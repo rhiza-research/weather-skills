@@ -105,6 +105,17 @@ def test_error_scale_bias_white_at_zero(plot_mod):
     # Midpoint of the colormap is white
     mid = cmap(0.5)[:3]
     assert all(c > 0.95 for c in mid)
+    dry = cmap(0.0)[:3]
+    wet = cmap(1.0)[:3]
+    assert dry[0] > dry[2]
+    assert wet[2] > wet[0]
+
+
+def test_verifying_week_title_from_time(plot_mod):
+    ds = _week(event_at=[])
+    assert plot_mod._verifying_week_title(ds["precip"]) == "Verifying week 1–7 Jan 2026"
+    ds["precip"].attrs["aggregation_period"] = "7 day"
+    assert plot_mod._verifying_week_title(ds["precip"]) == "Verifying week 1–7 Jan 2026"
 
 
 def test_error_scale_mae_white_at_zero(plot_mod):
@@ -142,8 +153,8 @@ def test_colorbar_figure_expands_for_precip_class_ticks(plot_mod):
     four_col = plot_mod._colorbar_figure_width(4, n_ticks)
     assert one_col > 7.0
     assert one_col * plot_mod._FIELD_CBAR_WIDTH >= plot_mod._CBAR_INCHES_PER_TICK * n_ticks
-    assert four_col == max(3.6 * 4, one_col)
-    assert plot_mod._colorbar_figure_width(1, 0) == 7.0
+    assert four_col == max(5.0 * 4, one_col)
+    assert plot_mod._colorbar_figure_width(1, 0) == 10.0
 
 
 def test_colorbar_axes_stack_field_above_verify(plot_mod):

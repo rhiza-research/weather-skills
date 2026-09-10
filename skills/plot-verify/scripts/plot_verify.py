@@ -207,6 +207,53 @@ def _aggregation_days(da):
         return None
 
 
+def _coord_as_date(val):
+    """Best-effort date from a numpy/cftime/datetime time value."""
+    from datetime import date, datetime
+
+    import numpy as np
+
+    if val is None or (isinstance(val, float) and np.isnan(val)):
+        return None
+    if isinstance(val, np.datetime64):
+        if np.isnat(val):
+            return None
+        return val.astype("datetime64[D]").astype(date)
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, date):
+        return val
+    if hasattr(val, "year") and hasattr(val, "month") and hasattr(val, "day"):
+        return date(int(val.year), int(val.month), int(val.day))
+    return None
+
+
+def _verifying_week_title(da):
+    """Banner text naming the obs week, e.g. ``Verifying week 24–30 Aug 2026``."""
+    from datetime import timedelta
+
+    import numpy as np
+
+    time_name = next((n for n in ("time", "valid_time") if n in da.coords or n in da.dims), None)
+    if time_name is None:
+        return "Verifying week"
+    start = _coord_as_date(np.asarray(da[time_name].values).reshape(-1)[0])
+    if start is None:
+        return "Verifying week"
+    days = _aggregation_days(da)
+    span = int(round(days)) if days and days >= 2 else 7
+    end = start + timedelta(days=span - 1)
+
+    def _day_mon(d):
+        return f"{d.day} {d.strftime('%b')}"
+
+    if start.year == end.year and start.month == end.month:
+        return f"Verifying week {start.day}–{end.day} {start.strftime('%b %Y')}"
+    if start.year == end.year:
+        return f"Verifying week {_day_mon(start)}–{_day_mon(end)} {end.year}"
+    return f"Verifying week {_day_mon(start)} {start.year}–{_day_mon(end)} {end.year}"
+
+
 def _precip_scale(da=None):
     """Discrete CHIRPS-GEFS rainfall-total classes with under/over colors.
 
@@ -298,7 +345,7 @@ def _colorbar_tick_count(norm):
 
 def _colorbar_figure_width(ncols, n_ticks):
     """Physical figure width so discrete colorbar labels do not collide."""
-    col_width = max(3.6 * ncols, 7.0)
+    col_width = max(5.0 * ncols, 10.0)
     if n_ticks < 8:
         return col_width
     needed = (_CBAR_INCHES_PER_TICK * n_ticks) / _FIELD_CBAR_WIDTH
@@ -339,19 +386,19 @@ def _hits_scale():
     return cmap, BoundaryNorm(bounds, cmap.N), ["disagree", "below", "hit"]
 
 
-# ColorBrewer RdBu-style stops with a true white center (bias) / white→warm (MAE).
-_ERROR_DIVERGING_COLORS = [
-    "#053061",
-    "#2166ac",
-    "#4393c3",
-    "#92c5de",
-    "#d1e5f0",
+# Brown (dry / negative) → white (zero) → blue (wet / positive).
+_BIAS_DRY_TO_WET_COLORS = [
+    "#543005",
+    "#8c510a",
+    "#bf812d",
+    "#dfc27d",
+    "#f6e8c3",
     "#ffffff",
-    "#fddbc7",
-    "#f4a582",
-    "#d6604d",
-    "#b2182b",
-    "#67001f",
+    "#deebf7",
+    "#9ecae1",
+    "#4292c6",
+    "#2171b5",
+    "#084594",
 ]
 _MAE_FROM_WHITE_COLORS = [
     "#ffffff",
@@ -366,7 +413,7 @@ _MAE_FROM_WHITE_COLORS = [
 def _bias_diverging_cmap():
     from matplotlib.colors import LinearSegmentedColormap
 
-    return LinearSegmentedColormap.from_list("verify_bias", _ERROR_DIVERGING_COLORS)
+    return LinearSegmentedColormap.from_list("verify_bias", _BIAS_DRY_TO_WET_COLORS)
 
 
 def _mae_from_white_cmap():
@@ -377,7 +424,7 @@ def _mae_from_white_cmap():
 
 
 def _error_scale(da, metric):
-    """Colormap / norm for bias (diverging, white at 0) or MAE (white→warm)."""
+    """Colormap / norm for bias (brown dry → white → blue wet) or MAE (white→warm)."""
     import numpy as np
     from matplotlib.colors import TwoSlopeNorm
 
@@ -651,6 +698,7 @@ def plot_verify(
     obs_da = _squeeze_map(obs_ds[obs_name], "--obs")
     obs_lat, obs_lon = _lat_lon(obs_da, "--obs")
     obs_da = _slice_bbox_mask(obs_da, obs_lat, obs_lon, bbox, polygon, "--obs")
+    week_title = _verifying_week_title(obs_ds[obs_name])
 
     columns = []
     for i, (fc_ds, fc_name, verify_ds, label) in enumerate(
@@ -703,7 +751,7 @@ def plot_verify(
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(fig_w, max(3.0 * nrows, 5.8) + (0.45 if title else 0.0) + 1.4),
+        figsize=(fig_w, max(4.4 * nrows, 9.0) + (0.5 if title else 0.0) + 1.6),
         sharex=True,
         sharey=True,
         subplot_kw={"projection": ccrs.PlateCarree()},
@@ -712,9 +760,10 @@ def plot_verify(
     if title:
         fig.suptitle(title, fontsize=fontsize, y=0.97)
 
-    tick_fs = _scaled_fontsize(fontsize, 0.9, floor=14)
+    tick_fs = _scaled_fontsize(fontsize, 0.5, floor=8)
     panel_title_fs = fontsize
-    cbar_label_fs = fontsize
+    name_fs = _scaled_fontsize(fontsize, 1.5)
+    cbar_label_fs = name_fs
     cbar_tick_fs = fontsize
 
     def _draw(
@@ -761,7 +810,7 @@ def plot_verify(
     field_mesh = verify_mesh = None
     for col, (label, fc_da, verify_da, lat_dim, lon_dim) in enumerate(columns):
         left = col == 0
-        axes[1][col].set_title(label, fontsize=panel_title_fs, pad=6)
+        axes[1][col].set_title(label, fontsize=panel_title_fs, pad=4)
         mesh = _draw(
             axes[0][col],
             obs_da,
@@ -820,35 +869,52 @@ def plot_verify(
             verify_mesh = mesh
 
     fig.subplots_adjust(
-        left=0.18,
+        left=0.22,
         right=0.99,
         bottom=maps_bottom,
         top=layout_top,
-        hspace=0.32,
-        wspace=0.10,
+        hspace=0.14,
+        wspace=0.04,
     )
+    obs_left = axes[0][0].get_position()
+    obs_right = axes[0][-1].get_position()
+    from matplotlib.patches import Rectangle
+
+    fig.add_artist(
+        Rectangle(
+            (obs_left.x0 - 0.02, obs_left.y0 - 0.018),
+            (obs_right.x1 - obs_left.x0) + 0.04,
+            (obs_left.y1 - obs_left.y0) + 0.055,
+            transform=fig.transFigure,
+            facecolor="#e8e8e8",
+            edgecolor="none",
+            zorder=0,
+            clip_on=False,
+        )
+    )
+    for ax in axes[0]:
+        ax.set_zorder(1)
     for row, row_label in enumerate(row_labels):
         pos = axes[row][0].get_position()
         fig.text(
-            pos.x0 - 0.07,
+            pos.x0 - 0.08,
             (pos.y0 + pos.y1) / 2,
             row_label,
             rotation=90,
             va="center",
             ha="right",
-            fontsize=fontsize,
+            fontsize=name_fs,
+            zorder=2,
         )
-    if ncols > 1:
-        obs_left = axes[0][0].get_position()
-        obs_right = axes[0][-1].get_position()
-        fig.text(
-            (obs_left.x0 + obs_right.x1) / 2,
-            obs_left.y1 + 0.012,
-            "Same verifying week",
-            ha="center",
-            va="bottom",
-            fontsize=fontsize,
-        )
+    fig.text(
+        (obs_left.x0 + obs_right.x1) / 2,
+        obs_left.y1 + 0.012,
+        week_title,
+        ha="center",
+        va="bottom",
+        fontsize=fontsize,
+        zorder=2,
+    )
     if field_mesh is not None:
         cbar_ax = fig.add_axes(field_box)
         cbar = fig.colorbar(
@@ -871,8 +937,12 @@ def plot_verify(
             verify_cbar = fig.colorbar(verify_mesh, cax=verify_ax, orientation="horizontal")
             units = format_units_for_display(u_obs)
             label = _METRIC_ROW_LABELS[metric]
+            if metric == "bias":
+                base = f"{label} (dry → wet)"
+            else:
+                base = label
             verify_cbar.set_label(
-                f"{label} [{units}]" if units else label, fontsize=cbar_label_fs
+                f"{base} [{units}]" if units else base, fontsize=cbar_label_fs
             )
         verify_cbar.ax.tick_params(labelsize=cbar_tick_fs)
 
