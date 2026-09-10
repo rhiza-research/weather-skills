@@ -29,7 +29,12 @@ date ends up absolute.
   - `summarize-dim --dim number` for a mean/std onset day across ensemble
     members (averaging raw dates directly is meaningless; averaging their
     day-of-year is a well-defined circular-ish approximation for a single
-    season).
+    season). **Caveat:** `onset-date`'s `NaT`s become `NaN` here, and
+    `summarize-dim --method mean` skips them — so a mean is averaged only
+    over members that found an onset, and a low-agreement cell's mean looks
+    just as confident as a high-agreement one. See `onset-date`'s SKILL.md
+    for the exceedance-probability recipe that gives a companion
+    member-coverage map, and report it alongside any mean onset.
   - `exceedance-probability` for "probability onset falls before day N."
   - `plot`, which needs a numeric field for its colorbar range —
     plotting a raw `datetime64`/`timedelta64` variable directly fails

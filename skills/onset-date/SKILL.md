@@ -38,7 +38,9 @@ Two onset definitions are available via `--definition`:
   dim, convert the resulting date to a comparable scalar with `day-of-year`
   (raw dates can't be averaged meaningfully), then feed that into
   `summarize-dim --dim number` for a mean/std onset day, or
-  `exceedance-probability` for "probability onset falls before day N."
+  `exceedance-probability` for "probability onset falls before day N." See
+  the caveat below before reporting a mean this way — pair it with a
+  member-coverage map.
 - Absolute onset *dates* (not elapsed lead time): run `step-to-time` first so
   the time dim already carries `datetime64` values before this skill runs —
   this skill does not do that conversion itself. `day-of-year` (chained
@@ -143,6 +145,40 @@ output (along with its coordinates) once no data variable carries it; a dim
 still carried by a pass-through variable stays. Remaining dims (e.g.
 `number`, `latitude`, `longitude`), coords, and pass-through variables are
 unchanged.
+
+### Caveat: averaging onset across ensemble members
+
+`onset-date` returns `NaT` for any member/gridpoint that never satisfies the
+rule. `summarize-dim --method mean` (like xarray's own `.mean()`) skips
+missing values by default — so a cell's mean onset is averaged only over
+whichever members *did* find one. A cell where just 2 of 51 members
+triggered still produces a confident-looking mean, backed by almost no
+members, indistinguishable in the output from a cell where 49 of 51 agreed.
+
+**If you report a mean onset date (or day-of-year) computed this way, say so
+explicitly** — something like: *"One caveat worth knowing before you use
+this: the onset skill returns NaT for a member that never meets the rule,
+and summarize-dim's mean skips missing values. So each cell's mean is
+averaged only over the members that did find an onset — cells where few
+members triggered give an early-looking mean backed by a handful of members.
+Read it alongside a probability map, which tells you how many members that
+mean rests on."*
+
+Get that companion coverage map with `exceedance-probability`, run on the
+day-of-year result (not the raw onset date) with a threshold every valid day
+satisfies and none of the `NaT`-derived `NaN`s can (comparisons against
+`NaN` are always false, so those members are correctly excluded from the
+count):
+
+```bash
+uv run ${CLAUDE_SKILL_DIR}/../exceedance-probability/scripts/exceedance_probability.py \
+    -i /tmp/onset_doy.zarr -o /tmp/onset_pct_valid.zarr \
+    --dim number --threshold 1 --comparison ge
+```
+
+This yields the percentage of members that found an onset at all per cell —
+report it alongside the mean, and treat a low-coverage cell's mean as
+unreliable rather than as a genuinely early onset.
 
 ### Provenance
 

@@ -60,7 +60,10 @@ Prefer small steps over stuffing every filter into one call:
   compute a numeric colorbar range from a date), `summarize-dim` (e.g. a
   mean/std onset across ensemble members), or `exceedance-probability` on an
   onset result, run `day-of-year` first to convert it to an integer
-  day-of-year.
+  day-of-year. If you report a mean onset, say so: `summarize-dim`'s mean
+  skips the members that never found an onset, so a low-agreement cell's
+  mean looks just as confident as a high-agreement one — pair it with the
+  member-coverage map documented in `onset-date`'s SKILL.md.
 
 ## Working directory and output files
 
