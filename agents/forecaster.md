@@ -55,6 +55,12 @@ Prefer small steps over stuffing every filter into one call:
   but still run `convert-to-totals` so the PNG is from an amount Zarr.
   `deaccumulate` is only for leftover cumulative-since-init cubes that still
   have amount units.
+- **Onset dates:** `onset-date` outputs a raw date/duration, not a plottable
+  or averageable number. Before `plot` (which errors outright trying to
+  compute a numeric colorbar range from a date), `summarize-dim` (e.g. a
+  mean/std onset across ensemble members), or `exceedance-probability` on an
+  onset result, run `day-of-year` first to convert it to an integer
+  day-of-year.
 
 ## Working directory and output files
 

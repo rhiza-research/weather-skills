@@ -1,6 +1,6 @@
 ---
 name: onset-date
-description: Compute the rainy season onset date along a time/step axis, per one of two selectable definitions -- ICPAC's wet-spell-then-no-dry-spell criterion, or the Climate Hazards Center's two-window cumulative-rainfall criterion (CHC_start_grow_season). Use whenever a dataset needs a per-gridpoint (or per-ensemble-member) onset date derived from a daily rainfall accumulation series.
+description: Compute the rainy season onset date along a time/step axis, per one of two selectable definitions -- ICPAC's wet-spell-then-no-dry-spell criterion, or the Climate Hazards Center's two-window cumulative-rainfall criterion (CHC_start_grow_season). Use whenever a dataset needs a per-gridpoint (or per-ensemble-member) onset date derived from a daily rainfall accumulation series. The output is a raw date/duration -- run the day-of-year skill on it before plot, summarize-dim, or exceedance-probability, since none of those handle a raw datetime64/timedelta64 value directly (plot errors outright on one).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/onset_date.py *)
