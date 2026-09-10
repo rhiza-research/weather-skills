@@ -63,8 +63,10 @@ def test_four_leads_write_png_and_stamp_history(tmp_path, plot_fn, verify_fn, ca
     assert history is not None
     assert history[-1]["skill"] == "plot-verify"
     printed = capsys.readouterr().out
-    weeks = [ln.split()[1] for ln in printed.splitlines() if ln.startswith("Week ")]
-    assert weeks == ["4", "3", "2", "1"]
+    leads = [
+        ln.split("  ", 1)[0] for ln in printed.splitlines() if "-week lead" in ln
+    ]
+    assert leads == ["4-week lead", "3-week lead", "2-week lead", "1-week lead"]
     assert "hit rate" in printed
 
 
@@ -154,7 +156,7 @@ def test_colorbar_axes_stack_field_above_verify(plot_mod):
     # Room between bars for the field colorbar label.
     assert field[1] - (verify[1] + verify[3]) >= 0.05
     assert maps_bottom > field[1] + field[3]
-    assert top == 0.91
+    assert top == 0.88
 
 
 def test_row_labels_use_weather_skills_source(plot_mod):

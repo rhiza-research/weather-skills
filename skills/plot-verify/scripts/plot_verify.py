@@ -282,10 +282,10 @@ def _cbar_boundary_kwargs(norm, cmap=None):
 # ``_colorbar_figure_width``) so the ticks do not collide.
 _FIELD_CBAR_WIDTH = 0.80
 _FIELD_CBAR_LEFT = 0.10
-_FIELD_CBAR_HEIGHT = 0.075
-_VERIFY_CBAR_HEIGHT = 0.070
+_FIELD_CBAR_HEIGHT = 0.048
+_VERIFY_CBAR_HEIGHT = 0.042
 # ~inches of colorbar per discrete tick so 3–4 digit labels stay readable.
-_CBAR_INCHES_PER_TICK = 0.48
+_CBAR_INCHES_PER_TICK = 0.55
 
 
 def _colorbar_tick_count(norm):
@@ -312,10 +312,10 @@ def _colorbar_axes_boxes(*, title):
     stacking lets the field bar use ``_FIELD_CBAR_WIDTH`` of the figure.
     Boxes sit just under the maps so the reserved bottom is not empty.
     """
-    top = 0.91 if title else 0.97
-    maps_bottom = 0.27
-    field = [_FIELD_CBAR_LEFT, 0.155, _FIELD_CBAR_WIDTH, _FIELD_CBAR_HEIGHT]
-    verify = [_FIELD_CBAR_LEFT, 0.020, _FIELD_CBAR_WIDTH, _VERIFY_CBAR_HEIGHT]
+    top = 0.88 if title else 0.94
+    maps_bottom = 0.24
+    field = [_FIELD_CBAR_LEFT, 0.145, _FIELD_CBAR_WIDTH, _FIELD_CBAR_HEIGHT]
+    verify = [_FIELD_CBAR_LEFT, 0.022, _FIELD_CBAR_WIDTH, _VERIFY_CBAR_HEIGHT]
     return maps_bottom, top, field, verify
 
 
@@ -537,7 +537,7 @@ def _prepare(ds, variable):
     "--lead",
     action="append",
     default=None,
-    help="Column label, once per --forecast. Default: Week N … Week 1 (least recent to most recent).",
+    help="Column label, once per --forecast. Default: N-week lead … 1-week lead (least recent to most recent).",
 )
 @weather_skill.argument(
     "--colormap",
@@ -560,8 +560,8 @@ def _prepare(ds, variable):
 @weather_skill.argument(
     "--fontsize",
     type=int,
-    default=14,
-    help="Base font size for column/row labels, ticks, and colorbars (default 14).",
+    default=18,
+    help="Base font size for column/row labels, ticks, and colorbars (default 18).",
 )
 @weather_skill.argument(
     "--mask-geojson",
@@ -600,7 +600,7 @@ def plot_verify(
             f"{len(forecasts)} time(s); pass one --lead per --forecast."
         )
     if not leads:
-        leads = [f"Week {i}" for i in range(len(forecasts), 0, -1)]
+        leads = [f"{i}-week lead" for i in range(len(forecasts), 0, -1)]
 
     metrics = [_metric_from_verify(ds, f"--verify {i + 1}") for i, ds in enumerate(verify_sets)]
     if len(set(metrics)) != 1:
@@ -710,12 +710,12 @@ def plot_verify(
         squeeze=False,
     )
     if title:
-        fig.suptitle(title, fontsize=_scaled_fontsize(fontsize, 1.1), y=0.97)
+        fig.suptitle(title, fontsize=fontsize, y=0.97)
 
-    tick_fs = _scaled_fontsize(fontsize, 0.7)
-    panel_title_fs = _scaled_fontsize(fontsize, 0.85)
-    cbar_label_fs = _scaled_fontsize(fontsize, 0.85, floor=10)
-    cbar_tick_fs = _scaled_fontsize(fontsize, 0.70, floor=9)
+    tick_fs = _scaled_fontsize(fontsize, 0.9, floor=14)
+    panel_title_fs = fontsize
+    cbar_label_fs = fontsize
+    cbar_tick_fs = fontsize
 
     def _draw(
         ax,
@@ -761,7 +761,7 @@ def plot_verify(
     field_mesh = verify_mesh = None
     for col, (label, fc_da, verify_da, lat_dim, lon_dim) in enumerate(columns):
         left = col == 0
-        axes[0][col].set_title(label, fontsize=panel_title_fs, pad=6)
+        axes[1][col].set_title(label, fontsize=panel_title_fs, pad=6)
         mesh = _draw(
             axes[0][col],
             obs_da,
@@ -820,12 +820,12 @@ def plot_verify(
             verify_mesh = mesh
 
     fig.subplots_adjust(
-        left=0.16,
+        left=0.18,
         right=0.99,
         bottom=maps_bottom,
         top=layout_top,
-        hspace=0.18,
-        wspace=0.08,
+        hspace=0.32,
+        wspace=0.10,
     )
     for row, row_label in enumerate(row_labels):
         pos = axes[row][0].get_position()
@@ -836,6 +836,17 @@ def plot_verify(
             rotation=90,
             va="center",
             ha="right",
+            fontsize=fontsize,
+        )
+    if ncols > 1:
+        obs_left = axes[0][0].get_position()
+        obs_right = axes[0][-1].get_position()
+        fig.text(
+            (obs_left.x0 + obs_right.x1) / 2,
+            obs_left.y1 + 0.012,
+            "Same verifying week",
+            ha="center",
+            va="bottom",
             fontsize=fontsize,
         )
     if field_mesh is not None:
@@ -854,7 +865,7 @@ def plot_verify(
             verify_cbar = fig.colorbar(
                 verify_mesh, cax=verify_ax, orientation="horizontal", ticks=[-1, 0, 1]
             )
-            verify_cbar.set_ticklabels(verify_labels)
+            verify_cbar.set_ticklabels(verify_labels, fontsize=cbar_tick_fs)
             verify_cbar.set_label("event", fontsize=cbar_label_fs)
         else:
             verify_cbar = fig.colorbar(verify_mesh, cax=verify_ax, orientation="horizontal")
