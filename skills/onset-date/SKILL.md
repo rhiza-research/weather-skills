@@ -1,6 +1,6 @@
 ---
 name: onset-date
-description: Compute the rainy season onset date along a time/step axis, per one of two selectable definitions -- ICPAC's wet-spell-then-no-dry-spell criterion, or the Climate Hazards Center's two-window cumulative-rainfall criterion (CHC_start_grow_season). Use whenever a dataset needs a per-gridpoint (or per-ensemble-member) onset date derived from a daily rainfall accumulation series. The output is a raw date/duration -- run the day-of-year skill on it before plot, summarize-dim, or exceedance-probability, since none of those handle a raw datetime64/timedelta64 value directly (plot errors outright on one).
+description: Compute the rainy season onset date along a time/step axis, per one of two selectable definitions -- ICPAC's wet-spell-then-no-dry-spell criterion, or the Climate Hazards Center's two-window cumulative-rainfall criterion (CHC_start_grow_season). Use whenever a dataset needs a per-gridpoint (or per-ensemble-member) onset date derived from a daily rainfall accumulation series. To MAP the result, use plot-onset, which takes this output directly and shows mean onset and member agreement together. The output is otherwise a raw date/duration -- run the day-of-year skill on it before summarize-dim or exceedance-probability, since neither handles a raw datetime64/timedelta64 value directly.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/onset_date.py *)
@@ -34,13 +34,16 @@ Two onset definitions are available via `--definition`:
   the classic 20mm/3-day wet spell and a 7-day dry-spell disqualifier over a
   21-day search window (the defaults).
 - A simpler two-window accumulation check: `--definition CHC_start_grow_season`.
-- Per-ensemble-member onset spread: run against a forecast with a `number`
-  dim, convert the resulting date to a comparable scalar with `day-of-year`
-  (raw dates can't be averaged meaningfully), then feed that into
-  `summarize-dim --dim number` for a mean/std onset day, or
-  `exceedance-probability` for "probability onset falls before day N." See
-  the caveat below before reporting a mean this way — pair it with a
-  member-coverage map.
+- Mapping the result: use `plot-onset`, which takes this skill's output
+  directly and renders mean onset date and per-cell member agreement in one
+  figure. Do not build that by hand, and do not use `plot` (it errors on a
+  date dtype).
+- Per-ensemble-member onset spread as *numbers* rather than a map: convert
+  the resulting date to a comparable scalar with `day-of-year` (raw dates
+  can't be averaged meaningfully), then feed that into `summarize-dim --dim
+  number` for a mean/std onset day, or `exceedance-probability` for
+  "probability onset falls before day N." See the caveat below before
+  reporting a mean this way.
 - Absolute onset *dates* (not elapsed lead time): run `step-to-time` first so
   the time dim already carries `datetime64` values before this skill runs —
   this skill does not do that conversion itself. `day-of-year` (chained
@@ -154,6 +157,13 @@ missing values by default — so a cell's mean onset is averaged only over
 whichever members *did* find one. A cell where just 2 of 51 members
 triggered still produces a confident-looking mean, backed by almost no
 members, indistinguishable in the output from a cell where 49 of 51 agreed.
+
+**If you are making a map, `plot-onset` solves this for you** — it takes
+this skill's output directly, derives the mean and the member coverage
+itself, fades low-coverage cells, and annotates the member percentage over
+the map. Prefer it over a hand-built mean-then-plot chain. The rest of this
+section applies when you are reporting a mean onset as a number rather than
+as a map.
 
 **If you report a mean onset date (or day-of-year) computed this way, say so
 explicitly** — something like: *"One caveat worth knowing before you use

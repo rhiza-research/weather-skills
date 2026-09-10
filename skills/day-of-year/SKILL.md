@@ -1,6 +1,6 @@
 ---
 name: day-of-year
-description: Extract calendar day-of-year (1-366) from a datetime64 data variable, replacing it with an integer that can be averaged, thresholded, and plotted -- a raw date/duration cannot. Use downstream of onset-date (or any other date-producing skill) before summarize-dim, exceedance-probability, or plot -- averaging or plotting a raw datetime64 value directly is not meaningful (and plot errors outright trying to compute a numeric vmin/vmax from one).
+description: Extract calendar day-of-year (1-366) from a datetime64 data variable, replacing it with an integer that can be averaged and thresholded -- a raw date/duration cannot. Use downstream of onset-date (or any other date-producing skill) before summarize-dim or exceedance-probability, since averaging a raw datetime64 value is not meaningful. NOT needed to map an onset result: plot-onset takes onset-date's output directly and derives this itself.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/day_of_year.py *)
@@ -24,22 +24,26 @@ date ends up absolute.
 
 ## When to use
 
-- After `onset-date`, before anything that needs to combine or compare onset
-  results numerically:
-  - `summarize-dim --dim number` for a mean/std onset day across ensemble
-    members (averaging raw dates directly is meaningless; averaging their
-    day-of-year is a well-defined circular-ish approximation for a single
-    season). **Caveat:** `onset-date`'s `NaT`s become `NaN` here, and
-    `summarize-dim --method mean` skips them — so a mean is averaged only
-    over members that found an onset, and a low-agreement cell's mean looks
-    just as confident as a high-agreement one. See `onset-date`'s SKILL.md
-    for the exceedance-probability recipe that gives a companion
-    member-coverage map, and report it alongside any mean onset.
-  - `exceedance-probability` for "probability onset falls before day N."
-  - `plot`, which needs a numeric field for its colorbar range —
-    plotting a raw `datetime64`/`timedelta64` variable directly fails
-    (`plot` computes `vmin`/`vmax` via `float(da.max())`, which raises on a
-    date/duration dtype).
+**Not for onset maps.** To map an onset result, use `plot-onset`, which
+takes `onset-date`'s output directly and derives the day-of-year, mean, and
+member coverage itself. Running this skill first is unnecessary there and
+throws away the coverage half of the figure.
+
+Use it when an onset result needs to become a plain number:
+
+- `summarize-dim --dim number` for a mean/std onset day across ensemble
+  members (averaging raw dates directly is meaningless; averaging their
+  day-of-year is a well-defined circular-ish approximation for a single
+  season). **Caveat:** `onset-date`'s `NaT`s become `NaN` here, and
+  `summarize-dim --method mean` skips them — so a mean is averaged only
+  over members that found an onset, and a low-agreement cell's mean looks
+  just as confident as a high-agreement one. See `onset-date`'s SKILL.md
+  for the exceedance-probability recipe that gives a companion
+  member-coverage figure, and report it alongside any mean onset.
+- `exceedance-probability` for "probability onset falls before day N."
+- `plot` on a *non-onset* datetime64 field, which needs a numeric variable
+  for its colorbar range — it computes `vmin`/`vmax` via `float(da.max())`,
+  which raises on a date/duration dtype.
 - Any other datetime64 data variable that needs to become a plain integer
   for the same reasons.
 
