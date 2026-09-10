@@ -207,40 +207,98 @@ def _aggregation_days(da):
         return None
 
 
-def _coord_as_date(val):
-    """Best-effort date from a numpy/cftime/datetime time value."""
+def _coord_as_date(val, *, units=None, calendar=None):
+    """Best-effort date from a numpy/cftime/datetime/CF-encoded time value."""
     from datetime import date, datetime
 
     import numpy as np
 
-    if val is None or (isinstance(val, float) and np.isnan(val)):
+    if val is None:
         return None
+    try:
+        if isinstance(val, float) and np.isnan(val):
+            return None
+    except (TypeError, ValueError):
+        pass
     if isinstance(val, np.datetime64):
         if np.isnat(val):
             return None
-        return val.astype("datetime64[D]").astype(date)
+        iso = str(val.astype("datetime64[D]"))
+        try:
+            return date.fromisoformat(iso[:10])
+        except ValueError:
+            return None
     if isinstance(val, datetime):
         return val.date()
     if isinstance(val, date):
         return val
     if hasattr(val, "year") and hasattr(val, "month") and hasattr(val, "day"):
-        return date(int(val.year), int(val.month), int(val.day))
+        try:
+            return date(int(val.year), int(val.month), int(val.day))
+        except (TypeError, ValueError):
+            return None
+    if isinstance(val, (bytes, bytearray)):
+        val = val.decode("utf-8", "replace")
+    if isinstance(val, str):
+        try:
+            return date.fromisoformat(val[:10])
+        except ValueError:
+            pass
+    if units and isinstance(val, (int, np.integer, float, np.floating)):
+        try:
+            import cftime
+
+            dt = cftime.num2date(val, units=units, calendar=calendar or "standard")
+            return date(int(dt.year), int(dt.month), int(dt.day))
+        except (TypeError, ValueError, OverflowError):
+            return None
     return None
 
 
-def _verifying_week_title(da):
-    """Banner text naming the obs week, e.g. ``Verifying week 24–30 Aug 2026``."""
+def _time_coord(da, ds=None):
+    """Return a time coordinate from the DataArray or its parent Dataset."""
+    names = ("time", "valid_time")
+    for obj in (da, ds):
+        if obj is None:
+            continue
+        for name in names:
+            if name in getattr(obj, "coords", {}) or name in getattr(obj, "dims", ()):
+                return obj[name]
+    return None
+
+
+def _verifying_week_title(da, ds=None):
+    """Obs-panel title naming the week, e.g. ``Verifying week 24–30 Aug 2026``."""
     from datetime import timedelta
 
     import numpy as np
 
-    time_name = next((n for n in ("time", "valid_time") if n in da.coords or n in da.dims), None)
-    if time_name is None:
-        return "Verifying week"
-    start = _coord_as_date(np.asarray(da[time_name].values).reshape(-1)[0])
+    coord = _time_coord(da, ds)
+    start = None
+    if coord is not None:
+        vals = np.asarray(coord.values).reshape(-1)
+        if vals.size:
+            start = _coord_as_date(
+                vals[0],
+                units=coord.attrs.get("units") if hasattr(coord, "attrs") else None,
+                calendar=coord.attrs.get("calendar") if hasattr(coord, "attrs") else None,
+            )
+    if start is None:
+        for obj in (da, ds):
+            if obj is None:
+                continue
+            attrs = getattr(obj, "attrs", {}) or {}
+            for key in ("time_coverage_start", "start_date", "start_time"):
+                start = _coord_as_date(attrs.get(key))
+                if start is not None:
+                    break
+            if start is not None:
+                break
     if start is None:
         return "Verifying week"
     days = _aggregation_days(da)
+    if days is None and ds is not None:
+        days = _aggregation_days(ds)
     span = int(round(days)) if days and days >= 2 else 7
     end = start + timedelta(days=span - 1)
 
@@ -326,13 +384,24 @@ def _cbar_boundary_kwargs(norm, cmap=None):
 
 # Field colorbar as a fraction of figure width. Discrete precip classes have
 # ~15 labels; they need this span plus a wide enough figure (see
-# ``_colorbar_figure_width``) so the ticks do not collide.
+# ``_colorbar_min_width``) so the ticks do not collide.
 _FIELD_CBAR_WIDTH = 0.80
 _FIELD_CBAR_LEFT = 0.10
-_FIELD_CBAR_HEIGHT = 0.048
-_VERIFY_CBAR_HEIGHT = 0.042
+# Thin strips (inches); type sits below each strip, not inside it.
+_FIELD_CBAR_HEIGHT_IN = 0.22
+_VERIFY_CBAR_WIDTH = 0.50
+_VERIFY_CBAR_HEIGHT_IN = 0.20
+_VERIFY_CBAR_Y_IN = 0.28
+_FIELD_CBAR_Y_IN = 1.65
+_CBAR_STACK_IN = 2.10
 # ~inches of colorbar per discrete tick so 3–4 digit labels stay readable.
-_CBAR_INCHES_PER_TICK = 0.55
+_CBAR_INCHES_PER_TICK = 0.95
+_LEFT_MARGIN_IN = 2.35
+_RIGHT_MARGIN_IN = 0.30
+_COL_GAP_IN = 0.16
+_ROW_GAP_IN = 0.22
+_OBS_GAP_IN = 0.52
+_MAP_HEIGHT_IN = 4.0
 
 
 def _colorbar_tick_count(norm):
@@ -343,27 +412,92 @@ def _colorbar_tick_count(norm):
     return len(list(norm.boundaries))
 
 
-def _colorbar_figure_width(ncols, n_ticks):
-    """Physical figure width so discrete colorbar labels do not collide."""
-    col_width = max(5.0 * ncols, 10.0)
+def _colorbar_min_width(n_ticks):
+    """Minimum figure width so discrete colorbar labels do not collide."""
     if n_ticks < 8:
-        return col_width
-    needed = (_CBAR_INCHES_PER_TICK * n_ticks) / _FIELD_CBAR_WIDTH
-    return max(col_width, needed)
+        return 8.0
+    return (_CBAR_INCHES_PER_TICK * n_ticks) / _FIELD_CBAR_WIDTH
 
 
-def _colorbar_axes_boxes(*, title):
+def _colorbar_axes_boxes(fig_h):
     """Stacked field + verify colorbar boxes (figure fraction).
 
-    Side-by-side bars squash the precip class labels on a 1-column figure;
-    stacking lets the field bar use ``_FIELD_CBAR_WIDTH`` of the figure.
-    Boxes sit just under the maps so the reserved bottom is not empty.
+    The precip bar stays ``_FIELD_CBAR_WIDTH`` so class labels fit; the
+    verify bar is shorter. Strips are thin; large tick/label type sits
+    in the gaps between and below them.
     """
-    top = 0.88 if title else 0.94
-    maps_bottom = 0.24
-    field = [_FIELD_CBAR_LEFT, 0.145, _FIELD_CBAR_WIDTH, _FIELD_CBAR_HEIGHT]
-    verify = [_FIELD_CBAR_LEFT, 0.022, _FIELD_CBAR_WIDTH, _VERIFY_CBAR_HEIGHT]
-    return maps_bottom, top, field, verify
+    field = [
+        _FIELD_CBAR_LEFT,
+        _FIELD_CBAR_Y_IN / fig_h,
+        _FIELD_CBAR_WIDTH,
+        _FIELD_CBAR_HEIGHT_IN / fig_h,
+    ]
+    verify = [
+        (1.0 - _VERIFY_CBAR_WIDTH) / 2,
+        _VERIFY_CBAR_Y_IN / fig_h,
+        _VERIFY_CBAR_WIDTH,
+        _VERIFY_CBAR_HEIGHT_IN / fig_h,
+    ]
+    return _CBAR_STACK_IN / fig_h, field, verify
+
+
+def _map_panel_inches(extent, *, base_height=_MAP_HEIGHT_IN):
+    """Width, height of one map panel so the bbox fills the axes (equal aspect)."""
+    lon_min, lon_max, lat_min, lat_max = (float(v) for v in extent)
+    lat_range = abs(lat_max - lat_min)
+    lon_range = abs(lon_max - lon_min)
+    if lat_range < 1e-6 or lon_range < 1e-6:
+        return base_height, base_height
+    height = base_height
+    width = height * lon_range / lat_range
+    return max(width, 2.0), height
+
+
+def _figure_layout(ncols, extent, n_ticks, *, title):
+    """Figure size and boxes: one obs map above an N-column forecast/verify grid."""
+    map_w, map_h = _map_panel_inches(extent)
+    grid_w = ncols * map_w + (ncols - 1) * _COL_GAP_IN
+    fig_w = max(
+        _LEFT_MARGIN_IN + grid_w + _RIGHT_MARGIN_IN,
+        _colorbar_min_width(n_ticks),
+        10.0,
+    )
+    extra_right = max(fig_w - (_LEFT_MARGIN_IN + grid_w + _RIGHT_MARGIN_IN), 0.0)
+    week_title_in = 0.48
+    fig_title_in = 0.62 if title else 0.12
+    fig_h = (
+        fig_title_in
+        + week_title_in
+        + map_h
+        + _OBS_GAP_IN
+        + 2 * map_h
+        + _ROW_GAP_IN
+        + _CBAR_STACK_IN
+    )
+    left = _LEFT_MARGIN_IN / fig_w
+    right = 1.0 - (_RIGHT_MARGIN_IN + extra_right) / fig_w
+    maps_bottom, field_box, verify_box = _colorbar_axes_boxes(fig_h)
+    wspace = _COL_GAP_IN / map_w
+    hspace = _ROW_GAP_IN / map_h
+    fc_top = maps_bottom + (2 * map_h + _ROW_GAP_IN) / fig_h
+    obs_bottom = fc_top + _OBS_GAP_IN / fig_h
+    panel_w = (right - left) / (ncols + wspace * (ncols - 1))
+    panel_h = map_h / fig_h
+    return {
+        "figsize": (fig_w, fig_h),
+        "left": left,
+        "right": right,
+        "maps_bottom": maps_bottom,
+        "fc_top": fc_top,
+        "obs_bottom": obs_bottom,
+        "obs_width": panel_w,
+        "obs_height": panel_h,
+        "wspace": wspace,
+        "hspace": hspace,
+        "field_box": field_box,
+        "verify_box": verify_box,
+        "title_y": 1.0 - fig_title_in / (2.0 * fig_h),
+    }
 
 
 def _variable_label(da):
@@ -665,7 +799,6 @@ def plot_verify(
     import cf_xarray  # noqa: F401 — registers the .cf accessor
     import matplotlib.pyplot as plt
     import numpy as np
-    from matplotlib.colors import BoundaryNorm
 
     obs_name = _pick_variable(obs, variable, "--obs")
     fc_names = [
@@ -698,7 +831,7 @@ def plot_verify(
     obs_da = _squeeze_map(obs_ds[obs_name], "--obs")
     obs_lat, obs_lon = _lat_lon(obs_da, "--obs")
     obs_da = _slice_bbox_mask(obs_da, obs_lat, obs_lon, bbox, polygon, "--obs")
-    week_title = _verifying_week_title(obs_ds[obs_name])
+    week_title = _verifying_week_title(obs_ds[obs_name], obs_ds)
 
     columns = []
     for i, (fc_ds, fc_name, verify_ds, label) in enumerate(
@@ -744,27 +877,44 @@ def plot_verify(
         if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
             vmin, vmax = 0.0, 1.0
 
-    nrows, ncols = 3, len(columns)
+    ncols = len(columns)
     n_ticks = _colorbar_tick_count(norm)
-    fig_w = _colorbar_figure_width(ncols, n_ticks)
-    maps_bottom, layout_top, field_box, verify_box = _colorbar_axes_boxes(title=bool(title))
-    fig, axes = plt.subplots(
-        nrows,
+    layout = _figure_layout(ncols, extent, n_ticks, title=bool(title))
+    fig = plt.figure(figsize=layout["figsize"])
+    gs = fig.add_gridspec(
+        2,
         ncols,
-        figsize=(fig_w, max(4.4 * nrows, 9.0) + (0.5 if title else 0.0) + 1.6),
-        sharex=True,
-        sharey=True,
-        subplot_kw={"projection": ccrs.PlateCarree()},
-        squeeze=False,
+        left=layout["left"],
+        right=layout["right"],
+        bottom=layout["maps_bottom"],
+        top=layout["fc_top"],
+        wspace=layout["wspace"],
+        hspace=layout["hspace"],
     )
+    fc_axes = [
+        fig.add_subplot(gs[0, i], projection=ccrs.PlateCarree()) for i in range(ncols)
+    ]
+    verify_axes = [
+        fig.add_subplot(gs[1, i], projection=ccrs.PlateCarree()) for i in range(ncols)
+    ]
+    gs_obs = fig.add_gridspec(
+        1,
+        ncols,
+        left=layout["left"],
+        right=layout["right"],
+        bottom=layout["obs_bottom"],
+        top=layout["obs_bottom"] + layout["obs_height"],
+        wspace=layout["wspace"],
+    )
+    obs_ax = fig.add_subplot(gs_obs[0, 0], projection=ccrs.PlateCarree())
     if title:
-        fig.suptitle(title, fontsize=fontsize, y=0.97)
+        fig.suptitle(title, fontsize=fontsize, y=layout["title_y"])
 
     tick_fs = _scaled_fontsize(fontsize, 0.5, floor=8)
     panel_title_fs = fontsize
     name_fs = _scaled_fontsize(fontsize, 1.5)
-    cbar_label_fs = name_fs
-    cbar_tick_fs = fontsize
+    cbar_label_fs = _scaled_fontsize(fontsize, 1.85)
+    cbar_tick_fs = _scaled_fontsize(fontsize, 1.5)
 
     def _draw(
         ax,
@@ -807,26 +957,26 @@ def plot_verify(
             transform=ccrs.PlateCarree(),
         )
 
-    field_mesh = verify_mesh = None
-    for col, (label, fc_da, verify_da, lat_dim, lon_dim) in enumerate(columns):
+    field_mesh = _draw(
+        obs_ax,
+        obs_da,
+        obs_lat,
+        obs_lon,
+        cmap,
+        norm,
+        vmin,
+        vmax,
+        left_labels=True,
+        bottom_labels=True,
+    )
+    obs_ax.set_title(week_title, fontsize=panel_title_fs, pad=8)
+
+    verify_mesh = None
+    for col, (col_label, fc_da, verify_da, lat_dim, lon_dim) in enumerate(columns):
         left = col == 0
-        axes[1][col].set_title(label, fontsize=panel_title_fs, pad=4)
-        mesh = _draw(
-            axes[0][col],
-            obs_da,
-            obs_lat,
-            obs_lon,
-            cmap,
-            norm,
-            vmin,
-            vmax,
-            left_labels=left,
-            bottom_labels=False,
-        )
-        if field_mesh is None:
-            field_mesh = mesh
-        mesh = _draw(
-            axes[1][col],
+        fc_axes[col].set_title(col_label, fontsize=panel_title_fs, pad=6)
+        _draw(
+            fc_axes[col],
             fc_da,
             lat_dim,
             lon_dim,
@@ -837,11 +987,9 @@ def plot_verify(
             left_labels=left,
             bottom_labels=False,
         )
-        if field_mesh is None:
-            field_mesh = mesh
         if metric == "hits":
             mesh = _draw(
-                axes[2][col],
+                verify_axes[col],
                 verify_da,
                 lat_dim,
                 lon_dim,
@@ -854,7 +1002,7 @@ def plot_verify(
             )
         else:
             mesh = _draw(
-                axes[2][col],
+                verify_axes[col],
                 verify_da,
                 lat_dim,
                 lon_dim,
@@ -868,83 +1016,53 @@ def plot_verify(
         if verify_mesh is None:
             verify_mesh = mesh
 
-    fig.subplots_adjust(
-        left=0.22,
-        right=0.99,
-        bottom=maps_bottom,
-        top=layout_top,
-        hspace=0.14,
-        wspace=0.04,
-    )
-    obs_left = axes[0][0].get_position()
-    obs_right = axes[0][-1].get_position()
-    from matplotlib.patches import Rectangle
-
-    fig.add_artist(
-        Rectangle(
-            (obs_left.x0 - 0.02, obs_left.y0 - 0.018),
-            (obs_right.x1 - obs_left.x0) + 0.04,
-            (obs_left.y1 - obs_left.y0) + 0.055,
-            transform=fig.transFigure,
-            facecolor="#e8e8e8",
-            edgecolor="none",
-            zorder=0,
-            clip_on=False,
-        )
-    )
-    for ax in axes[0]:
-        ax.set_zorder(1)
-    for row, row_label in enumerate(row_labels):
-        pos = axes[row][0].get_position()
+    for ax, row_label in (
+        (obs_ax, row_labels[0]),
+        (fc_axes[0], row_labels[1]),
+        (verify_axes[0], row_labels[2]),
+    ):
+        pos = ax.get_position()
         fig.text(
-            pos.x0 - 0.08,
+            pos.x0 - 0.012,
             (pos.y0 + pos.y1) / 2,
             row_label,
             rotation=90,
             va="center",
             ha="right",
             fontsize=name_fs,
-            zorder=2,
         )
-    fig.text(
-        (obs_left.x0 + obs_right.x1) / 2,
-        obs_left.y1 + 0.012,
-        week_title,
-        ha="center",
-        va="bottom",
-        fontsize=fontsize,
-        zorder=2,
-    )
     if field_mesh is not None:
-        cbar_ax = fig.add_axes(field_box)
+        cbar_ax = fig.add_axes(layout["field_box"])
         cbar = fig.colorbar(
             field_mesh,
             cax=cbar_ax,
             orientation="horizontal",
             **_cbar_boundary_kwargs(norm, cmap),
         )
-        cbar.set_label(_variable_label(obs_da), fontsize=cbar_label_fs)
-        cbar.ax.tick_params(labelsize=cbar_tick_fs)
+        cbar.set_label(_variable_label(obs_da), fontsize=cbar_label_fs, labelpad=18)
+        cbar.ax.tick_params(labelsize=cbar_tick_fs, length=4, width=0.8, pad=6)
+        cbar.ax.xaxis.set_label_coords(0.5, -3.6)
     if verify_mesh is not None:
-        verify_ax = fig.add_axes(verify_box)
+        verify_ax = fig.add_axes(layout["verify_box"])
         if metric == "hits":
             verify_cbar = fig.colorbar(
                 verify_mesh, cax=verify_ax, orientation="horizontal", ticks=[-1, 0, 1]
             )
             verify_cbar.set_ticklabels(verify_labels, fontsize=cbar_tick_fs)
-            verify_cbar.set_label("event", fontsize=cbar_label_fs)
+            verify_cbar.set_label("event", fontsize=cbar_label_fs, labelpad=14)
         else:
             verify_cbar = fig.colorbar(verify_mesh, cax=verify_ax, orientation="horizontal")
             units = format_units_for_display(u_obs)
-            label = _METRIC_ROW_LABELS[metric]
+            metric_label = _METRIC_ROW_LABELS[metric]
             if metric == "bias":
-                base = f"{label} (dry → wet)"
+                base = f"{metric_label} (dry → wet)"
             else:
-                base = label
+                base = metric_label
             verify_cbar.set_label(
-                f"{base} [{units}]" if units else base, fontsize=cbar_label_fs
+                f"{base} [{units}]" if units else base, fontsize=cbar_label_fs, labelpad=14
             )
-        verify_cbar.ax.tick_params(labelsize=cbar_tick_fs)
+        verify_cbar.ax.tick_params(labelsize=cbar_tick_fs, length=4, width=0.8, pad=6)
+        verify_cbar.ax.xaxis.set_label_coords(0.5, -3.2)
 
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)

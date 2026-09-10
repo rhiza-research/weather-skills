@@ -1,6 +1,6 @@
 ---
 name: plot-verify
-description: Plot a lead-week verification grid from pre-computed verify Zarrs. Columns are week-4 through week-1 forecasts; rows are obs, forecast, and the verify metric map. Run the verify skill on each forecast/obs pair first. For precipitation, aggregate-temporal then convert-to-totals before verify. Use --fontsize to enlarge column/row labels, ticks, and colorbars (default 18).
+description: Plot a lead-week verification grid from pre-computed verify Zarrs. Observation is shown once (the verifying week); columns are week-4 through week-1 forecasts with the verify metric under each. Run the verify skill on each forecast/obs pair first. For precipitation, aggregate-temporal then convert-to-totals before verify. Use --fontsize to enlarge column/row labels, ticks, and colorbars (default 18).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py *)
@@ -16,13 +16,13 @@ Lead-week **verification figure** for **one observation week**. This skill
 forecast/obs pair first, then pass the resulting Zarrs here.
 
 Columns run **least recent to most recent** (4-week lead on the left,
-1-week lead on the right). Observation is **one verifying week**, repeated
-in every column so you can read down a lead. Column titles name the
-forecast lead, not a different obs week.
+1-week lead on the right). Observation is drawn **once**, titled with the
+verifying week dates. Column titles name the forecast lead, not a
+different obs week.
 
 | | 4-week lead | 3-week lead | 2-week lead | 1-week lead |
 | --- | --- | --- | --- | --- |
-| obs product | same obs map | same obs map | same obs map | same obs map |
+| obs product | one map (verifying week) | | | |
 | forecast product | week-4 map | week-3 map | week-2 map | week-1 map |
 | Verification | verify map | verify map | verify map | verify map |
 
@@ -81,12 +81,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
 
 ### Output
 
-A 3 × N PNG. Stdout echoes each column's `verify_score_summary` from
-the corresponding `--verify` Zarr. The verify-row colorbar is metric-
-specific: hits use disagree / below / hit classes; bias uses a brown (dry)
-↔ white ↔ blue (wet) scale centered on zero; MAE uses white at zero through
-warm colors. The observation row is labeled with the verifying week dates
-and drawn on a light grey underlay.
+A PNG with one observation map above an N-column forecast + verify grid.
+Stdout echoes each column's `verify_score_summary` from the corresponding
+`--verify` Zarr. The verify-row colorbar is metric-specific: hits use
+disagree / below / hit classes; bias uses a brown (dry) ↔ white ↔ blue
+(wet) scale centered on zero; MAE uses white at zero through warm colors.
+The observation panel is titled with the verifying week dates. Colorbar
+strips are short; tick and label type is large.
 
 ## Example
 

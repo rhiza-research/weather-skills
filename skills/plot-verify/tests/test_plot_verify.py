@@ -118,6 +118,32 @@ def test_verifying_week_title_from_time(plot_mod):
     assert plot_mod._verifying_week_title(ds["precip"]) == "Verifying week 1–7 Jan 2026"
 
 
+def test_verifying_week_title_scalar_time_coord(plot_mod):
+    ds = _week(event_at=[])
+    da = ds["precip"].isel(time=0, drop=False)
+    assert plot_mod._verifying_week_title(da) == "Verifying week 1–7 Jan 2026"
+
+
+def test_verifying_week_title_from_dataset_when_da_has_no_time(plot_mod):
+    ds = _week(event_at=[])
+    da = ds["precip"].isel(time=0, drop=True)
+    assert plot_mod._verifying_week_title(da) == "Verifying week"
+    assert plot_mod._verifying_week_title(da, ds) == "Verifying week 1–7 Jan 2026"
+
+
+def test_verifying_week_title_cf_encoded_time(plot_mod):
+    import numpy as np
+    import xarray as xr
+
+    da = xr.DataArray(
+        np.zeros((1, 2, 2)),
+        dims=("time", "latitude", "longitude"),
+        coords={"time": [0]},
+    )
+    da["time"].attrs.update(units="days since 2026-08-30", calendar="standard")
+    assert plot_mod._verifying_week_title(da) == "Verifying week 30 Aug–5 Sep 2026"
+
+
 def test_error_scale_mae_white_at_zero(plot_mod):
     import numpy as np
     import xarray as xr
@@ -147,27 +173,38 @@ def test_verify_count_mismatch_is_refused(tmp_path, plot_fn):
     assert exc.value.code == 2
 
 
-def test_colorbar_figure_expands_for_precip_class_ticks(plot_mod):
+def test_colorbar_min_width_fits_precip_class_ticks(plot_mod):
     n_ticks = len(plot_mod.PRECIP_BOUNDS)
-    one_col = plot_mod._colorbar_figure_width(1, n_ticks)
-    four_col = plot_mod._colorbar_figure_width(4, n_ticks)
-    assert one_col > 7.0
-    assert one_col * plot_mod._FIELD_CBAR_WIDTH >= plot_mod._CBAR_INCHES_PER_TICK * n_ticks
-    assert four_col == max(5.0 * 4, one_col)
-    assert plot_mod._colorbar_figure_width(1, 0) == 10.0
+    needed = plot_mod._colorbar_min_width(n_ticks)
+    assert needed > 7.0
+    assert needed * plot_mod._FIELD_CBAR_WIDTH >= plot_mod._CBAR_INCHES_PER_TICK * n_ticks
+    assert plot_mod._colorbar_min_width(0) == 8.0
 
 
-def test_colorbar_axes_stack_field_above_verify(plot_mod):
-    maps_bottom, top, field, verify = plot_mod._colorbar_axes_boxes(title=True)
+def test_colorbar_axes_thin_strips_verify_narrower(plot_mod):
+    fig_h = 15.0
+    maps_bottom, field, verify = plot_mod._colorbar_axes_boxes(fig_h)
     assert field[2] == plot_mod._FIELD_CBAR_WIDTH
-    assert verify[2] == plot_mod._FIELD_CBAR_WIDTH
-    assert field[3] == plot_mod._FIELD_CBAR_HEIGHT
-    assert verify[3] == plot_mod._VERIFY_CBAR_HEIGHT
+    assert verify[2] == plot_mod._VERIFY_CBAR_WIDTH
+    assert verify[2] < field[2]
+    assert field[3] * fig_h == pytest.approx(plot_mod._FIELD_CBAR_HEIGHT_IN)
+    assert verify[3] * fig_h == pytest.approx(plot_mod._VERIFY_CBAR_HEIGHT_IN)
+    assert field[3] * fig_h < 0.35
     assert field[1] > verify[1] + verify[3]
-    # Room between bars for the field colorbar label.
-    assert field[1] - (verify[1] + verify[3]) >= 0.05
+    # Room between bars for the verify colorbar label (~0.7").
+    assert (field[1] - (verify[1] + verify[3])) * fig_h >= 0.6
     assert maps_bottom > field[1] + field[3]
-    assert top == 0.88
+
+
+def test_figure_layout_obs_above_forecast_grid(plot_mod):
+    extent = [34.0, 42.0, -5.0, 5.0]
+    map_w, map_h = plot_mod._map_panel_inches(extent)
+    assert map_h > map_w
+    layout = plot_mod._figure_layout(4, extent, 15, title=True)
+    assert layout["fc_top"] < layout["obs_bottom"]
+    assert layout["figsize"][0] >= plot_mod._colorbar_min_width(15)
+    assert layout["verify_box"][2] < layout["field_box"][2]
+    assert layout["obs_width"] < (layout["right"] - layout["left"]) / 2
 
 
 def test_row_labels_use_weather_skills_source(plot_mod):
