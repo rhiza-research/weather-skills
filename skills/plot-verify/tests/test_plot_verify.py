@@ -147,12 +147,14 @@ def test_colorbar_figure_expands_for_precip_class_ticks(plot_mod):
 def test_colorbar_axes_stack_field_above_verify(plot_mod):
     maps_bottom, top, field, verify = plot_mod._colorbar_axes_boxes(title=True)
     assert field[2] == plot_mod._FIELD_CBAR_WIDTH
-    assert field[2] > verify[2]
+    assert verify[2] == plot_mod._FIELD_CBAR_WIDTH
+    assert field[3] == plot_mod._FIELD_CBAR_HEIGHT
+    assert verify[3] == plot_mod._VERIFY_CBAR_HEIGHT
     assert field[1] > verify[1] + verify[3]
     # Room between bars for the field colorbar label.
     assert field[1] - (verify[1] + verify[3]) >= 0.05
     assert maps_bottom > field[1] + field[3]
-    assert top == 0.86
+    assert top == 0.91
 
 
 def test_row_labels_use_weather_skills_source(plot_mod):

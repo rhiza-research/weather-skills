@@ -282,6 +282,8 @@ def _cbar_boundary_kwargs(norm, cmap=None):
 # ``_colorbar_figure_width``) so the ticks do not collide.
 _FIELD_CBAR_WIDTH = 0.80
 _FIELD_CBAR_LEFT = 0.10
+_FIELD_CBAR_HEIGHT = 0.075
+_VERIFY_CBAR_HEIGHT = 0.070
 # ~inches of colorbar per discrete tick so 3–4 digit labels stay readable.
 _CBAR_INCHES_PER_TICK = 0.48
 
@@ -308,11 +310,12 @@ def _colorbar_axes_boxes(*, title):
 
     Side-by-side bars squash the precip class labels on a 1-column figure;
     stacking lets the field bar use ``_FIELD_CBAR_WIDTH`` of the figure.
+    Boxes sit just under the maps so the reserved bottom is not empty.
     """
-    top = 0.86 if title else 0.98
-    maps_bottom = 0.30
-    field = [_FIELD_CBAR_LEFT, 0.155, _FIELD_CBAR_WIDTH, 0.045]
-    verify = [0.22, 0.040, 0.56, 0.040]
+    top = 0.91 if title else 0.97
+    maps_bottom = 0.27
+    field = [_FIELD_CBAR_LEFT, 0.155, _FIELD_CBAR_WIDTH, _FIELD_CBAR_HEIGHT]
+    verify = [_FIELD_CBAR_LEFT, 0.020, _FIELD_CBAR_WIDTH, _VERIFY_CBAR_HEIGHT]
     return maps_bottom, top, field, verify
 
 
@@ -700,19 +703,19 @@ def plot_verify(
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(fig_w, max(3.2 * nrows, 6.0) + (0.7 if title else 0.0) + 1.2),
+        figsize=(fig_w, max(3.0 * nrows, 5.8) + (0.45 if title else 0.0) + 1.4),
         sharex=True,
         sharey=True,
         subplot_kw={"projection": ccrs.PlateCarree()},
         squeeze=False,
     )
     if title:
-        fig.suptitle(title, fontsize=_scaled_fontsize(fontsize, 1.1), y=0.99)
+        fig.suptitle(title, fontsize=_scaled_fontsize(fontsize, 1.1), y=0.97)
 
     tick_fs = _scaled_fontsize(fontsize, 0.7)
     panel_title_fs = _scaled_fontsize(fontsize, 0.85)
-    cbar_label_fs = _scaled_fontsize(fontsize, 0.50, floor=8)
-    cbar_tick_fs = _scaled_fontsize(fontsize, 0.36, floor=6)
+    cbar_label_fs = _scaled_fontsize(fontsize, 0.85, floor=10)
+    cbar_tick_fs = _scaled_fontsize(fontsize, 0.70, floor=9)
 
     def _draw(
         ax,
@@ -758,7 +761,7 @@ def plot_verify(
     field_mesh = verify_mesh = None
     for col, (label, fc_da, verify_da, lat_dim, lon_dim) in enumerate(columns):
         left = col == 0
-        axes[0][col].set_title(label, fontsize=panel_title_fs, pad=10)
+        axes[0][col].set_title(label, fontsize=panel_title_fs, pad=6)
         mesh = _draw(
             axes[0][col],
             obs_da,
@@ -816,11 +819,18 @@ def plot_verify(
         if verify_mesh is None:
             verify_mesh = mesh
 
-    fig.tight_layout(rect=[0.20, maps_bottom, 1, layout_top], h_pad=2.0)
+    fig.subplots_adjust(
+        left=0.16,
+        right=0.99,
+        bottom=maps_bottom,
+        top=layout_top,
+        hspace=0.18,
+        wspace=0.08,
+    )
     for row, row_label in enumerate(row_labels):
         pos = axes[row][0].get_position()
         fig.text(
-            pos.x0 - 0.10,
+            pos.x0 - 0.07,
             (pos.y0 + pos.y1) / 2,
             row_label,
             rotation=90,
@@ -857,7 +867,7 @@ def plot_verify(
 
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=150, bbox_inches="tight")
+    fig.savefig(output, dpi=150, bbox_inches="tight", pad_inches=0.12)
     plt.close(fig)
     return output
 
