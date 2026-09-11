@@ -34,6 +34,66 @@ def test_fontsize_writes_png(tmp_path, plot_fn):
     assert out.stat().st_size > 0
 
 
+def test_parse_figsize_and_legend():
+    import argparse
+
+    plot_mod = load_skill("plot", "plot")
+    assert plot_mod.parse_figsize("10,6") == (10.0, 6.0)
+    assert plot_mod.parse_figsize("8x5") == (8.0, 5.0)
+    assert plot_mod.parse_legend("upper right") == "upper right"
+    assert plot_mod.parse_legend("outside") == "outside right"
+    assert plot_mod.parse_legend("bottom") == "below"
+    assert plot_mod.parse_legend("off") == "none"
+    with pytest.raises(argparse.ArgumentTypeError, match="W,H"):
+        plot_mod.parse_figsize("wide")
+    with pytest.raises(argparse.ArgumentTypeError, match="placement"):
+        plot_mod.parse_legend("northwest")
+
+
+def test_figsize_writes_png(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "map.png"
+
+    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--figsize", "7,5", "--title", "Small")
+
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+    history = load_figure_history(out)
+    assert history[-1]["args"]["figsize"] == [7.0, 5.0]
+
+
+def test_timeseries_legend_writes_png(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "ts.png"
+
+    run_skill(
+        plot_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--style",
+        "timeseries",
+        "--legend",
+        "upper right",
+        "--figsize",
+        "9x4",
+    )
+
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+
+
+def test_heatmap_ignores_legend(tmp_path, plot_fn, capsys):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "map.png"
+
+    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--legend", "best")
+
+    assert Path(out).exists()
+    assert "ignored for --style heatmap" in capsys.readouterr().err
+
+
 def test_contour_levels_span_and_pad_constant():
     plot_mod = load_skill("plot", "plot")
     levels = plot_mod._contour_levels(0.0, 10.0, n=10)
@@ -128,7 +188,7 @@ def test_map_colorbar_axes_are_wide_and_thick():
 
     plot_mod = load_skill("plot", "plot")
     fig = plt.figure(figsize=(8, 6))
-    ax = plot_mod._map_colorbar_axes(fig, title=False, nrows=1)
+    ax = plot_mod._map_colorbar_axes(fig, title=False, nrows=1, fontsize=18)
     pos = ax.get_position()
     assert pos.width == pytest.approx(plot_mod._MAP_CBAR_WIDTH)
     assert pos.height == pytest.approx(plot_mod._MAP_CBAR_HEIGHT)
@@ -235,8 +295,10 @@ def test_heatmap_figure_title_sits_above_axes():
     st = fig._suptitle
     assert st is not None
     maps = [ax for ax in fig.axes[:-1] if ax.get_visible()]
+    maps_top = max(ax.get_position().y1 for ax in maps)
     assert st.get_position()[1] == pytest.approx(plot_mod._FIG_TITLE_Y)
-    assert max(ax.get_position().y1 for ax in maps) == pytest.approx(plot_mod._MAP_AXES_TOP_TITLED)
+    assert maps_top == pytest.approx(plot_mod._titled_maps_top(fig, "S2S precip", 18))
+    assert maps_top > 0.72
     plt.close(fig)
 
 
@@ -798,6 +860,26 @@ def test_windrose_writes_png(tmp_path, plot_fn):
     src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
     out = tmp_path / "rose.png"
     run_skill(plot_fn, "-i", str(src), "-o", str(out), "--style", "windrose")
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+
+
+def test_windrose_legend_below_writes_png(tmp_path, plot_fn):
+    src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
+    out = tmp_path / "rose.png"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--style",
+        "windrose",
+        "--legend",
+        "below",
+        "--figsize",
+        "6,6",
+    )
     assert Path(out).exists()
     assert out.stat().st_size > 0
 

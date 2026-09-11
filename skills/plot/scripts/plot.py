@@ -249,6 +249,91 @@ def parse_layer(value):
     return LayerSpec(kind, path, options, raw)
 
 
+_MPL_LEGEND_LOCS = frozenset(
+    {
+        "best",
+        "upper right",
+        "upper left",
+        "lower left",
+        "lower right",
+        "right",
+        "center left",
+        "center right",
+        "lower center",
+        "upper center",
+        "center",
+    }
+)
+_LEGEND_ALIASES = {
+    "outside": "outside right",
+    "outside right": "outside right",
+    "right outside": "outside right",
+    "below": "below",
+    "bottom": "below",
+    "none": "none",
+    "off": "none",
+}
+
+
+def parse_figsize(value):
+    """Argparse converter for ``W,H`` or ``WxH`` inches."""
+    if value is None:
+        return None
+    raw = str(value).strip().lower().replace("×", "x")
+    if not raw:
+        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
+    sep = "x" if "x" in raw and "," not in raw else ","
+    parts = [p.strip() for p in raw.split(sep)]
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
+    try:
+        width, height = float(parts[0]), float(parts[1])
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "--figsize must be W,H inches (e.g. 10,6 or 10x6)"
+        ) from None
+    if width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError("--figsize width and height must be positive")
+    return (width, height)
+
+
+def parse_legend(value):
+    """Argparse converter for a matplotlib loc, ``outside right``, ``below``, or ``none``."""
+    if value is None:
+        return None
+    loc = " ".join(str(value).strip().lower().replace("_", " ").replace("-", " ").split())
+    if not loc:
+        raise argparse.ArgumentTypeError("--legend placement is empty")
+    loc = _LEGEND_ALIASES.get(loc, loc)
+    if loc in _MPL_LEGEND_LOCS or loc in ("outside right", "below", "none"):
+        return loc
+    allowed = ", ".join(sorted(_MPL_LEGEND_LOCS | {"below", "none", "outside right"}))
+    raise argparse.ArgumentTypeError(f"--legend {value!r} is not a placement ({allowed})")
+
+
+def _legend_kwargs(loc, *, default="outside right"):
+    """Matplotlib ``legend()`` kwargs, or ``None`` to omit the legend."""
+    resolved = default if loc is None else loc
+    if resolved == "none":
+        return None
+    if resolved == "outside right":
+        return {"loc": "center left", "bbox_to_anchor": (1.15, 0.5)}
+    if resolved == "below":
+        return {"loc": "upper center", "bbox_to_anchor": (0.5, -0.18)}
+    return {"loc": resolved}
+
+
+def _resolve_figsize(requested, default):
+    return tuple(requested) if requested is not None else default
+
+
+def _map_figsize(requested, default_w, default_h, n_ticks=0):
+    """Honor ``--figsize`` as the full figure; otherwise auto-size (and widen for colorbar ticks)."""
+    if requested is not None:
+        return requested
+    return (_colorbar_figure_width(default_w, n_ticks), default_h)
+
+
 def _parse_index(spec):
     """Parse ``--index`` into ``{dim: int | list[int]}`` (e.g. ``step=0,1,2``)."""
     if not spec or not spec.strip():
@@ -1146,6 +1231,7 @@ def _plot_xy(
     xlabel,
     ylabel,
     fontsize,
+    figsize=None,
 ):
     """Scatter --x against --y after reducing each input to 1D and pairing samples."""
     import matplotlib.pyplot as plt
@@ -1165,7 +1251,7 @@ def _plot_xy(
     if x_vals.size == 0:
         raise UsageError("xy scatter has no finite paired samples to plot.")
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=_resolve_figsize(figsize, (8, 6)))
     ax.scatter(x_vals, y_vals, s=36, zorder=3)
     if pair_on == "year" or (pair_on == "time" and x_vals.size <= 25):
         for xv, yv, key in zip(x_vals, y_vals, keys, strict=True):
@@ -1233,6 +1319,8 @@ def _panel_title_fontsize(fontsize):
 
 
 _TITLE_WRAP_WIDTH = 56
+_TITLE_LINE_EM = 1.20  # reserved line height for wrapped figure titles, in em
+_TITLE_GAP_IN = 0.04  # whitespace under the title block before panel dates
 
 
 def _wrap_title(text):
@@ -1283,7 +1371,7 @@ def _draw_figure_title(fig, title, fontsize, y):
         fig.suptitle(lines[0], fontsize=fontsize, y=y, ha="center", va="top")
         return
     fig_h = max(fig.get_figheight(), 1e-6)
-    step = 1.35 * (fontsize / 72.0) / fig_h
+    step = _TITLE_LINE_EM * (fontsize / 72.0) / fig_h
     for i, line in enumerate(lines):
         fig.text(0.5, y - i * step, line, ha="center", va="top", fontsize=fontsize)
 
@@ -1330,16 +1418,39 @@ _MAP_CBAR_WIDTH = 0.84
 _MAP_CBAR_HEIGHT = 0.028
 _MAP_CBAR_STACK_STEP = 0.07
 _MAP_CBAR_Y0 = 0.04
-_MAP_CBAR_MAPS_BOTTOM = 0.28
-_MAP_AXES_TOP_TITLED = 0.72
 _MAP_AXES_TOP = 0.96
 _FIG_TITLE_Y = 1.0
-_PANEL_TITLE_PAD = 12
+_PANEL_TITLE_PAD = 8
 # Cartopy GeoAxes xlabel default (y in display coords) lands on the colorbar;
 # keep lon/lat names in axes coords, just below/beside the gridline ticks.
 _GEO_XLABEL_AXES_Y = -0.06
 _GEO_YLABEL_AXES_X = -0.16
 _CBAR_INCHES_PER_TICK = 0.28
+# Lon ticks + "Longitude" hang this fraction of axes height below the maps.
+_GEO_XLABEL_AXES_FRAC = 0.12
+
+
+def _title_band_inches(title, fontsize):
+    """Inches above the maps: figure-title lines, a small gap, then panel dates."""
+    n = len(_title_lines(title))
+    if n == 0:
+        return 0.0
+    line_in = (fontsize / 72.0) * _TITLE_LINE_EM
+    panel_in = _PANEL_TITLE_PAD / 72.0 + (fontsize / 72.0)
+    return n * line_in + _TITLE_GAP_IN + panel_in
+
+
+def _titled_maps_top(fig, title, fontsize):
+    """Axes top: just enough for the figure title and panel dates, not a fixed band."""
+    fig_h = max(fig.get_figheight(), 1e-6)
+    return 1.0 - _title_band_inches(title, fontsize) / fig_h
+
+
+def _maps_bottom(n_cbars, top):
+    """Axes bottom: colorbar plus lon labels, without a large empty band."""
+    extra = _MAP_CBAR_STACK_STEP * max(0, n_cbars - 1)
+    cbar_top = _MAP_CBAR_Y0 + _MAP_CBAR_HEIGHT + extra
+    return (cbar_top + 0.02 + _GEO_XLABEL_AXES_FRAC * top) / (1.0 + _GEO_XLABEL_AXES_FRAC)
 
 
 def _colorbar_tick_count(norm):
@@ -1358,20 +1469,19 @@ def _colorbar_figure_width(fig_width, n_ticks):
     return max(fig_width, needed)
 
 
-def _map_colorbar_axes(fig, *, title, nrows, index=0, n_cbars=1):
-    """Axes for a horizontal colorbar with clear gap under the map row(s)."""
-    top = _MAP_AXES_TOP_TITLED if title else _MAP_AXES_TOP
-    # Room for lon tick labels + axis name, a gap, then one or more colorbars.
-    bottom = _MAP_CBAR_MAPS_BOTTOM + _MAP_CBAR_STACK_STEP * max(0, n_cbars - 1)
+def _map_colorbar_axes(fig, *, title, nrows, fontsize, index=0, n_cbars=1):
+    """Axes for a horizontal colorbar tucked under the lon labels."""
+    top = _titled_maps_top(fig, title, fontsize) if title else _MAP_AXES_TOP
+    bottom = _maps_bottom(n_cbars, top)
     if index == 0:
-        hspace = 0.42 if nrows > 1 else 0.12
+        hspace = 0.22 if nrows > 1 else 0.08
         fig.subplots_adjust(
             left=0.08,
             right=0.98,
             bottom=bottom,
             top=top,
             hspace=hspace,
-            wspace=0.18,
+            wspace=0.12,
         )
     y = _MAP_CBAR_Y0 + index * _MAP_CBAR_STACK_STEP
     return fig.add_axes([_MAP_CBAR_LEFT, y, _MAP_CBAR_WIDTH, _MAP_CBAR_HEIGHT])
@@ -1582,7 +1692,9 @@ def _wind_rose_hist(speed, direction, speed_edges, nsector=WIND_ROSE_SECTORS):
     return hist
 
 
-def _windrose(speed, direction, *, title, fontsize, units_disp, colormap, units):
+def _windrose(
+    speed, direction, *, title, fontsize, units_disp, colormap, units, figsize=None, legend=None
+):
     """Polar stacked-bar wind rose; radial axis is frequency percent."""
     import matplotlib.pyplot as plt
     import numpy as np
@@ -1605,7 +1717,7 @@ def _windrose(speed, direction, *, title, fontsize, units_disp, colormap, units)
     nsector = WIND_ROSE_SECTORS
     width = 2.0 * np.pi / nsector
     theta = np.arange(nsector) * width
-    fig = plt.figure(figsize=(8.5, 7.0))
+    fig = plt.figure(figsize=_resolve_figsize(figsize, (8.5, 7.0)))
     ax = fig.add_subplot(111, projection="polar")
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
@@ -1641,15 +1753,16 @@ def _windrose(speed, direction, *, title, fontsize, units_disp, colormap, units)
         Patch(facecolor=colors[i], edgecolor="white", label=legend_labels[i])
         for i in range(n_speed)
     ]
-    ax.legend(
-        handles=handles,
-        title="Wind speed",
-        loc="center left",
-        bbox_to_anchor=(1.15, 0.5),
-        fontsize=int(fontsize * 0.7),
-        title_fontsize=int(fontsize * 0.75),
-        frameon=False,
-    )
+    legend_kw = _legend_kwargs(legend, default="outside right")
+    if legend_kw is not None:
+        ax.legend(
+            handles=handles,
+            title="Wind speed",
+            fontsize=int(fontsize * 0.7),
+            title_fontsize=int(fontsize * 0.75),
+            frameon=False,
+            **legend_kw,
+        )
     if title:
         _draw_figure_title(fig, title, fontsize, 0.98)
     return fig
@@ -1666,6 +1779,8 @@ def _plot_windrose(
     title,
     fontsize,
     colormap,
+    figsize=None,
+    legend=None,
 ):
     """Flatten u/v samples into one meteorological-from wind rose."""
     import numpy as np
@@ -1723,6 +1838,8 @@ def _plot_windrose(
         units_disp=_speed_units_display(u_da),
         colormap=colormap,
         units=u_units,
+        figsize=figsize,
+        legend=legend,
     )
 
 
@@ -1858,6 +1975,7 @@ def _quiver_map(
     cbar_label=None,
     xlabel=None,
     ylabel=None,
+    figsize=None,
 ):
     """Speed pcolormesh with native-grid u/v arrows (plot_wind_and_sst_anomaly)."""
     import cartopy.crs as ccrs
@@ -1904,7 +2022,7 @@ def _quiver_map(
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(sw * ncols, sh * nrows),
+        figsize=_resolve_figsize(figsize, (sw * ncols, sh * nrows)),
         sharex=True,
         sharey=True,
         subplot_kw={"projection": ccrs.PlateCarree()},
@@ -2011,7 +2129,7 @@ def _quiver_map(
 
     if title:
         _set_figure_title(fig, title, fontsize)
-    cbar_ax = _map_colorbar_axes(fig, title=title, nrows=nrows)
+    cbar_ax = _map_colorbar_axes(fig, title=title, nrows=nrows, fontsize=fontsize)
     cbar = fig.colorbar(mesh, cax=cbar_ax, orientation="horizontal", fraction=5)
     _style_map_colorbar(cbar, cbar_label or _wind_speed_cbar_label(u_da), fontsize)
     return fig
@@ -2037,6 +2155,7 @@ def _plot_quiver(
     quiver_step,
     xlabel=None,
     ylabel=None,
+    figsize=None,
 ):
     """Map panels of wind speed with S2S-style u/v quiver overlay."""
     if variable:
@@ -2083,6 +2202,7 @@ def _plot_quiver(
         cbar_label=_wind_speed_cbar_label(u_da),
         xlabel=xlabel,
         ylabel=ylabel,
+        figsize=figsize,
     )
 
 
@@ -2660,6 +2780,7 @@ def _plot_layers(
     layer_labels=None,
     xlabel=None,
     ylabel=None,
+    figsize=None,
 ):
     """Stack ``--layer`` entries on shared Cartopy panels."""
     import cartopy.crs as ccrs
@@ -2808,11 +2929,10 @@ def _plot_layers(
     nrows, ncols = _panel_shape(num_steps, rows=rows, columns=columns)
     sw, sh = _figsize_from_extent(*extent_vals)
     n_ticks = max((_colorbar_tick_count(p.get("norm")) for p in prepared), default=0)
-    fig_w = _colorbar_figure_width(sw * ncols, n_ticks)
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(fig_w, sh * nrows),
+        figsize=_map_figsize(figsize, sw * ncols, sh * nrows, n_ticks),
         sharex=True,
         sharey=True,
         subplot_kw={"projection": ccrs.PlateCarree()},
@@ -2927,7 +3047,9 @@ def _plot_layers(
     cbars = list(last_by_group.values())
     n_cbars = len(cbars)
     for ci, (mappable, p) in enumerate(cbars):
-        cbar_ax = _map_colorbar_axes(fig, title=title, nrows=nrows, index=ci, n_cbars=n_cbars)
+        cbar_ax = _map_colorbar_axes(
+            fig, title=title, nrows=nrows, fontsize=fontsize, index=ci, n_cbars=n_cbars
+        )
         cbar = fig.colorbar(
             mappable,
             cax=cbar_ax,
@@ -2981,6 +3103,7 @@ def _heatmap(
     kind="heatmap",
     xlabel=None,
     ylabel=None,
+    figsize=None,
 ):
     import cartopy.crs as ccrs
     import matplotlib.pyplot as plt
@@ -3023,11 +3146,10 @@ def _heatmap(
         vmin, vmax = None, None
 
     sw, sh = _figsize_from_extent(*extent)
-    fig_w = _colorbar_figure_width(sw * ncols, _colorbar_tick_count(norm))
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(fig_w, sh * nrows),
+        figsize=_map_figsize(figsize, sw * ncols, sh * nrows, _colorbar_tick_count(norm)),
         sharex=True,
         sharey=True,
         subplot_kw={"projection": ccrs.PlateCarree()},
@@ -3120,7 +3242,7 @@ def _heatmap(
 
     if title:
         _set_figure_title(fig, title, fontsize)
-    cbar_ax = _map_colorbar_axes(fig, title=title, nrows=nrows)
+    cbar_ax = _map_colorbar_axes(fig, title=title, nrows=nrows, fontsize=fontsize)
     cbar = fig.colorbar(
         mappable,
         cax=cbar_ax,
@@ -3239,6 +3361,22 @@ def _heatmap(
     default=18,
     help="Base font size for titles, axis labels, and colorbar text (default 18).",
 )
+@weather_skill.argument(
+    "--figsize",
+    default=None,
+    type=parse_figsize,
+    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default is style-specific.",
+)
+@weather_skill.argument(
+    "--legend",
+    default=None,
+    type=parse_legend,
+    help=(
+        "Legend placement: matplotlib loc (best, upper right, …), "
+        "'outside right', 'below', or 'none'. Windrose default: outside right. "
+        "Timeseries draws a legend only when this is set."
+    ),
+)
 @weather_skill.argument("--title", default=None, help="Optional plot title.")
 @weather_skill.argument(
     "--xlabel",
@@ -3329,6 +3467,8 @@ def plot(
     extent,
     cities,
     fontsize,
+    figsize,
+    legend,
     mask_geojson,
     draw_box,
     rows,
@@ -3397,6 +3537,12 @@ def plot(
     bbox_nwse = bbox
     draw_boxes = _parse_draw_boxes(draw_box)
 
+    legend_used = legend is not None and legend != "none"
+    if layers and legend_used:
+        print(
+            "Warning: --legend is ignored for layered maps (they use colorbars).",
+            file=sys.stderr,
+        )
     if layers:
         fig = _plot_layers(
             layers,
@@ -3421,6 +3567,7 @@ def plot(
             layer_labels=label,
             xlabel=xlabel,
             ylabel=ylabel,
+            figsize=figsize,
         )
         output = Path(output)
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -3493,6 +3640,11 @@ def plot(
                 "use --x-variable/--y-variable.",
                 file=sys.stderr,
             )
+        if legend_used:
+            print(
+                "Warning: --legend is ignored for --style xy.",
+                file=sys.stderr,
+            )
     elif style in ("heatmap", "contour"):
         for flag, set_ in {**uv_flags, **quiver_only}.items():
             if set_:
@@ -3501,6 +3653,17 @@ def plot(
                     f"--style quiver; ignored for --style {style}.",
                     file=sys.stderr,
                 )
+        if legend_used:
+            print(
+                f"Warning: --legend is ignored for --style {style} (maps use a colorbar).",
+                file=sys.stderr,
+            )
+    elif style == "quiver":
+        if legend_used:
+            print(
+                "Warning: --legend is ignored for --style quiver (maps use a colorbar).",
+                file=sys.stderr,
+            )
     elif style == "windrose":
         for flag, set_ in {**map_only, **quiver_only}.items():
             if set_:
@@ -3523,6 +3686,7 @@ def plot(
             xlabel,
             ylabel,
             fontsize,
+            figsize=figsize,
         )
     elif style == "windrose":
         fig = _plot_windrose(
@@ -3536,6 +3700,8 @@ def plot(
             title,
             fontsize,
             colormap,
+            figsize=figsize,
+            legend=legend,
         )
     elif style == "quiver":
         fig = _plot_quiver(
@@ -3558,6 +3724,7 @@ def plot(
             quiver_step,
             xlabel=xlabel,
             ylabel=ylabel,
+            figsize=figsize,
         )
     else:
         variable = variable or auto_variable(ds)
@@ -3605,16 +3772,18 @@ def plot(
             kind=style,
             xlabel=xlabel,
             ylabel=ylabel,
+            figsize=figsize,
         )
     elif style == "timeseries":
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=_resolve_figsize(figsize, (10, 6)))
         sdim = "step" if "step" in da.dims else cf_dim(da, "time")
         if sdim is None:
             raise UsageError(f"timeseries needs 'step' or 'time'; got {list(da.dims)}.")
         reduce_dims = [d for d in da.dims if d != sdim]
         reduced = da.mean(reduce_dims, keep_attrs=True)
         xvals, default_xlabel = _timeseries_axis(reduced, sdim)
-        ax.plot(xvals, reduced.values, marker="o", markersize=5)
+        qty = variable_label_for_display(reduced, include_units=False)
+        ax.plot(xvals, reduced.values, marker="o", markersize=5, label=qty)
         tick_fs = max(10, int(round(fontsize * 0.7)))
         resolved_xlabel = _resolve_time_axis_label(xlabel, default_xlabel, xvals)
         ax.set_xlabel(resolved_xlabel, fontsize=fontsize)
@@ -3622,9 +3791,15 @@ def plot(
             _resolve_axis_label(ylabel, _variable_label(reduced)),
             fontsize=fontsize,
         )
-        qty = variable_label_for_display(reduced, include_units=False)
         _draw_axes_title(ax, title or f"{qty} ({style})", fontsize)
         ax.tick_params(labelsize=tick_fs)
+        legend_kw = _legend_kwargs(legend, default="none")
+        if legend_kw is not None:
+            ax.legend(
+                fontsize=max(10, int(round(fontsize * 0.7))),
+                frameon=False,
+                **legend_kw,
+            )
         if _is_datetime_axis(xvals):
             _apply_date_ticks(ax)
             fig.autofmt_xdate()

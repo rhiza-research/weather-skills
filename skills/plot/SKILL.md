@@ -126,7 +126,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --input <in.zarr> --output <out.png> 
     [--colormap NAME] [--title TEXT] [--xlabel TEXT] [--ylabel TEXT] \
     [--index DIM=POS,...] \
     [--extent LON_MIN,LON_MAX,LAT_MIN,LAT_MAX] \
-    [--cities JSON_OR_PATH] [--fontsize N] [--bbox N/W/S/E] \
+    [--cities JSON_OR_PATH] [--fontsize N] [--figsize W,H] [--legend LOC] \
+    [--bbox N/W/S/E] \
     [--mask-geojson PATH] [--draw-box N/W/S/E ...] \
     [--rows N] [--columns N]
 
@@ -195,8 +196,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   anomaly quivers. A variable with CF `flag_values` (e.g. `verify --metric hits`) uses a
   discrete colormap and labeled colorbar ticks; `--colormap` as comma-separated
   colors must then match the flag count.
-- `--title` — optional plot title. Titles longer than about 56 characters
-  wrap onto a second line at a `·` / `:` / word break.
+- `--title` — optional plot title. Prefer a short name that fits on one
+  line (about 56 characters or less), e.g. `S2S precip`, not a full
+  sentence. Longer titles wrap onto a second line at a `·` / `:` / word
+  break.
 - `--xlabel` / `--ylabel` — optional axis-label overrides. When omitted, maps
   use `Longitude` / `Latitude`, timeseries omits the x label when ticks are
   dates (otherwise the time dim) and uses the variable label on y, and `xy`
@@ -227,6 +230,15 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
 - `--fontsize` — base font size for titles (including panel date labels), axis
   labels, city labels, and colorbar text (default 18). Raise on user request
   (e.g. `--fontsize 22`).
+- `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `10,6`).
+  When omitted, maps size from the geographic extent, timeseries is `10×6`,
+  xy is `8×6`, and windrose is `8.5×7`.
+- `--legend` — legend placement: a matplotlib loc (`best`, `upper right`,
+  `upper left`, `lower left`, `lower right`, `right`, `center left`,
+  `center right`, `lower center`, `upper center`, `center`), `outside right`,
+  `below`, or `none`. Windrose default is `outside right`. Timeseries draws
+  a legend only when this flag is set. Heatmap / contour / quiver / layered
+  maps ignore it (they use a colorbar).
 - `--rows` / `--columns` — heatmap/quiver panel grid. Pass either or both.
   Leftover cells stay blank when the grid is larger than the data: both
   given → `rows × columns` must be ≥ the number of panels (steps/times

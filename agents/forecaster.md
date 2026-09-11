@@ -69,7 +69,8 @@ Prefer small steps over stuffing every filter into one call:
   (`--layer heatmap:… --layer scatter:…`). Use `plot-compare` for a two-row
   side-by-side, `plot-compare-forecasts` for an N×time grid, `plot-verify` for
   the obs/forecast/verification grid (run `verify` on each lead first, then pass
-  `--verify` Zarrs).
+  `--verify` Zarrs). Prefer a short `--title` that fits on one line (e.g.
+  `S2S precip`), not a sentence.
 
 ## Working directory and output files
 
