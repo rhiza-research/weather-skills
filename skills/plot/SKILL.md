@@ -15,9 +15,9 @@ Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
 (`--layer`, repeatable):
 - `heatmap` — CartoPy `PlateCarree` map with scale-appropriate geographic
   overlays (Natural Earth, fetched and cached via `cartopy`): coastlines,
-  country borders, and lake outlines at 10m / 50m / 110m depending on the
-  view size, plus admin-1 (states / provinces / counties) on country-scale
-  maps (span ≤ 20°). Overlays are clipped to the map extent. If
+  country borders, and lakes filled in a distinct blue at 10m / 50m / 110m
+  depending on the view size, plus admin-1 (states / provinces / counties)
+  on country-scale maps (span ≤ 20°). Overlays are clipped to the map extent. If
   the input has a `step` (or `time`) dimension, panels are laid out one per
   step with a shared color scale and a horizontal colorbar spanning all
   panels at the bottom. Panel titles show calendar dates (`YYYY-MM-DD`) or,

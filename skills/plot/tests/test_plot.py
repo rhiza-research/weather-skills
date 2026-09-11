@@ -529,6 +529,12 @@ def test_pad_cell_extent_indian_ocean_keeps_basin():
     assert ext[3] == pytest.approx(25.0)
 
 
+def test_lakes_overlay_is_filled_blue():
+    plot_mod = load_skill("plot", "plot")
+    assert plot_mod._LAKES_STYLE["facecolor"] == plot_mod._LAKE_FACECOLOR
+    assert plot_mod._LAKE_FACECOLOR == "#4da6ff"
+
+
 def test_load_geo_overlays_skips_on_download_failure(monkeypatch, capsys):
     plot_mod = load_skill("plot", "plot")
     import cartopy.io.shapereader as shpreader

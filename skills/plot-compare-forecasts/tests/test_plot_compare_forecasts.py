@@ -193,3 +193,7 @@ def test_precip_anomaly_colormap_is_chirps_palette(plot_mod):
     assert cmap.name == "chirps_anom"
     assert isinstance(norm, BoundaryNorm)
     assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_ANOMALY_BOUNDS)
+
+
+def test_lakes_are_filled_blue(plot_mod):
+    assert plot_mod._LAKE_FACECOLOR == "#4da6ff"

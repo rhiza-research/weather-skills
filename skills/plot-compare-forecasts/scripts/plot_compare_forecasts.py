@@ -68,6 +68,8 @@ PRECIP_BOUNDS = [5, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500
 # Daily / sub-pentad totals (< 5 day aggregation): exact KMSA breaks.
 PRECIP_SHORT_BOUNDS = [1, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100]
 PRECIP_LONG_MIN_DAYS = 5
+# KMD-style water fill (Lake Victoria, Turkana, …) drawn on top of the heatmap.
+_LAKE_FACECOLOR = "#4da6ff"
 
 # CHIRPS-GEFS / Early Warning eXplorer rainfall-anomaly classes (mm).
 PRECIP_ANOMALY_COLORS = [
@@ -814,6 +816,13 @@ def plot_compare_forecasts(
                 ax.set_ylim(extent[2], extent[3])
             ax.add_feature(cfeature.COASTLINE, edgecolor="black")
             ax.add_feature(cfeature.BORDERS, linestyle=":", alpha=0.7)
+            ax.add_feature(
+                cfeature.LAKES.with_scale("50m"),
+                facecolor=_LAKE_FACECOLOR,
+                edgecolor=_LAKE_FACECOLOR,
+                linewidth=0.4,
+                zorder=3,
+            )
             gl = ax.gridlines(draw_labels=True, alpha=0)
             gl.top_labels = False
             gl.right_labels = False

@@ -141,8 +141,15 @@ _ADMIN1_MAX_SPAN_DEG = 20.0
 _HIRES_MAX_SPAN_DEG = 45.0
 _MIDRES_MAX_SPAN_DEG = 90.0
 
+# KMD-style water fill (Lake Victoria, Turkana, …) drawn on top of the heatmap.
+_LAKE_FACECOLOR = "#4da6ff"
 _ADMIN1_STYLE = {"facecolor": "none", "edgecolor": "0.45", "linewidth": 0.4, "zorder": 3}
-_LAKES_STYLE = {"facecolor": "none", "edgecolor": "0.2", "linewidth": 0.5, "zorder": 3.5}
+_LAKES_STYLE = {
+    "facecolor": _LAKE_FACECOLOR,
+    "edgecolor": _LAKE_FACECOLOR,
+    "linewidth": 0.4,
+    "zorder": 3.5,
+}
 _BORDERS_STYLE = {"facecolor": "none", "edgecolor": "0.15", "linewidth": 0.8, "zorder": 4}
 _COAST_STYLE = {"facecolor": "none", "edgecolor": "black", "linewidth": 0.8, "zorder": 4}
 
@@ -764,7 +771,7 @@ def _clip_ne_geoms(resolution, category, name, clip_geom):
 
 
 def _load_geo_overlays(extent):
-    """Scale-appropriate coastline / border / lake / admin-1 overlays.
+    """Scale-appropriate coastline / border / filled-lake / admin-1 overlays.
 
     Each layer is clipped to the map extent so a country-scale view does not
     draw the rest of the world. Download or clip failures warn and skip that
