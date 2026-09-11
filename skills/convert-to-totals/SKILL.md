@@ -69,4 +69,4 @@ do not apply.
 - `cell_methods` → `{dim}: sum`.
 - `aggregation_coverage` removed (coverage gate already applied).
 - `aggregation_period` **kept** so plotters can choose a period-aware precip
-  color scale (sub-pentad vs 5+ day CHIRPS classes).
+  color scale (daily KMSA vs 5× longer-aggregation classes).

@@ -63,9 +63,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.z
 - `--variable`, `-v` — variable name. Defaults to the first data variable of
   the first input. Must exist in every input.
 - `--colormap` — matplotlib colormap name, or comma-separated colors to
-  interpolate. When omitted, precipitation totals use the CHIRPS-GEFS
-  total-rainfall classes (same bins as `plot`; sub-pentad
-  `aggregation_period` < 5 days uses the short breaks); precipitation
+  interpolate. When omitted, precipitation totals use the KMSA
+  rainfall classes (same bins as `plot`; daily / sub-pentad
+  `aggregation_period` < 5 days uses the official daily breaks); precipitation
   anomalies (negatives, or `anomal` in the name) use the CHIRPS-GEFS
   diverging classes. Every other variable uses `viridis`. One shared
   scale across all present cells.

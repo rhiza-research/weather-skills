@@ -44,29 +44,29 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-# CHIRPS-GEFS / Early Warning eXplorer rainfall-total classes (mm).
-# Under (<2) is white; over (>2500) is pale pink.
+# KMSA 24-hour cumulative rainfall classes (mm). Daily / sub-pentad totals
+# use the official labeled breaks; longer aggregations use the same colors at 5×.
+# Under is white; over is dark red.
 PRECIP_COLORS = [
     "#ffffff",
-    "#c7ffbb",
-    "#75f676",
-    "#1bb61d",
-    "#b8edfb",
-    "#50a5f8",
-    "#1e6eec",
-    "#dcdcff",
-    "#a08bff",
-    "#7060de",
-    "#fff8ad",
-    "#ff9d00",
-    "#ff1400",
-    "#a30005",
-    "#e58d8b",
-    "#ffe5e4",
+    "#42f400",
+    "#3cd707",
+    "#2db82c",
+    "#1c8f1a",
+    "#ccebff",
+    "#b5dafe",
+    "#8ec3e4",
+    "#47a6e6",
+    "#2482c0",
+    "#ffc801",
+    "#fea600",
+    "#ee7000",
+    "#f00001",
+    "#880003",
 ]
-PRECIP_BOUNDS = [2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]
-# Sub-pentad / daily totals (< 5 day aggregation): same colors, lower breaks.
-PRECIP_SHORT_BOUNDS = [0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30, 50, 75, 100, 150, 200]
+PRECIP_BOUNDS = [5, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500]
+# Daily / sub-pentad totals (< 5 day aggregation): exact KMSA breaks.
+PRECIP_SHORT_BOUNDS = [1, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100]
 PRECIP_LONG_MIN_DAYS = 5
 
 # CHIRPS-GEFS / Early Warning eXplorer rainfall-anomaly classes (mm).
@@ -146,10 +146,11 @@ def _aggregation_days(da):
 
 
 def _precip_scale(da=None):
-    """Discrete CHIRPS-GEFS rainfall-total classes with under/over colors.
+    """Discrete KMSA rainfall-total classes with under/over colors.
 
-    Periods shorter than ``PRECIP_LONG_MIN_DAYS`` use ``PRECIP_SHORT_BOUNDS``;
-    longer (or unknown) periods use the dekadal-style ``PRECIP_BOUNDS``.
+    Periods shorter than ``PRECIP_LONG_MIN_DAYS`` use ``PRECIP_SHORT_BOUNDS``
+    (official daily breaks); longer (or unknown) periods use the same
+    colors at 5× (``PRECIP_BOUNDS``).
     """
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
@@ -157,7 +158,7 @@ def _precip_scale(da=None):
     short = days is not None and days < PRECIP_LONG_MIN_DAYS
     colors = PRECIP_COLORS
     bounds = PRECIP_SHORT_BOUNDS if short else PRECIP_BOUNDS
-    name = "chirps_short" if short else "chirps_total"
+    name = "kmsa_daily" if short else "kmsa_total"
     cmap = ListedColormap(colors[1:-1], name=name)
     cmap.set_under(colors[0])
     cmap.set_over(colors[-1])
@@ -212,7 +213,7 @@ def _cbar_boundary_kwargs(norm, cmap=None):
     if not isinstance(norm, BoundaryNorm):
         return {}
     kw = {"spacing": "uniform", "ticks": list(norm.boundaries)}
-    if getattr(cmap, "name", None) in ("chirps_anom", "chirps_total", "chirps_short"):
+    if getattr(cmap, "name", None) in ("chirps_anom", "kmsa_total", "kmsa_daily"):
         kw["extend"] = "both"
     return kw
 
@@ -626,7 +627,7 @@ def _extent_from_da(da, lat_dim, lon_dim, bbox):
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors. "
-        "Default: discrete CHIRPS-GEFS precip classes for precip variables, else viridis."
+        "Default: discrete KMSA precip classes for precip variables, else viridis."
     ),
 )
 @weather_skill.argument("--title", default=None, help="Optional figure title.")
@@ -744,7 +745,7 @@ def plot_compare_forecasts(
     cmap, norm = _heatmap_scale(das[0], colormap)
     if (
         colormap is None
-        and getattr(cmap, "name", None) in ("chirps_total", "chirps_short")
+        and getattr(cmap, "name", None) in ("kmsa_total", "kmsa_daily")
         and any(_is_precip_anomaly(da) for da in das)
     ):
         cmap, norm = _precip_anomaly_scale()

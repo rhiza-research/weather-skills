@@ -30,11 +30,12 @@ Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
   error. Ensemble members
   (`number` dim) are averaged before plotting. Use `--index` to override the
   default reduction for any other extra dim. Precipitation totals default to
-  the CHIRPS-GEFS total-rainfall classes (white `<2` through green→blue→
-  purple→yellow→red→pink at 2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500,
-  750, 1000, 1500, 2500 mm) when `aggregation_period` is missing or ≥ 5 days.
-  Sub-pentad totals (`aggregation_period` < 5 days) use the same colors with
-  lower breaks (0.5 … 200 mm). Precipitation anomalies (negative values, or
+  the KMSA rainfall classes (white `<5` through green→blue→yellow→orange→red
+  at 5, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500 mm) when
+  `aggregation_period` is missing or ≥ 5 days. Daily / sub-pentad totals
+  (`aggregation_period` < 5 days) use the same colors with the official KMSA
+  daily breaks (1, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100 mm).
+  Precipitation anomalies (negative values, or
   `anomal` in the variable / long name — e.g. after `difference`) use the
   CHIRPS-GEFS diverging classes (brown/red dry ↔ white ↔ green/blue wet at
   ±10, 25, 50, 100, 200, 300, 500 mm). Other variables default to `viridis`.
@@ -179,13 +180,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   list of colors to interpolate between (e.g. `white,wheat,green`). Named
   matplotlib colormaps cannot contain commas, so the presence of a comma
   unambiguously selects the custom-list form. When omitted, precipitation
-  totals (rate or amount) use the CHIRPS-GEFS total-rainfall classes
+  totals (rate or amount) use the KMSA rainfall classes
   (`BoundaryNorm` over
-  `[2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]`
-  mm with white under `<2` and pale-pink over `>2500`) when
-  `aggregation_period` is missing or ≥ 5 days. Sub-pentad totals
-  (`aggregation_period` < 5 days) keep the same colors with lower breaks
-  (`[0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30, 50, 75, 100, 150, 200]` mm).
+  `[5, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500]`
+  mm with white under `<5` and dark red over `>500`) when
+  `aggregation_period` is missing or ≥ 5 days. Daily / sub-pentad totals
+  (`aggregation_period` < 5 days) keep the same colors with the official
+  daily breaks (`[1, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100]` mm).
   Precipitation anomalies (negatives, or `anomal` in the name — e.g. after
   `difference`) use the CHIRPS-GEFS diverging classes
   (`[-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]`
@@ -302,7 +303,7 @@ exiftool out.png
 
 ## Examples
 
-Multi-step forecast panel (precip uses the CHIRPS-GEFS totals palette by default):
+Multi-step forecast panel (precip uses the KMSA totals palette by default):
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/ecmwf_namibia.zarr -o /tmp/ecmwf.png \
     --variable tp --style heatmap --title "S2S precip"

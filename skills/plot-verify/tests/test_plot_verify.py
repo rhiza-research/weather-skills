@@ -139,7 +139,9 @@ def test_colorbar_figure_expands_for_precip_class_ticks(plot_mod):
     one_col = plot_mod._colorbar_figure_width(1, n_ticks)
     four_col = plot_mod._colorbar_figure_width(4, n_ticks)
     assert one_col > 7.0
-    assert one_col * plot_mod._FIELD_CBAR_WIDTH >= plot_mod._CBAR_INCHES_PER_TICK * n_ticks
+    assert one_col * plot_mod._FIELD_CBAR_WIDTH + 1e-9 >= (
+        plot_mod._CBAR_INCHES_PER_TICK * n_ticks
+    )
     assert four_col == max(3.6 * 4, one_col)
     assert plot_mod._colorbar_figure_width(1, 0) == 7.0
 

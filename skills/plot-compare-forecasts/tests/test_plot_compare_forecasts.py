@@ -154,15 +154,15 @@ def test_forecast_and_obs_share_valid_times(tmp_path, plot_fn, plot_mod):
     assert out.stat().st_size > 0
 
 
-def test_precip_default_colormap_is_discrete_chirps_total_palette(plot_mod):
+def test_precip_default_colormap_is_discrete_kmsa_total_palette(plot_mod):
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
     da = make_forecast()["tp"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
     cmap, norm = plot_mod._heatmap_scale(da, None)
     assert isinstance(cmap, ListedColormap)
-    assert cmap.name == "chirps_total"
-    assert cmap.N == 14
+    assert cmap.name == "kmsa_total"
+    assert cmap.N == 13
     assert isinstance(norm, BoundaryNorm)
     assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_BOUNDS)
 
