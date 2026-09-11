@@ -48,8 +48,9 @@ _SKILL_VERSION = "0.0.2"
 
 _INDEX_INT_RE = re.compile(r"[+-]?[0-9]+")
 
-# KMSA 24-hour cumulative rainfall classes (mm). Daily / sub-pentad totals
-# use the official labeled breaks; longer aggregations use the same colors at 5×.
+# KMSA 24-hour cumulative rainfall classes (mm). Daily / weekly / dekadal
+# totals use the official labeled breaks; monthly and longer use the same
+# colors at 5×.
 # Under is white; over is dark red.
 PRECIP_COLORS = [
     "#ffffff",
@@ -69,10 +70,11 @@ PRECIP_COLORS = [
     "#880003",
 ]
 PRECIP_BOUNDS = [5, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500]
-# Daily / sub-pentad totals (< 5 day aggregation): exact KMSA breaks.
+# Daily / weekly / dekadal totals (< 30 day aggregation): exact KMSA breaks.
 PRECIP_SHORT_BOUNDS = [1, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100]
-# Use PRECIP_BOUNDS when aggregation_period is missing or ≥ this many days.
-PRECIP_LONG_MIN_DAYS = 5
+# Use PRECIP_BOUNDS when aggregation_period is ≥ this many days.
+# Missing period uses the daily / short breaks.
+PRECIP_LONG_MIN_DAYS = 30
 
 # CHIRPS-GEFS / Early Warning eXplorer rainfall-anomaly classes (mm).
 # Under/over colors sit outside the labeled tick bounds.
@@ -562,14 +564,14 @@ def _aggregation_days(da):
 def _precip_scale(da=None):
     """Discrete KMSA rainfall-total classes with under/over colors.
 
-    Periods shorter than ``PRECIP_LONG_MIN_DAYS`` use ``PRECIP_SHORT_BOUNDS``
-    (official daily breaks); longer (or unknown) periods use the same
-    colors at 5× (``PRECIP_BOUNDS``).
+    Periods shorter than ``PRECIP_LONG_MIN_DAYS``, or with no stamped
+    period, use ``PRECIP_SHORT_BOUNDS`` (official daily breaks); longer
+    periods use the same colors at 5× (``PRECIP_BOUNDS``).
     """
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
     days = _aggregation_days(da) if da is not None else None
-    short = days is not None and days < PRECIP_LONG_MIN_DAYS
+    short = days is None or days < PRECIP_LONG_MIN_DAYS
     colors = PRECIP_COLORS
     bounds = PRECIP_SHORT_BOUNDS if short else PRECIP_BOUNDS
     name = "kmsa_daily" if short else "kmsa_total"
@@ -1214,13 +1216,13 @@ def _set_panel_title(ax, text, fontsize):
     ax.set_title(text, fontsize=fontsize, pad=_PANEL_TITLE_PAD)
 
 
-# Horizontal colorbar as a fraction of figure width. Discrete precip classes
-# have ~14 labels; they need this span plus a wide enough figure (see
-# ``_colorbar_figure_width``) so the ticks do not collide.
+# Horizontal colorbar as a fraction of figure width. KMSA-style: a thin
+# strip under the map. Discrete precip classes still widen a very narrow
+# figure (see ``_colorbar_figure_width``) so ticks do not collide.
 _MAP_CBAR_LEFT = 0.08
 _MAP_CBAR_WIDTH = 0.84
-_MAP_CBAR_HEIGHT = 0.055
-_MAP_CBAR_STACK_STEP = 0.09
+_MAP_CBAR_HEIGHT = 0.028
+_MAP_CBAR_STACK_STEP = 0.07
 _MAP_CBAR_Y0 = 0.04
 _MAP_CBAR_MAPS_BOTTOM = 0.20
 _MAP_AXES_TOP_TITLED = 0.80
@@ -1231,8 +1233,8 @@ _PANEL_TITLE_PAD = 28
 # keep lon/lat names in axes coords, just below/beside the gridline ticks.
 _GEO_XLABEL_AXES_Y = -0.06
 _GEO_YLABEL_AXES_X = -0.16
-# ~inches of colorbar per discrete tick so 3–4 digit class labels stay readable.
-_CBAR_INCHES_PER_TICK = 0.48
+# Compact KMSA class labels (~2 digits) fit tighter than the old CHIRPS bins.
+_CBAR_INCHES_PER_TICK = 0.28
 
 
 def _colorbar_tick_count(norm):
@@ -1291,6 +1293,13 @@ def _colorbar_text_sizes(fontsize):
     label_fs = max(8, int(round(fontsize * 0.50)))
     tick_fs = max(6, int(round(fontsize * 0.36)))
     return label_fs, tick_fs
+
+
+def _style_map_colorbar(cbar, label, fontsize):
+    """KMSA-style horizontal bar: thin strip and compact ticks."""
+    label_fs, tick_fs = _colorbar_text_sizes(fontsize)
+    cbar.set_label(label, fontsize=label_fs)
+    cbar.ax.tick_params(labelsize=tick_fs, length=3, width=0.6, pad=2)
 
 
 def _wind_component_role(da):
@@ -1899,9 +1908,7 @@ def _quiver_map(
         _set_figure_title(fig, title, fontsize)
     cbar_ax = _map_colorbar_axes(fig, title=title, nrows=nrows)
     cbar = fig.colorbar(mesh, cax=cbar_ax, orientation="horizontal", fraction=5)
-    cbar_label_fs, cbar_tick_fs = _colorbar_text_sizes(fontsize)
-    cbar.set_label(cbar_label or _wind_speed_cbar_label(u_da), fontsize=cbar_label_fs)
-    cbar.ax.tick_params(labelsize=cbar_tick_fs)
+    _style_map_colorbar(cbar, cbar_label or _wind_speed_cbar_label(u_da), fontsize)
     return fig
 
 
@@ -2827,12 +2834,9 @@ def _plot_layers(
             cbar.set_ticks(p["flag_ticks"])
             if p.get("flag_labels") is not None:
                 cbar.set_ticklabels(p["flag_labels"])
-        cbar_label_fs, cbar_tick_fs = _colorbar_text_sizes(fontsize)
-        cbar.set_label(
-            p.get("cbar_label") or _variable_label(p.get("da")),
-            fontsize=cbar_label_fs,
+        _style_map_colorbar(
+            cbar, p.get("cbar_label") or _variable_label(p.get("da")), fontsize
         )
-        cbar.ax.tick_params(labelsize=cbar_tick_fs)
     return fig
 
 
@@ -3023,9 +3027,7 @@ def _heatmap(
         cbar.set_ticks(flag_ticks)
         if flag_labels is not None:
             cbar.set_ticklabels(flag_labels)
-    cbar_label_fs, cbar_tick_fs = _colorbar_text_sizes(fontsize)
-    cbar.set_label(_variable_label(da), fontsize=cbar_label_fs)
-    cbar.ax.tick_params(labelsize=cbar_tick_fs)
+    _style_map_colorbar(cbar, _variable_label(da), fontsize)
     return fig
 
 

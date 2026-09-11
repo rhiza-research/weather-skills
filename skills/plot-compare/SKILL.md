@@ -106,9 +106,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
   form. When omitted, precipitation totals use the KMSA rainfall
   classes (`BoundaryNorm` over
   `[5, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500]`
-  mm with white under / dark-red over) when `aggregation_period` is missing
-  or ≥ 5 days; daily / sub-pentad totals (< 5 days) use the official daily
-  breaks (`1 … 100` mm, same colors). Precipitation anomalies (negatives,
+  mm with white under / dark-red over) when `aggregation_period` is
+  ≥ 30 days; missing period or daily / weekly / dekadal totals (< 30 days)
+  use the official daily breaks (`1 … 100` mm, same colors). Precipitation anomalies (negatives,
   or `anomal` in the name) use the CHIRPS-GEFS diverging classes
   (`[-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]`
   mm). In independent-scale mode a non-precip row falls back

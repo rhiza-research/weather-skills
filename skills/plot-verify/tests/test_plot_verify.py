@@ -137,9 +137,12 @@ def test_verify_count_mismatch_is_refused(tmp_path, plot_fn):
 def test_colorbar_min_width_fits_precip_class_ticks(plot_mod):
     n_ticks = len(plot_mod.PRECIP_BOUNDS)
     needed = plot_mod._colorbar_min_width(n_ticks)
-    assert needed > 7.0
-    assert needed * plot_mod._FIELD_CBAR_WIDTH >= plot_mod._CBAR_INCHES_PER_TICK * n_ticks
+    assert needed * plot_mod._FIELD_CBAR_WIDTH + 1e-9 >= (
+        plot_mod._CBAR_INCHES_PER_TICK * n_ticks
+    )
     assert plot_mod._colorbar_min_width(0) == 8.0
+    # KMSA ticks are compact; do not inflate past a typical map figure.
+    assert needed < 10.0
 
 
 def test_figure_layout_obs_then_leads(plot_mod):

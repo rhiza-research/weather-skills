@@ -52,8 +52,9 @@ _VERIFY_VARS = {
     "mae": "mae",
 }
 
-# KMSA 24-hour cumulative rainfall classes (mm). Daily / sub-pentad totals
-# use the official labeled breaks; longer aggregations use the same colors at 5×.
+# KMSA 24-hour cumulative rainfall classes (mm). Daily / weekly / dekadal
+# totals use the official labeled breaks; monthly and longer use the same
+# colors at 5×.
 # Under is white; over is dark red.
 PRECIP_COLORS = [
     "#ffffff",
@@ -73,9 +74,9 @@ PRECIP_COLORS = [
     "#880003",
 ]
 PRECIP_BOUNDS = [5, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500]
-# Daily / sub-pentad totals (< 5 day aggregation): exact KMSA breaks.
+# Daily / weekly / dekadal totals (< 30 day aggregation): exact KMSA breaks.
 PRECIP_SHORT_BOUNDS = [1, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100]
-PRECIP_LONG_MIN_DAYS = 5
+PRECIP_LONG_MIN_DAYS = 30
 # KMD-style water fill (Lake Victoria, Turkana, …) drawn on top of the heatmap.
 _LAKE_FACECOLOR = "#4da6ff"
 _ROW_FALLBACKS = ("Observation", "Forecast", "Verification")
@@ -305,14 +306,14 @@ def _verifying_week_title(da, ds=None):
 def _precip_scale(da=None):
     """Discrete KMSA rainfall-total classes with under/over colors.
 
-    Periods shorter than ``PRECIP_LONG_MIN_DAYS`` use ``PRECIP_SHORT_BOUNDS``
-    (official daily breaks); longer (or unknown) periods use the same
-    colors at 5× (``PRECIP_BOUNDS``).
+    Periods shorter than ``PRECIP_LONG_MIN_DAYS``, or with no stamped
+    period, use ``PRECIP_SHORT_BOUNDS`` (official daily breaks); longer
+    periods use the same colors at 5× (``PRECIP_BOUNDS``).
     """
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
     days = _aggregation_days(da) if da is not None else None
-    short = days is not None and days < PRECIP_LONG_MIN_DAYS
+    short = days is None or days < PRECIP_LONG_MIN_DAYS
     colors = PRECIP_COLORS
     bounds = PRECIP_SHORT_BOUNDS if short else PRECIP_BOUNDS
     name = "kmsa_daily" if short else "kmsa_total"
@@ -373,13 +374,13 @@ def _cbar_boundary_kwargs(norm, cmap=None):
     return kw
 
 
-# Colorbar row is tall enough for strip + ticks + caption. Precip classes
-# need width; the verify bar is narrower and sits to the right.
-_FIELD_CBAR_WIDTH = 0.50
-_VERIFY_CBAR_WIDTH = 0.32
-_CBAR_STRIP_IN = 0.28
-_CBAR_ROW_IN = 1.20
-_CBAR_INCHES_PER_TICK = 0.70
+# KMSA-style colorbar row: thin strip, label above, ticks below. Precip
+# classes share the row with a shorter verify bar to the right.
+_FIELD_CBAR_WIDTH = 0.62
+_VERIFY_CBAR_WIDTH = 0.28
+_CBAR_STRIP_IN = 0.12
+_CBAR_ROW_IN = 0.72
+_CBAR_INCHES_PER_TICK = 0.28
 _LABEL_IN = 1.25
 _RIGHT_IN = 0.35
 _COL_GAP_IN = 0.14
@@ -431,7 +432,7 @@ def _figure_layout(n_leads, extent, n_ticks, *, title):
     maps_bottom = _CBAR_ROW_IN / fig_h
     maps_top = 1.0 - (title_in + header_in) / fig_h
     strip_h = _CBAR_STRIP_IN / fig_h
-    cbar_y = 0.48 / fig_h
+    cbar_y = 0.20 / fig_h
     span = right - left
     field_w = _FIELD_CBAR_WIDTH * span / ( _FIELD_CBAR_WIDTH + _VERIFY_CBAR_WIDTH + 0.08)
     verify_w = _VERIFY_CBAR_WIDTH * span / (_FIELD_CBAR_WIDTH + _VERIFY_CBAR_WIDTH + 0.08)
@@ -863,8 +864,9 @@ def plot_verify(
     tick_fs = _scaled_fontsize(fontsize, 0.55, floor=8)
     panel_title_fs = _scaled_fontsize(fontsize, 1.1)
     name_fs = fontsize
-    cbar_label_fs = fontsize
-    cbar_tick_fs = _scaled_fontsize(fontsize, 0.85)
+    cbar_label_fs = _scaled_fontsize(fontsize, 0.50, floor=8)
+    field_tick_fs = _scaled_fontsize(fontsize, 0.40, floor=6)
+    verify_tick_fs = _scaled_fontsize(fontsize, 0.55, floor=7)
 
     def _draw(
         ax,
@@ -986,13 +988,12 @@ def plot_verify(
 
     def _cbar_caption(box, text):
         x, y, w, h = box
-        tick_in = max(cbar_tick_fs / 72.0 * 1.35, 0.22)
         fig.text(
             x + w / 2,
-            y - (tick_in + 0.08) / fig_h,
+            y + h + 0.04 / fig_h,
             text,
             ha="center",
-            va="top",
+            va="bottom",
             fontsize=cbar_label_fs,
         )
 
@@ -1004,7 +1005,7 @@ def plot_verify(
             orientation="horizontal",
             **_cbar_boundary_kwargs(norm, cmap),
         )
-        cbar.ax.tick_params(labelsize=cbar_tick_fs, length=4, width=0.8, pad=5)
+        cbar.ax.tick_params(labelsize=field_tick_fs, length=3, width=0.6, pad=2)
         _cbar_caption(layout["field_box"], _variable_label(obs_da))
     if verify_mesh is not None:
         verify_ax = fig.add_axes(layout["verify_box"])
@@ -1012,14 +1013,14 @@ def plot_verify(
             verify_cbar = fig.colorbar(
                 verify_mesh, cax=verify_ax, orientation="horizontal", ticks=[-1, 0, 1]
             )
-            verify_cbar.set_ticklabels(verify_labels, fontsize=cbar_tick_fs)
+            verify_cbar.set_ticklabels(verify_labels, fontsize=verify_tick_fs)
             caption = "event"
         else:
             verify_cbar = fig.colorbar(verify_mesh, cax=verify_ax, orientation="horizontal")
             units = format_units_for_display(u_obs)
             metric_label = _METRIC_ROW_LABELS[metric]
             caption = f"{metric_label} [{units}]" if units else metric_label
-        verify_cbar.ax.tick_params(labelsize=cbar_tick_fs, length=4, width=0.8, pad=5)
+        verify_cbar.ax.tick_params(labelsize=verify_tick_fs, length=3, width=0.6, pad=2)
         _cbar_caption(layout["verify_box"], caption)
 
     output = Path(output)

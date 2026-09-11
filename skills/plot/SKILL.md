@@ -32,9 +32,10 @@ Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
   default reduction for any other extra dim. Precipitation totals default to
   the KMSA rainfall classes (white `<5` through green→blue→yellow→orange→red
   at 5, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500 mm) when
-  `aggregation_period` is missing or ≥ 5 days. Daily / sub-pentad totals
-  (`aggregation_period` < 5 days) use the same colors with the official KMSA
-  daily breaks (1, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100 mm).
+  `aggregation_period` is ≥ 30 days. Missing period, or daily / weekly /
+  dekadal totals (`aggregation_period` < 30 days), use the same colors with
+  the official KMSA daily breaks (1, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60,
+  70, 80, 100 mm).
   Precipitation anomalies (negative values, or
   `anomal` in the variable / long name — e.g. after `difference`) use the
   CHIRPS-GEFS diverging classes (brown/red dry ↔ white ↔ green/blue wet at
@@ -184,8 +185,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   (`BoundaryNorm` over
   `[5, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500]`
   mm with white under `<5` and dark red over `>500`) when
-  `aggregation_period` is missing or ≥ 5 days. Daily / sub-pentad totals
-  (`aggregation_period` < 5 days) keep the same colors with the official
+  `aggregation_period` is ≥ 30 days. Missing period, or daily / weekly /
+  dekadal totals (`aggregation_period` < 30 days), keep the same colors with
+  the official
   daily breaks (`[1, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100]` mm).
   Precipitation anomalies (negatives, or `anomal` in the name — e.g. after
   `difference`) use the CHIRPS-GEFS diverging classes

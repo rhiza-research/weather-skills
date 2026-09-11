@@ -44,8 +44,9 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-# KMSA 24-hour cumulative rainfall classes (mm). Daily / sub-pentad totals
-# use the official labeled breaks; longer aggregations use the same colors at 5×.
+# KMSA 24-hour cumulative rainfall classes (mm). Daily / weekly / dekadal
+# totals use the official labeled breaks; monthly and longer use the same
+# colors at 5×.
 # Under is white; over is dark red.
 PRECIP_COLORS = [
     "#ffffff",
@@ -65,9 +66,9 @@ PRECIP_COLORS = [
     "#880003",
 ]
 PRECIP_BOUNDS = [5, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500]
-# Daily / sub-pentad totals (< 5 day aggregation): exact KMSA breaks.
+# Daily / weekly / dekadal totals (< 30 day aggregation): exact KMSA breaks.
 PRECIP_SHORT_BOUNDS = [1, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100]
-PRECIP_LONG_MIN_DAYS = 5
+PRECIP_LONG_MIN_DAYS = 30
 # KMD-style water fill (Lake Victoria, Turkana, …) drawn on top of the heatmap.
 _LAKE_FACECOLOR = "#4da6ff"
 
@@ -150,14 +151,14 @@ def _aggregation_days(da):
 def _precip_scale(da=None):
     """Discrete KMSA rainfall-total classes with under/over colors.
 
-    Periods shorter than ``PRECIP_LONG_MIN_DAYS`` use ``PRECIP_SHORT_BOUNDS``
-    (official daily breaks); longer (or unknown) periods use the same
-    colors at 5× (``PRECIP_BOUNDS``).
+    Periods shorter than ``PRECIP_LONG_MIN_DAYS``, or with no stamped
+    period, use ``PRECIP_SHORT_BOUNDS`` (official daily breaks); longer
+    periods use the same colors at 5× (``PRECIP_BOUNDS``).
     """
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
     days = _aggregation_days(da) if da is not None else None
-    short = days is not None and days < PRECIP_LONG_MIN_DAYS
+    short = days is None or days < PRECIP_LONG_MIN_DAYS
     colors = PRECIP_COLORS
     bounds = PRECIP_SHORT_BOUNDS if short else PRECIP_BOUNDS
     name = "kmsa_daily" if short else "kmsa_total"
@@ -222,8 +223,8 @@ def _cbar_boundary_kwargs(norm, cmap=None):
 
 _MAP_CBAR_LEFT = 0.08
 _MAP_CBAR_WIDTH = 0.84
-_MAP_CBAR_HEIGHT = 0.045
-_CBAR_INCHES_PER_TICK = 0.48
+_MAP_CBAR_HEIGHT = 0.028
+_CBAR_INCHES_PER_TICK = 0.28
 
 
 def _colorbar_tick_count(norm):
@@ -885,7 +886,7 @@ def plot_compare_forecasts(
             **_cbar_boundary_kwargs(norm, cmap),
         )
         cbar.set_label(_variable_label(das[0]), fontsize=cbar_label_fs)
-        cbar.ax.tick_params(labelsize=cbar_tick_fs)
+        cbar.ax.tick_params(labelsize=cbar_tick_fs, length=3, width=0.6, pad=2)
     else:
         fig.tight_layout()
 

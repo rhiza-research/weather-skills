@@ -32,16 +32,16 @@ def test_two_gridded_inputs_write_png(tmp_path, plot_compare):
     assert out.stat().st_size > 0
 
 
-def test_precip_shared_scale_is_discrete_kmsa_total_palette():
+def test_precip_shared_scale_is_discrete_kmsa_daily_palette():
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
     plot_mod = load_skill("plot-compare", "plot_compare")
     cmap, norm = plot_mod._precip_scale()
     assert isinstance(cmap, ListedColormap)
-    assert cmap.name == "kmsa_total"
+    assert cmap.name == "kmsa_daily"
     assert cmap.N == 13
     assert isinstance(norm, BoundaryNorm)
-    assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_BOUNDS)
+    assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_SHORT_BOUNDS)
 
 
 def test_precip_anomaly_row_scale_is_chirps_palette():

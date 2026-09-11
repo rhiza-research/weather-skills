@@ -161,10 +161,15 @@ def test_precip_default_colormap_is_discrete_kmsa_total_palette(plot_mod):
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
     cmap, norm = plot_mod._heatmap_scale(da, None)
     assert isinstance(cmap, ListedColormap)
-    assert cmap.name == "kmsa_total"
+    assert cmap.name == "kmsa_daily"
     assert cmap.N == 13
     assert isinstance(norm, BoundaryNorm)
-    assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_BOUNDS)
+    assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_SHORT_BOUNDS)
+
+    da.attrs["aggregation_period"] = "30 day"
+    cmap_long, norm_long = plot_mod._heatmap_scale(da, None)
+    assert cmap_long.name == "kmsa_total"
+    assert list(norm_long.boundaries) == pytest.approx(plot_mod.PRECIP_BOUNDS)
 
     t2m = make_gridded(name="t2m")["t2m"]
     t2m.attrs.update(units="degree_Celsius", standard_name="air_temperature")
@@ -177,8 +182,10 @@ def test_colorbar_figure_expands_for_precip_class_ticks(plot_mod):
     n_ticks = len(plot_mod.PRECIP_BOUNDS)
     one_col = plot_mod._colorbar_figure_width(1, n_ticks)
     four_col = plot_mod._colorbar_figure_width(4, n_ticks)
-    assert one_col > 6.0
-    assert one_col * plot_mod._MAP_CBAR_WIDTH >= plot_mod._CBAR_INCHES_PER_TICK * n_ticks
+    assert one_col >= 6.0
+    assert one_col * plot_mod._MAP_CBAR_WIDTH + 1e-9 >= (
+        plot_mod._CBAR_INCHES_PER_TICK * n_ticks
+    )
     assert four_col == max(3.2 * 4, one_col)
     assert plot_mod._colorbar_figure_width(1, 0) == 6.0
 

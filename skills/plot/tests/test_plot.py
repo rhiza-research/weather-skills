@@ -113,7 +113,9 @@ def test_colorbar_figure_expands_for_precip_class_ticks():
     n_ticks = len(plot_mod.PRECIP_BOUNDS)
     narrow = plot_mod._colorbar_figure_width(4.0, n_ticks)
     assert narrow > 4.0
-    assert narrow * plot_mod._MAP_CBAR_WIDTH >= plot_mod._CBAR_INCHES_PER_TICK * n_ticks
+    assert narrow * plot_mod._MAP_CBAR_WIDTH + 1e-9 >= (
+        plot_mod._CBAR_INCHES_PER_TICK * n_ticks
+    )
     assert plot_mod._colorbar_figure_width(12.0, n_ticks) == 12.0
     assert plot_mod._colorbar_figure_width(4.0, 0) == 4.0
 
@@ -225,7 +227,9 @@ def test_precip_heatmap_widens_for_class_ticks_and_shrinks_cbar_text():
         norm=norm,
     )
     n_ticks = len(plot_mod.PRECIP_BOUNDS)
-    assert fig.get_figwidth() * plot_mod._MAP_CBAR_WIDTH >= plot_mod._CBAR_INCHES_PER_TICK * n_ticks
+    assert fig.get_figwidth() * plot_mod._MAP_CBAR_WIDTH + 1e-9 >= (
+        plot_mod._CBAR_INCHES_PER_TICK * n_ticks
+    )
     labels = fig.axes[-1].xaxis.get_ticklabels()
     assert labels
     assert labels[0].get_fontsize() <= 7
@@ -346,7 +350,7 @@ def test_precip_default_colormap_is_kmsa_total_palette():
     da.attrs.update(
         units="mm",
         standard_name="lwe_thickness_of_precipitation_amount",
-        aggregation_period="10 day",
+        aggregation_period="30 day",
     )
     cmap, norm = plot_mod._heatmap_scale(da, None)
     assert isinstance(cmap, ListedColormap)
@@ -360,7 +364,7 @@ def test_precip_default_colormap_is_kmsa_total_palette():
     assert plot_mod.PRECIP_BOUNDS == [5 * b for b in plot_mod.PRECIP_SHORT_BOUNDS]
 
     rate = make_gridded()["precip"]
-    rate.attrs["aggregation_period"] = "7 day"
+    rate.attrs["aggregation_period"] = "30 day"
     cmap_rate, norm_rate = plot_mod._heatmap_scale(rate, None)
     assert isinstance(cmap_rate, ListedColormap)
     assert cmap_rate.name == "kmsa_total"
@@ -382,6 +386,18 @@ def test_precip_short_period_colormap_uses_daily_kmsa_bounds():
     assert cmap.name == "kmsa_daily"
     assert isinstance(norm, BoundaryNorm)
     assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_SHORT_BOUNDS)
+
+    weekly = da.copy()
+    weekly.attrs["aggregation_period"] = "10 day"
+    cmap_w, norm_w = plot_mod._heatmap_scale(weekly, None)
+    assert cmap_w.name == "kmsa_daily"
+    assert list(norm_w.boundaries) == pytest.approx(plot_mod.PRECIP_SHORT_BOUNDS)
+
+    missing = da.copy()
+    missing.attrs.pop("aggregation_period", None)
+    cmap_m, norm_m = plot_mod._heatmap_scale(missing, None)
+    assert cmap_m.name == "kmsa_daily"
+    assert list(norm_m.boundaries) == pytest.approx(plot_mod.PRECIP_SHORT_BOUNDS)
 
 
 def test_precip_anomaly_colormap_is_chirps_palette():
