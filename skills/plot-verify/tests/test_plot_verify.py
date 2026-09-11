@@ -141,7 +141,7 @@ def test_colorbar_min_width_fits_precip_class_ticks(plot_mod):
         plot_mod._CBAR_INCHES_PER_TICK * n_ticks
     )
     assert plot_mod._colorbar_min_width(0) == 8.0
-    # KMSA ticks are compact; do not inflate past a typical map figure.
+    # CHIRPS class ticks still fit a typical map figure.
     assert needed < 10.0
 
 

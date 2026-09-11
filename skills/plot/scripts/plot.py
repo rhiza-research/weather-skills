@@ -48,33 +48,31 @@ _SKILL_VERSION = "0.0.2"
 
 _INDEX_INT_RE = re.compile(r"[+-]?[0-9]+")
 
-# KMSA 24-hour cumulative rainfall classes (mm). Daily / weekly / dekadal
-# totals use the official labeled breaks; monthly and longer use the same
-# colors at 5×.
-# Under is white; over is dark red.
+# CHIRPS-GEFS / Early Warning eXplorer rainfall-total classes (mm).
+# Under (<2) is white; over (>2500) is pale pink.
 PRECIP_COLORS = [
     "#ffffff",
-    "#42f400",
-    "#3cd707",
-    "#2db82c",
-    "#1c8f1a",
-    "#ccebff",
-    "#b5dafe",
-    "#8ec3e4",
-    "#47a6e6",
-    "#2482c0",
-    "#ffc801",
-    "#fea600",
-    "#ee7000",
-    "#f00001",
-    "#880003",
+    "#c7ffbb",
+    "#75f676",
+    "#1bb61d",
+    "#b8edfb",
+    "#50a5f8",
+    "#1e6eec",
+    "#dcdcff",
+    "#a08bff",
+    "#7060de",
+    "#fff8ad",
+    "#ff9d00",
+    "#ff1400",
+    "#a30005",
+    "#e58d8b",
+    "#ffe5e4",
 ]
-PRECIP_BOUNDS = [5, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300, 350, 400, 500]
-# Daily / weekly / dekadal totals (< 30 day aggregation): exact KMSA breaks.
-PRECIP_SHORT_BOUNDS = [1, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100]
-# Use PRECIP_BOUNDS when aggregation_period is ≥ this many days.
-# Missing period uses the daily / short breaks.
-PRECIP_LONG_MIN_DAYS = 30
+PRECIP_BOUNDS = [2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]
+# Sub-pentad / daily totals (< 5 day aggregation): same colors, lower breaks.
+PRECIP_SHORT_BOUNDS = [0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30, 50, 75, 100, 150, 200]
+# Use PRECIP_BOUNDS when aggregation_period is missing or ≥ this many days.
+PRECIP_LONG_MIN_DAYS = 5
 
 # CHIRPS-GEFS / Early Warning eXplorer rainfall-anomaly classes (mm).
 # Under/over colors sit outside the labeled tick bounds.
@@ -562,19 +560,18 @@ def _aggregation_days(da):
 
 
 def _precip_scale(da=None):
-    """Discrete KMSA rainfall-total classes with under/over colors.
+    """Discrete CHIRPS-GEFS rainfall-total classes with under/over colors.
 
-    Periods shorter than ``PRECIP_LONG_MIN_DAYS``, or with no stamped
-    period, use ``PRECIP_SHORT_BOUNDS`` (official daily breaks); longer
-    periods use the same colors at 5× (``PRECIP_BOUNDS``).
+    Periods shorter than ``PRECIP_LONG_MIN_DAYS`` use ``PRECIP_SHORT_BOUNDS``;
+    longer (or unknown) periods use the dekadal-style ``PRECIP_BOUNDS``.
     """
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
     days = _aggregation_days(da) if da is not None else None
-    short = days is None or days < PRECIP_LONG_MIN_DAYS
+    short = days is not None and days < PRECIP_LONG_MIN_DAYS
     colors = PRECIP_COLORS
     bounds = PRECIP_SHORT_BOUNDS if short else PRECIP_BOUNDS
-    name = "kmsa_daily" if short else "kmsa_total"
+    name = "chirps_short" if short else "chirps_total"
     cmap = ListedColormap(colors[1:-1], name=name)
     cmap.set_under(colors[0])
     cmap.set_over(colors[-1])
@@ -610,7 +607,7 @@ def _cbar_boundary_kwargs(norm, cmap=None):
     if not isinstance(norm, BoundaryNorm):
         return {}
     kw = {"spacing": "uniform", "ticks": list(norm.boundaries)}
-    if getattr(cmap, "name", None) in ("chirps_anom", "kmsa_total", "kmsa_daily"):
+    if getattr(cmap, "name", None) in ("chirps_anom", "chirps_total", "chirps_short"):
         kw["extend"] = "both"
     return kw
 
@@ -1297,9 +1294,9 @@ def _set_panel_title(ax, text, fontsize):
     ax.set_title(text, fontsize=fontsize, pad=_PANEL_TITLE_PAD)
 
 
-# Horizontal colorbar as a fraction of figure width. KMSA-style: a thin
-# strip under the map. Discrete precip classes still widen a very narrow
-# figure (see ``_colorbar_figure_width``) so ticks do not collide.
+# Horizontal colorbar as a fraction of figure width: a thin strip under
+# the map. Discrete precip classes still widen a very narrow figure
+# (see ``_colorbar_figure_width``) so ticks do not collide.
 _MAP_CBAR_LEFT = 0.08
 _MAP_CBAR_WIDTH = 0.84
 _MAP_CBAR_HEIGHT = 0.028
@@ -1314,7 +1311,6 @@ _PANEL_TITLE_PAD = 12
 # keep lon/lat names in axes coords, just below/beside the gridline ticks.
 _GEO_XLABEL_AXES_Y = -0.06
 _GEO_YLABEL_AXES_X = -0.16
-# Compact KMSA class labels (~2 digits) fit tighter than the old CHIRPS bins.
 _CBAR_INCHES_PER_TICK = 0.28
 
 
@@ -1377,7 +1373,7 @@ def _colorbar_text_sizes(fontsize):
 
 
 def _style_map_colorbar(cbar, label, fontsize):
-    """KMSA-style horizontal bar: thin strip and compact ticks."""
+    """Thin horizontal colorbar strip with compact ticks."""
     label_fs, tick_fs = _colorbar_text_sizes(fontsize)
     cbar.set_label(label, fontsize=label_fs)
     cbar.ax.tick_params(labelsize=tick_fs, length=3, width=0.6, pad=2)
@@ -3016,7 +3012,7 @@ def _heatmap(
     levels = _contour_levels(vmin, vmax, norm=norm) if kind == "contour" else None
     contour_extend = (
         "both"
-        if getattr(cmap, "name", None) in ("chirps_anom", "kmsa_total", "kmsa_daily")
+        if getattr(cmap, "name", None) in ("chirps_anom", "chirps_total", "chirps_short")
         else "neither"
     )
     for i, s in enumerate(steps):
@@ -3186,7 +3182,7 @@ def _heatmap(
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors. "
-        "Heatmap default: discrete KMSA precip classes for precip "
+        "Heatmap default: discrete CHIRPS-GEFS precip classes for precip "
         "variables, else viridis. Windrose default: blue-to-orange speed classes. "
         "Quiver default: YlGn (ECMWF S2S 10 m / 700 hPa wind vectors)."
     ),
