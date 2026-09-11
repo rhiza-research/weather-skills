@@ -165,6 +165,27 @@ def test_datetime_axis_omits_default_time_label():
     assert mod._resolve_time_axis_label(None, "calendar day", doy) == "Calendar day"
 
 
+def test_date_ticks_are_calendar_dates_not_timestamps():
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    mod = load_skill("plot-timeseries", "plot_timeseries")
+    fig, ax = plt.subplots()
+    days = mdates.date2num(np.arange("2026-08-05", "2026-09-10", dtype="datetime64[D]"))
+    ax.plot(days, np.arange(len(days)))
+    mod._apply_date_ticks(ax)
+    fig.canvas.draw()
+    labels = [tick.get_text() for tick in ax.get_xticklabels() if tick.get_text()]
+    assert labels
+    assert all("00:00" not in label for label in labels)
+    assert all(len(label) == 10 and label[4] == "-" and label[7] == "-" for label in labels)
+    plt.close(fig)
+
+
 def test_trace_label_prefers_station_id_over_tahmo_source():
     import numpy as np
     import xarray as xr

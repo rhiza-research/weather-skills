@@ -305,7 +305,12 @@ def _format_single(t, bin_width=None):
     try:
         start = pd.Timestamp(t)
     except (TypeError, ValueError):
-        return str(t)
+        if hasattr(t, "year") and hasattr(t, "month") and hasattr(t, "day"):
+            return f"{int(t.year):04d}-{int(t.month):02d}-{int(t.day):02d}"
+        text = str(t)
+        if len(text) >= 10 and text[4:5] == "-" and text[7:8] == "-":
+            return text[:10]
+        return text
     if bin_width is None:
         return start.date().isoformat()
     try:

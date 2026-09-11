@@ -372,6 +372,38 @@ def test_panel_title_calendar_daily_is_single_date(plot_fn):
     assert "time=" not in title
 
 
+def test_format_date_drops_midnight_time():
+    import datetime as dt
+
+    import numpy as np
+
+    plot_mod = load_skill("plot", "plot")
+    assert plot_mod._format_date(np.datetime64("2026-01-01T00:00:00")) == "2026-01-01"
+    assert plot_mod._format_date(dt.datetime(2026, 1, 1, 0, 0, 0)) == "2026-01-01"
+    assert plot_mod._format_step(np.datetime64("2026-01-01T00:00:00")) == "2026-01-01"
+
+
+def test_date_ticks_are_calendar_dates_not_timestamps():
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    plot_mod = load_skill("plot", "plot")
+    fig, ax = plt.subplots()
+    days = mdates.date2num(np.arange("2026-08-05", "2026-09-10", dtype="datetime64[D]"))
+    ax.plot(days, np.arange(len(days)))
+    plot_mod._apply_date_ticks(ax)
+    fig.canvas.draw()
+    labels = [tick.get_text() for tick in ax.get_xticklabels() if tick.get_text()]
+    assert labels
+    assert all("00:00" not in label for label in labels)
+    assert all(len(label) == 10 and label[4] == "-" and label[7] == "-" for label in labels)
+    plt.close(fig)
+
+
 def test_timeseries_forecast_writes_png(tmp_path, plot_fn):
     ds = make_forecast()
     ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")

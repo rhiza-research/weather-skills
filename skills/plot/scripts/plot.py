@@ -916,15 +916,43 @@ def _resolve_time_axis_label(override, default, values):
     return _axis_label(default)
 
 
+def _format_date(value) -> str:
+    """Calendar date ``YYYY-MM-DD`` from a datetime-like value (time-of-day dropped)."""
+    import numpy as np
+
+    if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
+        try:
+            return f"{int(value.year):04d}-{int(value.month):02d}-{int(value.day):02d}"
+        except (TypeError, ValueError):
+            pass
+    arr = np.asarray(value)
+    if arr.dtype.kind == "M":
+        sample = arr.reshape(-1)[0]
+        return str(np.datetime_as_string(np.asarray(sample).astype("datetime64[D]"), unit="D"))
+    text = str(value)
+    if len(text) >= 10 and text[4:5] == "-" and text[7:8] == "-":
+        return text[:10]
+    return text
+
+
+def _apply_date_ticks(ax) -> None:
+    """Show datetime x ticks as calendar dates, never ``YYYY-MM-DD 00:00:00``."""
+    import matplotlib.dates as mdates
+
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+
+
 def _format_step(value):
     import numpy as np
 
     arr = np.asarray(value)
     if arr.dtype.kind == "M":
-        return np.datetime_as_string(arr.astype("datetime64[D]"), unit="D")
+        return _format_date(value)
     if arr.dtype.kind == "m":
         days = arr.astype("timedelta64[D]").astype(int)
         return f"+{days}d"
+    if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
+        return _format_date(value)
     return str(value)
 
 
@@ -1188,7 +1216,7 @@ def _panel_title(da, sdim, step_value, all_steps):
             if dt is None:
                 dt = step_arr[1] - step_arr[0] if step_arr.size > 1 else np.timedelta64(1, "D")
             end = start + dt
-            return f"{str(start)[:16]} until {str(end)[:16]}"
+            return f"{_format_date(start)} until {_format_date(end)}"
         except Exception:  # noqa: BLE001
             return fallback
 
@@ -3598,6 +3626,7 @@ def plot(
         _draw_axes_title(ax, title or f"{qty} ({style})", fontsize)
         ax.tick_params(labelsize=tick_fs)
         if _is_datetime_axis(xvals):
+            _apply_date_ticks(ax)
             fig.autofmt_xdate()
         fig.tight_layout()
 

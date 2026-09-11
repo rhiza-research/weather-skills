@@ -92,6 +92,13 @@ def _resolve_time_axis_label(override, default, values):
     return _axis_label(default)
 
 
+def _apply_date_ticks(ax) -> None:
+    """Show datetime x ticks as calendar dates, never ``YYYY-MM-DD 00:00:00``."""
+    import matplotlib.dates as mdates
+
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+
+
 def _size1_str(ds, *names) -> str | None:
     for name in names:
         if name not in ds.coords and name not in getattr(ds, "variables", ()):
@@ -805,6 +812,7 @@ def plot_timeseries(
     if align_day_of_year:
         _apply_day_of_year_ticks(ax)
     elif _is_datetime_axis(x_for_label):
+        _apply_date_ticks(ax)
         fig.autofmt_xdate()
     fig.tight_layout(rect=(0, 0.24, 1, 1))
     output = Path(output)

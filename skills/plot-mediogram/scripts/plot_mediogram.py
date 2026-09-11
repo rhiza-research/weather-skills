@@ -256,6 +256,15 @@ def plot_mediogram(ds, variable, lat, lon, title, xlabel, ylabel, fontsize, outp
         arr = np.asarray(value)
         if arr.dtype.kind == "m":
             tick_labels.append(f"+{int(arr.astype('timedelta64[D]').astype(int))}d")
+        elif arr.dtype.kind == "M" or hasattr(value, "year"):
+            if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
+                tick_labels.append(
+                    f"{int(value.year):04d}-{int(value.month):02d}-{int(value.day):02d}"
+                )
+            else:
+                tick_labels.append(
+                    str(np.datetime_as_string(arr.astype("datetime64[D]"), unit="D"))
+                )
         else:
             tick_labels.append(str(value))
     tick_fs = max(10, int(round(fontsize * 0.7)))
