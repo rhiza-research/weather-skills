@@ -715,7 +715,7 @@ def test_place_legend_below_axis():
     handles, labels = mod._legend_handles(ax, [([1, 2], [1, 2], "a"), ([1, 2], [2, 3], "b")])
     legend = mod._place_legend_below(ax, handles, labels, fontsize=12)
     anchor = legend.get_bbox_to_anchor()._bbox
-    assert anchor.y0 < 0
+    assert anchor.y0 < -0.3
     plt.close(fig)
 
 

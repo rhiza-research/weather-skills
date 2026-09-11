@@ -619,14 +619,15 @@ def _legend_handles(ax, series):
 
 
 def _place_legend_below(ax, handles, labels, fontsize: int):
-    """Place legend centered below the plotting area."""
+    """Place legend centered below the axis title, with a clear gap."""
     ncols = max(1, min(len(labels), 4))
     return ax.legend(
         handles,
         labels,
         fontsize=fontsize,
         loc="upper center",
-        bbox_to_anchor=(0.5, -0.22),
+        bbox_to_anchor=(0.5, -0.42),
+        borderaxespad=0.0,
         ncol=ncols,
         frameon=False,
     )
@@ -876,7 +877,7 @@ def plot_timeseries(
         if _is_datetime_axis(x_for_label):
             _apply_weekly_date_ticks(ax)
         fig.autofmt_xdate()
-    fig.tight_layout(rect=(0, 0.16, 1, 1))
+    fig.tight_layout(rect=(0, 0.24, 1, 1))
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output, dpi=150, bbox_inches="tight")

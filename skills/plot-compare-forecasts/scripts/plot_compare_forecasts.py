@@ -924,7 +924,7 @@ def plot_compare_forecasts(
         fig.subplots_adjust(
             left=0.08,
             right=0.98,
-            bottom=0.20,
+            bottom=0.28,
             top=0.76 if len(title_lines) > 1 else 0.80 if title_lines else 0.96,
             hspace=0.42 if nrows > 1 else 0.12,
             wspace=0.18,
