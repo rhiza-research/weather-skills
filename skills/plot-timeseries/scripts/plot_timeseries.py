@@ -440,81 +440,12 @@ def _day_of_year_tick_label(doy: float) -> str:
     return f"{date.strftime('%b')} {date.day}"
 
 
-def _month_start_day_of_year_ticks(xmin: float, xmax: float) -> tuple[list[float], list[str]]:
-    """First-of-month tick positions and labels within ``[xmin, xmax]``."""
-    import datetime as dt
-
-    positions: list[float] = []
-    labels: list[str] = []
-    for month in range(1, 13):
-        date = dt.date(2023, month, 1)
-        doy = float(date.timetuple().tm_yday)
-        if xmin <= doy <= xmax:
-            positions.append(doy)
-            labels.append(f"{date.strftime('%b')} {date.day}")
-    return positions, labels
-
-
-def _weekly_day_of_year_ticks(xmin: float, xmax: float) -> tuple[list[float], list[str]]:
-    """Monday tick positions and labels within a 1-based day-of-year window."""
-    import datetime as dt
-
-    year = 2024 if xmax > 365 else 2023
-    positions: list[float] = []
-    labels: list[str] = []
-    day = dt.date(year, 1, 1)
-    day += dt.timedelta(days=(7 - day.weekday()) % 7)
-    while day.year == year:
-        doy = float(day.timetuple().tm_yday)
-        if xmin <= doy <= xmax:
-            positions.append(doy)
-            labels.append(f"{day.strftime('%b')} {day.day}")
-        day += dt.timedelta(days=7)
-    return positions, labels
-
-
 def _apply_day_of_year_ticks(ax) -> None:
     """Label day-of-year x ticks with calendar dates (e.g. Oct 1, not 274)."""
-    from matplotlib.ticker import FixedFormatter, FixedLocator, FuncFormatter, MaxNLocator
-
-    xmin, xmax = ax.get_xlim()
-    month_pos, month_labels = _month_start_day_of_year_ticks(xmin, xmax)
-    if len(month_pos) >= 2 and (xmax - xmin) >= 240:
-        ax.xaxis.set_major_locator(FixedLocator(month_pos))
-        ax.xaxis.set_major_formatter(FixedFormatter(month_labels))
-        return
-
-    weekly_pos, weekly_labels = _weekly_day_of_year_ticks(xmin, xmax)
-    if len(weekly_pos) >= 2:
-        ax.xaxis.set_major_locator(FixedLocator(weekly_pos))
-        ax.xaxis.set_major_formatter(FixedFormatter(weekly_labels))
-        return
+    from matplotlib.ticker import FuncFormatter, MaxNLocator
 
     ax.xaxis.set_major_locator(MaxNLocator(nbins=8, integer=True, min_n_ticks=3))
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _pos: _day_of_year_tick_label(x)))
-
-
-# Weekly Monday ticks are the default for seasonal/monthly series. Shorter
-# windows stay on AutoDate so a week of daily points still has labels;
-# multi-season spans switch to months so the axis is not 50+ Mondays.
-_WEEKLY_TICK_MIN_DAYS = 14
-_MONTHLY_TICK_MIN_DAYS = 240
-
-
-def _apply_weekly_date_ticks(ax) -> None:
-    """Major datetime ticks: Mondays by default, monthly if the span is long."""
-    import matplotlib.dates as mdates
-
-    xmin, xmax = ax.get_xlim()
-    span_days = float(xmax - xmin)
-    if span_days >= _MONTHLY_TICK_MIN_DAYS:
-        locator = mdates.MonthLocator()
-    elif span_days >= _WEEKLY_TICK_MIN_DAYS:
-        locator = mdates.WeekdayLocator(byweekday=mdates.MO)
-    else:
-        locator = mdates.AutoDateLocator(minticks=3, maxticks=8)
-    ax.xaxis.set_major_locator(locator)
-    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
 
 
 def _numeric_x(xvals):
@@ -873,9 +804,7 @@ def plot_timeseries(
 
     if align_day_of_year:
         _apply_day_of_year_ticks(ax)
-    else:
-        if _is_datetime_axis(x_for_label):
-            _apply_weekly_date_ticks(ax)
+    elif _is_datetime_axis(x_for_label):
         fig.autofmt_xdate()
     fig.tight_layout(rect=(0, 0.24, 1, 1))
     output = Path(output)

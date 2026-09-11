@@ -49,9 +49,8 @@ Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
 - `timeseries` — 1D profile. Averages across all non-time dims. Line plus a
   marker at each time point. A forecast cube (`step` lead times + scalar init
   `time`) is plotted against **valid time** (`init + step`) with calendar dates
-  on the x-axis, not raw lead-time nanoseconds. Date ticks are Mondays by
-  default (monthly when the span is longer than about eight months). An
-  analysis / obs cube with a `time` dim is plotted against that axis as-is.
+  on the x-axis, not raw lead-time nanoseconds. An analysis / obs cube with a
+  `time` dim is plotted against that axis as-is.
 - `xy` — scatter one 1D series against another. Pass `--x` and `--y` Zarrs
   (or one `-i` with `--x-variable` and `--y-variable`). Each input is reduced
   the same way as `timeseries` (mean over non-time dims; `--bbox` /
@@ -168,8 +167,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
 - `--style` — `heatmap` (default), `contour`, `timeseries`, `xy`, `windrose`, or
   `quiver`. `contour` is the heatmap layout with filled isolines instead of
   grid cells. Timeseries of a forecast (`step` + scalar init) uses valid times
-  on the x-axis, with Monday ticks by default (monthly ticks when the span is
-  longer than about eight months). `xy` is a 1D-vs-1D scatter (`--x`/`--y` or one `-i`); see
+  on the x-axis. `xy` is a 1D-vs-1D scatter (`--x`/`--y` or one `-i`); see
   `--pair-on`. Windrose converts u/v to meteorological-from direction (the
   direction the wind blows **from**) and speed, then histograms every remaining
   sample. Quiver is the S2S wind-vector map (speed field + arrows).

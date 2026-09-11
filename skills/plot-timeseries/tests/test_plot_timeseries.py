@@ -209,46 +209,6 @@ def test_day_of_year_tick_label():
     assert mod._day_of_year_tick_label(366) == "Dec 31"
 
 
-def test_apply_weekly_date_ticks_uses_mondays():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.dates as mdates
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    mod = load_skill("plot-timeseries", "plot_timeseries")
-    fig, ax = plt.subplots()
-    days = mdates.date2num(np.arange("2026-08-03", "2026-09-08", dtype="datetime64[D]"))
-    ax.plot(days, np.arange(len(days)))
-    ax.set_xlim(days[0], days[-1])
-    mod._apply_weekly_date_ticks(ax)
-    fig.canvas.draw()
-    ticks = [mdates.num2date(t) for t in ax.get_xticks() if days[0] - 0.5 <= t <= days[-1] + 0.5]
-    assert ticks
-    assert all(tick.weekday() == 0 for tick in ticks)
-    plt.close(fig)
-
-
-def test_apply_day_of_year_ticks_seasonal_are_weekly():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    mod = load_skill("plot-timeseries", "plot_timeseries")
-    fig, ax = plt.subplots()
-    ax.plot([274, 288, 302, 316], [1, 2, 3, 4])
-    ax.set_xlim(274, 334)
-    mod._apply_day_of_year_ticks(ax)
-    fig.canvas.draw()
-    labels = [tick.get_text() for tick in ax.get_xticklabels() if tick.get_text()]
-    assert labels
-    assert "Oct 1" not in labels
-    assert any(label.startswith("Oct") for label in labels)
-    plt.close(fig)
-
-
 def test_apply_day_of_year_ticks(tmp_path, plot_timeseries):
     import matplotlib
 
@@ -261,10 +221,10 @@ def test_apply_day_of_year_ticks(tmp_path, plot_timeseries):
     ax.set_xlim(1, 366)
     mod._apply_day_of_year_ticks(ax)
     fig.canvas.draw()
-    labels = [tick.get_text() for tick in ax.get_xticklabels()]
-    assert "Oct 1" in labels
-    assert "Jan 1" in labels
+    labels = [tick.get_text() for tick in ax.get_xticklabels() if tick.get_text()]
+    assert labels
     assert "274" not in labels
+    assert any(any(ch.isalpha() for ch in label) for label in labels)
     plt.close(fig)
 
     src = write_zarr(make_gridded(n_time=12, start="2023-01-01"), tmp_path / "in.zarr")
