@@ -89,8 +89,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
 - `--title` — optional figure title.
 - `--xlabel` / `--ylabel` — optional axis-label overrides. When omitted, x is
   blank if the ticks are dates (`Time` / `Valid time` are redundant);
-  otherwise `Calendar day` or the time dim. Y comes from the variable
-  metadata. Passed text is used as-is.
+  otherwise `Calendar day` or the time dim. Date ticks are Mondays by
+  default (monthly when the span is longer than about eight months).
+  Y comes from the variable metadata. Passed text is used as-is.
 - `--fontsize` — base font size for titles, axis labels, ticks, and legend
   (default 16). Raise on user request (e.g. `--fontsize 22`).
 - `--style` — `line` (default) or `bar`. Default for every series; a per-trace
@@ -102,7 +103,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
 - `--align-day-of-year` — opt-in (default off). Plot each trace against its
   day-of-year (1–366) instead of its absolute date, so inputs from different
   years overlay on a shared x-axis. Tick labels show calendar dates (e.g.
-  `Oct 1`); the x-axis label is `calendar day`.
+  `Oct 6` on Mondays; first-of-month on a full-year axis); the x-axis
+  label is `calendar day`.
   Caveats:
   - Requires a calendar-date time axis. It errors (exit 2) on a non-date axis,
     such as a forecast `step` timedelta; drop the flag or select a date dim

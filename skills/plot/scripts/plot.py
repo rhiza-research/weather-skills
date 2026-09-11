@@ -919,6 +919,29 @@ def _resolve_time_axis_label(override, default, values):
     return _axis_label(default)
 
 
+# Weekly Monday ticks are the default for seasonal/monthly series. Shorter
+# windows stay on AutoDate so a week of daily points still has labels;
+# multi-season spans switch to months so the axis is not 50+ Mondays.
+_WEEKLY_TICK_MIN_DAYS = 14
+_MONTHLY_TICK_MIN_DAYS = 240
+
+
+def _apply_weekly_date_ticks(ax):
+    """Major datetime ticks: Mondays by default, monthly if the span is long."""
+    import matplotlib.dates as mdates
+
+    xmin, xmax = ax.get_xlim()
+    span_days = float(xmax - xmin)
+    if span_days >= _MONTHLY_TICK_MIN_DAYS:
+        locator = mdates.MonthLocator()
+    elif span_days >= _WEEKLY_TICK_MIN_DAYS:
+        locator = mdates.WeekdayLocator(byweekday=mdates.MO)
+    else:
+        locator = mdates.AutoDateLocator(minticks=3, maxticks=8)
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+
+
 def _format_step(value):
     import numpy as np
 
@@ -3521,6 +3544,7 @@ def plot(
         ax.set_title(title or f"{qty} ({style})", fontsize=fontsize)
         ax.tick_params(labelsize=tick_fs)
         if _is_datetime_axis(xvals):
+            _apply_weekly_date_ticks(ax)
             fig.autofmt_xdate()
         fig.tight_layout()
 

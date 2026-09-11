@@ -342,6 +342,26 @@ def test_timeseries_forecast_writes_png(tmp_path, plot_fn):
     assert out.stat().st_size > 0
 
 
+def test_apply_weekly_date_ticks_uses_mondays():
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+
+    plot_mod = load_skill("plot", "plot")
+    fig, ax = plt.subplots()
+    days = mdates.date2num(np.arange("2026-08-03", "2026-09-08", dtype="datetime64[D]"))
+    ax.plot(days, np.arange(len(days)))
+    ax.set_xlim(days[0], days[-1])
+    plot_mod._apply_weekly_date_ticks(ax)
+    fig.canvas.draw()
+    ticks = [mdates.num2date(t) for t in ax.get_xticks() if days[0] - 0.5 <= t <= days[-1] + 0.5]
+    assert ticks
+    assert all(tick.weekday() == 0 for tick in ticks)
+    plt.close(fig)
+
+
 def test_precip_default_colormap_is_kmsa_total_palette():
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
