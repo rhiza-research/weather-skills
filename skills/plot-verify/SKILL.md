@@ -1,6 +1,6 @@
 ---
 name: plot-verify
-description: Plot a lead-week verification grid from pre-computed verify Zarrs. Observation is shown once (the verifying week); columns are week-4 through week-1 forecasts with the verify metric under each. Run the verify skill on each forecast/obs pair first. For precipitation, aggregate-temporal then convert-to-totals before verify. Use --fontsize to enlarge column/row labels, ticks, and colorbars (default 18).
+description: Plot a lead-week verification grid from pre-computed verify Zarrs. Columns are week-4 through week-1 forecasts; rows are obs, forecast, and the verify metric map. Run the verify skill on each forecast/obs pair first. For precipitation, aggregate-temporal then convert-to-totals before verify. Use --fontsize to enlarge column/row labels, ticks, and colorbars (default 14).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py *)
@@ -15,14 +15,12 @@ Lead-week **verification figure** for **one observation week**. This skill
 **plots only** — it does not compute verification. Run `verify` on each
 forecast/obs pair first, then pass the resulting Zarrs here.
 
-Columns run **least recent to most recent** (4-week lead on the left,
-1-week lead on the right). Observation is drawn **once**, titled with the
-verifying week dates. Column titles name the forecast lead, not a
-different obs week.
+Columns run **least recent to most recent** (week-4 on the left, week-1
+on the right):
 
-| | 4-week lead | 3-week lead | 2-week lead | 1-week lead |
+| | Week 4 | Week 3 | Week 2 | Week 1 |
 | --- | --- | --- | --- | --- |
-| obs product | one map (verifying week) | | | |
+| obs product | obs map | obs map | obs map | obs map |
 | forecast product | week-4 map | week-3 map | week-2 map | week-1 map |
 | Verification | verify map | verify map | verify map | verify map |
 
@@ -55,7 +53,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
     --forecast <week3.zarr> --verify <verify_w3.zarr> \
     ... \
     -o <out.png> [--variable NAME] \
-    [--lead "4-week lead" ...] [--title TEXT] [--fontsize N] [--colormap NAME] \
+    [--lead "Week 4" ...] [--title TEXT] [--fontsize N] [--colormap NAME] \
     [--bbox N/W/S/E] [--mask-geojson PATH]
 ```
 
@@ -68,26 +66,21 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
   **Required once per `--forecast`**, same order.
 - `--variable`, `-v` — obs/forecast data variable (verify Zarrs carry
   their own verification variable).
-- `--lead` — column title, once per `--forecast`. Default: `N-week lead`
-  … `1-week lead` so columns read as forecast lead time, not as different
-  observation weeks.
+- `--lead` — column title, once per `--forecast`.
 - `--label` — row title override. Pass once for `--obs`, then once per
   `--forecast` (same order). The forecast row uses one label when all match,
   otherwise joins unique labels with ` / `. The verify row stays the metric
   name (Hits, Bias, MAE). When omitted, row titles are inferred from provenance.
 - `--fontsize` — base font size for column/row labels, ticks, and colorbars
-  (default 18). Raise on user request (e.g. `--fontsize 22`).
+  (default 14). Raise on user request (e.g. `--fontsize 18`).
 - `--colormap`, `--title`, `--bbox`, `--mask-geojson`, `--output` — as before.
 
 ### Output
 
-A PNG with one observation map above an N-column forecast + verify grid.
-Stdout echoes each column's `verify_score_summary` from the corresponding
-`--verify` Zarr. The verify-row colorbar is metric-specific: hits use
-disagree / below / hit classes; bias uses a brown (dry) ↔ white ↔ blue
-(wet) scale centered on zero; MAE uses white at zero through warm colors.
-The observation panel is titled with the verifying week dates. Colorbar
-strips are short; tick and label type is large.
+A 3 × N PNG. Stdout echoes each column's `verify_score_summary` from
+the corresponding `--verify` Zarr. The verify-row colorbar is metric-
+specific: hits use disagree / below / hit classes; bias uses a blue↔white↔red
+diverging scale centered on zero; MAE uses white at zero through warm colors.
 
 ## Example
 
