@@ -2,6 +2,7 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
+#   "shapely>=2.1",
 # ]
 # ///
 """Resolve a country, named region, custom box, admin unit, or Nominatim landmark to a bbox and optional polygon."""
