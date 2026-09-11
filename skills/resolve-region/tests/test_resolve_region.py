@@ -193,23 +193,26 @@ def test_east_africa_prints_ne_subregion_bbox(capsys, resolve_region, monkeypatc
 
     run_skill(resolve_region, "East Africa")
     n, w, s, e = (float(x) for x in capsys.readouterr().out.strip().split("/"))
-    assert s < -20
+    assert s == pytest.approx(-15.0)
     assert n > 10
     assert w < 30 < e
     assert w < 38 < e
 
 
-def test_eastern_africa_matches_east_africa(capsys, resolve_region, monkeypatch):
+def test_eastern_africa_keeps_madagascar(capsys, resolve_region, monkeypatch):
     def _fail_nominatim(query):
         raise AssertionError(f"Nominatim should not run for Eastern Africa; got {query!r}")
 
     monkeypatch.setattr("weather_skills_core.region._load_nominatim", _fail_nominatim)
 
     run_skill(resolve_region, "East Africa")
-    east = capsys.readouterr().out.strip()
+    _en, _ew, es, _ee = (float(x) for x in capsys.readouterr().out.strip().split("/"))
     run_skill(resolve_region, "Eastern Africa")
-    eastern = capsys.readouterr().out.strip()
-    assert east == eastern
+    n, w, s, e = (float(x) for x in capsys.readouterr().out.strip().split("/"))
+    assert s < -20
+    assert s < es
+    assert n > 10
+    assert w < 30 < e
 
 
 def test_kenya_ond_region_prints_custom_bbox(capsys, resolve_region, monkeypatch):
