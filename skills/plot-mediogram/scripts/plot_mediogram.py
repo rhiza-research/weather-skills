@@ -27,6 +27,66 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
+_TITLE_WRAP_WIDTH = 56
+
+
+def _wrap_title(text):
+    """Split a long title onto at most two lines at a natural break."""
+    if text is None:
+        return None
+    s = str(text).replace("\\n", "\n").strip()
+    if not s or "\n" in s or len(s) <= _TITLE_WRAP_WIDTH:
+        return s
+    for sep in (" · ", " — ", " – ", ": "):
+        idx = s.find(sep)
+        if 12 <= idx <= len(s) - 8:
+            return s[:idx].rstrip() + "\n" + s[idx + len(sep) :].lstrip()
+    mid = len(s) // 2
+    lo, hi = max(12, int(len(s) * 0.35)), min(len(s) - 8, int(len(s) * 0.70))
+    best = -1
+    for i in range(lo, hi + 1):
+        if s[i].isspace() and (best < 0 or abs(i - mid) < abs(best - mid)):
+            best = i
+    if best < 0:
+        best = s.rfind(" ", 0, _TITLE_WRAP_WIDTH + 1)
+        if best < 12:
+            best = s.find(" ", _TITLE_WRAP_WIDTH)
+    if best < 12:
+        return s
+    return s[:best].rstrip() + "\n" + s[best + 1 :].lstrip()
+
+
+def _title_lines(text):
+    wrapped = _wrap_title(text)
+    if not wrapped:
+        return []
+    return [ln for ln in str(wrapped).splitlines() if ln.strip()][:2]
+
+
+def _draw_axes_title(ax, title, fontsize, pad=None):
+    lines = _title_lines(title)
+    if not lines:
+        return
+    if len(lines) == 1:
+        kw = {"fontsize": fontsize}
+        if pad is not None:
+            kw["pad"] = pad
+        ax.set_title(lines[0], **kw)
+        return
+    extra = (pad if pad is not None else 6) + 1.4 * fontsize
+    ax.set_title(" ", fontsize=fontsize, pad=extra)
+    for i, line in enumerate(lines):
+        ax.text(
+            0.5,
+            1.0 + 0.02 + (len(lines) - 1 - i) * 0.085,
+            line,
+            transform=ax.transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=fontsize,
+            clip_on=False,
+        )
+
 
 def _axis_label(text):
     """Sentence-case an axis label; map lon/lat shorthand to Longitude/Latitude."""
@@ -207,9 +267,10 @@ def plot_mediogram(ds, variable, lat, lon, title, xlabel, ylabel, fontsize, outp
         fontsize=fontsize,
     )
     qty = variable_label_for_display(pt_fc, fallback=variable, include_units=False)
-    ax.set_title(
+    _draw_axes_title(
+        ax,
         title or f"Mediogram: {qty} at lat={snapped_lat:g}, lon={snapped_lon:g}",
-        fontsize=fontsize,
+        fontsize,
     )
     ax.tick_params(labelsize=tick_fs)
     ax.grid(True, linestyle="--", alpha=0.6)

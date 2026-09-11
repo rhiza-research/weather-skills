@@ -86,7 +86,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
   ensemble Zarr and a 1D obs Zarr can share the same `--along number`).
   `--along` traces are lines even when `--style bar`. `--trace` selectors
   refer to the `--input` (1-based index / label), not to individual members.
-- `--title` — optional figure title.
+- `--title` — optional figure title. Titles longer than about 56 characters
+  wrap onto a second line at a `·` / `:` / word break.
 - `--xlabel` / `--ylabel` — optional axis-label overrides. When omitted, x is
   blank if the ticks are dates (`Time` / `Valid time` are redundant);
   otherwise `Calendar day` or the time dim. Date ticks are Mondays by

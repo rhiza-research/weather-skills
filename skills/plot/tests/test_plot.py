@@ -172,6 +172,46 @@ def test_heatmap_colorbar_sits_below_xaxis_label():
     plt.close(fig)
 
 
+def test_wrap_title_splits_long_text_onto_two_lines():
+    plot_mod = load_skill("plot", "plot")
+    assert plot_mod._wrap_title("S2S precip") == "S2S precip"
+    assert plot_mod._wrap_title(None) is None
+    dotted = plot_mod._wrap_title(
+        "Kenya GEFS vs CHIRPS 5 mm event verification · 2026-08-04 to 2026-08-10"
+    )
+    assert dotted == "Kenya GEFS vs CHIRPS 5 mm event verification\n2026-08-04 to 2026-08-10"
+    long = (
+        "Weekly rainfall totals averaged over Kenya counties compared with the "
+        "CHIRPS climatology for the same calendar window"
+    )
+    wrapped = plot_mod._wrap_title(long)
+    assert "\n" in wrapped
+    assert wrapped.count("\n") == 1
+    assert wrapped.replace("\n", " ") == long
+
+
+def test_draw_figure_title_two_lines_are_separate_texts():
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    plot_mod = load_skill("plot", "plot")
+    fig, _ax = plt.subplots(figsize=(8, 6))
+    plot_mod._draw_figure_title(
+        fig,
+        "Kenya GEFS vs CHIRPS 5 mm event verification · 2026-08-04 to 2026-08-10",
+        16,
+        0.99,
+    )
+    fig.canvas.draw()
+    texts = [t.get_text() for t in fig.texts]
+    assert all("\n" not in t for t in texts)
+    assert any("Kenya GEFS vs CHIRPS" in t for t in texts)
+    assert any("2026-08-04" in t for t in texts)
+    plt.close(fig)
+
+
 def test_heatmap_figure_title_sits_above_axes():
     import matplotlib
 

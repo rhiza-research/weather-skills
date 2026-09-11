@@ -70,7 +70,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.z
   anomalies (negatives, or `anomal` in the name) use the CHIRPS-GEFS
   diverging classes. Every other variable uses `viridis`. One shared
   scale across all present cells.
-- `--title` — optional figure title.
+- `--title` — optional figure title. Long titles wrap onto a second line.
 - `--fontsize` — base font size for column titles, row labels, ticks, and
   colorbars (default 14). Raise on user request (e.g. `--fontsize 18`).
 - `--panels` — cap on columns, keeping the earliest N of the union. Default

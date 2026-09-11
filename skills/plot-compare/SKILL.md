@@ -121,7 +121,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
   shared color scale across both rows or a per-row scale + colorbar. When
   neither is given, the mode is chosen automatically: shared when both
   rows resolve to the same variable AND matching units, else independent.
-- `--title` — figure title.
+- `--title` — figure title. Long titles wrap onto a second line.
 - `--xlabel` — override the bottom longitude axis label (default `Longitude`).
   Row titles stay `--label`.
 - `--fontsize` — base font size for panel titles, row labels, ticks, and

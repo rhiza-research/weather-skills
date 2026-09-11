@@ -74,6 +74,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
 - `--fontsize` — base font size (default 18). Title is larger than column
   headers; lat/lon ticks stay smaller.
 - `--colormap`, `--title`, `--bbox`, `--mask-geojson`, `--output` — as before.
+  A long `--title` (or title plus verifying-week dates) wraps onto a second
+  line.
 
 ### Output
 

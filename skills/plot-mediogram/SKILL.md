@@ -41,7 +41,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py -i <forecast.zarr> -i <mcli
 - `--lat`, `--lon` — point location (nearest-neighbor selection).
 - `--output`, `-o` — PNG output path.
 - `--variable`, `-v` — variable name. Defaults to the first data variable in the forecast input.
-- `--title` — optional plot title.
+- `--title` — optional plot title. Long titles wrap onto a second line.
 - `--xlabel` / `--ylabel` — optional axis-label overrides (defaults: `Forecast step`
   and the variable label). Passed text is used as-is.
 - `--fontsize` — base font size for titles, axis labels, ticks, and legend

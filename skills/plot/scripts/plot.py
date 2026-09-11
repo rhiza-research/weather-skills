@@ -1179,7 +1179,7 @@ def _plot_xy(
     ax.set_ylabel(_resolve_axis_label(ylabel, _variable_label(y_da)), fontsize=fontsize)
     x_qty = variable_label_for_display(x_da, include_units=False)
     y_qty = variable_label_for_display(y_da, include_units=False)
-    ax.set_title(title or f"{y_qty} vs {x_qty}", fontsize=fontsize)
+    _draw_axes_title(ax, title or f"{y_qty} vs {x_qty}", fontsize)
     ax.tick_params(labelsize=tick_fs)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -1230,9 +1230,90 @@ def _panel_title_fontsize(fontsize):
     return int(fontsize)
 
 
+_TITLE_WRAP_WIDTH = 56
+
+
+def _wrap_title(text):
+    """Split a long title onto at most two lines at a natural break."""
+    if text is None:
+        return None
+    s = str(text).replace("\\n", "\n").strip()
+    if not s or "\n" in s or len(s) <= _TITLE_WRAP_WIDTH:
+        return s
+    for sep in (" · ", " — ", " – ", ": "):
+        idx = s.find(sep)
+        if 12 <= idx <= len(s) - 8:
+            return s[:idx].rstrip() + "\n" + s[idx + len(sep) :].lstrip()
+    mid = len(s) // 2
+    lo, hi = max(12, int(len(s) * 0.35)), min(len(s) - 8, int(len(s) * 0.70))
+    best = -1
+    for i in range(lo, hi + 1):
+        if s[i].isspace() and (best < 0 or abs(i - mid) < abs(best - mid)):
+            best = i
+    if best < 0:
+        best = s.rfind(" ", 0, _TITLE_WRAP_WIDTH + 1)
+        if best < 12:
+            best = s.find(" ", _TITLE_WRAP_WIDTH)
+    if best < 12:
+        return s
+    return s[:best].rstrip() + "\n" + s[best + 1 :].lstrip()
+
+
+def _title_lines(text):
+    """1–2 display lines for a figure or axes title."""
+    wrapped = _wrap_title(text)
+    if not wrapped:
+        return []
+    return [ln for ln in str(wrapped).splitlines() if ln.strip()][:2]
+
+
+def _draw_figure_title(fig, title, fontsize, y):
+    """Draw a one- or two-line figure title as separate centered texts.
+
+    A single ``suptitle`` with ``\\n`` is clipped or left-aligned on many
+    matplotlib builds; two ``fig.text`` artists stay centered and inside the
+    reserved title band.
+    """
+    lines = _title_lines(title)
+    if not lines:
+        return
+    if len(lines) == 1:
+        fig.suptitle(lines[0], fontsize=fontsize, y=y, ha="center", va="top")
+        return
+    fig_h = max(fig.get_figheight(), 1e-6)
+    step = 1.35 * (fontsize / 72.0) / fig_h
+    for i, line in enumerate(lines):
+        fig.text(0.5, y - i * step, line, ha="center", va="top", fontsize=fontsize)
+
+
+def _draw_axes_title(ax, title, fontsize, pad=None):
+    """Draw a one- or two-line axes title; each line is its own centered text."""
+    lines = _title_lines(title)
+    if not lines:
+        return
+    if len(lines) == 1:
+        kw = {"fontsize": fontsize}
+        if pad is not None:
+            kw["pad"] = pad
+        ax.set_title(lines[0], **kw)
+        return
+    extra = (pad if pad is not None else 6) + 1.4 * fontsize
+    ax.set_title(" ", fontsize=fontsize, pad=extra)
+    for i, line in enumerate(lines):
+        ax.text(
+            0.5,
+            1.0 + 0.02 + (len(lines) - 1 - i) * 0.085,
+            line,
+            transform=ax.transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=fontsize,
+            clip_on=False,
+        )
+
+
 def _set_figure_title(fig, title, fontsize):
-    if title:
-        fig.suptitle(title, fontsize=fontsize, y=_FIG_TITLE_Y)
+    _draw_figure_title(fig, title, fontsize, _FIG_TITLE_Y)
 
 
 def _set_panel_title(ax, text, fontsize):
@@ -1569,7 +1650,7 @@ def _windrose(speed, direction, *, title, fontsize, units_disp, colormap, units)
         frameon=False,
     )
     if title:
-        fig.suptitle(title, fontsize=fontsize, y=0.98)
+        _draw_figure_title(fig, title, fontsize, 0.98)
     return fig
 
 
@@ -3541,7 +3622,7 @@ def plot(
             fontsize=fontsize,
         )
         qty = variable_label_for_display(reduced, include_units=False)
-        ax.set_title(title or f"{qty} ({style})", fontsize=fontsize)
+        _draw_axes_title(ax, title or f"{qty} ({style})", fontsize)
         ax.tick_params(labelsize=tick_fs)
         if _is_datetime_axis(xvals):
             _apply_weekly_date_ticks(ax)

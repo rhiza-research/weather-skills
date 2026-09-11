@@ -200,7 +200,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   anomaly quivers. A variable with CF `flag_values` (e.g. `verify --metric hits`) uses a
   discrete colormap and labeled colorbar ticks; `--colormap` as comma-separated
   colors must then match the flag count.
-- `--title` — optional plot title.
+- `--title` — optional plot title. Titles longer than about 56 characters
+  wrap onto a second line at a `·` / `:` / word break.
 - `--xlabel` / `--ylabel` — optional axis-label overrides. When omitted, maps
   use `Longitude` / `Latitude`, timeseries omits the x label when ticks are
   dates (otherwise the time dim) and uses the variable label on y, and `xy`

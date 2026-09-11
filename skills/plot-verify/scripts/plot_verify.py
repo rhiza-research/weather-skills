@@ -388,7 +388,56 @@ _COL_GAP_IN = 0.14
 _ROW_GAP_IN = 0.32
 _MAP_HEIGHT_IN = 3.8
 _TITLE_BAND_IN = 0.58
+_TITLE_BAND_TWO_LINE_IN = 0.96
 _COL_HEADER_IN = 0.48
+_TITLE_WRAP_WIDTH = 56
+
+
+def _wrap_title(text):
+    """Split a long title onto at most two lines at a natural break."""
+    if text is None:
+        return None
+    s = str(text).replace("\\n", "\n").strip()
+    if not s or "\n" in s or len(s) <= _TITLE_WRAP_WIDTH:
+        return s
+    for sep in (" · ", " — ", " – ", ": "):
+        idx = s.find(sep)
+        if 12 <= idx <= len(s) - 8:
+            return s[:idx].rstrip() + "\n" + s[idx + len(sep) :].lstrip()
+    mid = len(s) // 2
+    lo, hi = max(12, int(len(s) * 0.35)), min(len(s) - 8, int(len(s) * 0.70))
+    best = -1
+    for i in range(lo, hi + 1):
+        if s[i].isspace() and (best < 0 or abs(i - mid) < abs(best - mid)):
+            best = i
+    if best < 0:
+        best = s.rfind(" ", 0, _TITLE_WRAP_WIDTH + 1)
+        if best < 12:
+            best = s.find(" ", _TITLE_WRAP_WIDTH)
+    if best < 12:
+        return s
+    return s[:best].rstrip() + "\n" + s[best + 1 :].lstrip()
+
+
+def _title_lines(text):
+    wrapped = _wrap_title(text)
+    if not wrapped:
+        return []
+    return [ln for ln in str(wrapped).splitlines() if ln.strip()][:2]
+
+
+def _draw_figure_title(fig, title, fontsize, y):
+    """One or two centered title lines. Avoids ``suptitle`` + newline."""
+    lines = _title_lines(title)
+    if not lines:
+        return
+    if len(lines) == 1:
+        fig.suptitle(lines[0], fontsize=fontsize, y=y, ha="center", va="top")
+        return
+    fig_h = max(fig.get_figheight(), 1e-6)
+    step = 1.35 * (fontsize / 72.0) / fig_h
+    for i, line in enumerate(lines):
+        fig.text(0.5, y - i * step, line, ha="center", va="top", fontsize=fontsize)
 
 
 def _colorbar_tick_count(norm):
@@ -425,7 +474,12 @@ def _figure_layout(n_leads, extent, n_ticks, *, title):
     fig_w = max(_LABEL_IN + grid_w + _RIGHT_IN, _colorbar_min_width(n_ticks), 10.0)
     extra_right = max(fig_w - (_LABEL_IN + grid_w + _RIGHT_IN), 0.0)
     # Figure title sits in title_in; axes titles stick up into header_in.
-    title_in = _TITLE_BAND_IN if title else 0.10
+    if title and "\n" in str(title):
+        title_in = _TITLE_BAND_TWO_LINE_IN
+    elif title:
+        title_in = _TITLE_BAND_IN
+    else:
+        title_in = 0.10
     header_in = _COL_HEADER_IN
     fig_h = title_in + header_in + 2 * map_h + _ROW_GAP_IN + _CBAR_ROW_IN
     left = _LABEL_IN / fig_w
@@ -450,7 +504,7 @@ def _figure_layout(n_leads, extent, n_ticks, *, title):
         "hspace": _ROW_GAP_IN / map_h,
         "field_box": field_box,
         "verify_box": verify_box,
-        "title_y": 1.0 - title_in / (2.0 * fig_h),
+        "title_y": 1.0 - 0.08 / fig_h,
         "n_cols": n_cols,
     }
 
@@ -834,7 +888,11 @@ def plot_verify(
 
     n_leads = len(columns)
     n_ticks = _colorbar_tick_count(norm)
-    layout = _figure_layout(n_leads, extent, n_ticks, title=bool(title) or bool(week_dates))
+    fig_title = title
+    if week_dates and not (title and week_dates in title):
+        fig_title = f"{title} · {week_dates}" if title else week_dates
+    fig_title = _wrap_title(fig_title)
+    layout = _figure_layout(n_leads, extent, n_ticks, title=fig_title)
     fig = plt.figure(figsize=layout["figsize"])
     gs = fig.add_gridspec(
         2,
@@ -854,12 +912,12 @@ def plot_verify(
         fig.add_subplot(gs[1, i + 1], projection=ccrs.PlateCarree()) for i in range(n_leads)
     ]
 
-    fig_title = title
-    if week_dates and not (title and week_dates in title):
-        fig_title = f"{title} · {week_dates}" if title else week_dates
     if fig_title:
-        fig.suptitle(
-            fig_title, fontsize=_scaled_fontsize(fontsize, 1.25), y=layout["title_y"]
+        _draw_figure_title(
+            fig,
+            fig_title,
+            _scaled_fontsize(fontsize, 1.25),
+            layout["title_y"],
         )
 
     tick_fs = _scaled_fontsize(fontsize, 0.55, floor=8)

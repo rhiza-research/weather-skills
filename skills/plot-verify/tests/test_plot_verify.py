@@ -145,6 +145,41 @@ def test_colorbar_min_width_fits_precip_class_ticks(plot_mod):
     assert needed < 10.0
 
 
+def test_wrap_title_and_two_line_title_band(plot_mod):
+    short = plot_mod._wrap_title("Hits")
+    assert short == "Hits"
+    dotted = plot_mod._wrap_title(
+        "Kenya GEFS vs CHIRPS 5 mm event verification · 2026-08-04 to 2026-08-10"
+    )
+    assert dotted == "Kenya GEFS vs CHIRPS 5 mm event verification\n2026-08-04 to 2026-08-10"
+    extent = [34.0, 42.0, -5.0, 5.0]
+    one = plot_mod._figure_layout(4, extent, 14, title="Hits")
+    two = plot_mod._figure_layout(4, extent, 14, title=dotted)
+    assert two["figsize"][1] > one["figsize"][1]
+    assert two["maps_top"] < one["maps_top"]
+
+
+def test_draw_figure_title_two_lines_are_separate_texts(plot_mod):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, _ax = plt.subplots(figsize=(10, 8))
+    plot_mod._draw_figure_title(
+        fig,
+        "Kenya GEFS vs CHIRPS 5 mm event verification · 2026-08-04 to 2026-08-10",
+        18,
+        0.98,
+    )
+    fig.canvas.draw()
+    texts = [t.get_text() for t in fig.texts]
+    assert all("\n" not in t for t in texts)
+    assert any("Kenya GEFS vs CHIRPS" in t for t in texts)
+    assert any("2026-08-04" in t for t in texts)
+    plt.close(fig)
+
+
 def test_figure_layout_obs_then_leads(plot_mod):
     extent = [34.0, 42.0, -5.0, 5.0]
     layout = plot_mod._figure_layout(4, extent, 14, title=True)

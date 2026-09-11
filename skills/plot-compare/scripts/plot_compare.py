@@ -43,6 +43,55 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
+_TITLE_WRAP_WIDTH = 56
+
+
+def _wrap_title(text):
+    """Split a long title onto at most two lines at a natural break."""
+    if text is None:
+        return None
+    s = str(text).replace("\\n", "\n").strip()
+    if not s or "\n" in s or len(s) <= _TITLE_WRAP_WIDTH:
+        return s
+    for sep in (" · ", " — ", " – ", ": "):
+        idx = s.find(sep)
+        if 12 <= idx <= len(s) - 8:
+            return s[:idx].rstrip() + "\n" + s[idx + len(sep) :].lstrip()
+    mid = len(s) // 2
+    lo, hi = max(12, int(len(s) * 0.35)), min(len(s) - 8, int(len(s) * 0.70))
+    best = -1
+    for i in range(lo, hi + 1):
+        if s[i].isspace() and (best < 0 or abs(i - mid) < abs(best - mid)):
+            best = i
+    if best < 0:
+        best = s.rfind(" ", 0, _TITLE_WRAP_WIDTH + 1)
+        if best < 12:
+            best = s.find(" ", _TITLE_WRAP_WIDTH)
+    if best < 12:
+        return s
+    return s[:best].rstrip() + "\n" + s[best + 1 :].lstrip()
+
+
+def _title_lines(text):
+    wrapped = _wrap_title(text)
+    if not wrapped:
+        return []
+    return [ln for ln in str(wrapped).splitlines() if ln.strip()][:2]
+
+
+def _draw_figure_title(fig, title, fontsize, y):
+    lines = _title_lines(title)
+    if not lines:
+        return
+    if len(lines) == 1:
+        fig.suptitle(lines[0], fontsize=fontsize, y=y, ha="center", va="top")
+        return
+    fig_h = max(fig.get_figheight(), 1e-6)
+    step = 1.35 * (fontsize / 72.0) / fig_h
+    for i, line in enumerate(lines):
+        fig.text(0.5, y - i * step, line, ha="center", va="top", fontsize=fontsize)
+
+
 # KMSA 24-hour cumulative rainfall classes (mm). Daily / weekly / dekadal
 # totals use the official labeled breaks; monthly and longer use the same
 # colors at 5×.
@@ -819,7 +868,7 @@ def plot_compare(
     top_axes = [fig.add_subplot(gs[0, i]) for i in range(n)]
     bottom_axes = [fig.add_subplot(gs[1, i]) for i in range(n)]
     if title:
-        fig.suptitle(title, fontsize=_scaled_fontsize(fontsize, 1.1), y=0.99)
+        _draw_figure_title(fig, title, _scaled_fontsize(fontsize, 1.1), 0.99)
 
     if a_station and not b_station:
         gridded_ds, gridded_var = ds_b, var_b
