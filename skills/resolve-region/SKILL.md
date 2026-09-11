@@ -121,15 +121,15 @@ A few briefing regions that are not Natural Earth groupings or admin units
 are bundled as rectangles (`level` is `custom`). They never hit Nominatim.
 
 - `Kenya OND region` (also `Kenya OND`, `OND Kenya`,
-  `Central-Eastern Kenya`, `CE Kenya`) — short-rains analog box
-  `1.0/36.5/-3.0/39.0` (N/W/S/E), inside Kenya, east of the Rift.
+  `Central-Eastern Kenya`, `CE Kenya`) — analog box
+  `5.0/36.5/-5.0/42.0` (5°N–5°S, 36.5°E–42°E), east of the Rift.
 - `Indian Ocean basin` (also `Indian Ocean`, `IOB`) — conventional
   basin box `30.0/20.0/-40.0/120.0` (30°N–40°S, 20°E–120°E). Not the
   Nominatim ocean centroid.
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py "Kenya OND region"
-# -> 1.0/36.5/-3.0/39.0
+# -> 5.0/36.5/-5.0/42.0
 uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py "Indian Ocean"
 # -> 30.0/20.0/-40.0/120.0
 ```
@@ -261,7 +261,7 @@ labels, joined to the bundled countries (offline). `East Africa` is the
 `Eastern Africa` keeps the full UN box (Madagascar, Mozambique, Zambia).
 
 **Custom forecast boxes.** Rectangles listed in weather-skills-core
-`region.py` (offline). `Kenya OND region` is `1.0/36.5/-3.0/39.0`, not
+`region.py` (offline). `Kenya OND region` is `5.0/36.5/-5.0/42.0`, not
 a geoBoundaries county union and not Nominatim. `Indian Ocean` /
 `Indian Ocean basin` is `30.0/20.0/-40.0/120.0`, not a Nominatim centroid.
 

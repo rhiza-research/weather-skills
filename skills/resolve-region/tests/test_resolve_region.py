@@ -224,9 +224,9 @@ def test_kenya_ond_region_prints_custom_bbox(capsys, resolve_region, monkeypatch
     monkeypatch.setattr("weather_skills_core.region._load_nominatim", _fail_nominatim)
 
     run_skill(resolve_region, "Kenya OND region")
-    assert capsys.readouterr().out.strip() == "1.0/36.5/-3.0/39.0"
+    assert capsys.readouterr().out.strip() == "5.0/36.5/-5.0/42.0"
     run_skill(resolve_region, "Kenya OND")
-    assert capsys.readouterr().out.strip() == "1.0/36.5/-3.0/39.0"
+    assert capsys.readouterr().out.strip() == "5.0/36.5/-5.0/42.0"
 
 
 def test_indian_ocean_prints_basin_bbox(capsys, resolve_region, monkeypatch):
