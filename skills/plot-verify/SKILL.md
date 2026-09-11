@@ -1,6 +1,6 @@
 ---
 name: plot-verify
-description: Plot a lead-week verification grid from pre-computed verify Zarrs. Observation is shown once (the verifying week); columns are week-4 through week-1 forecasts with the verify metric under each. Run the verify skill on each forecast/obs pair first. For precipitation, aggregate-temporal then convert-to-totals before verify. Use --fontsize to enlarge column/row labels, ticks, and colorbars (default 18).
+description: Plot a lead-week verification grid from pre-computed verify Zarrs. Observation is shown once (the verifying week); columns are week-4 through week-1 forecasts with the verify metric under each. Every --obs and --forecast must already be a single time — run select on the verifying week first (a weekly GEFS cube still has ~5 times after aggregate-temporal). Run verify on each forecast/obs pair before this skill. For precipitation, aggregate-temporal then convert-to-totals before verify. Use --fontsize to enlarge column/row labels, ticks, and colorbars (default 18).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py *)
@@ -12,8 +12,25 @@ metadata:
 # plot-verify
 
 Lead-week **verification figure** for **one observation week**. This skill
-**plots only** — it does not compute verification. Run `verify` on each
-forecast/obs pair first, then pass the resulting Zarrs here.
+**plots only** — it does not compute verification and it does not pick a
+time. Run `select` so every cube is one verifying week, run `verify` on
+each forecast/obs pair, then pass those Zarrs here.
+
+**`--obs` and each `--forecast` must have a single time (size 1).** A
+weekly GEFS (or S2S) cube after `aggregate-temporal --period weekly` still
+has several valid times (often 5: week-0 through week-4). `verify` may
+inner-join down to one time; the forecast file does not. If you see
+`has time size N; select the verifying week`, run `select` first:
+
+```bash
+uv run skills/select/scripts/select_dim.py \
+    --dim time --value 2026-08-30 \
+    --input /tmp/gefs_w4_weekly.zarr --output /tmp/gefs_w4_week.zarr
+```
+
+Use the same `--value` as the obs week (ISO date, exact match). Do that
+for obs and for every lead before `verify` and before this skill. A
+leftover `step` axis needs `step-to-time` first, then `select` on `time`.
 
 Columns run **least recent to most recent** (4-week lead on the left,
 1-week lead on the right). Observation is drawn **once**, titled with the
@@ -33,8 +50,10 @@ Zarr's `verify_score_summary` attr (stamped by `verify`).
 
 ## Pipeline (one obs week)
 
-1. Prepare obs and each lead's forecast (aggregate, coarsen obs onto
-   forecast grid, select verifying week) — same as before.
+1. Prepare obs and each lead's forecast: aggregate, `step-to-time` if
+   needed, **`select` the verifying week** (`--dim time --value <week
+   start>`), coarsen obs onto the forecast grid. Every file passed to
+   `verify` / `plot-verify` is then one time.
 2. For each lead, run `verify`:
 
 ```bash
@@ -44,7 +63,7 @@ uv run skills/verify/scripts/verify.py \
 # repeat for week 3, 2, 1 …
 ```
 
-3. Pass obs, forecasts, and verify Zarrs to this skill (week-4 first).
+3. Pass those single-time obs, forecasts, and verify Zarrs here (week-4 first).
 
 ## Usage
 
@@ -61,9 +80,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
 
 ### Arguments
 
-- `--obs` — observation Zarr for the verifying week (required).
-- `--forecast` — forecast Zarr for that week at one lead. Repeat with
-  matching `--verify`.
+- `--obs` — observation Zarr for the verifying week (required). Must
+  already be one time.
+- `--forecast` — forecast Zarr for that **same** week at one lead. Repeat
+  with matching `--verify`. Must already be one time; this skill will not
+  choose among several valid times.
 - `--verify` — verify Zarr from the `verify` skill for that lead.
   **Required once per `--forecast`**, same order.
 - `--variable`, `-v` — obs/forecast data variable (verify Zarrs carry
@@ -92,14 +113,13 @@ strips are short; tick and label type is large.
 ## Example
 
 ```bash
-# Step 1: verify each lead (hits example)
+# Each cube is already one verifying week (select first if time size > 1)
 for w in 4 3 2 1; do
   uv run skills/verify/scripts/verify.py \
     --forecast /tmp/s2s_week${w}.zarr --obs /tmp/chirps_week.zarr \
     --metric hits --threshold 1 -o /tmp/verify_w${w}.zarr
 done
 
-# Step 2: plot
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
     --obs /tmp/chirps_week.zarr \
     --forecast /tmp/s2s_week4.zarr --verify /tmp/verify_w4.zarr \

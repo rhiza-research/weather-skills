@@ -391,17 +391,19 @@ _FIELD_CBAR_LEFT = 0.10
 _FIELD_CBAR_HEIGHT_IN = 0.22
 _VERIFY_CBAR_WIDTH = 0.50
 _VERIFY_CBAR_HEIGHT_IN = 0.20
-_VERIFY_CBAR_Y_IN = 0.28
-_FIELD_CBAR_Y_IN = 1.65
-_CBAR_STACK_IN = 2.10
+_VERIFY_CBAR_Y_IN = 0.72
+_FIELD_CBAR_Y_IN = 1.78
+_CBAR_STACK_IN = 2.20
 # ~inches of colorbar per discrete tick so 3–4 digit labels stay readable.
 _CBAR_INCHES_PER_TICK = 0.95
-_LEFT_MARGIN_IN = 2.35
+_LEFT_MARGIN_IN = 3.20
 _RIGHT_MARGIN_IN = 0.30
 _COL_GAP_IN = 0.16
-_ROW_GAP_IN = 0.22
-_OBS_GAP_IN = 0.52
+_ROW_GAP_IN = 0.28
+_OBS_GAP_IN = 0.62
 _MAP_HEIGHT_IN = 4.0
+# Inches left of the map axes so rotated row names clear lat tick labels.
+_ROW_LABEL_OFFSET_IN = 0.90
 
 
 def _colorbar_tick_count(norm):
@@ -463,8 +465,8 @@ def _figure_layout(ncols, extent, n_ticks, *, title):
         10.0,
     )
     extra_right = max(fig_w - (_LEFT_MARGIN_IN + grid_w + _RIGHT_MARGIN_IN), 0.0)
-    week_title_in = 0.48
-    fig_title_in = 0.62 if title else 0.12
+    week_title_in = 0.55
+    fig_title_in = 0.72 if title else 0.14
     fig_h = (
         fig_title_in
         + week_title_in
@@ -908,13 +910,13 @@ def plot_verify(
     )
     obs_ax = fig.add_subplot(gs_obs[0, 0], projection=ccrs.PlateCarree())
     if title:
-        fig.suptitle(title, fontsize=fontsize, y=layout["title_y"])
+        fig.suptitle(title, fontsize=_scaled_fontsize(fontsize, 1.5), y=layout["title_y"])
 
     tick_fs = _scaled_fontsize(fontsize, 0.5, floor=8)
-    panel_title_fs = fontsize
-    name_fs = _scaled_fontsize(fontsize, 1.5)
-    cbar_label_fs = _scaled_fontsize(fontsize, 1.85)
-    cbar_tick_fs = _scaled_fontsize(fontsize, 1.5)
+    panel_title_fs = _scaled_fontsize(fontsize, 1.4)
+    name_fs = _scaled_fontsize(fontsize, 1.25)
+    cbar_label_fs = _scaled_fontsize(fontsize, 1.25)
+    cbar_tick_fs = fontsize
 
     def _draw(
         ax,
@@ -941,6 +943,9 @@ def plot_verify(
         gl.right_labels = False
         gl.xlabel_style = {"size": tick_fs}
         gl.ylabel_style = {"size": tick_fs}
+        if hasattr(gl, "xpadding"):
+            gl.xpadding = 6
+            gl.ypadding = 6
         if not left_labels:
             gl.left_labels = False
         if not bottom_labels:
@@ -969,12 +974,12 @@ def plot_verify(
         left_labels=True,
         bottom_labels=True,
     )
-    obs_ax.set_title(week_title, fontsize=panel_title_fs, pad=8)
+    obs_ax.set_title(week_title, fontsize=panel_title_fs, pad=10)
 
     verify_mesh = None
     for col, (col_label, fc_da, verify_da, lat_dim, lon_dim) in enumerate(columns):
         left = col == 0
-        fc_axes[col].set_title(col_label, fontsize=panel_title_fs, pad=6)
+        fc_axes[col].set_title(col_label, fontsize=panel_title_fs, pad=8)
         _draw(
             fc_axes[col],
             fc_da,
@@ -1016,6 +1021,8 @@ def plot_verify(
         if verify_mesh is None:
             verify_mesh = mesh
 
+    fig_w, fig_h = layout["figsize"]
+    name_dx = _ROW_LABEL_OFFSET_IN / fig_w
     for ax, row_label in (
         (obs_ax, row_labels[0]),
         (fc_axes[0], row_labels[1]),
@@ -1023,7 +1030,7 @@ def plot_verify(
     ):
         pos = ax.get_position()
         fig.text(
-            pos.x0 - 0.012,
+            pos.x0 - name_dx,
             (pos.y0 + pos.y1) / 2,
             row_label,
             rotation=90,
@@ -1031,6 +1038,19 @@ def plot_verify(
             ha="right",
             fontsize=name_fs,
         )
+
+    def _cbar_caption(box, text):
+        x, y, w, h = box
+        tick_in = max(cbar_tick_fs / 72.0 * 1.4, 0.24)
+        fig.text(
+            x + w / 2,
+            y - (tick_in + 0.08) / fig_h,
+            text,
+            ha="center",
+            va="top",
+            fontsize=cbar_label_fs,
+        )
+
     if field_mesh is not None:
         cbar_ax = fig.add_axes(layout["field_box"])
         cbar = fig.colorbar(
@@ -1039,9 +1059,8 @@ def plot_verify(
             orientation="horizontal",
             **_cbar_boundary_kwargs(norm, cmap),
         )
-        cbar.set_label(_variable_label(obs_da), fontsize=cbar_label_fs, labelpad=18)
-        cbar.ax.tick_params(labelsize=cbar_tick_fs, length=4, width=0.8, pad=6)
-        cbar.ax.xaxis.set_label_coords(0.5, -3.6)
+        cbar.ax.tick_params(labelsize=cbar_tick_fs, length=4, width=0.8, pad=5)
+        _cbar_caption(layout["field_box"], _variable_label(obs_da))
     if verify_mesh is not None:
         verify_ax = fig.add_axes(layout["verify_box"])
         if metric == "hits":
@@ -1049,7 +1068,7 @@ def plot_verify(
                 verify_mesh, cax=verify_ax, orientation="horizontal", ticks=[-1, 0, 1]
             )
             verify_cbar.set_ticklabels(verify_labels, fontsize=cbar_tick_fs)
-            verify_cbar.set_label("event", fontsize=cbar_label_fs, labelpad=14)
+            caption = "event"
         else:
             verify_cbar = fig.colorbar(verify_mesh, cax=verify_ax, orientation="horizontal")
             units = format_units_for_display(u_obs)
@@ -1058,11 +1077,9 @@ def plot_verify(
                 base = f"{metric_label} (dry → wet)"
             else:
                 base = metric_label
-            verify_cbar.set_label(
-                f"{base} [{units}]" if units else base, fontsize=cbar_label_fs, labelpad=14
-            )
-        verify_cbar.ax.tick_params(labelsize=cbar_tick_fs, length=4, width=0.8, pad=6)
-        verify_cbar.ax.xaxis.set_label_coords(0.5, -3.2)
+            caption = f"{base} [{units}]" if units else base
+        verify_cbar.ax.tick_params(labelsize=cbar_tick_fs, length=4, width=0.8, pad=5)
+        _cbar_caption(layout["verify_box"], caption)
 
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
