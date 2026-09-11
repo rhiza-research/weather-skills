@@ -153,6 +153,8 @@ def test_figure_layout_obs_then_leads(plot_mod):
     assert layout["title_y"] > layout["maps_top"]
     assert layout["verify_box"][0] > layout["field_box"][0]
     assert layout["figsize"][0] >= plot_mod._colorbar_min_width(14)
+    field_top = layout["field_box"][1] + layout["field_box"][3]
+    assert field_top < layout["maps_bottom"]
 
 
 def test_row_labels_use_weather_skills_source(plot_mod):

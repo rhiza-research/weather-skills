@@ -374,13 +374,14 @@ def _cbar_boundary_kwargs(norm, cmap=None):
     return kw
 
 
-# KMSA-style colorbar row: thin strip, label above, ticks below. Precip
-# classes share the row with a shorter verify bar to the right.
+# Colorbar row under the maps: strip, ticks, then caption. Precip classes
+# share the row with a shorter verify bar to the right.
 _FIELD_CBAR_WIDTH = 0.62
 _VERIFY_CBAR_WIDTH = 0.28
-_CBAR_STRIP_IN = 0.12
-_CBAR_ROW_IN = 0.72
-_CBAR_INCHES_PER_TICK = 0.28
+_CBAR_STRIP_IN = 0.24
+_CBAR_ROW_IN = 1.18
+_CBAR_INCHES_PER_TICK = 0.36
+_CBAR_Y_IN = 0.46
 _LABEL_IN = 1.25
 _RIGHT_IN = 0.35
 _COL_GAP_IN = 0.14
@@ -432,7 +433,7 @@ def _figure_layout(n_leads, extent, n_ticks, *, title):
     maps_bottom = _CBAR_ROW_IN / fig_h
     maps_top = 1.0 - (title_in + header_in) / fig_h
     strip_h = _CBAR_STRIP_IN / fig_h
-    cbar_y = 0.20 / fig_h
+    cbar_y = _CBAR_Y_IN / fig_h
     span = right - left
     field_w = _FIELD_CBAR_WIDTH * span / ( _FIELD_CBAR_WIDTH + _VERIFY_CBAR_WIDTH + 0.08)
     verify_w = _VERIFY_CBAR_WIDTH * span / (_FIELD_CBAR_WIDTH + _VERIFY_CBAR_WIDTH + 0.08)
@@ -864,9 +865,9 @@ def plot_verify(
     tick_fs = _scaled_fontsize(fontsize, 0.55, floor=8)
     panel_title_fs = _scaled_fontsize(fontsize, 1.1)
     name_fs = fontsize
-    cbar_label_fs = _scaled_fontsize(fontsize, 0.50, floor=8)
-    field_tick_fs = _scaled_fontsize(fontsize, 0.40, floor=6)
-    verify_tick_fs = _scaled_fontsize(fontsize, 0.55, floor=7)
+    cbar_label_fs = _scaled_fontsize(fontsize, 0.90)
+    field_tick_fs = _scaled_fontsize(fontsize, 0.70, floor=9)
+    verify_tick_fs = _scaled_fontsize(fontsize, 0.75, floor=9)
 
     def _draw(
         ax,
@@ -986,14 +987,15 @@ def plot_verify(
         fontsize=name_fs,
     )
 
-    def _cbar_caption(box, text):
+    def _cbar_caption(box, text, tick_fs):
         x, y, w, h = box
+        tick_in = max(tick_fs / 72.0 * 1.45, 0.24)
         fig.text(
             x + w / 2,
-            y + h + 0.04 / fig_h,
+            y - (tick_in + 0.08) / fig_h,
             text,
             ha="center",
-            va="bottom",
+            va="top",
             fontsize=cbar_label_fs,
         )
 
@@ -1005,8 +1007,8 @@ def plot_verify(
             orientation="horizontal",
             **_cbar_boundary_kwargs(norm, cmap),
         )
-        cbar.ax.tick_params(labelsize=field_tick_fs, length=3, width=0.6, pad=2)
-        _cbar_caption(layout["field_box"], _variable_label(obs_da))
+        cbar.ax.tick_params(labelsize=field_tick_fs, length=4, width=0.8, pad=5)
+        _cbar_caption(layout["field_box"], _variable_label(obs_da), field_tick_fs)
     if verify_mesh is not None:
         verify_ax = fig.add_axes(layout["verify_box"])
         if metric == "hits":
@@ -1020,8 +1022,8 @@ def plot_verify(
             units = format_units_for_display(u_obs)
             metric_label = _METRIC_ROW_LABELS[metric]
             caption = f"{metric_label} [{units}]" if units else metric_label
-        verify_cbar.ax.tick_params(labelsize=verify_tick_fs, length=3, width=0.6, pad=2)
-        _cbar_caption(layout["verify_box"], caption)
+        verify_cbar.ax.tick_params(labelsize=verify_tick_fs, length=4, width=0.8, pad=5)
+        _cbar_caption(layout["verify_box"], caption, verify_tick_fs)
 
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
