@@ -1329,10 +1329,10 @@ _MAP_CBAR_HEIGHT = 0.028
 _MAP_CBAR_STACK_STEP = 0.07
 _MAP_CBAR_Y0 = 0.04
 _MAP_CBAR_MAPS_BOTTOM = 0.28
-_MAP_AXES_TOP_TITLED = 0.80
+_MAP_AXES_TOP_TITLED = 0.72
 _MAP_AXES_TOP = 0.96
-_FIG_TITLE_Y = 0.99
-_PANEL_TITLE_PAD = 28
+_FIG_TITLE_Y = 1.0
+_PANEL_TITLE_PAD = 12
 # Cartopy GeoAxes xlabel default (y in display coords) lands on the colorbar;
 # keep lon/lat names in axes coords, just below/beside the gridline ticks.
 _GEO_XLABEL_AXES_Y = -0.06
