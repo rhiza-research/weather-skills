@@ -43,7 +43,7 @@ def test_four_leads_write_png_and_stamp_history(tmp_path, plot_fn, verify_fn, ca
     obs = write_zarr(_week(event_at=[(0, 0), (1, 0)]), tmp_path / "obs.zarr")
     forecasts = []
     verify_paths = []
-    for k, cells in zip((4, 3, 2, 1), ([], [(1, 0)], [(0, 0), (1, 0)], [(0, 0)]), strict=True):
+    for k, cells in zip((1, 2, 3, 4), ([(0, 0)], [(0, 0), (1, 0)], [(1, 0)], []), strict=True):
         fc_path = write_zarr(_week(event_at=cells), tmp_path / f"w{k}.zarr")
         forecasts.append(fc_path)
         vpath = tmp_path / f"v{k}.zarr"
@@ -63,8 +63,8 @@ def test_four_leads_write_png_and_stamp_history(tmp_path, plot_fn, verify_fn, ca
     assert history is not None
     assert history[-1]["skill"] == "plot-verify"
     printed = capsys.readouterr().out
-    weeks = [ln.split()[1] for ln in printed.splitlines() if ln.startswith("Week ")]
-    assert weeks == ["4", "3", "2", "1"]
+    leads = [ln.split("  ", 1)[0] for ln in printed.splitlines() if "-week lead" in ln]
+    assert leads == ["1-week lead", "2-week lead", "3-week lead", "4-week lead"]
     assert "hit rate" in printed
 
 
@@ -134,27 +134,22 @@ def test_verify_count_mismatch_is_refused(tmp_path, plot_fn):
     assert exc.value.code == 2
 
 
-def test_colorbar_figure_expands_for_precip_class_ticks(plot_mod):
+def test_colorbar_min_width_fits_precip_class_ticks(plot_mod):
     n_ticks = len(plot_mod.PRECIP_BOUNDS)
-    one_col = plot_mod._colorbar_figure_width(1, n_ticks)
-    four_col = plot_mod._colorbar_figure_width(4, n_ticks)
-    assert one_col > 7.0
-    assert one_col * plot_mod._FIELD_CBAR_WIDTH + 1e-9 >= (
-        plot_mod._CBAR_INCHES_PER_TICK * n_ticks
-    )
-    assert four_col == max(3.6 * 4, one_col)
-    assert plot_mod._colorbar_figure_width(1, 0) == 7.0
+    needed = plot_mod._colorbar_min_width(n_ticks)
+    assert needed > 7.0
+    assert needed * plot_mod._FIELD_CBAR_WIDTH >= plot_mod._CBAR_INCHES_PER_TICK * n_ticks
+    assert plot_mod._colorbar_min_width(0) == 8.0
 
 
-def test_colorbar_axes_stack_field_above_verify(plot_mod):
-    maps_bottom, top, field, verify = plot_mod._colorbar_axes_boxes(title=True)
-    assert field[2] == plot_mod._FIELD_CBAR_WIDTH
-    assert field[2] > verify[2]
-    assert field[1] > verify[1] + verify[3]
-    # Room between bars for the field colorbar label.
-    assert field[1] - (verify[1] + verify[3]) >= 0.05
-    assert maps_bottom > field[1] + field[3]
-    assert top == 0.86
+def test_figure_layout_obs_then_leads(plot_mod):
+    extent = [34.0, 42.0, -5.0, 5.0]
+    layout = plot_mod._figure_layout(4, extent, 14, title=True)
+    assert layout["n_cols"] == 5
+    assert layout["maps_top"] > layout["maps_bottom"]
+    assert layout["title_y"] > layout["maps_top"]
+    assert layout["verify_box"][0] > layout["field_box"][0]
+    assert layout["figsize"][0] >= plot_mod._colorbar_min_width(14)
 
 
 def test_row_labels_use_weather_skills_source(plot_mod):
@@ -309,3 +304,7 @@ def test_bbox_slices_before_draw(tmp_path, plot_fn, verify_fn):
     )
     assert Path(out).exists()
     assert out.stat().st_size > 0
+
+
+def test_lakes_are_filled_blue(plot_mod):
+    assert plot_mod._LAKE_FACECOLOR == "#4da6ff"
