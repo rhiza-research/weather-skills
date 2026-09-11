@@ -888,6 +888,28 @@ def _resolve_axis_label(override, default):
     return _axis_label(default)
 
 
+def _is_datetime_axis(values):
+    """True when ``values`` are matplotlib-date ticks (datetime64 or cftime)."""
+    import numpy as np
+
+    arr = np.asarray(values)
+    if arr.dtype.kind == "M":
+        return True
+    if arr.size == 0:
+        return False
+    first = arr.reshape(-1)[0]
+    return hasattr(first, "year") and hasattr(first, "month")
+
+
+def _resolve_time_axis_label(override, default, values):
+    """Axis label for a 1D time axis. Datetime ticks already name the axis."""
+    if override is not None and str(override).strip() != "":
+        return str(override)
+    if _is_datetime_axis(values):
+        return ""
+    return _axis_label(default)
+
+
 def _format_step(value):
     import numpy as np
 
@@ -3107,7 +3129,7 @@ def _heatmap(
 @weather_skill.argument(
     "--xlabel",
     default=None,
-    help="Override the x-axis label (default: Longitude / Valid time / …).",
+    help="Override the x-axis label (default: Longitude; omitted on datetime ticks).",
 )
 @weather_skill.argument(
     "--ylabel",
@@ -3480,7 +3502,7 @@ def plot(
         xvals, default_xlabel = _timeseries_axis(reduced, sdim)
         ax.plot(xvals, reduced.values, marker="o", markersize=5)
         tick_fs = max(10, int(round(fontsize * 0.7)))
-        resolved_xlabel = _resolve_axis_label(xlabel, default_xlabel)
+        resolved_xlabel = _resolve_time_axis_label(xlabel, default_xlabel, xvals)
         ax.set_xlabel(resolved_xlabel, fontsize=fontsize)
         ax.set_ylabel(
             _resolve_axis_label(ylabel, _variable_label(reduced)),
@@ -3489,7 +3511,7 @@ def plot(
         qty = variable_label_for_display(reduced, include_units=False)
         ax.set_title(title or f"{qty} ({style})", fontsize=fontsize)
         ax.tick_params(labelsize=tick_fs)
-        if resolved_xlabel == "Valid time" or default_xlabel == "Valid time":
+        if _is_datetime_axis(xvals):
             fig.autofmt_xdate()
         fig.tight_layout()
 

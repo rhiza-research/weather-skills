@@ -152,6 +152,19 @@ def test_y_label_shows_units_from_pint():
     assert mod._y_label("precip", da) == "IMERG daily precipitation [mm/day]"
 
 
+def test_datetime_axis_omits_default_time_label():
+    import numpy as np
+
+    mod = load_skill("plot-timeseries", "plot_timeseries")
+    times = np.array(["2026-01-01", "2026-01-02"], dtype="datetime64[ns]")
+    assert mod._is_datetime_axis(times)
+    assert mod._resolve_time_axis_label(None, "Valid time", times) == ""
+    assert mod._resolve_time_axis_label("Lead time", "time", times) == "Lead time"
+    doy = np.array([1, 2, 3])
+    assert not mod._is_datetime_axis(doy)
+    assert mod._resolve_time_axis_label(None, "calendar day", doy) == "Calendar day"
+
+
 def test_trace_label_prefers_station_id_over_tahmo_source():
     import numpy as np
     import xarray as xr

@@ -198,9 +198,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   colors must then match the flag count.
 - `--title` — optional plot title.
 - `--xlabel` / `--ylabel` — optional axis-label overrides. When omitted, maps
-  use `Longitude` / `Latitude`, timeseries uses `Valid time` (or the time
-  dim) / the variable label, and `xy` uses each series' variable label.
-  Passed text is used as-is (not re-cased).
+  use `Longitude` / `Latitude`, timeseries omits the x label when ticks are
+  dates (otherwise the time dim) and uses the variable label on y, and `xy`
+  uses each series' variable label. Passed text is used as-is (not re-cased).
 - `--index` — dim selections like `step=3,number=0`. A dim may take several
   comma-separated positions, e.g. `step=0,1,2`, which keeps the dim with just
   those positions. Negative positions are accepted and count from the end,

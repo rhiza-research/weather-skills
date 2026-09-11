@@ -70,6 +70,28 @@ def _resolve_axis_label(override, default):
     return _axis_label(default)
 
 
+def _is_datetime_axis(values):
+    """True when ``values`` are matplotlib-date ticks (datetime64 or cftime)."""
+    import numpy as np
+
+    arr = np.asarray(values)
+    if arr.dtype.kind == "M":
+        return True
+    if arr.size == 0:
+        return False
+    first = arr.reshape(-1)[0]
+    return hasattr(first, "year") and hasattr(first, "month")
+
+
+def _resolve_time_axis_label(override, default, values):
+    """Axis label for a 1D time axis. Datetime ticks already name the axis."""
+    if override is not None and str(override).strip() != "":
+        return str(override)
+    if _is_datetime_axis(values):
+        return ""
+    return _axis_label(default)
+
+
 def _size1_str(ds, *names) -> str | None:
     for name in names:
         if name not in ds.coords and name not in getattr(ds, "variables", ()):
@@ -531,7 +553,7 @@ def _place_legend_below(ax, handles, labels, fontsize: int):
 @weather_skill.argument(
     "--xlabel",
     default=None,
-    help="Override the x-axis label (default: Time / Valid time / Calendar day).",
+    help="Override the x-axis label (default: omitted on datetime ticks; else Calendar day / Step).",
 )
 @weather_skill.argument(
     "--ylabel",
@@ -680,7 +702,7 @@ def plot_timeseries(
             )
 
         label = _trace_label(ds, idx, label_slots[idx])
-        xlabel = tdim
+        series_xlabel = tdim
         if align_day_of_year:
             try:
                 xvals = da[tdim].dt.dayofyear.values
@@ -697,7 +719,7 @@ def plot_timeseries(
                     f"rendering anyway.",
                     file=sys.stderr,
                 )
-            xlabel = "calendar day"
+            series_xlabel = "calendar day"
         else:
             xvals = da[tdim].values
             if (
@@ -708,7 +730,7 @@ def plot_timeseries(
                 and np.asarray(ds["time"].values).dtype.kind == "M"
             ):
                 xvals = (np.asarray(ds["time"].values) + np.asarray(xvals)).astype("datetime64[ns]")
-                xlabel = "valid time"
+                series_xlabel = "valid time"
         if along_dim:
             da = da.transpose(tdim, along_dim)
         series.append((xvals, np.asarray(da.values), label))
@@ -716,7 +738,7 @@ def plot_timeseries(
         if first_tdim is None:
             first_tdim = tdim
         if axis_label is None:
-            axis_label = xlabel
+            axis_label = series_xlabel
 
     styles = resolve_trace_styles([label for _, _, label in series], trace)
     _validate_trace_colors(styles)
@@ -724,8 +746,10 @@ def plot_timeseries(
 
     tick_fs = max(10, int(round(fontsize * 0.7)))
     legend_fs = max(10, int(round(fontsize * 0.85)))
+    x_for_label = series[0][0] if series else None
     ax.set_xlabel(
-        _resolve_axis_label(xlabel, axis_label or first_tdim or "time"), fontsize=fontsize
+        _resolve_time_axis_label(xlabel, axis_label or first_tdim or "time", x_for_label),
+        fontsize=fontsize,
     )
     ax.set_ylabel(
         _resolve_axis_label(ylabel, _y_label(variable, datasets[0][variable])),

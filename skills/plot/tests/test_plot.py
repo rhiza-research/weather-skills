@@ -239,6 +239,16 @@ def test_resolve_axis_label_override_is_verbatim():
     assert plot_mod._resolve_axis_label("", "Latitude") == "Latitude"
 
 
+def test_datetime_axis_omits_default_time_label():
+    plot_mod = load_skill("plot", "plot")
+    times = np.array(["2026-01-01", "2026-01-02"], dtype="datetime64[ns]")
+    assert plot_mod._is_datetime_axis(times)
+    assert plot_mod._resolve_time_axis_label(None, "Valid time", times) == ""
+    assert plot_mod._resolve_time_axis_label("Lead time", "Valid time", times) == "Lead time"
+    assert not plot_mod._is_datetime_axis(np.array([1.0, 2.0, 3.0]))
+    assert plot_mod._resolve_time_axis_label(None, "step", np.array([1, 2, 3])) == "Step"
+
+
 def test_heatmap_axis_label_overrides(tmp_path, plot_fn):
     import matplotlib
 

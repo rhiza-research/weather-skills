@@ -88,7 +88,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
   refer to the `--input` (1-based index / label), not to individual members.
 - `--title` — optional figure title.
 - `--xlabel` / `--ylabel` — optional axis-label overrides. When omitted, x is
-  `Time` / `Valid time` / `Calendar day` and y comes from the variable
+  blank if the ticks are dates (`Time` / `Valid time` are redundant);
+  otherwise `Calendar day` or the time dim. Y comes from the variable
   metadata. Passed text is used as-is.
 - `--fontsize` — base font size for titles, axis labels, ticks, and legend
   (default 16). Raise on user request (e.g. `--fontsize 22`).
