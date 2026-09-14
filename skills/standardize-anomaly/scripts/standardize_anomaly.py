@@ -70,10 +70,10 @@ def standardize_anomaly(ds, climatology, variable, epsilon, **kwargs):
         field = ds[v]
         avg, std = climatology[avg_name], climatology[std_name]
 
-        # epsilon regularizes the denominator (in std's own units) so a
-        # near-zero-variance cell doesn't blow up to inf. An offset unit
-        # (e.g. degree_Celsius) can't add a plain quantity in that unit —
-        # add it as a delta instead, which is what a magnitude bump means.
+        # regularize the denominator to avoid divide-by-zero. An offset
+        # unit (e.g. degree_Celsius) can't add a plain quantity in that
+        # unit — add it as a delta instead, which is what a magnitude
+        # bump means.
         std_units = std.pint.units if getattr(std, "pint", None) is not None else None
         if std_units is None:
             denom = std + epsilon
