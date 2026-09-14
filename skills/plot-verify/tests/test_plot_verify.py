@@ -157,6 +157,10 @@ def test_wrap_title_and_two_line_title_band(plot_mod):
     two = plot_mod._figure_layout(4, extent, 14, title=dotted)
     assert two["figsize"][1] > one["figsize"][1]
     assert two["maps_top"] < one["maps_top"]
+    line = plot_mod._TITLE_LINE_EM * (plot_mod._scaled_fontsize(18, 1.25) / 72.0)
+    assert plot_mod._title_band_inches(dotted, 18) - plot_mod._title_band_inches(
+        "Hits", 18
+    ) == pytest.approx(line)
 
 
 def test_draw_figure_title_two_lines_are_separate_texts(plot_mod):
@@ -190,6 +194,20 @@ def test_figure_layout_obs_then_leads(plot_mod):
     assert layout["figsize"][0] >= plot_mod._colorbar_min_width(14)
     field_top = layout["field_box"][1] + layout["field_box"][3]
     assert field_top < layout["maps_bottom"]
+
+
+def test_parse_figsize(plot_mod):
+    import argparse
+
+    assert plot_mod.parse_figsize("14,8") == (14.0, 8.0)
+    with pytest.raises(argparse.ArgumentTypeError, match="W,H"):
+        plot_mod.parse_figsize("wide")
+
+
+def test_figure_layout_honors_figsize(plot_mod):
+    extent = [34.0, 42.0, -5.0, 5.0]
+    layout = plot_mod._figure_layout(4, extent, 14, title="Hits", figsize=(12.0, 7.0))
+    assert layout["figsize"] == (12.0, 7.0)
 
 
 def test_row_labels_use_weather_skills_source(plot_mod):

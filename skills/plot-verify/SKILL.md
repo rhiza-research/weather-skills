@@ -51,7 +51,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
     --forecast <week2.zarr> --verify <verify_w2.zarr> \
     ... \
     -o <out.png> [--variable NAME] \
-    [--lead "1-week lead" ...] [--title TEXT] [--fontsize N] [--colormap NAME] \
+    [--lead "1-week lead" ...] [--title TEXT] [--fontsize N] [--figsize W,H] [--colormap NAME] \
     [--bbox N/W/S/E] [--mask-geojson PATH]
 ```
 
@@ -73,6 +73,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
   name (Hits, Bias, MAE). When omitted, labels are inferred from provenance.
 - `--fontsize` — base font size (default 18). Title is larger than column
   headers; lat/lon ticks stay smaller.
+- `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `14,8`).
+  When omitted, size follows the map grid, title band, and colorbars.
 - `--colormap`, `--title`, `--bbox`, `--mask-geojson`, `--output` — as before.
   A long `--title` (or title plus verifying-week dates) wraps onto a second
   line.

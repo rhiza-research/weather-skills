@@ -18,6 +18,7 @@
 # ///
 """Side-by-side multi-panel PNG comparing two weather-skills standard dataset Zarrs."""
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -44,6 +45,32 @@ from weather_skills_core.units import (
 _SKILL_VERSION = "0.0.2"
 
 _TITLE_WRAP_WIDTH = 56
+
+
+def parse_figsize(value):
+    """Argparse converter for ``W,H`` or ``WxH`` inches."""
+    if value is None:
+        return None
+    raw = str(value).strip().lower().replace("×", "x")
+    if not raw:
+        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
+    sep = "x" if "x" in raw and "," not in raw else ","
+    parts = [p.strip() for p in raw.split(sep)]
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
+    try:
+        width, height = float(parts[0]), float(parts[1])
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "--figsize must be W,H inches (e.g. 10,6 or 10x6)"
+        ) from None
+    if width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError("--figsize width and height must be positive")
+    return (width, height)
+
+
+def _resolve_figsize(requested, default):
+    return tuple(requested) if requested is not None else tuple(default)
 
 
 def _wrap_title(text):
@@ -498,6 +525,12 @@ def _axis_kind(values):
     help="Base font size for panel titles, row labels, ticks, and colorbars (default 14).",
 )
 @weather_skill.argument(
+    "--figsize",
+    default=None,
+    type=parse_figsize,
+    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default 22,10.",
+)
+@weather_skill.argument(
     "--label",
     action="append",
     default=None,
@@ -522,6 +555,7 @@ def plot_compare(
     title,
     xlabel,
     fontsize,
+    figsize,
     panels,
     time_dim,
     label,
@@ -863,7 +897,7 @@ def plot_compare(
     side_b = (ds_b, da_b, td_b, label_b, var_b, _row_units(da_b), scale_b)
     top, bottom = (side_b, side_a) if b_station and not a_station else (side_a, side_b)
 
-    fig = plt.figure(figsize=(22, 10))
+    fig = plt.figure(figsize=_resolve_figsize(figsize, (22, 10)))
     gs = GridSpec(2, n, figure=fig, wspace=0.08, hspace=0.32)
     top_axes = [fig.add_subplot(gs[0, i]) for i in range(n)]
     bottom_axes = [fig.add_subplot(gs[1, i]) for i in range(n)]

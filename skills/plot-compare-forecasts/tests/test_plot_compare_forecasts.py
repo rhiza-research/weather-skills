@@ -44,6 +44,37 @@ def test_two_forecasts_write_png_and_stamp_history(tmp_path, plot_fn):
     assert history[-1]["args"]["title"] == "Two forecasts"
 
 
+def test_parse_figsize(plot_mod):
+    import argparse
+
+    assert plot_mod.parse_figsize("12,8") == (12.0, 8.0)
+    assert plot_mod.parse_figsize("10x6") == (10.0, 6.0)
+    with pytest.raises(argparse.ArgumentTypeError, match="W,H"):
+        plot_mod.parse_figsize("wide")
+
+
+def test_figsize_writes_png(tmp_path, plot_fn):
+    a = write_zarr(make_forecast(fill=1.0), tmp_path / "a.zarr")
+    b = write_zarr(make_forecast(fill=2.0), tmp_path / "b.zarr")
+    out = tmp_path / "grid.png"
+
+    run_skill(
+        plot_fn,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(out),
+        "--figsize",
+        "11,7",
+    )
+
+    assert Path(out).exists()
+    history = load_figure_history(out)
+    assert history[-1]["args"]["figsize"] == [11.0, 7.0]
+
+
 def test_shorter_horizon_blank_does_not_crash(tmp_path, plot_fn, plot_mod):
     long = make_forecast(n_step=3, fill=1.0)
     short = make_forecast(n_step=2, fill=2.0)

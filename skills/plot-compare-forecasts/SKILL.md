@@ -49,7 +49,7 @@ forecasts with a hits row, use `plot-verify`.
 
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.zarr> [-i <c.zarr> ...] \
-    --output <out.png> [--variable NAME] [--title TEXT] [--fontsize N] [--colormap NAME] \
+    --output <out.png> [--variable NAME] [--title TEXT] [--fontsize N] [--figsize W,H] [--colormap NAME] \
     [--bbox N/W/S/E] [--mask-geojson PATH] [--panels N]
 ```
 
@@ -72,6 +72,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.z
 - `--title` — optional figure title. Long titles wrap onto a second line.
 - `--fontsize` — base font size for column titles, row labels, ticks, and
   colorbars (default 14). Raise on user request (e.g. `--fontsize 18`).
+- `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `12,8`).
+  When omitted, width follows the colorbar/columns and height the row count.
 - `--panels` — cap on columns, keeping the earliest N of the union. Default
   unset → every union column.
 - `--bbox` — optional `N/W/S/E` decimal degrees. Rectangular `sel` slice on

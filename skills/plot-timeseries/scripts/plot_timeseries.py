@@ -202,6 +202,32 @@ def _parse_trace_options(blob: str) -> dict:
     return options
 
 
+def parse_figsize(value):
+    """Argparse converter for ``W,H`` or ``WxH`` inches."""
+    if value is None:
+        return None
+    raw = str(value).strip().lower().replace("×", "x")
+    if not raw:
+        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
+    sep = "x" if "x" in raw and "," not in raw else ","
+    parts = [p.strip() for p in raw.split(sep)]
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
+    try:
+        width, height = float(parts[0]), float(parts[1])
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "--figsize must be W,H inches (e.g. 10,6 or 10x6)"
+        ) from None
+    if width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError("--figsize width and height must be positive")
+    return (width, height)
+
+
+def _resolve_figsize(requested, default):
+    return tuple(requested) if requested is not None else tuple(default)
+
+
 def parse_trace(value) -> TraceSpec:
     """Argparse converter for ``SELECTOR:k=v[,k=v...]``."""
     if not value or not str(value).strip():
@@ -614,6 +640,12 @@ def _place_legend_below(ax, handles, labels, fontsize: int):
     help="Base font size for titles, axis labels, ticks, and legend (default 16).",
 )
 @weather_skill.argument(
+    "--figsize",
+    default=None,
+    type=parse_figsize,
+    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default 10,6.",
+)
+@weather_skill.argument(
     "--style",
     choices=["line", "bar"],
     default="line",
@@ -653,6 +685,7 @@ def plot_timeseries(
     xlabel,
     ylabel,
     fontsize,
+    figsize,
     style,
     align_day_of_year,
     label,
@@ -707,7 +740,7 @@ def plot_timeseries(
             file=sys.stderr,
         )
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=_resolve_figsize(figsize, (10, 6)))
     first_tdim = None
     axis_label = None
     series = []

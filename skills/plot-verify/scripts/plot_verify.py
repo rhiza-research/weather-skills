@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -45,6 +46,29 @@ from weather_skills_core.units import (
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.3"
+
+
+def parse_figsize(value):
+    """Argparse converter for ``W,H`` or ``WxH`` inches."""
+    if value is None:
+        return None
+    raw = str(value).strip().lower().replace("×", "x")
+    if not raw:
+        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
+    sep = "x" if "x" in raw and "," not in raw else ","
+    parts = [p.strip() for p in raw.split(sep)]
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
+    try:
+        width, height = float(parts[0]), float(parts[1])
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "--figsize must be W,H inches (e.g. 10,6 or 10x6)"
+        ) from None
+    if width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError("--figsize width and height must be positive")
+    return (width, height)
+
 
 _VERIFY_VARS = {
     "hits": "event_hit",
@@ -385,8 +409,8 @@ _RIGHT_IN = 0.35
 _COL_GAP_IN = 0.14
 _ROW_GAP_IN = 0.32
 _MAP_HEIGHT_IN = 3.8
-_TITLE_BAND_IN = 0.58
-_TITLE_BAND_TWO_LINE_IN = 0.96
+_TITLE_LINE_EM = 1.35
+_TITLE_GAP_IN = 0.10
 _COL_HEADER_IN = 0.48
 _TITLE_WRAP_WIDTH = 56
 
@@ -433,7 +457,7 @@ def _draw_figure_title(fig, title, fontsize, y):
         fig.suptitle(lines[0], fontsize=fontsize, y=y, ha="center", va="top")
         return
     fig_h = max(fig.get_figheight(), 1e-6)
-    step = 1.35 * (fontsize / 72.0) / fig_h
+    step = _TITLE_LINE_EM * (fontsize / 72.0) / fig_h
     for i, line in enumerate(lines):
         fig.text(0.5, y - i * step, line, ha="center", va="top", fontsize=fontsize)
 
@@ -464,22 +488,27 @@ def _map_panel_inches(extent, *, base_height=_MAP_HEIGHT_IN):
     return max(width, 2.0), height
 
 
-def _figure_layout(n_leads, extent, n_ticks, *, title):
+def _title_band_inches(title, fontsize):
+    """Inches for the figure title: one or two lines plus a little whitespace."""
+    if not title:
+        return 0.10
+    n = max(len(_title_lines(title)), 1)
+    title_fs = _scaled_fontsize(fontsize, 1.25)
+    return n * _TITLE_LINE_EM * (title_fs / 72.0) + _TITLE_GAP_IN
+
+
+def _figure_layout(n_leads, extent, n_ticks, *, title, fontsize=18, figsize=None):
     """Obs column + N lead columns; forecast row over metric row; colorbars below."""
     n_cols = 1 + n_leads
     map_w, map_h = _map_panel_inches(extent)
     grid_w = n_cols * map_w + (n_cols - 1) * _COL_GAP_IN
     fig_w = max(_LABEL_IN + grid_w + _RIGHT_IN, _colorbar_min_width(n_ticks), 10.0)
-    extra_right = max(fig_w - (_LABEL_IN + grid_w + _RIGHT_IN), 0.0)
-    # Figure title sits in title_in; axes titles stick up into header_in.
-    if title and "\n" in str(title):
-        title_in = _TITLE_BAND_TWO_LINE_IN
-    elif title:
-        title_in = _TITLE_BAND_IN
-    else:
-        title_in = 0.10
+    title_in = _title_band_inches(title, fontsize)
     header_in = _COL_HEADER_IN
     fig_h = title_in + header_in + 2 * map_h + _ROW_GAP_IN + _CBAR_ROW_IN
+    if figsize is not None:
+        fig_w, fig_h = figsize
+    extra_right = max(fig_w - (_LABEL_IN + grid_w + _RIGHT_IN), 0.0)
     left = _LABEL_IN / fig_w
     right = 1.0 - (_RIGHT_IN + extra_right) / fig_w
     maps_bottom = _CBAR_ROW_IN / fig_h
@@ -502,7 +531,7 @@ def _figure_layout(n_leads, extent, n_ticks, *, title):
         "hspace": _ROW_GAP_IN / map_h,
         "field_box": field_box,
         "verify_box": verify_box,
-        "title_y": 1.0 - 0.08 / fig_h,
+        "title_y": 1.0,
         "n_cols": n_cols,
     }
 
@@ -752,6 +781,12 @@ def _prepare(ds, variable):
     help="Base font size for column/row labels, ticks, and colorbars (default 18).",
 )
 @weather_skill.argument(
+    "--figsize",
+    default=None,
+    type=parse_figsize,
+    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default from map grid.",
+)
+@weather_skill.argument(
     "--mask-geojson",
     default=None,
     help="GeoJSON polygon; gridded cells outside become NaN.",
@@ -767,6 +802,7 @@ def plot_verify(
     label,
     title,
     fontsize,
+    figsize,
     mask_geojson,
     output,
     **kwargs,
@@ -890,7 +926,9 @@ def plot_verify(
     if week_dates and not (title and week_dates in title):
         fig_title = f"{title} · {week_dates}" if title else week_dates
     fig_title = _wrap_title(fig_title)
-    layout = _figure_layout(n_leads, extent, n_ticks, title=fig_title)
+    layout = _figure_layout(
+        n_leads, extent, n_ticks, title=fig_title, fontsize=fontsize, figsize=figsize
+    )
     fig = plt.figure(figsize=layout["figsize"])
     gs = fig.add_gridspec(
         2,

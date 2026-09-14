@@ -62,7 +62,7 @@ For maps of N forecasts (or forecasts vs gridded obs) over time, use
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> ...] --output <out.png> \
     [--variable NAME] [--time-dim DIM] [--reduce DIM ...] [--along DIM] [--title TEXT] \
-    [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] \
+    [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H] \
     [--style line|bar] [--align-day-of-year] [--trace SELECTOR:k=v ...]
 ```
 
@@ -94,6 +94,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
   Y comes from the variable metadata. Passed text is used as-is.
 - `--fontsize` — base font size for titles, axis labels, ticks, and legend
   (default 16). Raise on user request (e.g. `--fontsize 22`).
+- `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `10,6`).
+  Default `10×6`.
 - `--style` — `line` (default) or `bar`. Default for every series; a per-trace
   `style=line|bar` on `--trace` overrides it. `bar` draws grouped bars (one
   group per time step; one bar per bar-styled `--input`, offset within the
@@ -135,7 +137,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
 
 ### Output
 
-A PNG at `--output`, single axes (`figsize=(10, 6)`), one series per `--input`
+A PNG at `--output`, single axes (default `figsize=(10, 6)`; override with
+`--figsize`), one series per `--input`
 (line with markers, `--along` spaghetti, or bars; mixed `--trace style=` overlays a line on bars), legend on the axes. The y-axis label is the variable `long_name` (then
 `GRIB_name`, then the variable name) plus `[<units>]` when the variable
 carries a `units` attribute. Units are a short display form (`mm/day`,

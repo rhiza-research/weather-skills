@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import argparse
 import datetime as _dt
 import sys
 from pathlib import Path
@@ -45,6 +46,35 @@ from weather_skills_core.units import (
 _SKILL_VERSION = "0.0.2"
 
 _TITLE_WRAP_WIDTH = 56
+_TITLE_LINE_EM = 1.35
+_TITLE_GAP_IN = 0.10
+_PANEL_TITLE_PAD = 6  # matplotlib default axes-title pad
+
+
+def parse_figsize(value):
+    """Argparse converter for ``W,H`` or ``WxH`` inches."""
+    if value is None:
+        return None
+    raw = str(value).strip().lower().replace("×", "x")
+    if not raw:
+        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
+    sep = "x" if "x" in raw and "," not in raw else ","
+    parts = [p.strip() for p in raw.split(sep)]
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
+    try:
+        width, height = float(parts[0]), float(parts[1])
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "--figsize must be W,H inches (e.g. 10,6 or 10x6)"
+        ) from None
+    if width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError("--figsize width and height must be positive")
+    return (width, height)
+
+
+def _resolve_figsize(requested, default):
+    return tuple(requested) if requested is not None else tuple(default)
 
 
 def _wrap_title(text):
@@ -88,7 +118,7 @@ def _draw_figure_title(fig, title, fontsize, y):
         fig.suptitle(lines[0], fontsize=fontsize, y=y, ha="center", va="top")
         return
     fig_h = max(fig.get_figheight(), 1e-6)
-    step = 1.35 * (fontsize / 72.0) / fig_h
+    step = _TITLE_LINE_EM * (fontsize / 72.0) / fig_h
     for i, line in enumerate(lines):
         fig.text(0.5, y - i * step, line, ha="center", va="top", fontsize=fontsize)
 
@@ -174,6 +204,18 @@ _TOL_NS = 1_000_000_000  # 1 s, matching plot-compare
 def _scaled_fontsize(base, frac, *, floor=8):
     """Scale a base ``--fontsize`` by ``frac``, never below ``floor``."""
     return max(floor, int(round(int(base) * frac)))
+
+
+def _title_band_inches(title, fontsize):
+    """Inches above the maps: figure-title lines, a small gap, then column dates."""
+    n = len(_title_lines(title))
+    if n == 0:
+        return 0.0
+    title_fs = _scaled_fontsize(fontsize, 1.1)
+    panel_fs = _scaled_fontsize(fontsize, 0.85)
+    title_in = n * _TITLE_LINE_EM * (title_fs / 72.0)
+    panel_in = _PANEL_TITLE_PAD / 72.0 + _TITLE_LINE_EM * (panel_fs / 72.0)
+    return title_in + _TITLE_GAP_IN + panel_in
 
 
 def _parse_colormap(spec):
@@ -688,6 +730,12 @@ def _extent_from_da(da, lat_dim, lon_dim, bbox):
     help="Base font size for column titles, row labels, ticks, and colorbars (default 14).",
 )
 @weather_skill.argument(
+    "--figsize",
+    default=None,
+    type=parse_figsize,
+    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default from panel count.",
+)
+@weather_skill.argument(
     "--panels",
     type=int,
     default=None,
@@ -711,6 +759,7 @@ def plot_compare_forecasts(
     colormap,
     title,
     fontsize,
+    figsize,
     panels,
     label,
     mask_geojson,
@@ -822,21 +871,25 @@ def plot_compare_forecasts(
         else:
             vmin, vmax = 0.0, 1.0
     title_lines = _title_lines(title)
+    title_band = _title_band_inches(title, fontsize)
+    fig_w, fig_h = _resolve_figsize(
+        figsize,
+        (
+            _colorbar_figure_width(ncols, _colorbar_tick_count(norm)),
+            max(2.8 * nrows, 4.0) + title_band,
+        ),
+    )
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(
-            _colorbar_figure_width(ncols, _colorbar_tick_count(norm)),
-            max(2.8 * nrows, 4.0)
-            + (0.95 if len(title_lines) > 1 else 0.6 if title_lines else 0.0),
-        ),
+        figsize=(fig_w, fig_h),
         sharex=True,
         sharey=True,
         subplot_kw={"projection": ccrs.PlateCarree()},
         squeeze=False,
     )
     if title_lines:
-        _draw_figure_title(fig, title, _scaled_fontsize(fontsize, 1.1), 0.99)
+        _draw_figure_title(fig, title, _scaled_fontsize(fontsize, 1.1), 1.0)
 
     tick_fs = _scaled_fontsize(fontsize, 0.7)
     panel_title_fs = _scaled_fontsize(fontsize, 0.85)
@@ -923,7 +976,7 @@ def plot_compare_forecasts(
             left=0.08,
             right=0.98,
             bottom=0.28,
-            top=0.76 if len(title_lines) > 1 else 0.80 if title_lines else 0.96,
+            top=(1.0 - title_band / fig_h) if title_band else 0.96,
             hspace=0.42 if nrows > 1 else 0.12,
             wspace=0.18,
         )

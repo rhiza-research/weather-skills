@@ -83,7 +83,7 @@ dataset has no matching time, use `plot-compare-forecasts`.
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --output <out.png> \
     [--variable NAME] [--variable-a NAME] [--variable-b NAME] \
     [--colormap NAME] [--colormap-a NAME] [--colormap-b NAME] \
-    [--shared-scale | --independent-scale] [--title TEXT] [--xlabel TEXT] [--fontsize N] \
+    [--shared-scale | --independent-scale] [--title TEXT] [--xlabel TEXT] [--fontsize N] [--figsize W,H] \
     [--panels N] [--time-dim DIM] \
     [--bbox N/W/S/E] [--mask-geojson PATH]
 ```
@@ -126,6 +126,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
   Row titles stay `--label`.
 - `--fontsize` — base font size for panel titles, row labels, ticks, and
   colorbars (default 14). Raise on user request (e.g. `--fontsize 18`).
+- `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `16,8`).
+  Default `22×10`.
 - `--panels` — number of panels per row (default 3).
 - `--time-dim` — override the time axis. Defaults to `time` if present, else `step`.
 - `--bbox` — optional `N/W/S/E` decimal degrees. Rectangular clipping:
@@ -190,8 +192,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
 
 ### Output
 
-A PNG with a `(2, n)` `GridSpec` (`figsize=(22, 10)`,
-`wspace=0.08`, `hspace=0.32`). Each row gets its own colorbar.
+A PNG with a `(2, n)` `GridSpec` (default `figsize=(22, 10)`; override with
+`--figsize`; `wspace=0.08`, `hspace=0.32`). Each row gets its own colorbar.
 Station scatter points use `s=30`. Each panel's y-axis is the row's
 dataset name (`weather_skills_source`, else `A` / `B`). Latitude ticks
 stay on the leftmost panel of each row.

@@ -56,6 +56,39 @@ def test_fontsize_writes_png(tmp_path, plot_timeseries):
     assert out.stat().st_size > 0
 
 
+def test_parse_figsize():
+    import argparse
+
+    plot_mod = load_skill("plot-timeseries", "plot_timeseries")
+    assert plot_mod.parse_figsize("10,6") == (10.0, 6.0)
+    assert plot_mod.parse_figsize("8x5") == (8.0, 5.0)
+    with pytest.raises(argparse.ArgumentTypeError, match="W,H"):
+        plot_mod.parse_figsize("wide")
+
+
+def test_figsize_writes_png(tmp_path, plot_timeseries):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "ts.png"
+
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+        "--figsize",
+        "9x4",
+    )
+
+    assert Path(out).exists()
+    history = load_figure_history(out)
+    assert history[-1]["args"]["figsize"] == [9.0, 4.0]
+
+
 def test_reduce_spatial_dims(tmp_path, plot_timeseries):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "ts.png"

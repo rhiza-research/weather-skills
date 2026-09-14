@@ -14,6 +14,7 @@
 # ///
 """ECMWF-style mediogram: forecast vs m-climate ensemble distributions at a point."""
 
+import argparse
 from pathlib import Path
 
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
@@ -28,6 +29,32 @@ from weather_skills_core.units import (
 _SKILL_VERSION = "0.0.2"
 
 _TITLE_WRAP_WIDTH = 56
+
+
+def parse_figsize(value):
+    """Argparse converter for ``W,H`` or ``WxH`` inches."""
+    if value is None:
+        return None
+    raw = str(value).strip().lower().replace("×", "x")
+    if not raw:
+        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
+    sep = "x" if "x" in raw and "," not in raw else ","
+    parts = [p.strip() for p in raw.split(sep)]
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
+    try:
+        width, height = float(parts[0]), float(parts[1])
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "--figsize must be W,H inches (e.g. 10,6 or 10x6)"
+        ) from None
+    if width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError("--figsize width and height must be positive")
+    return (width, height)
+
+
+def _resolve_figsize(requested, default):
+    return tuple(requested) if requested is not None else tuple(default)
 
 
 def _wrap_title(text):
@@ -185,7 +212,15 @@ def _draw_bxp(ax, stats, positions, width, facecolor, whisker_lw, cap_alpha=1):
     default=16,
     help="Base font size for titles, axis labels, ticks, and legend (default 16).",
 )
-def plot_mediogram(ds, variable, lat, lon, title, xlabel, ylabel, fontsize, output, **kwargs):
+@weather_skill.argument(
+    "--figsize",
+    default=None,
+    type=parse_figsize,
+    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default 10,5.",
+)
+def plot_mediogram(
+    ds, variable, lat, lon, title, xlabel, ylabel, fontsize, figsize, output, **kwargs
+):
     """ECMWF-style mediogram: forecast vs m-climate ensemble distributions at a point."""
     if len(ds) != 2:
         raise UsageError(f"expected exactly two --input paths, got {len(ds)}")
@@ -234,7 +269,7 @@ def plot_mediogram(ds, variable, lat, lon, title, xlabel, ylabel, fontsize, outp
     snapped_lon = float(pt_fc[lon_dim].values) if lon_dim else lon
 
     time_steps = np.arange(n_steps)
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=_resolve_figsize(figsize, (10, 5)))
 
     fc_outer = [_bxp_stats(fc[:, i], 25, 25, 75, 75) for i in range(n_steps)]
     mc_outer = [_bxp_stats(mc[:, i], 25, 25, 75, 75) for i in range(n_steps)]

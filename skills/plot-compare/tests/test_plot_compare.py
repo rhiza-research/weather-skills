@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from conftest import load_skill, make_gridded, run_skill, write_zarr
+from weather_skills_core.provenance import load_figure_history
 
 
 @pytest.fixture(scope="module")
@@ -30,6 +31,39 @@ def test_two_gridded_inputs_write_png(tmp_path, plot_compare):
 
     assert Path(out).exists()
     assert out.stat().st_size > 0
+
+
+def test_parse_figsize():
+    import argparse
+
+    plot_mod = load_skill("plot-compare", "plot_compare")
+    assert plot_mod.parse_figsize("16,8") == (16.0, 8.0)
+    with pytest.raises(argparse.ArgumentTypeError, match="W,H"):
+        plot_mod.parse_figsize("wide")
+
+
+def test_figsize_writes_png(tmp_path, plot_compare):
+    a = write_zarr(make_gridded(fill=1.0), tmp_path / "a.zarr")
+    b = write_zarr(make_gridded(fill=2.0), tmp_path / "b.zarr")
+    out = tmp_path / "cmp.png"
+
+    run_skill(
+        plot_compare,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(out),
+        "--panels",
+        "2",
+        "--figsize",
+        "12,6",
+    )
+
+    assert Path(out).exists()
+    history = load_figure_history(out)
+    assert history[-1]["args"]["figsize"] == [12.0, 6.0]
 
 
 def test_precip_shared_scale_is_discrete_chirps_total_palette():
