@@ -1319,8 +1319,8 @@ def _panel_title_fontsize(fontsize):
 
 
 _TITLE_WRAP_WIDTH = 56
-_TITLE_LINE_EM = 1.20  # reserved line height for wrapped figure titles, in em
-_TITLE_GAP_IN = 0.04  # whitespace under the title block before panel dates
+_TITLE_LINE_EM = 1.35  # reserved line height for wrapped figure titles, in em
+_TITLE_GAP_IN = 0.16  # whitespace under the title block before panel dates
 
 
 def _wrap_title(text):
@@ -1420,7 +1420,7 @@ _MAP_CBAR_STACK_STEP = 0.07
 _MAP_CBAR_Y0 = 0.04
 _MAP_AXES_TOP = 0.96
 _FIG_TITLE_Y = 1.0
-_PANEL_TITLE_PAD = 8
+_PANEL_TITLE_PAD = 10
 # Cartopy GeoAxes xlabel default (y in display coords) lands on the colorbar;
 # keep lon/lat names in axes coords, just below/beside the gridline ticks.
 _GEO_XLABEL_AXES_Y = -0.06
@@ -1436,7 +1436,7 @@ def _title_band_inches(title, fontsize):
     if n == 0:
         return 0.0
     line_in = (fontsize / 72.0) * _TITLE_LINE_EM
-    panel_in = _PANEL_TITLE_PAD / 72.0 + (fontsize / 72.0)
+    panel_in = _PANEL_TITLE_PAD / 72.0 + line_in
     return n * line_in + _TITLE_GAP_IN + panel_in
 
 
@@ -1474,7 +1474,7 @@ def _map_colorbar_axes(fig, *, title, nrows, fontsize, index=0, n_cbars=1):
     top = _titled_maps_top(fig, title, fontsize) if title else _MAP_AXES_TOP
     bottom = _maps_bottom(n_cbars, top)
     if index == 0:
-        hspace = 0.22 if nrows > 1 else 0.08
+        hspace = 0.32 if nrows > 1 else 0.08
         fig.subplots_adjust(
             left=0.08,
             right=0.98,
