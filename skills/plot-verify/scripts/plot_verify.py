@@ -797,9 +797,6 @@ def plot_verify(
         this_norm,
         this_vmin,
         this_vmax,
-        *,
-        left_labels,
-        bottom_labels,
     ):
         if wrap_lon:
             ax.set_extent(extent, crs=ccrs.PlateCarree())
@@ -815,13 +812,7 @@ def plot_verify(
             linewidth=0.4,
             zorder=3,
         )
-        gl = ax.gridlines(draw_labels=True, alpha=0)
-        gl.top_labels = False
-        gl.right_labels = False
-        if not left_labels:
-            gl.left_labels = False
-        if not bottom_labels:
-            gl.bottom_labels = False
+        ax.gridlines(draw_labels=False, alpha=0)
         slab = da.transpose(lat_dim, lon_dim)
         return ax.pcolormesh(
             slab[lon_dim],
@@ -843,8 +834,6 @@ def plot_verify(
         norm,
         vmin,
         vmax,
-        left_labels=True,
-        bottom_labels=True,
     )
     obs_ax.set_title(row_labels[0])
     obs_ax.set_ylabel(row_labels[0])
@@ -861,8 +850,6 @@ def plot_verify(
             norm,
             vmin,
             vmax,
-            left_labels=False,
-            bottom_labels=False,
         )
         if metric == "hits":
             mesh = _draw(
@@ -874,8 +861,6 @@ def plot_verify(
                 verify_norm,
                 None,
                 None,
-                left_labels=False,
-                bottom_labels=True,
             )
         else:
             mesh = _draw(
@@ -887,8 +872,6 @@ def plot_verify(
                 verify_norm,
                 verify_vmin,
                 verify_vmax,
-                left_labels=False,
-                bottom_labels=True,
             )
         if verify_mesh is None:
             verify_mesh = mesh

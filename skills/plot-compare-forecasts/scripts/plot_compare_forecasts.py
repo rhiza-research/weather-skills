@@ -805,11 +805,7 @@ def plot_compare_forecasts(
                 linewidth=0.4,
                 zorder=3,
             )
-            gl = ax.gridlines(draw_labels=True, alpha=0)
-            gl.top_labels = False
-            gl.right_labels = False
-            if col != 0:
-                gl.left_labels = False
+            ax.gridlines(draw_labels=False, alpha=0)
             if idx is None:
                 ax.text(
                     0.5,

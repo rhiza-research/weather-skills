@@ -893,8 +893,7 @@ def plot_compare(
             if boundaries is not None:
                 boundaries.boundary.plot(edgecolor="grey", linewidth=1.0, ax=ax)
             ax.set_ylabel(_axis_label(label))
-            if col != 0:
-                ax.tick_params(left=False, labelleft=False)
+            ax.tick_params(bottom=False, labelbottom=False, left=False, labelleft=False)
         return last_im
 
     sc_top = _plot_row(top_axes, top, n)

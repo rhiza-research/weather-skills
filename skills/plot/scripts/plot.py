@@ -1834,9 +1834,7 @@ def _quiver_map(
             zorder=5,
         )
         _draw_geo_overlays(ax, overlays, ccrs.PlateCarree())
-        gl = ax.gridlines(draw_labels=True, alpha=0)
-        gl.top_labels = False
-        gl.right_labels = False
+        ax.gridlines(draw_labels=False, alpha=0)
         _apply_geo_axis_labels(
             ax,
             xlabel,
@@ -2736,9 +2734,7 @@ def _plot_layers(
             elif slab["kind"] == "outline":
                 _draw_outline_on_ax(ax, slab, transform)
         _draw_geo_overlays(ax, overlays, transform)
-        gl = ax.gridlines(draw_labels=True, alpha=0)
-        gl.top_labels = False
-        gl.right_labels = False
+        ax.gridlines(draw_labels=False, alpha=0)
         _apply_geo_axis_labels(
             ax,
             xlabel,
@@ -2940,9 +2936,7 @@ def _heatmap(
             ax.set_xlim(extent[0], extent[1])
             ax.set_ylim(extent[2], extent[3])
         _draw_geo_overlays(ax, overlays, ccrs.PlateCarree())
-        gl = ax.gridlines(draw_labels=True, alpha=0)
-        gl.top_labels = False
-        gl.right_labels = False
+        ax.gridlines(draw_labels=False, alpha=0)
         _apply_geo_axis_labels(
             ax,
             xlabel,
