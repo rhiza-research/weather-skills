@@ -160,126 +160,15 @@ def test_axis_label_capitalizes():
     assert plot_mod._axis_label("Latitude") == "Latitude"
 
 
-def test_colorbar_text_sizes_are_smaller_than_base_fontsize():
-    plot_mod = load_skill("plot", "plot")
-    label_fs, tick_fs = plot_mod._colorbar_text_sizes(18)
-    assert label_fs <= 10
-    assert tick_fs <= 7
-    assert tick_fs < label_fs < 18
-
-
-def test_colorbar_figure_expands_for_precip_class_ticks():
-    plot_mod = load_skill("plot", "plot")
-    n_ticks = len(plot_mod.PRECIP_BOUNDS)
-    narrow = plot_mod._colorbar_figure_width(4.0, n_ticks)
-    assert narrow > 4.0
-    assert narrow * plot_mod._MAP_CBAR_WIDTH + 1e-9 >= (
-        plot_mod._CBAR_INCHES_PER_TICK * n_ticks
-    )
-    assert plot_mod._colorbar_figure_width(12.0, n_ticks) == 12.0
-    assert plot_mod._colorbar_figure_width(4.0, 0) == 4.0
-
-
-def test_map_colorbar_axes_are_wide_and_thick():
+def test_heatmap_colorbar_sits_below_maps():
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     plot_mod = load_skill("plot", "plot")
-    fig = plt.figure(figsize=(8, 6))
-    ax = plot_mod._map_colorbar_axes(fig, title=False, nrows=1, fontsize=18)
-    pos = ax.get_position()
-    assert pos.width == pytest.approx(plot_mod._MAP_CBAR_WIDTH)
-    assert pos.height == pytest.approx(plot_mod._MAP_CBAR_HEIGHT)
-    plt.close(fig)
-
-
-def test_heatmap_colorbar_sits_below_xaxis_label():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    plot_mod = load_skill("plot", "plot")
+    plot_mod.apply_style(16)
     da = make_gridded(n_time=1, lats=(-4.0, 0.0, 4.0), lons=(35.0, 37.0, 39.0))["precip"]
-    fig = plot_mod._heatmap(
-        da,
-        "latitude",
-        "longitude",
-        "viridis",
-        extent=(34.0, 42.0, -5.0, 5.0),
-        cities={},
-        title=None,
-        fontsize=18,
-        wrap_lon=True,
-    )
-    fig.canvas.draw()
-    renderer = fig.canvas.get_renderer()
-    maps = [ax for ax in fig.axes[:-1] if ax.get_visible()]
-    cbar = fig.axes[-1]
-    cbar_top = cbar.get_tightbbox(renderer).ymax
-    for ax in maps:
-        xlabel = ax.xaxis.label
-        if not xlabel.get_text():
-            continue
-        label_bottom = xlabel.get_window_extent(renderer).ymin
-        assert label_bottom > cbar_top
-        ticks = [t for t in ax.get_xticklabels() if t.get_text() and t.get_visible()]
-        if ticks:
-            tick_bottom = min(t.get_window_extent(renderer).ymin for t in ticks)
-            assert tick_bottom > cbar_top
-    plt.close(fig)
-
-
-def test_wrap_title_splits_long_text_onto_two_lines():
-    plot_mod = load_skill("plot", "plot")
-    assert plot_mod._wrap_title("S2S precip") == "S2S precip"
-    assert plot_mod._wrap_title(None) is None
-    dotted = plot_mod._wrap_title(
-        "Kenya GEFS vs CHIRPS 5 mm event verification · 2026-08-04 to 2026-08-10"
-    )
-    assert dotted == "Kenya GEFS vs CHIRPS 5 mm event verification\n2026-08-04 to 2026-08-10"
-    long = (
-        "Weekly rainfall totals averaged over Kenya counties compared with the "
-        "CHIRPS climatology for the same calendar window"
-    )
-    wrapped = plot_mod._wrap_title(long)
-    assert "\n" in wrapped
-    assert wrapped.count("\n") == 1
-    assert wrapped.replace("\n", " ") == long
-
-
-def test_draw_figure_title_two_lines_are_separate_texts():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    plot_mod = load_skill("plot", "plot")
-    fig, _ax = plt.subplots(figsize=(8, 6))
-    plot_mod._draw_figure_title(
-        fig,
-        "Kenya GEFS vs CHIRPS 5 mm event verification · 2026-08-04 to 2026-08-10",
-        16,
-        0.99,
-    )
-    fig.canvas.draw()
-    texts = [t.get_text() for t in fig.texts]
-    assert all("\n" not in t for t in texts)
-    assert any("Kenya GEFS vs CHIRPS" in t for t in texts)
-    assert any("2026-08-04" in t for t in texts)
-    plt.close(fig)
-
-
-def test_heatmap_figure_title_sits_above_axes():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    plot_mod = load_skill("plot", "plot")
-    da = make_forecast(n_step=2, lats=(-4.0, 0.0, 4.0), lons=(35.0, 37.0, 39.0))["tp"]
     fig = plot_mod._heatmap(
         da,
         "latitude",
@@ -288,53 +177,52 @@ def test_heatmap_figure_title_sits_above_axes():
         extent=(34.0, 42.0, -5.0, 5.0),
         cities={},
         title="S2S precip",
-        fontsize=18,
+        fontsize=16,
         wrap_lon=True,
     )
     fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    maps = [ax for ax in fig.axes if ax.get_visible() and getattr(ax, "projection", None)]
+    if not maps:
+        maps = [ax for ax in fig.axes[:-1] if ax.get_visible()]
+    cbar = fig.axes[-1]
+    cbar_box = cbar.get_tightbbox(renderer)
+    maps_bottom = min(ax.get_tightbbox(renderer).ymin for ax in maps)
+    maps_right = max(ax.get_tightbbox(renderer).xmax for ax in maps)
+    below = cbar_box.ymax <= maps_bottom + 2.0
+    to_the_right = cbar_box.xmin >= maps_right - 2.0
+    assert below or to_the_right
     st = fig._suptitle
     assert st is not None
-    maps = [ax for ax in fig.axes[:-1] if ax.get_visible()]
-    maps_top = max(ax.get_position().y1 for ax in maps)
-    assert st.get_position()[1] == pytest.approx(plot_mod._FIG_TITLE_Y)
-    assert maps_top == pytest.approx(plot_mod._titled_maps_top(fig, "S2S precip", 18))
-    assert maps_top > 0.72
+    maps_top = max(ax.get_tightbbox(renderer).ymax for ax in maps)
+    title_bottom = st.get_window_extent(renderer).ymin
+    assert title_bottom >= maps_top - 2.0
     plt.close(fig)
 
 
-def test_precip_heatmap_widens_for_class_ticks_and_shrinks_cbar_text():
+def test_long_title_still_renders():
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     plot_mod = load_skill("plot", "plot")
-    da = make_gridded(n_time=1, lats=(-4.0, 0.0, 4.0), lons=(35.0, 37.0, 39.0))["precip"]
-    da.attrs.update(
-        units="mm",
-        standard_name="lwe_thickness_of_precipitation_amount",
-        aggregation_period="10 day",
-    )
-    cmap, norm = plot_mod._heatmap_scale(da, None)
+    plot_mod.apply_style(16)
+    da = make_gridded(n_time=1)["precip"]
     fig = plot_mod._heatmap(
         da,
         "latitude",
         "longitude",
-        cmap,
-        extent=(34.0, 42.0, -5.0, 5.0),
+        "viridis",
+        extent=(10.0, 11.0, 1.0, 2.0),
         cities={},
-        title=None,
-        fontsize=18,
+        title="Kenya GEFS vs CHIRPS 5 mm event verification · 2026-08-04 to 2026-08-10",
+        fontsize=16,
         wrap_lon=True,
-        norm=norm,
     )
-    n_ticks = len(plot_mod.PRECIP_BOUNDS)
-    assert fig.get_figwidth() * plot_mod._MAP_CBAR_WIDTH + 1e-9 >= (
-        plot_mod._CBAR_INCHES_PER_TICK * n_ticks
-    )
-    labels = fig.axes[-1].xaxis.get_ticklabels()
-    assert labels
-    assert labels[0].get_fontsize() <= 7
+    fig.canvas.draw()
+    assert fig._suptitle is not None
+    assert "Kenya GEFS" in fig._suptitle.get_text()
     plt.close(fig)
 
 

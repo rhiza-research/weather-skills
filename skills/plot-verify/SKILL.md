@@ -1,6 +1,6 @@
 ---
 name: plot-verify
-description: Plot a lead-week verification grid from pre-computed verify Zarrs. Columns are observation, then week-1 through week-4 forecasts; the metric row sits under the forecasts. Every --obs and --forecast must already be a single time — run select on the verifying week first. Run verify on each forecast/obs pair before this skill. For precipitation, aggregate-temporal then convert-to-totals before verify. Pass --forecast week-1 first. Use --fontsize to enlarge labels (default 18).
+description: Plot a lead-week verification grid from pre-computed verify Zarrs. Columns are observation, then week-1 through week-4 forecasts; the metric row sits under the forecasts. Every --obs and --forecast must already be a single time — run select on the verifying week first. Run verify on each forecast/obs pair before this skill. For precipitation, aggregate-temporal then convert-to-totals before verify. Pass --forecast week-1 first. Use --fontsize to enlarge labels (default 16).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py *)
@@ -71,7 +71,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
 - `--label` — pass once for `--obs`, then once per `--forecast`. The obs
   value titles the observation column; the verify row uses the metric
   name (Hits, Bias, MAE). When omitted, labels are inferred from provenance.
-- `--fontsize` — base font size (default 18). Title is larger than column
+- `--fontsize` — base font size (default 16). Title is larger than column
   headers; lat/lon ticks stay smaller.
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `14,8`).
   When omitted, size follows the map grid, title band, and colorbars.

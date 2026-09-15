@@ -43,6 +43,30 @@ from weather_skills_core.units import (
     variable_units,
 )
 
+try:
+    from weather_skills_core.figure import (
+        DEFAULT_FONTSIZE,
+        add_shared_colorbar,
+        apply_style,
+        parse_figsize,
+        resolve_figsize,
+        save_figure,
+    )
+except ImportError:
+    import importlib.util as _ilu
+
+    _spec = _ilu.spec_from_file_location(
+        "_ws_figure", Path(__file__).resolve().parent / "_figure.py"
+    )
+    _mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    DEFAULT_FONTSIZE = _mod.DEFAULT_FONTSIZE
+    add_shared_colorbar = _mod.add_shared_colorbar
+    apply_style = _mod.apply_style
+    parse_figsize = _mod.parse_figsize
+    resolve_figsize = _mod.resolve_figsize
+    save_figure = _mod.save_figure
+
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
@@ -275,28 +299,6 @@ _LEGEND_ALIASES = {
 }
 
 
-def parse_figsize(value):
-    """Argparse converter for ``W,H`` or ``WxH`` inches."""
-    if value is None:
-        return None
-    raw = str(value).strip().lower().replace("×", "x")
-    if not raw:
-        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
-    sep = "x" if "x" in raw and "," not in raw else ","
-    parts = [p.strip() for p in raw.split(sep)]
-    if len(parts) != 2:
-        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
-    try:
-        width, height = float(parts[0]), float(parts[1])
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            "--figsize must be W,H inches (e.g. 10,6 or 10x6)"
-        ) from None
-    if width <= 0 or height <= 0:
-        raise argparse.ArgumentTypeError("--figsize width and height must be positive")
-    return (width, height)
-
-
 def parse_legend(value):
     """Argparse converter for a matplotlib loc, ``outside right``, ``below``, or ``none``."""
     if value is None:
@@ -321,17 +323,6 @@ def _legend_kwargs(loc, *, default="outside right"):
     if resolved == "below":
         return {"loc": "upper center", "bbox_to_anchor": (0.5, -0.18)}
     return {"loc": resolved}
-
-
-def _resolve_figsize(requested, default):
-    return tuple(requested) if requested is not None else default
-
-
-def _map_figsize(requested, default_w, default_h, n_ticks=0):
-    """Honor ``--figsize`` as the full figure; otherwise auto-size (and widen for colorbar ticks)."""
-    if requested is not None:
-        return requested
-    return (_colorbar_figure_width(default_w, n_ticks), default_h)
 
 
 def _parse_index(spec):
@@ -1251,7 +1242,7 @@ def _plot_xy(
     if x_vals.size == 0:
         raise UsageError("xy scatter has no finite paired samples to plot.")
 
-    fig, ax = plt.subplots(figsize=_resolve_figsize(figsize, (8, 6)))
+    fig, ax = plt.subplots(figsize=resolve_figsize(figsize, (8, 6)))
     ax.scatter(x_vals, y_vals, s=36, zorder=3)
     if pair_on == "year" or (pair_on == "time" and x_vals.size <= 25):
         for xv, yv, key in zip(x_vals, y_vals, keys, strict=True):
@@ -1262,15 +1253,12 @@ def _plot_xy(
                 xytext=(4, 4),
                 fontsize=max(8, int(round(fontsize * 0.55))),
             )
-    tick_fs = max(10, int(round(fontsize * 0.7)))
-    ax.set_xlabel(_resolve_axis_label(xlabel, _variable_label(x_da)), fontsize=fontsize)
-    ax.set_ylabel(_resolve_axis_label(ylabel, _variable_label(y_da)), fontsize=fontsize)
+    ax.set_xlabel(_resolve_axis_label(xlabel, _variable_label(x_da)))
+    ax.set_ylabel(_resolve_axis_label(ylabel, _variable_label(y_da)))
     x_qty = variable_label_for_display(x_da, include_units=False)
     y_qty = variable_label_for_display(y_da, include_units=False)
-    _draw_axes_title(ax, title or f"{y_qty} vs {x_qty}", fontsize)
-    ax.tick_params(labelsize=tick_fs)
+    ax.set_title(title or f"{y_qty} vs {x_qty}")
     ax.grid(True, alpha=0.3)
-    fig.tight_layout()
     return fig
 
 
@@ -1313,208 +1301,12 @@ def _panel_title(da, sdim, step_value, all_steps):
     return f"{sdim}={_format_step(step_value)}"
 
 
-def _panel_title_fontsize(fontsize):
-    """Panel date labels track ``--fontsize`` (not a reduced fraction)."""
-    return int(fontsize)
-
-
-_TITLE_WRAP_WIDTH = 56
-_TITLE_LINE_EM = 1.35  # reserved line height for wrapped figure titles, in em
-_TITLE_GAP_IN = 0.16  # whitespace under the title block before panel dates
-
-
-def _wrap_title(text):
-    """Split a long title onto at most two lines at a natural break."""
-    if text is None:
-        return None
-    s = str(text).replace("\\n", "\n").strip()
-    if not s or "\n" in s or len(s) <= _TITLE_WRAP_WIDTH:
-        return s
-    for sep in (" · ", " — ", " – ", ": "):
-        idx = s.find(sep)
-        if 12 <= idx <= len(s) - 8:
-            return s[:idx].rstrip() + "\n" + s[idx + len(sep) :].lstrip()
-    mid = len(s) // 2
-    lo, hi = max(12, int(len(s) * 0.35)), min(len(s) - 8, int(len(s) * 0.70))
-    best = -1
-    for i in range(lo, hi + 1):
-        if s[i].isspace() and (best < 0 or abs(i - mid) < abs(best - mid)):
-            best = i
-    if best < 0:
-        best = s.rfind(" ", 0, _TITLE_WRAP_WIDTH + 1)
-        if best < 12:
-            best = s.find(" ", _TITLE_WRAP_WIDTH)
-    if best < 12:
-        return s
-    return s[:best].rstrip() + "\n" + s[best + 1 :].lstrip()
-
-
-def _title_lines(text):
-    """1–2 display lines for a figure or axes title."""
-    wrapped = _wrap_title(text)
-    if not wrapped:
-        return []
-    return [ln for ln in str(wrapped).splitlines() if ln.strip()][:2]
-
-
-def _draw_figure_title(fig, title, fontsize, y):
-    """Draw a one- or two-line figure title as separate centered texts.
-
-    A single ``suptitle`` with ``\\n`` is clipped or left-aligned on many
-    matplotlib builds; two ``fig.text`` artists stay centered and inside the
-    reserved title band.
-    """
-    lines = _title_lines(title)
-    if not lines:
-        return
-    if len(lines) == 1:
-        fig.suptitle(lines[0], fontsize=fontsize, y=y, ha="center", va="top")
-        return
-    fig_h = max(fig.get_figheight(), 1e-6)
-    step = _TITLE_LINE_EM * (fontsize / 72.0) / fig_h
-    for i, line in enumerate(lines):
-        fig.text(0.5, y - i * step, line, ha="center", va="top", fontsize=fontsize)
-
-
-def _draw_axes_title(ax, title, fontsize, pad=None):
-    """Draw a one- or two-line axes title; each line is its own centered text."""
-    lines = _title_lines(title)
-    if not lines:
-        return
-    if len(lines) == 1:
-        kw = {"fontsize": fontsize}
-        if pad is not None:
-            kw["pad"] = pad
-        ax.set_title(lines[0], **kw)
-        return
-    extra = (pad if pad is not None else 6) + 1.4 * fontsize
-    ax.set_title(" ", fontsize=fontsize, pad=extra)
-    for i, line in enumerate(lines):
-        ax.text(
-            0.5,
-            1.0 + 0.02 + (len(lines) - 1 - i) * 0.085,
-            line,
-            transform=ax.transAxes,
-            ha="center",
-            va="bottom",
-            fontsize=fontsize,
-            clip_on=False,
-        )
-
-
-def _set_figure_title(fig, title, fontsize):
-    _draw_figure_title(fig, title, fontsize, _FIG_TITLE_Y)
-
-
-def _set_panel_title(ax, text, fontsize):
-    ax.set_title(text, fontsize=fontsize, pad=_PANEL_TITLE_PAD)
-
-
-# Horizontal colorbar as a fraction of figure width: a thin strip under
-# the map. Discrete precip classes still widen a very narrow figure
-# (see ``_colorbar_figure_width``) so ticks do not collide.
-_MAP_CBAR_LEFT = 0.08
-_MAP_CBAR_WIDTH = 0.84
-_MAP_CBAR_HEIGHT = 0.028
-_MAP_CBAR_STACK_STEP = 0.07
-_MAP_CBAR_Y0 = 0.04
-_MAP_AXES_TOP = 0.96
-_FIG_TITLE_Y = 1.0
-_PANEL_TITLE_PAD = 10
-# Cartopy GeoAxes xlabel default (y in display coords) lands on the colorbar;
-# keep lon/lat names in axes coords, just below/beside the gridline ticks.
-_GEO_XLABEL_AXES_Y = -0.06
-_GEO_YLABEL_AXES_X = -0.16
-_CBAR_INCHES_PER_TICK = 0.28
-# Lon ticks + "Longitude" hang this fraction of axes height below the maps.
-_GEO_XLABEL_AXES_FRAC = 0.12
-
-
-def _title_band_inches(title, fontsize):
-    """Inches above the maps: figure-title lines, a small gap, then panel dates."""
-    n = len(_title_lines(title))
-    if n == 0:
-        return 0.0
-    line_in = (fontsize / 72.0) * _TITLE_LINE_EM
-    panel_in = _PANEL_TITLE_PAD / 72.0 + line_in
-    return n * line_in + _TITLE_GAP_IN + panel_in
-
-
-def _titled_maps_top(fig, title, fontsize):
-    """Axes top: just enough for the figure title and panel dates, not a fixed band."""
-    fig_h = max(fig.get_figheight(), 1e-6)
-    return 1.0 - _title_band_inches(title, fontsize) / fig_h
-
-
-def _maps_bottom(n_cbars, top):
-    """Axes bottom: colorbar plus lon labels, without a large empty band."""
-    extra = _MAP_CBAR_STACK_STEP * max(0, n_cbars - 1)
-    cbar_top = _MAP_CBAR_Y0 + _MAP_CBAR_HEIGHT + extra
-    return (cbar_top + 0.02 + _GEO_XLABEL_AXES_FRAC * top) / (1.0 + _GEO_XLABEL_AXES_FRAC)
-
-
-def _colorbar_tick_count(norm):
-    from matplotlib.colors import BoundaryNorm
-
-    if not isinstance(norm, BoundaryNorm):
-        return 0
-    return len(list(norm.boundaries))
-
-
-def _colorbar_figure_width(fig_width, n_ticks):
-    """Widen the figure so discrete colorbar labels do not collide."""
-    if n_ticks < 8:
-        return fig_width
-    needed = (_CBAR_INCHES_PER_TICK * n_ticks) / _MAP_CBAR_WIDTH
-    return max(fig_width, needed)
-
-
-def _map_colorbar_axes(fig, *, title, nrows, fontsize, index=0, n_cbars=1):
-    """Axes for a horizontal colorbar tucked under the lon labels."""
-    top = _titled_maps_top(fig, title, fontsize) if title else _MAP_AXES_TOP
-    bottom = _maps_bottom(n_cbars, top)
-    if index == 0:
-        hspace = 0.32 if nrows > 1 else 0.08
-        fig.subplots_adjust(
-            left=0.08,
-            right=0.98,
-            bottom=bottom,
-            top=top,
-            hspace=hspace,
-            wspace=0.12,
-        )
-    y = _MAP_CBAR_Y0 + index * _MAP_CBAR_STACK_STEP
-    return fig.add_axes([_MAP_CBAR_LEFT, y, _MAP_CBAR_WIDTH, _MAP_CBAR_HEIGHT])
-
-
-def _apply_geo_axis_labels(ax, xlabel, ylabel, fontsize, *, xlabel_on=True, ylabel_on=True):
-    """Lon/lat names in axes coordinates so they do not sit on the colorbar."""
+def _apply_geo_axis_labels(ax, xlabel, ylabel, *, xlabel_on=True, ylabel_on=True):
+    """Lon/lat names; matplotlib places them relative to the colorbar slot."""
     xlab = _resolve_axis_label(xlabel, "Longitude")
     ylab = _resolve_axis_label(ylabel, "Latitude")
-    if xlabel_on:
-        ax.set_xlabel(xlab, fontsize=fontsize)
-        ax.xaxis.set_label_coords(0.5, _GEO_XLABEL_AXES_Y)
-    else:
-        ax.set_xlabel("")
-    if ylabel_on:
-        ax.set_ylabel(ylab, fontsize=fontsize)
-        ax.yaxis.set_label_coords(_GEO_YLABEL_AXES_X, 0.5)
-    else:
-        ax.set_ylabel("")
-
-
-def _colorbar_text_sizes(fontsize):
-    """Colorbar text is intentionally smaller than axis/title text."""
-    label_fs = max(8, int(round(fontsize * 0.50)))
-    tick_fs = max(6, int(round(fontsize * 0.36)))
-    return label_fs, tick_fs
-
-
-def _style_map_colorbar(cbar, label, fontsize):
-    """Thin horizontal colorbar strip with compact ticks."""
-    label_fs, tick_fs = _colorbar_text_sizes(fontsize)
-    cbar.set_label(label, fontsize=label_fs)
-    cbar.ax.tick_params(labelsize=tick_fs, length=3, width=0.6, pad=2)
+    ax.set_xlabel(xlab if xlabel_on else "")
+    ax.set_ylabel(ylab if ylabel_on else "")
 
 
 def _wind_component_role(da):
@@ -1717,7 +1509,7 @@ def _windrose(
     nsector = WIND_ROSE_SECTORS
     width = 2.0 * np.pi / nsector
     theta = np.arange(nsector) * width
-    fig = plt.figure(figsize=_resolve_figsize(figsize, (8.5, 7.0)))
+    fig = plt.figure(figsize=resolve_figsize(figsize, (8.5, 7.0)))
     ax = fig.add_subplot(111, projection="polar")
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
@@ -1739,16 +1531,8 @@ def _windrose(
         [0, 45, 90, 135, 180, 225, 270, 315],
         ["N", "NE", "E", "SE", "S", "SW", "W", "NW"],
     )
-    ax.tick_params(axis="y", labelsize=int(fontsize * 0.7))
     ax.set_ylim(0, max(float(bottom.max()) * 1.08, 1.0))
-    ax.text(
-        0.5,
-        1.12,
-        "Frequency (%)",
-        transform=ax.transAxes,
-        ha="center",
-        fontsize=int(fontsize * 0.8),
-    )
+    ax.set_ylabel("Frequency (%)")
     handles = [
         Patch(facecolor=colors[i], edgecolor="white", label=legend_labels[i])
         for i in range(n_speed)
@@ -1758,13 +1542,11 @@ def _windrose(
         ax.legend(
             handles=handles,
             title="Wind speed",
-            fontsize=int(fontsize * 0.7),
-            title_fontsize=int(fontsize * 0.75),
             frameon=False,
             **legend_kw,
         )
     if title:
-        _draw_figure_title(fig, title, fontsize, 0.98)
+        fig.suptitle(title)
     return fig
 
 
@@ -2022,7 +1804,7 @@ def _quiver_map(
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=_resolve_figsize(figsize, (sw * ncols, sh * nrows)),
+        figsize=resolve_figsize(figsize, (sw * ncols, sh * nrows)),
         sharex=True,
         sharey=True,
         subplot_kw={"projection": ccrs.PlateCarree()},
@@ -2087,7 +1869,6 @@ def _quiver_map(
             ax,
             xlabel,
             ylabel,
-            fontsize,
             xlabel_on=(i // ncols == nrows - 1),
             ylabel_on=(i % ncols == 0),
         )
@@ -2097,17 +1878,12 @@ def _quiver_map(
                 lon - 2.0,
                 lat + 0.5,
                 city,
-                fontsize=max(10, int(round(fontsize * 0.65))),
                 transform=ccrs.PlateCarree(),
             )
         if boxes:
             _draw_boxes_on_ax(ax, boxes, ccrs.PlateCarree())
         if s is not None:
-            _set_panel_title(
-                ax,
-                _panel_title(speed, sdim, s, title_steps),
-                _panel_title_fontsize(fontsize),
-            )
+            ax.set_title(_panel_title(speed, sdim, s, title_steps))
 
     for j in range(num_steps, len(axes)):
         axes[j].set_visible(False)
@@ -2128,10 +1904,9 @@ def _quiver_map(
         y_key -= 0.10
 
     if title:
-        _set_figure_title(fig, title, fontsize)
-    cbar_ax = _map_colorbar_axes(fig, title=title, nrows=nrows, fontsize=fontsize)
-    cbar = fig.colorbar(mesh, cax=cbar_ax, orientation="horizontal", fraction=5)
-    _style_map_colorbar(cbar, cbar_label or _wind_speed_cbar_label(u_da), fontsize)
+        fig.suptitle(title)
+    visible = [ax for ax in axes if ax.get_visible()]
+    add_shared_colorbar(fig, mesh, visible, cbar_label or _wind_speed_cbar_label(u_da))
     return fig
 
 
@@ -2786,7 +2561,6 @@ def _plot_layers(
     import cartopy.crs as ccrs
     import matplotlib.pyplot as plt
     import numpy as np
-    from matplotlib.colors import BoundaryNorm
 
     if shared_scale and independent_scale:
         raise UsageError("--shared-scale and --independent-scale are mutually exclusive")
@@ -2928,11 +2702,10 @@ def _plot_layers(
     num_steps = len(steps)
     nrows, ncols = _panel_shape(num_steps, rows=rows, columns=columns)
     sw, sh = _figsize_from_extent(*extent_vals)
-    n_ticks = max((_colorbar_tick_count(p.get("norm")) for p in prepared), default=0)
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=_map_figsize(figsize, sw * ncols, sh * nrows, n_ticks),
+        figsize=resolve_figsize(figsize, (sw * ncols, sh * nrows)),
         sharex=True,
         sharey=True,
         subplot_kw={"projection": ccrs.PlateCarree()},
@@ -2998,7 +2771,6 @@ def _plot_layers(
             ax,
             xlabel,
             ylabel,
-            fontsize,
             xlabel_on=(i // ncols == nrows - 1),
             ylabel_on=(i % ncols == 0),
         )
@@ -3008,18 +2780,13 @@ def _plot_layers(
                 lon - 2.0,
                 lat + 0.5,
                 city,
-                fontsize=max(10, int(round(fontsize * 0.65))),
                 transform=transform,
                 zorder=8,
             )
         if boxes:
             _draw_boxes_on_ax(ax, boxes, transform)
         if s is not None and title_da is not None:
-            _set_panel_title(
-                ax,
-                _panel_title(title_da, sdim, s, title_steps),
-                _panel_title_fontsize(fontsize),
-            )
+            ax.set_title(_panel_title(title_da, sdim, s, title_steps))
 
     for j in range(num_steps, len(axes)):
         axes[j].set_visible(False)
@@ -3042,28 +2809,22 @@ def _plot_layers(
             y_key -= 0.10
 
     if title:
-        _set_figure_title(fig, title, fontsize)
+        fig.suptitle(title)
 
-    cbars = list(last_by_group.values())
-    n_cbars = len(cbars)
-    for ci, (mappable, p) in enumerate(cbars):
-        cbar_ax = _map_colorbar_axes(
-            fig, title=title, nrows=nrows, fontsize=fontsize, index=ci, n_cbars=n_cbars
-        )
-        cbar = fig.colorbar(
-            mappable,
-            cax=cbar_ax,
-            orientation="horizontal",
-            fraction=5,
-            **_cbar_boundary_kwargs(p.get("norm"), p.get("cmap")),
-        )
+    visible = [ax for ax in axes if ax.get_visible()]
+    for mappable, p in last_by_group.values():
+        kw = dict(_cbar_boundary_kwargs(p.get("norm"), p.get("cmap")))
         if p.get("flag_ticks") is not None:
-            cbar.set_ticks(p["flag_ticks"])
-            if p.get("flag_labels") is not None:
-                cbar.set_ticklabels(p["flag_labels"])
-        _style_map_colorbar(
-            cbar, p.get("cbar_label") or _variable_label(p.get("da")), fontsize
+            kw["ticks"] = p["flag_ticks"]
+        cbar = add_shared_colorbar(
+            fig,
+            mappable,
+            visible,
+            p.get("cbar_label") or _variable_label(p.get("da")),
+            **kw,
         )
+        if cbar is not None and p.get("flag_labels") is not None:
+            cbar.set_ticklabels(p["flag_labels"])
     return fig
 
 
@@ -3108,7 +2869,6 @@ def _heatmap(
     import cartopy.crs as ccrs
     import matplotlib.pyplot as plt
     import numpy as np
-    from matplotlib.colors import BoundaryNorm
 
     if "number" in da.dims:
         da = da.mean("number", keep_attrs=True)
@@ -3149,7 +2909,7 @@ def _heatmap(
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=_map_figsize(figsize, sw * ncols, sh * nrows, _colorbar_tick_count(norm)),
+        figsize=resolve_figsize(figsize, (sw * ncols, sh * nrows)),
         sharex=True,
         sharey=True,
         subplot_kw={"projection": ccrs.PlateCarree()},
@@ -3215,7 +2975,6 @@ def _heatmap(
             ax,
             xlabel,
             ylabel,
-            fontsize,
             xlabel_on=(i // ncols == nrows - 1),
             ylabel_on=(i % ncols == 0),
         )
@@ -3225,36 +2984,25 @@ def _heatmap(
                 lon - 2.0,
                 lat + 0.5,
                 city,
-                fontsize=max(10, int(round(fontsize * 0.65))),
                 transform=ccrs.PlateCarree(),
             )
         if boxes:
             _draw_boxes_on_ax(ax, boxes, ccrs.PlateCarree())
         if s is not None:
-            _set_panel_title(
-                ax,
-                _panel_title(da, sdim, s, title_steps),
-                _panel_title_fontsize(fontsize),
-            )
+            ax.set_title(_panel_title(da, sdim, s, title_steps))
 
     for j in range(num_steps, len(axes)):
         axes[j].set_visible(False)
 
     if title:
-        _set_figure_title(fig, title, fontsize)
-    cbar_ax = _map_colorbar_axes(fig, title=title, nrows=nrows, fontsize=fontsize)
-    cbar = fig.colorbar(
-        mappable,
-        cax=cbar_ax,
-        orientation="horizontal",
-        fraction=5,
-        **_cbar_boundary_kwargs(norm, cmap),
-    )
+        fig.suptitle(title)
+    visible = [ax for ax in axes if ax.get_visible()]
+    cbar_kw = dict(_cbar_boundary_kwargs(norm, cmap))
     if flag_ticks is not None:
-        cbar.set_ticks(flag_ticks)
-        if flag_labels is not None:
-            cbar.set_ticklabels(flag_labels)
-    _style_map_colorbar(cbar, _variable_label(da), fontsize)
+        cbar_kw["ticks"] = flag_ticks
+    cbar = add_shared_colorbar(fig, mappable, visible, _variable_label(da), **cbar_kw)
+    if cbar is not None and flag_labels is not None:
+        cbar.set_ticklabels(flag_labels)
     return fig
 
 
@@ -3358,8 +3106,8 @@ def _heatmap(
 @weather_skill.argument(
     "--fontsize",
     type=int,
-    default=18,
-    help="Base font size for titles, axis labels, and colorbar text (default 18).",
+    default=DEFAULT_FONTSIZE,
+    help="Base font size for titles, axis labels, and colorbar text (default 16).",
 )
 @weather_skill.argument(
     "--figsize",
@@ -3497,6 +3245,8 @@ def plot(
     import matplotlib.pyplot as plt
     import nc_time_axis  # noqa: F401 — registers the cftime→matplotlib axis converter
 
+    apply_style(fontsize)
+
     layers = layer or []
     if layers and ds is not None:
         raise UsageError("pass either -i/--input or --layer, not both")
@@ -3569,11 +3319,7 @@ def plot(
             ylabel=ylabel,
             figsize=figsize,
         )
-        output = Path(output)
-        output.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(output, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        return output
+        return save_figure(fig, output)
     map_only = {
         "--extent": bool(extent),
         "--cities": bool(cities),
@@ -3775,7 +3521,7 @@ def plot(
             figsize=figsize,
         )
     elif style == "timeseries":
-        fig, ax = plt.subplots(figsize=_resolve_figsize(figsize, (10, 6)))
+        fig, ax = plt.subplots(figsize=resolve_figsize(figsize, (10, 6)))
         sdim = "step" if "step" in da.dims else cf_dim(da, "time")
         if sdim is None:
             raise UsageError(f"timeseries needs 'step' or 'time'; got {list(da.dims)}.")
@@ -3784,32 +3530,18 @@ def plot(
         xvals, default_xlabel = _timeseries_axis(reduced, sdim)
         qty = variable_label_for_display(reduced, include_units=False)
         ax.plot(xvals, reduced.values, marker="o", markersize=5, label=qty)
-        tick_fs = max(10, int(round(fontsize * 0.7)))
         resolved_xlabel = _resolve_time_axis_label(xlabel, default_xlabel, xvals)
-        ax.set_xlabel(resolved_xlabel, fontsize=fontsize)
-        ax.set_ylabel(
-            _resolve_axis_label(ylabel, _variable_label(reduced)),
-            fontsize=fontsize,
-        )
-        _draw_axes_title(ax, title or f"{qty} ({style})", fontsize)
-        ax.tick_params(labelsize=tick_fs)
+        ax.set_xlabel(resolved_xlabel)
+        ax.set_ylabel(_resolve_axis_label(ylabel, _variable_label(reduced)))
+        ax.set_title(title or f"{qty} ({style})")
         legend_kw = _legend_kwargs(legend, default="none")
         if legend_kw is not None:
-            ax.legend(
-                fontsize=max(10, int(round(fontsize * 0.7))),
-                frameon=False,
-                **legend_kw,
-            )
+            ax.legend(frameon=False, **legend_kw)
         if _is_datetime_axis(xvals):
             _apply_date_ticks(ax)
             fig.autofmt_xdate()
-        fig.tight_layout()
 
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return output
+    return save_figure(fig, output)
 
 
 if __name__ == "__main__":

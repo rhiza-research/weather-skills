@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 
-import argparse
 import datetime as _dt
 import sys
 from pathlib import Path
@@ -42,85 +41,33 @@ from weather_skills_core.units import (
     variable_units,
 )
 
+try:
+    from weather_skills_core.figure import (
+        DEFAULT_FONTSIZE,
+        add_shared_colorbar,
+        apply_style,
+        parse_figsize,
+        resolve_figsize,
+        save_figure,
+    )
+except ImportError:
+    import importlib.util as _ilu
+
+    _spec = _ilu.spec_from_file_location(
+        "_ws_figure", Path(__file__).resolve().parent / "_figure.py"
+    )
+    _mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    DEFAULT_FONTSIZE = _mod.DEFAULT_FONTSIZE
+    add_shared_colorbar = _mod.add_shared_colorbar
+    apply_style = _mod.apply_style
+    parse_figsize = _mod.parse_figsize
+    resolve_figsize = _mod.resolve_figsize
+    save_figure = _mod.save_figure
+
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-_TITLE_WRAP_WIDTH = 56
-_TITLE_LINE_EM = 1.35
-_TITLE_GAP_IN = 0.10
-_PANEL_TITLE_PAD = 6  # matplotlib default axes-title pad
-
-
-def parse_figsize(value):
-    """Argparse converter for ``W,H`` or ``WxH`` inches."""
-    if value is None:
-        return None
-    raw = str(value).strip().lower().replace("×", "x")
-    if not raw:
-        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
-    sep = "x" if "x" in raw and "," not in raw else ","
-    parts = [p.strip() for p in raw.split(sep)]
-    if len(parts) != 2:
-        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
-    try:
-        width, height = float(parts[0]), float(parts[1])
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            "--figsize must be W,H inches (e.g. 10,6 or 10x6)"
-        ) from None
-    if width <= 0 or height <= 0:
-        raise argparse.ArgumentTypeError("--figsize width and height must be positive")
-    return (width, height)
-
-
-def _resolve_figsize(requested, default):
-    return tuple(requested) if requested is not None else tuple(default)
-
-
-def _wrap_title(text):
-    """Split a long title onto at most two lines at a natural break."""
-    if text is None:
-        return None
-    s = str(text).replace("\\n", "\n").strip()
-    if not s or "\n" in s or len(s) <= _TITLE_WRAP_WIDTH:
-        return s
-    for sep in (" · ", " — ", " – ", ": "):
-        idx = s.find(sep)
-        if 12 <= idx <= len(s) - 8:
-            return s[:idx].rstrip() + "\n" + s[idx + len(sep) :].lstrip()
-    mid = len(s) // 2
-    lo, hi = max(12, int(len(s) * 0.35)), min(len(s) - 8, int(len(s) * 0.70))
-    best = -1
-    for i in range(lo, hi + 1):
-        if s[i].isspace() and (best < 0 or abs(i - mid) < abs(best - mid)):
-            best = i
-    if best < 0:
-        best = s.rfind(" ", 0, _TITLE_WRAP_WIDTH + 1)
-        if best < 12:
-            best = s.find(" ", _TITLE_WRAP_WIDTH)
-    if best < 12:
-        return s
-    return s[:best].rstrip() + "\n" + s[best + 1 :].lstrip()
-
-
-def _title_lines(text):
-    wrapped = _wrap_title(text)
-    if not wrapped:
-        return []
-    return [ln for ln in str(wrapped).splitlines() if ln.strip()][:2]
-
-
-def _draw_figure_title(fig, title, fontsize, y):
-    lines = _title_lines(title)
-    if not lines:
-        return
-    if len(lines) == 1:
-        fig.suptitle(lines[0], fontsize=fontsize, y=y, ha="center", va="top")
-        return
-    fig_h = max(fig.get_figheight(), 1e-6)
-    step = _TITLE_LINE_EM * (fontsize / 72.0) / fig_h
-    for i, line in enumerate(lines):
-        fig.text(0.5, y - i * step, line, ha="center", va="top", fontsize=fontsize)
 
 
 # CHIRPS-GEFS / Early Warning eXplorer rainfall-total classes (mm).
@@ -199,23 +146,6 @@ def _axis_label(text):
 
 _NS_PER_DAY = 86_400_000_000_000
 _TOL_NS = 1_000_000_000  # 1 s, matching plot-compare
-
-
-def _scaled_fontsize(base, frac, *, floor=8):
-    """Scale a base ``--fontsize`` by ``frac``, never below ``floor``."""
-    return max(floor, int(round(int(base) * frac)))
-
-
-def _title_band_inches(title, fontsize):
-    """Inches above the maps: figure-title lines, a small gap, then column dates."""
-    n = len(_title_lines(title))
-    if n == 0:
-        return 0.0
-    title_fs = _scaled_fontsize(fontsize, 1.1)
-    panel_fs = _scaled_fontsize(fontsize, 0.85)
-    title_in = n * _TITLE_LINE_EM * (title_fs / 72.0)
-    panel_in = _PANEL_TITLE_PAD / 72.0 + _TITLE_LINE_EM * (panel_fs / 72.0)
-    return title_in + _TITLE_GAP_IN + panel_in
 
 
 def _parse_colormap(spec):
@@ -308,29 +238,6 @@ def _cbar_boundary_kwargs(norm, cmap=None):
     if getattr(cmap, "name", None) in ("chirps_anom", "chirps_total", "chirps_short"):
         kw["extend"] = "both"
     return kw
-
-
-_MAP_CBAR_LEFT = 0.08
-_MAP_CBAR_WIDTH = 0.84
-_MAP_CBAR_HEIGHT = 0.028
-_CBAR_INCHES_PER_TICK = 0.28
-
-
-def _colorbar_tick_count(norm):
-    from matplotlib.colors import BoundaryNorm
-
-    if not isinstance(norm, BoundaryNorm):
-        return 0
-    return len(list(norm.boundaries))
-
-
-def _colorbar_figure_width(ncols, n_ticks):
-    """Physical figure width so discrete colorbar labels do not collide."""
-    col_width = max(3.2 * ncols, 6.0)
-    if n_ticks < 8:
-        return col_width
-    needed = (_CBAR_INCHES_PER_TICK * n_ticks) / _MAP_CBAR_WIDTH
-    return max(col_width, needed)
 
 
 def _variable_label(da):
@@ -726,8 +633,8 @@ def _extent_from_da(da, lat_dim, lon_dim, bbox):
 @weather_skill.argument(
     "--fontsize",
     type=int,
-    default=14,
-    help="Base font size for column titles, row labels, ticks, and colorbars (default 14).",
+    default=DEFAULT_FONTSIZE,
+    help="Base font size for column titles, row labels, ticks, and colorbars (default 16).",
 )
 @weather_skill.argument(
     "--figsize",
@@ -775,6 +682,7 @@ def plot_compare_forecasts(
     import matplotlib
 
     matplotlib.use("Agg")
+    apply_style(fontsize)
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
     import cf_xarray  # noqa: F401 — registers the .cf accessor
@@ -870,15 +778,7 @@ def plot_compare_forecasts(
                 vmin, vmax = 0.0, 1.0
         else:
             vmin, vmax = 0.0, 1.0
-    title_lines = _title_lines(title)
-    title_band = _title_band_inches(title, fontsize)
-    fig_w, fig_h = _resolve_figsize(
-        figsize,
-        (
-            _colorbar_figure_width(ncols, _colorbar_tick_count(norm)),
-            max(2.8 * nrows, 4.0) + title_band,
-        ),
-    )
+    fig_w, fig_h = resolve_figsize(figsize, (max(3.2 * ncols, 6.0), max(2.8 * nrows, 4.0)))
     fig, axes = plt.subplots(
         nrows,
         ncols,
@@ -888,15 +788,8 @@ def plot_compare_forecasts(
         subplot_kw={"projection": ccrs.PlateCarree()},
         squeeze=False,
     )
-    if title_lines:
-        _draw_figure_title(fig, title, _scaled_fontsize(fontsize, 1.1), 1.0)
-
-    tick_fs = _scaled_fontsize(fontsize, 0.7)
-    panel_title_fs = _scaled_fontsize(fontsize, 0.85)
-    lead_fs = _scaled_fontsize(fontsize, 0.65)
-    na_fs = _scaled_fontsize(fontsize, 0.9)
-    cbar_label_fs = _scaled_fontsize(fontsize, 0.50, floor=8)
-    cbar_tick_fs = _scaled_fontsize(fontsize, 0.36, floor=6)
+    if title:
+        fig.suptitle(title)
 
     contour = None
     for row, da in enumerate(das):
@@ -911,7 +804,7 @@ def plot_compare_forecasts(
             if idx is not None and steps_per_row[row] is not None:
                 lead = _format_lead(steps_per_row[row][idx])
             if row == 0:
-                ax.set_title(col_title, fontsize=panel_title_fs)
+                ax.set_title(col_title)
             if wrap_lon:
                 ax.set_extent(extent, crs=ccrs.PlateCarree())
             else:
@@ -929,8 +822,6 @@ def plot_compare_forecasts(
             gl = ax.gridlines(draw_labels=True, alpha=0)
             gl.top_labels = False
             gl.right_labels = False
-            gl.xlabel_style = {"size": tick_fs}
-            gl.ylabel_style = {"size": tick_fs}
             if col != 0:
                 gl.left_labels = False
             if idx is None:
@@ -941,7 +832,6 @@ def plot_compare_forecasts(
                     transform=ax.transAxes,
                     ha="center",
                     va="center",
-                    fontsize=na_fs,
                     color="0.4",
                 )
             else:
@@ -966,37 +856,20 @@ def plot_compare_forecasts(
                         transform=ax.transAxes,
                         ha="left",
                         va="top",
-                        fontsize=lead_fs,
                         color="0.2",
                     )
-            ax.set_ylabel(_axis_label(labels[row]), fontsize=fontsize)
+            ax.set_ylabel(_axis_label(labels[row]))
 
     if contour is not None:
-        fig.subplots_adjust(
-            left=0.08,
-            right=0.98,
-            bottom=0.28,
-            top=(1.0 - title_band / fig_h) if title_band else 0.96,
-            hspace=0.42 if nrows > 1 else 0.12,
-            wspace=0.18,
-        )
-        cbar_ax = fig.add_axes([_MAP_CBAR_LEFT, 0.04, _MAP_CBAR_WIDTH, _MAP_CBAR_HEIGHT])
-        cbar = fig.colorbar(
+        add_shared_colorbar(
+            fig,
             contour,
-            cax=cbar_ax,
-            orientation="horizontal",
+            axes,
+            _variable_label(das[0]),
             **_cbar_boundary_kwargs(norm, cmap),
         )
-        cbar.set_label(_variable_label(das[0]), fontsize=cbar_label_fs)
-        cbar.ax.tick_params(labelsize=cbar_tick_fs, length=3, width=0.6, pad=2)
-    else:
-        fig.tight_layout()
 
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return output
+    return save_figure(fig, output)
 
 
 if __name__ == "__main__":

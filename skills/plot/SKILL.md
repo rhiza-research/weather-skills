@@ -1,6 +1,6 @@
 ---
 name: plot
-description: Render a 2D heatmap, filled-contour map, 1D time series, xy scatter, wind-rose, u/v quiver, or layered map PNG from weather-skills standard dataset Zarrs. Overlay multiple inputs with repeatable --layer KIND:PATH (heatmap, scatter, quiver, GeoJSON outline/mask). Heatmaps overlay scale-appropriate coastlines, country borders, lakes, and admin-1 boundaries. Use for a single dataset as a map/profile/rose/vectors, or stacked layers (e.g. precip heatmap + station scatter). --style xy plots one 1D series against another (--x/--y, or -i with --x-variable/--y-variable), pairing on time, year, or index. For precipitation, run aggregate-temporal then convert-to-totals first. For side-by-side two-row comparison, use plot-compare. Use --fontsize to enlarge titles, axis labels, city labels, and colorbar text (default 18).
+description: Render a 2D heatmap, filled-contour map, 1D time series, xy scatter, wind-rose, u/v quiver, or layered map PNG from weather-skills standard dataset Zarrs. Overlay multiple inputs with repeatable --layer KIND:PATH (heatmap, scatter, quiver, GeoJSON outline/mask). Heatmaps overlay scale-appropriate coastlines, country borders, lakes, and admin-1 boundaries. Use for a single dataset as a map/profile/rose/vectors, or stacked layers (e.g. precip heatmap + station scatter). --style xy plots one 1D series against another (--x/--y, or -i with --x-variable/--y-variable), pairing on time, year, or index. For precipitation, run aggregate-temporal then convert-to-totals first. For side-by-side two-row comparison, use plot-compare. Use --fontsize to enlarge titles, axis labels, city labels, and colorbar text (default 16).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py *)
@@ -228,7 +228,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   `'{"Windhoek": [-22.55, 17.08]}'` or a path to such a JSON file. Off by
   default.
 - `--fontsize` — base font size for titles (including panel date labels), axis
-  labels, city labels, and colorbar text (default 18). Raise on user request
+  labels, city labels, and colorbar text (default 16). Raise on user request
   (e.g. `--fontsize 22`).
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `10,6`).
   When omitted, maps size from the geographic extent, timeseries is `10×6`,

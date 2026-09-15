@@ -1,6 +1,6 @@
 ---
 name: plot-compare
-description: Render a side-by-side two-row comparison PNG of two weather-skills standard dataset Zarr stores (gridded-vs-gridded or station-vs-gridded as separate rows, not overlaid). Use for sat-vs-station validation, model-vs-obs comparison, or cross-source QC. To overlay stations on a heatmap, use plot --layer instead. For precipitation, convert-to-totals after aggregate-temporal before plotting. Use --fontsize to enlarge panel titles, row labels, ticks, and colorbars (default 14).
+description: Render a side-by-side two-row comparison PNG of two weather-skills standard dataset Zarr stores (gridded-vs-gridded or station-vs-gridded as separate rows, not overlaid). Use for sat-vs-station validation, model-vs-obs comparison, or cross-source QC. To overlay stations on a heatmap, use plot --layer instead. For precipitation, convert-to-totals after aggregate-temporal before plotting. Use --fontsize to enlarge panel titles, row labels, ticks, and colorbars (default 16).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py *)
@@ -125,7 +125,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
 - `--xlabel` — override the bottom longitude axis label (default `Longitude`).
   Row titles stay `--label`.
 - `--fontsize` — base font size for panel titles, row labels, ticks, and
-  colorbars (default 14). Raise on user request (e.g. `--fontsize 18`).
+  colorbars (default 16). Raise on user request (e.g. `--fontsize 18`).
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `16,8`).
   Default `22×10`.
 - `--panels` — number of panels per row (default 3).

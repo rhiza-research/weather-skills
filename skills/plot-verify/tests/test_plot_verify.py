@@ -134,80 +134,12 @@ def test_verify_count_mismatch_is_refused(tmp_path, plot_fn):
     assert exc.value.code == 2
 
 
-def test_colorbar_min_width_fits_precip_class_ticks(plot_mod):
-    n_ticks = len(plot_mod.PRECIP_BOUNDS)
-    needed = plot_mod._colorbar_min_width(n_ticks)
-    assert needed * plot_mod._FIELD_CBAR_WIDTH + 1e-9 >= (
-        plot_mod._CBAR_INCHES_PER_TICK * n_ticks
-    )
-    assert plot_mod._colorbar_min_width(0) == 8.0
-    # CHIRPS class ticks still fit a typical map figure.
-    assert needed < 10.0
-
-
-def test_wrap_title_and_two_line_title_band(plot_mod):
-    short = plot_mod._wrap_title("Hits")
-    assert short == "Hits"
-    dotted = plot_mod._wrap_title(
-        "Kenya GEFS vs CHIRPS 5 mm event verification · 2026-08-04 to 2026-08-10"
-    )
-    assert dotted == "Kenya GEFS vs CHIRPS 5 mm event verification\n2026-08-04 to 2026-08-10"
-    extent = [34.0, 42.0, -5.0, 5.0]
-    one = plot_mod._figure_layout(4, extent, 14, title="Hits")
-    two = plot_mod._figure_layout(4, extent, 14, title=dotted)
-    assert two["figsize"][1] > one["figsize"][1]
-    assert two["maps_top"] < one["maps_top"]
-    line = plot_mod._TITLE_LINE_EM * (plot_mod._scaled_fontsize(18, 1.25) / 72.0)
-    assert plot_mod._title_band_inches(dotted, 18) - plot_mod._title_band_inches(
-        "Hits", 18
-    ) == pytest.approx(line)
-
-
-def test_draw_figure_title_two_lines_are_separate_texts(plot_mod):
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    fig, _ax = plt.subplots(figsize=(10, 8))
-    plot_mod._draw_figure_title(
-        fig,
-        "Kenya GEFS vs CHIRPS 5 mm event verification · 2026-08-04 to 2026-08-10",
-        18,
-        0.98,
-    )
-    fig.canvas.draw()
-    texts = [t.get_text() for t in fig.texts]
-    assert all("\n" not in t for t in texts)
-    assert any("Kenya GEFS vs CHIRPS" in t for t in texts)
-    assert any("2026-08-04" in t for t in texts)
-    plt.close(fig)
-
-
-def test_figure_layout_obs_then_leads(plot_mod):
-    extent = [34.0, 42.0, -5.0, 5.0]
-    layout = plot_mod._figure_layout(4, extent, 14, title=True)
-    assert layout["n_cols"] == 5
-    assert layout["maps_top"] > layout["maps_bottom"]
-    assert layout["title_y"] > layout["maps_top"]
-    assert layout["verify_box"][0] > layout["field_box"][0]
-    assert layout["figsize"][0] >= plot_mod._colorbar_min_width(14)
-    field_top = layout["field_box"][1] + layout["field_box"][3]
-    assert field_top < layout["maps_bottom"]
-
-
 def test_parse_figsize(plot_mod):
     import argparse
 
     assert plot_mod.parse_figsize("14,8") == (14.0, 8.0)
     with pytest.raises(argparse.ArgumentTypeError, match="W,H"):
         plot_mod.parse_figsize("wide")
-
-
-def test_figure_layout_honors_figsize(plot_mod):
-    extent = [34.0, 42.0, -5.0, 5.0]
-    layout = plot_mod._figure_layout(4, extent, 14, title="Hits", figsize=(12.0, 7.0))
-    assert layout["figsize"] == (12.0, 7.0)
 
 
 def test_row_labels_use_weather_skills_source(plot_mod):

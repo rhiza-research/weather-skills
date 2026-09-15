@@ -33,6 +33,28 @@ from weather_skills_core.units import (
     variable_units,
 )
 
+try:
+    from weather_skills_core.figure import (
+        DEFAULT_FONTSIZE,
+        apply_style,
+        parse_figsize,
+        resolve_figsize,
+        save_figure,
+    )
+except ImportError:
+    import importlib.util as _ilu
+
+    _spec = _ilu.spec_from_file_location(
+        "_ws_figure", Path(__file__).resolve().parent / "_figure.py"
+    )
+    _mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    DEFAULT_FONTSIZE = _mod.DEFAULT_FONTSIZE
+    apply_style = _mod.apply_style
+    parse_figsize = _mod.parse_figsize
+    resolve_figsize = _mod.resolve_figsize
+    save_figure = _mod.save_figure
+
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
@@ -200,32 +222,6 @@ def _parse_trace_options(blob: str) -> dict:
     if not options:
         raise ValueError("--trace needs at least one k=v option (e.g. color=black)")
     return options
-
-
-def parse_figsize(value):
-    """Argparse converter for ``W,H`` or ``WxH`` inches."""
-    if value is None:
-        return None
-    raw = str(value).strip().lower().replace("×", "x")
-    if not raw:
-        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
-    sep = "x" if "x" in raw and "," not in raw else ","
-    parts = [p.strip() for p in raw.split(sep)]
-    if len(parts) != 2:
-        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
-    try:
-        width, height = float(parts[0]), float(parts[1])
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            "--figsize must be W,H inches (e.g. 10,6 or 10x6)"
-        ) from None
-    if width <= 0 or height <= 0:
-        raise argparse.ArgumentTypeError("--figsize width and height must be positive")
-    return (width, height)
-
-
-def _resolve_figsize(requested, default):
-    return tuple(requested) if requested is not None else tuple(default)
 
 
 def parse_trace(value) -> TraceSpec:
@@ -399,67 +395,6 @@ def _y_label(variable, da):
     return variable_label_for_display(da, fallback=variable)
 
 
-_TITLE_WRAP_WIDTH = 56
-
-
-def _wrap_title(text):
-    """Split a long title onto at most two lines at a natural break."""
-    if text is None:
-        return None
-    s = str(text).replace("\\n", "\n").strip()
-    if not s or "\n" in s or len(s) <= _TITLE_WRAP_WIDTH:
-        return s
-    for sep in (" · ", " — ", " – ", ": "):
-        idx = s.find(sep)
-        if 12 <= idx <= len(s) - 8:
-            return s[:idx].rstrip() + "\n" + s[idx + len(sep) :].lstrip()
-    mid = len(s) // 2
-    lo, hi = max(12, int(len(s) * 0.35)), min(len(s) - 8, int(len(s) * 0.70))
-    best = -1
-    for i in range(lo, hi + 1):
-        if s[i].isspace() and (best < 0 or abs(i - mid) < abs(best - mid)):
-            best = i
-    if best < 0:
-        best = s.rfind(" ", 0, _TITLE_WRAP_WIDTH + 1)
-        if best < 12:
-            best = s.find(" ", _TITLE_WRAP_WIDTH)
-    if best < 12:
-        return s
-    return s[:best].rstrip() + "\n" + s[best + 1 :].lstrip()
-
-
-def _title_lines(text):
-    wrapped = _wrap_title(text)
-    if not wrapped:
-        return []
-    return [ln for ln in str(wrapped).splitlines() if ln.strip()][:2]
-
-
-def _draw_axes_title(ax, title, fontsize, pad=None):
-    lines = _title_lines(title)
-    if not lines:
-        return
-    if len(lines) == 1:
-        kw = {"fontsize": fontsize}
-        if pad is not None:
-            kw["pad"] = pad
-        ax.set_title(lines[0], **kw)
-        return
-    extra = (pad if pad is not None else 6) + 1.4 * fontsize
-    ax.set_title(" ", fontsize=fontsize, pad=extra)
-    for i, line in enumerate(lines):
-        ax.text(
-            0.5,
-            1.0 + 0.02 + (len(lines) - 1 - i) * 0.085,
-            line,
-            transform=ax.transAxes,
-            ha="center",
-            va="bottom",
-            fontsize=fontsize,
-            clip_on=False,
-        )
-
-
 def _day_of_year_tick_label(doy: float) -> str:
     """Map a 1-based day-of-year tick value to a short calendar label."""
     import datetime as dt
@@ -582,16 +517,14 @@ def _legend_handles(ax, series):
     return [by_label[label] for label in ordered_labels], ordered_labels
 
 
-def _place_legend_below(ax, handles, labels, fontsize: int):
-    """Place legend centered below the axis title, with a clear gap."""
+def _place_legend_below(ax, handles, labels):
+    """Place legend centered below the axes; tight-bbox includes it."""
     ncols = max(1, min(len(labels), 4))
     return ax.legend(
         handles,
         labels,
-        fontsize=fontsize,
         loc="upper center",
-        bbox_to_anchor=(0.5, -0.42),
-        borderaxespad=0.0,
+        bbox_to_anchor=(0.5, -0.18),
         ncol=ncols,
         frameon=False,
     )
@@ -636,7 +569,7 @@ def _place_legend_below(ax, handles, labels, fontsize: int):
 @weather_skill.argument(
     "--fontsize",
     type=int,
-    default=16,
+    default=DEFAULT_FONTSIZE,
     help="Base font size for titles, axis labels, ticks, and legend (default 16).",
 )
 @weather_skill.argument(
@@ -705,6 +638,7 @@ def plot_timeseries(
     import matplotlib
 
     matplotlib.use("Agg")
+    apply_style(fontsize)
     import cf_xarray  # noqa: F401 — registers the .cf accessor
     import matplotlib.pyplot as plt
     import nc_time_axis  # noqa: F401 — registers the cftime→matplotlib axis converter
@@ -740,7 +674,7 @@ def plot_timeseries(
             file=sys.stderr,
         )
 
-    fig, ax = plt.subplots(figsize=_resolve_figsize(figsize, (10, 6)))
+    fig, ax = plt.subplots(figsize=resolve_figsize(figsize, (10, 6)))
     first_tdim = None
     axis_label = None
     series = []
@@ -824,22 +758,15 @@ def plot_timeseries(
     _validate_trace_colors(styles)
     _draw_traces(ax, series, styles, style)
 
-    tick_fs = max(10, int(round(fontsize * 0.7)))
-    legend_fs = max(10, int(round(fontsize * 0.85)))
     x_for_label = series[0][0] if series else None
     ax.set_xlabel(
-        _resolve_time_axis_label(xlabel, axis_label or first_tdim or "time", x_for_label),
-        fontsize=fontsize,
+        _resolve_time_axis_label(xlabel, axis_label or first_tdim or "time", x_for_label)
     )
-    ax.set_ylabel(
-        _resolve_axis_label(ylabel, _y_label(variable, datasets[0][variable])),
-        fontsize=fontsize,
-    )
+    ax.set_ylabel(_resolve_axis_label(ylabel, _y_label(variable, datasets[0][variable])))
     if title:
-        _draw_axes_title(ax, title, fontsize)
-    ax.tick_params(labelsize=tick_fs)
+        ax.set_title(title)
     handles, legend_labels = _legend_handles(ax, series)
-    _place_legend_below(ax, handles, legend_labels, legend_fs)
+    _place_legend_below(ax, handles, legend_labels)
     ax.grid(True, linestyle="--", alpha=0.5)
 
     if align_day_of_year:
@@ -847,12 +774,7 @@ def plot_timeseries(
     elif _is_datetime_axis(x_for_label):
         _apply_date_ticks(ax)
         fig.autofmt_xdate()
-    fig.tight_layout(rect=(0, 0.24, 1, 1))
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return output
+    return save_figure(fig, output)
 
 
 if __name__ == "__main__":

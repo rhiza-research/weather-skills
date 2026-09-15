@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
 
@@ -44,31 +43,32 @@ from weather_skills_core.units import (
     variable_units,
 )
 
+try:
+    from weather_skills_core.figure import (
+        DEFAULT_FONTSIZE,
+        add_shared_colorbar,
+        apply_style,
+        parse_figsize,
+        resolve_figsize,
+        save_figure,
+    )
+except ImportError:
+    import importlib.util as _ilu
+
+    _spec = _ilu.spec_from_file_location(
+        "_ws_figure", Path(__file__).resolve().parent / "_figure.py"
+    )
+    _mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    DEFAULT_FONTSIZE = _mod.DEFAULT_FONTSIZE
+    add_shared_colorbar = _mod.add_shared_colorbar
+    apply_style = _mod.apply_style
+    parse_figsize = _mod.parse_figsize
+    resolve_figsize = _mod.resolve_figsize
+    save_figure = _mod.save_figure
+
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.3"
-
-
-def parse_figsize(value):
-    """Argparse converter for ``W,H`` or ``WxH`` inches."""
-    if value is None:
-        return None
-    raw = str(value).strip().lower().replace("×", "x")
-    if not raw:
-        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
-    sep = "x" if "x" in raw and "," not in raw else ","
-    parts = [p.strip() for p in raw.split(sep)]
-    if len(parts) != 2:
-        raise argparse.ArgumentTypeError("--figsize must be W,H inches (e.g. 10,6 or 10x6)")
-    try:
-        width, height = float(parts[0]), float(parts[1])
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            "--figsize must be W,H inches (e.g. 10,6 or 10x6)"
-        ) from None
-    if width <= 0 or height <= 0:
-        raise argparse.ArgumentTypeError("--figsize width and height must be positive")
-    return (width, height)
-
 
 _VERIFY_VARS = {
     "hits": "event_hit",
@@ -124,11 +124,6 @@ PRECIP_ANOMALY_COLORS = [
     "#8070ee",
 ]
 PRECIP_ANOMALY_BOUNDS = [-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]
-
-
-def _scaled_fontsize(base, frac, *, floor=8):
-    """Scale a base ``--fontsize`` by ``frac``, never below ``floor``."""
-    return max(floor, int(round(int(base) * frac)))
 
 
 def _metric_from_verify(ds, role: str) -> str:
@@ -396,88 +391,7 @@ def _cbar_boundary_kwargs(norm, cmap=None):
     return kw
 
 
-# Colorbar row under the maps: strip, ticks, then caption. Precip classes
-# share the row with a shorter verify bar to the right.
-_FIELD_CBAR_WIDTH = 0.62
-_VERIFY_CBAR_WIDTH = 0.28
-_CBAR_STRIP_IN = 0.24
-_CBAR_ROW_IN = 1.18
-_CBAR_INCHES_PER_TICK = 0.36
-_CBAR_Y_IN = 0.46
-_LABEL_IN = 1.25
-_RIGHT_IN = 0.35
-_COL_GAP_IN = 0.14
-_ROW_GAP_IN = 0.32
-_MAP_HEIGHT_IN = 3.8
-_TITLE_LINE_EM = 1.35
-_TITLE_GAP_IN = 0.10
-_COL_HEADER_IN = 0.48
-_TITLE_WRAP_WIDTH = 56
-
-
-def _wrap_title(text):
-    """Split a long title onto at most two lines at a natural break."""
-    if text is None:
-        return None
-    s = str(text).replace("\\n", "\n").strip()
-    if not s or "\n" in s or len(s) <= _TITLE_WRAP_WIDTH:
-        return s
-    for sep in (" · ", " — ", " – ", ": "):
-        idx = s.find(sep)
-        if 12 <= idx <= len(s) - 8:
-            return s[:idx].rstrip() + "\n" + s[idx + len(sep) :].lstrip()
-    mid = len(s) // 2
-    lo, hi = max(12, int(len(s) * 0.35)), min(len(s) - 8, int(len(s) * 0.70))
-    best = -1
-    for i in range(lo, hi + 1):
-        if s[i].isspace() and (best < 0 or abs(i - mid) < abs(best - mid)):
-            best = i
-    if best < 0:
-        best = s.rfind(" ", 0, _TITLE_WRAP_WIDTH + 1)
-        if best < 12:
-            best = s.find(" ", _TITLE_WRAP_WIDTH)
-    if best < 12:
-        return s
-    return s[:best].rstrip() + "\n" + s[best + 1 :].lstrip()
-
-
-def _title_lines(text):
-    wrapped = _wrap_title(text)
-    if not wrapped:
-        return []
-    return [ln for ln in str(wrapped).splitlines() if ln.strip()][:2]
-
-
-def _draw_figure_title(fig, title, fontsize, y):
-    """One or two centered title lines. Avoids ``suptitle`` + newline."""
-    lines = _title_lines(title)
-    if not lines:
-        return
-    if len(lines) == 1:
-        fig.suptitle(lines[0], fontsize=fontsize, y=y, ha="center", va="top")
-        return
-    fig_h = max(fig.get_figheight(), 1e-6)
-    step = _TITLE_LINE_EM * (fontsize / 72.0) / fig_h
-    for i, line in enumerate(lines):
-        fig.text(0.5, y - i * step, line, ha="center", va="top", fontsize=fontsize)
-
-
-def _colorbar_tick_count(norm):
-    from matplotlib.colors import BoundaryNorm
-
-    if not isinstance(norm, BoundaryNorm):
-        return 0
-    return len(list(norm.boundaries))
-
-
-def _colorbar_min_width(n_ticks):
-    """Minimum figure width so discrete precip class labels do not collide."""
-    if n_ticks < 8:
-        return 8.0
-    return (_CBAR_INCHES_PER_TICK * n_ticks) / _FIELD_CBAR_WIDTH
-
-
-def _map_panel_inches(extent, *, base_height=_MAP_HEIGHT_IN):
+def _map_panel_inches(extent, *, base_height=3.8):
     lon_min, lon_max, lat_min, lat_max = (float(v) for v in extent)
     lat_range = abs(lat_max - lat_min)
     lon_range = abs(lon_max - lon_min)
@@ -486,54 +400,6 @@ def _map_panel_inches(extent, *, base_height=_MAP_HEIGHT_IN):
     height = base_height
     width = height * lon_range / lat_range
     return max(width, 2.0), height
-
-
-def _title_band_inches(title, fontsize):
-    """Inches for the figure title: one or two lines plus a little whitespace."""
-    if not title:
-        return 0.10
-    n = max(len(_title_lines(title)), 1)
-    title_fs = _scaled_fontsize(fontsize, 1.25)
-    return n * _TITLE_LINE_EM * (title_fs / 72.0) + _TITLE_GAP_IN
-
-
-def _figure_layout(n_leads, extent, n_ticks, *, title, fontsize=18, figsize=None):
-    """Obs column + N lead columns; forecast row over metric row; colorbars below."""
-    n_cols = 1 + n_leads
-    map_w, map_h = _map_panel_inches(extent)
-    grid_w = n_cols * map_w + (n_cols - 1) * _COL_GAP_IN
-    fig_w = max(_LABEL_IN + grid_w + _RIGHT_IN, _colorbar_min_width(n_ticks), 10.0)
-    title_in = _title_band_inches(title, fontsize)
-    header_in = _COL_HEADER_IN
-    fig_h = title_in + header_in + 2 * map_h + _ROW_GAP_IN + _CBAR_ROW_IN
-    if figsize is not None:
-        fig_w, fig_h = figsize
-    extra_right = max(fig_w - (_LABEL_IN + grid_w + _RIGHT_IN), 0.0)
-    left = _LABEL_IN / fig_w
-    right = 1.0 - (_RIGHT_IN + extra_right) / fig_w
-    maps_bottom = _CBAR_ROW_IN / fig_h
-    maps_top = 1.0 - (title_in + header_in) / fig_h
-    strip_h = _CBAR_STRIP_IN / fig_h
-    cbar_y = _CBAR_Y_IN / fig_h
-    span = right - left
-    field_w = _FIELD_CBAR_WIDTH * span / ( _FIELD_CBAR_WIDTH + _VERIFY_CBAR_WIDTH + 0.08)
-    verify_w = _VERIFY_CBAR_WIDTH * span / (_FIELD_CBAR_WIDTH + _VERIFY_CBAR_WIDTH + 0.08)
-    gap = 0.08 * span / (_FIELD_CBAR_WIDTH + _VERIFY_CBAR_WIDTH + 0.08)
-    field_box = [left, cbar_y, field_w, strip_h]
-    verify_box = [left + field_w + gap, cbar_y, verify_w, strip_h]
-    return {
-        "figsize": (fig_w, fig_h),
-        "left": left,
-        "right": right,
-        "maps_bottom": maps_bottom,
-        "maps_top": maps_top,
-        "wspace": _COL_GAP_IN / map_w,
-        "hspace": _ROW_GAP_IN / map_h,
-        "field_box": field_box,
-        "verify_box": verify_box,
-        "title_y": 1.0,
-        "n_cols": n_cols,
-    }
 
 
 def _variable_label(da):
@@ -777,8 +643,8 @@ def _prepare(ds, variable):
 @weather_skill.argument(
     "--fontsize",
     type=int,
-    default=18,
-    help="Base font size for column/row labels, ticks, and colorbars (default 18).",
+    default=DEFAULT_FONTSIZE,
+    help="Base font size for column/row labels, ticks, and colorbars (default 16).",
 )
 @weather_skill.argument(
     "--figsize",
@@ -837,6 +703,7 @@ def plot_verify(
     import matplotlib
 
     matplotlib.use("Agg")
+    apply_style(fontsize)
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
     import cf_xarray  # noqa: F401 — registers the .cf accessor
@@ -921,47 +788,26 @@ def plot_verify(
             vmin, vmax = 0.0, 1.0
 
     n_leads = len(columns)
-    n_ticks = _colorbar_tick_count(norm)
+    n_cols = 1 + n_leads
     fig_title = title
     if week_dates and not (title and week_dates in title):
         fig_title = f"{title} · {week_dates}" if title else week_dates
-    fig_title = _wrap_title(fig_title)
-    layout = _figure_layout(
-        n_leads, extent, n_ticks, title=fig_title, fontsize=fontsize, figsize=figsize
-    )
-    fig = plt.figure(figsize=layout["figsize"])
-    gs = fig.add_gridspec(
-        2,
-        layout["n_cols"],
-        left=layout["left"],
-        right=layout["right"],
-        bottom=layout["maps_bottom"],
-        top=layout["maps_top"],
-        wspace=layout["wspace"],
-        hspace=layout["hspace"],
-    )
+    map_w, map_h = _map_panel_inches(extent)
+    fig_w, fig_h = resolve_figsize(figsize, (max(map_w * n_cols, 8.0), max(2 * map_h, 6.0)))
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    gs = fig.add_gridspec(2, n_cols)
     obs_ax = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
     fc_axes = [
         fig.add_subplot(gs[0, i + 1], projection=ccrs.PlateCarree()) for i in range(n_leads)
     ]
+    blank = fig.add_subplot(gs[1, 0], projection=ccrs.PlateCarree())
+    blank.set_visible(False)
     verify_axes = [
         fig.add_subplot(gs[1, i + 1], projection=ccrs.PlateCarree()) for i in range(n_leads)
     ]
 
     if fig_title:
-        _draw_figure_title(
-            fig,
-            fig_title,
-            _scaled_fontsize(fontsize, 1.25),
-            layout["title_y"],
-        )
-
-    tick_fs = _scaled_fontsize(fontsize, 0.55, floor=8)
-    panel_title_fs = _scaled_fontsize(fontsize, 1.1)
-    name_fs = fontsize
-    cbar_label_fs = _scaled_fontsize(fontsize, 0.90)
-    field_tick_fs = _scaled_fontsize(fontsize, 0.70, floor=9)
-    verify_tick_fs = _scaled_fontsize(fontsize, 0.75, floor=9)
+        fig.suptitle(fig_title)
 
     def _draw(
         ax,
@@ -993,8 +839,6 @@ def plot_verify(
         gl = ax.gridlines(draw_labels=True, alpha=0)
         gl.top_labels = False
         gl.right_labels = False
-        gl.xlabel_style = {"size": tick_fs}
-        gl.ylabel_style = {"size": tick_fs}
         if not left_labels:
             gl.left_labels = False
         if not bottom_labels:
@@ -1023,11 +867,12 @@ def plot_verify(
         left_labels=True,
         bottom_labels=True,
     )
-    obs_ax.set_title(row_labels[0], fontsize=panel_title_fs, pad=8)
+    obs_ax.set_title(row_labels[0])
+    obs_ax.set_ylabel(row_labels[0])
 
     verify_mesh = None
     for col, (col_label, fc_da, verify_da, lat_dim, lon_dim) in enumerate(columns):
-        fc_axes[col].set_title(col_label, fontsize=panel_title_fs, pad=8)
+        fc_axes[col].set_title(col_label)
         _draw(
             fc_axes[col],
             fc_da,
@@ -1069,61 +914,32 @@ def plot_verify(
         if verify_mesh is None:
             verify_mesh = mesh
 
-    _fig_w, fig_h = layout["figsize"]
-    metric_pos = verify_axes[0].get_position()
-    fig.text(
-        layout["left"] - 0.03,
-        (metric_pos.y0 + metric_pos.y1) / 2,
-        row_labels[2],
-        rotation=90,
-        va="center",
-        ha="right",
-        fontsize=name_fs,
-    )
+    verify_axes[0].set_ylabel(row_labels[2])
 
-    def _cbar_caption(box, text, tick_fs):
-        x, y, w, h = box
-        tick_in = max(tick_fs / 72.0 * 1.45, 0.24)
-        fig.text(
-            x + w / 2,
-            y - (tick_in + 0.08) / fig_h,
-            text,
-            ha="center",
-            va="top",
-            fontsize=cbar_label_fs,
-        )
-
+    map_axes = [obs_ax, *fc_axes, *verify_axes]
     if field_mesh is not None:
-        cbar_ax = fig.add_axes(layout["field_box"])
-        cbar = fig.colorbar(
+        add_shared_colorbar(
+            fig,
             field_mesh,
-            cax=cbar_ax,
-            orientation="horizontal",
+            map_axes,
+            _variable_label(obs_da),
             **_cbar_boundary_kwargs(norm, cmap),
         )
-        cbar.ax.tick_params(labelsize=field_tick_fs, length=4, width=0.8, pad=5)
-        _cbar_caption(layout["field_box"], _variable_label(obs_da), field_tick_fs)
     if verify_mesh is not None:
-        verify_ax = fig.add_axes(layout["verify_box"])
         if metric == "hits":
-            verify_cbar = fig.colorbar(
-                verify_mesh, cax=verify_ax, orientation="horizontal", ticks=[-1, 0, 1]
-            )
-            verify_cbar.set_ticklabels(verify_labels, fontsize=verify_tick_fs)
             caption = "event"
+            cbar = add_shared_colorbar(
+                fig, verify_mesh, map_axes, caption, ticks=[-1, 0, 1]
+            )
+            if cbar is not None:
+                cbar.set_ticklabels(verify_labels)
         else:
-            verify_cbar = fig.colorbar(verify_mesh, cax=verify_ax, orientation="horizontal")
             units = format_units_for_display(u_obs)
             metric_label = _METRIC_ROW_LABELS[metric]
             caption = f"{metric_label} [{units}]" if units else metric_label
-        verify_cbar.ax.tick_params(labelsize=verify_tick_fs, length=4, width=0.8, pad=5)
-        _cbar_caption(layout["verify_box"], caption, verify_tick_fs)
+            add_shared_colorbar(fig, verify_mesh, map_axes, caption)
 
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=150, bbox_inches="tight", pad_inches=0.15)
-    plt.close(fig)
-    return output
+    return save_figure(fig, output)
 
 
 if __name__ == "__main__":
