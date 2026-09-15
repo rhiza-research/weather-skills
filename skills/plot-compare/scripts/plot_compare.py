@@ -45,6 +45,8 @@ try:
         DEFAULT_FONTSIZE,
         add_shared_colorbar,
         apply_style,
+        format_plot_date,
+        format_plot_date_range,
         parse_figsize,
         resolve_figsize,
         save_figure,
@@ -60,6 +62,8 @@ except ImportError:
     DEFAULT_FONTSIZE = _mod.DEFAULT_FONTSIZE
     add_shared_colorbar = _mod.add_shared_colorbar
     apply_style = _mod.apply_style
+    format_plot_date = _mod.format_plot_date
+    format_plot_date_range = _mod.format_plot_date_range
     parse_figsize = _mod.parse_figsize
     resolve_figsize = _mod.resolve_figsize
     save_figure = _mod.save_figure
@@ -258,36 +262,33 @@ def _is_station(ds):
 
 
 def _format_single(t, bin_width=None):
-    """Render a time-bin label; with bin_width, ``YYYY-MM-DD to YYYY-MM-DD`` (left-edge)."""
+    """Render a time-bin label; with bin_width, ``4–10 Aug '26`` (left-edge)."""
     import datetime as _dt
 
     import pandas as pd
 
     if hasattr(t, "calendar"):
         if bin_width is None:
-            return t.strftime("%Y-%m-%d")
+            return format_plot_date(t)
         try:
             end = t + bin_width - _dt.timedelta(days=1)
         except (TypeError, ValueError):
-            return t.strftime("%Y-%m-%d")
-        return f"{t.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}"
+            return format_plot_date(t)
+        return format_plot_date_range(t, end)
 
     try:
         start = pd.Timestamp(t)
     except (TypeError, ValueError):
         if hasattr(t, "year") and hasattr(t, "month") and hasattr(t, "day"):
-            return f"{int(t.year):04d}-{int(t.month):02d}-{int(t.day):02d}"
-        text = str(t)
-        if len(text) >= 10 and text[4:5] == "-" and text[7:8] == "-":
-            return text[:10]
-        return text
+            return format_plot_date(t)
+        return format_plot_date(t)
     if bin_width is None:
-        return start.date().isoformat()
+        return format_plot_date(start)
     try:
         end = start + bin_width - pd.Timedelta(days=1)
     except (TypeError, ValueError):
-        return start.date().isoformat()
-    return f"{start.date().isoformat()} to {end.date().isoformat()}"
+        return format_plot_date(start)
+    return format_plot_date_range(start, end)
 
 
 def _load_admin_boundaries(bbox=None):

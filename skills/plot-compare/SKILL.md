@@ -63,11 +63,11 @@ Both rows always share the gridded input's spatial extent so the figure
 is centered on the gridded base; station points outside that extent are
 clipped by matplotlib.
 
-Panel titles render the time-bin range as `YYYY-MM-DD to YYYY-MM-DD`
+Panel titles render the time-bin range as `30 Apr–9 May '26`
 with the bin coord interpreted as the inclusive **left** edge: end =
 start + bin_width − 1 day. Matches `aggregate-temporal` and
 `deaccumulate`'s period-start convention so a 10-day dekad starting
-`2026-04-30` renders as `2026-04-30 to 2026-05-09` (10 days inclusive).
+`2026-04-30` renders as `30 Apr–9 May '26` (10 days inclusive).
 
 ## When to use
 

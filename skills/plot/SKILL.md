@@ -20,9 +20,9 @@ Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
   on country-scale maps (span ≤ 20°). Overlays are clipped to the map extent. If
   the input has a `step` (or `time`) dimension, panels are laid out one per
   step with a shared color scale and a horizontal colorbar spanning all
-  panels at the bottom. Panel titles show calendar dates (`YYYY-MM-DD`) or,
+  panels at the bottom. Panel titles show calendar dates (`14 Sept '26`) or,
   for multi-day bins (from `aggregation_period` or time spacing), inclusive
-  ranges (`YYYY-MM-DD to YYYY-MM-DD`); forecast lead panels keep
+  ranges (`4–10 Aug '26`); forecast lead panels keep
   `<start> until <end>`. Default layout is up to 4 columns (rows added as
   needed). `--rows` and/or `--columns` override that; leftover cells stay
   blank when the grid is larger than the data (`--rows 2 --columns 3` with

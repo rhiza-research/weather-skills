@@ -36,7 +36,9 @@ from weather_skills_core.units import (
 try:
     from weather_skills_core.figure import (
         DEFAULT_FONTSIZE,
+        apply_date_ticks,
         apply_style,
+        format_plot_date,
         parse_figsize,
         resolve_figsize,
         save_figure,
@@ -50,7 +52,9 @@ except ImportError:
     _mod = _ilu.module_from_spec(_spec)
     _spec.loader.exec_module(_mod)
     DEFAULT_FONTSIZE = _mod.DEFAULT_FONTSIZE
+    apply_date_ticks = _mod.apply_date_ticks
     apply_style = _mod.apply_style
+    format_plot_date = _mod.format_plot_date
     parse_figsize = _mod.parse_figsize
     resolve_figsize = _mod.resolve_figsize
     save_figure = _mod.save_figure
@@ -115,10 +119,8 @@ def _resolve_time_axis_label(override, default, values):
 
 
 def _apply_date_ticks(ax) -> None:
-    """Show datetime x ticks as calendar dates, never ``YYYY-MM-DD 00:00:00``."""
-    import matplotlib.dates as mdates
-
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+    """Show datetime x ticks as ``14 Sept '26``, never midnight timestamps."""
+    apply_date_ticks(ax)
 
 
 def _size1_str(ds, *names) -> str | None:
@@ -403,13 +405,13 @@ def _day_of_year_tick_label(doy: float) -> str:
     if day < 1 or day > 366:
         return ""
     if day == 366:
-        return "Dec 31"
+        return format_plot_date(dt.date(2023, 12, 31), year=False)
     date = dt.date(2023, 1, 1) + dt.timedelta(days=day - 1)
-    return f"{date.strftime('%b')} {date.day}"
+    return format_plot_date(date, year=False)
 
 
 def _apply_day_of_year_ticks(ax) -> None:
-    """Label day-of-year x ticks with calendar dates (e.g. Oct 1, not 274)."""
+    """Label day-of-year x ticks with calendar dates (e.g. 1 Oct, not 274)."""
     from matplotlib.ticker import FuncFormatter, MaxNLocator
 
     ax.xaxis.set_major_locator(MaxNLocator(nbins=8, integer=True, min_n_ticks=3))

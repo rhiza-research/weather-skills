@@ -280,8 +280,8 @@ def test_panel_title_lead_zero_is_first_24h(plot_fn):
     da = make_forecast(init="2025-01-01", n_step=3)["tp"]
     da.attrs["data_interval"] = "1 day"
     title = plot_mod._panel_title(da, "step", da["step"].values[0], da["step"].values)
-    assert title.startswith("2025-01-01")
-    assert "until 2025-01-02" in title
+    assert title.startswith("1 Jan '25")
+    assert "until 2 Jan '25" in title
 
 
 def test_panel_title_calendar_weekly_range(plot_fn):
@@ -302,7 +302,7 @@ def test_panel_title_calendar_weekly_range(plot_fn):
     )
     da.attrs["aggregation_period"] = "7 day"
     title = plot_mod._panel_title(da, "time", times[0], times)
-    assert title == "2026-08-04 to 2026-08-10"
+    assert title == "4–10 Aug '26"
 
 
 def test_panel_title_calendar_daily_is_single_date(plot_fn):
@@ -323,7 +323,7 @@ def test_panel_title_calendar_daily_is_single_date(plot_fn):
     )
     da.attrs["aggregation_period"] = "1 day"
     title = plot_mod._panel_title(da, "time", times[0], times)
-    assert title == "2026-08-04"
+    assert title == "4 Aug '26"
     assert "time=" not in title
 
 
@@ -333,9 +333,9 @@ def test_format_date_drops_midnight_time():
     import numpy as np
 
     plot_mod = load_skill("plot", "plot")
-    assert plot_mod._format_date(np.datetime64("2026-01-01T00:00:00")) == "2026-01-01"
-    assert plot_mod._format_date(dt.datetime(2026, 1, 1, 0, 0, 0)) == "2026-01-01"
-    assert plot_mod._format_step(np.datetime64("2026-01-01T00:00:00")) == "2026-01-01"
+    assert plot_mod._format_date(np.datetime64("2026-01-01T00:00:00")) == "1 Jan '26"
+    assert plot_mod._format_date(dt.datetime(2026, 1, 1, 0, 0, 0)) == "1 Jan '26"
+    assert plot_mod._format_step(np.datetime64("2026-01-01T00:00:00")) == "1 Jan '26"
 
 
 def test_date_ticks_are_calendar_dates_not_timestamps():
@@ -355,7 +355,7 @@ def test_date_ticks_are_calendar_dates_not_timestamps():
     labels = [tick.get_text() for tick in ax.get_xticklabels() if tick.get_text()]
     assert labels
     assert all("00:00" not in label for label in labels)
-    assert all(len(label) == 10 and label[4] == "-" and label[7] == "-" for label in labels)
+    assert all("'" in label and any(ch.isalpha() for ch in label) for label in labels)
     plt.close(fig)
 
 

@@ -48,6 +48,7 @@ try:
         DEFAULT_FONTSIZE,
         add_shared_colorbar,
         apply_style,
+        format_plot_date_range,
         parse_figsize,
         resolve_figsize,
         save_figure,
@@ -63,6 +64,7 @@ except ImportError:
     DEFAULT_FONTSIZE = _mod.DEFAULT_FONTSIZE
     add_shared_colorbar = _mod.add_shared_colorbar
     apply_style = _mod.apply_style
+    format_plot_date_range = _mod.format_plot_date_range
     parse_figsize = _mod.parse_figsize
     resolve_figsize = _mod.resolve_figsize
     save_figure = _mod.save_figure
@@ -288,7 +290,7 @@ def _time_coord(da, ds=None):
 
 
 def _verifying_week_title(da, ds=None):
-    """Obs-week dates, e.g. ``30 Aug–5 Sep 2026``, or None if time is missing."""
+    """Obs-week dates, e.g. ``30 Aug–5 Sept '26``, or None if time is missing."""
     from datetime import timedelta
 
     import numpy as np
@@ -311,14 +313,7 @@ def _verifying_week_title(da, ds=None):
     span = int(round(days)) if days and days >= 2 else 7
     end = start + timedelta(days=span - 1)
 
-    def _day_mon(d):
-        return f"{d.day} {d.strftime('%b')}"
-
-    if start.year == end.year and start.month == end.month:
-        return f"{start.day}–{end.day} {start.strftime('%b %Y')}"
-    if start.year == end.year:
-        return f"{_day_mon(start)}–{_day_mon(end)} {end.year}"
-    return f"{_day_mon(start)} {start.year}–{_day_mon(end)} {end.year}"
+    return format_plot_date_range(start, end)
 
 
 def _precip_scale(da=None):

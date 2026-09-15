@@ -220,7 +220,7 @@ def test_date_ticks_are_calendar_dates_not_timestamps():
     labels = [tick.get_text() for tick in ax.get_xticklabels() if tick.get_text()]
     assert labels
     assert all("00:00" not in label for label in labels)
-    assert all(len(label) == 10 and label[4] == "-" and label[7] == "-" for label in labels)
+    assert all("'" in label and any(ch.isalpha() for ch in label) for label in labels)
     plt.close(fig)
 
 
@@ -263,9 +263,9 @@ def test_trace_label_respects_explicit_override():
 
 def test_day_of_year_tick_label():
     mod = load_skill("plot-timeseries", "plot_timeseries")
-    assert mod._day_of_year_tick_label(1) == "Jan 1"
-    assert mod._day_of_year_tick_label(274) == "Oct 1"
-    assert mod._day_of_year_tick_label(366) == "Dec 31"
+    assert mod._day_of_year_tick_label(1) == "1 Jan"
+    assert mod._day_of_year_tick_label(274) == "1 Oct"
+    assert mod._day_of_year_tick_label(366) == "31 Dec"
 
 
 def test_apply_day_of_year_ticks(tmp_path, plot_timeseries):

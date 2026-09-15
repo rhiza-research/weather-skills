@@ -105,7 +105,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
 - `--align-day-of-year` — opt-in (default off). Plot each trace against its
   day-of-year (1–366) instead of its absolute date, so inputs from different
   years overlay on a shared x-axis. Tick labels show calendar dates (e.g.
-  `Oct 1`); the x-axis
+  `1 Oct`); the x-axis
   label is `calendar day`.
   Caveats:
   - Requires a calendar-date time axis. It errors (exit 2) on a non-date axis,

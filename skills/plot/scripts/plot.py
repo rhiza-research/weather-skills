@@ -47,7 +47,10 @@ try:
     from weather_skills_core.figure import (
         DEFAULT_FONTSIZE,
         add_shared_colorbar,
+        apply_date_ticks,
         apply_style,
+        format_plot_date,
+        format_plot_date_range,
         parse_figsize,
         resolve_figsize,
         save_figure,
@@ -62,7 +65,10 @@ except ImportError:
     _spec.loader.exec_module(_mod)
     DEFAULT_FONTSIZE = _mod.DEFAULT_FONTSIZE
     add_shared_colorbar = _mod.add_shared_colorbar
+    apply_date_ticks = _mod.apply_date_ticks
     apply_style = _mod.apply_style
+    format_plot_date = _mod.format_plot_date
+    format_plot_date_range = _mod.format_plot_date_range
     parse_figsize = _mod.parse_figsize
     resolve_figsize = _mod.resolve_figsize
     save_figure = _mod.save_figure
@@ -993,29 +999,13 @@ def _resolve_time_axis_label(override, default, values):
 
 
 def _format_date(value) -> str:
-    """Calendar date ``YYYY-MM-DD`` from a datetime-like value (time-of-day dropped)."""
-    import numpy as np
-
-    if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
-        try:
-            return f"{int(value.year):04d}-{int(value.month):02d}-{int(value.day):02d}"
-        except (TypeError, ValueError):
-            pass
-    arr = np.asarray(value)
-    if arr.dtype.kind == "M":
-        sample = arr.reshape(-1)[0]
-        return str(np.datetime_as_string(np.asarray(sample).astype("datetime64[D]"), unit="D"))
-    text = str(value)
-    if len(text) >= 10 and text[4:5] == "-" and text[7:8] == "-":
-        return text[:10]
-    return text
+    """Calendar date ``14 Sept '26`` from a datetime-like value (time-of-day dropped)."""
+    return format_plot_date(value)
 
 
 def _apply_date_ticks(ax) -> None:
-    """Show datetime x ticks as calendar dates, never ``YYYY-MM-DD 00:00:00``."""
-    import matplotlib.dates as mdates
-
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+    """Show datetime x ticks as ``14 Sept '26``, never midnight timestamps."""
+    apply_date_ticks(ax)
 
 
 def _format_step(value):
@@ -1057,7 +1047,7 @@ def _calendar_bin_width(da, all_steps):
 
 
 def _format_calendar_panel(value, bin_width=None):
-    """``YYYY-MM-DD``, or ``YYYY-MM-DD to YYYY-MM-DD`` for multi-day left-edge bins."""
+    """``14 Sept '26``, or ``4–10 Aug '26`` for multi-day left-edge bins."""
     import datetime as _dt
 
     import numpy as np
@@ -1065,24 +1055,24 @@ def _format_calendar_panel(value, bin_width=None):
 
     if hasattr(value, "calendar"):
         if bin_width is None:
-            return value.strftime("%Y-%m-%d")
+            return format_plot_date(value)
         try:
             end = value + bin_width - _dt.timedelta(days=1)
         except (TypeError, ValueError):
-            return value.strftime("%Y-%m-%d")
-        return f"{value.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}"
+            return format_plot_date(value)
+        return format_plot_date_range(value, end)
 
     try:
         start = pd.Timestamp(np.asarray(value).item() if hasattr(value, "dtype") else value)
     except (TypeError, ValueError):
         return _format_step(value)
     if bin_width is None:
-        return start.date().isoformat()
+        return format_plot_date(start)
     try:
         end = start + bin_width - pd.Timedelta(days=1)
     except (TypeError, ValueError):
-        return start.date().isoformat()
-    return f"{start.date().isoformat()} to {end.date().isoformat()}"
+        return format_plot_date(start)
+    return format_plot_date_range(start, end)
 
 
 def _timeseries_axis(da, sdim):

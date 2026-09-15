@@ -46,6 +46,8 @@ try:
         DEFAULT_FONTSIZE,
         add_shared_colorbar,
         apply_style,
+        format_plot_date,
+        format_plot_date_range,
         parse_figsize,
         resolve_figsize,
         save_figure,
@@ -61,6 +63,8 @@ except ImportError:
     DEFAULT_FONTSIZE = _mod.DEFAULT_FONTSIZE
     add_shared_colorbar = _mod.add_shared_colorbar
     apply_style = _mod.apply_style
+    format_plot_date = _mod.format_plot_date
+    format_plot_date_range = _mod.format_plot_date_range
     parse_figsize = _mod.parse_figsize
     resolve_figsize = _mod.resolve_figsize
     save_figure = _mod.save_figure
@@ -277,7 +281,7 @@ def _format_lead(step_value):
 
 
 def _format_column_title(t, bin_width_ns):
-    """``YYYY-MM-DD``, or a left-edge range when median spacing is ≥ 2 days."""
+    """``14 Sept '26``, or a left-edge range when median spacing is ≥ 2 days."""
     import numpy as np
 
     use_range = bin_width_ns is not None and bin_width_ns >= 2 * _NS_PER_DAY
@@ -287,23 +291,22 @@ def _format_column_title(t, bin_width_ns):
 
     if hasattr(t, "calendar"):
         if width is None:
-            return t.strftime("%Y-%m-%d")
+            return format_plot_date(t)
         try:
             end = t + width - _dt.timedelta(days=1)
         except (TypeError, ValueError):
-            return t.strftime("%Y-%m-%d")
-        return f"{t.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}"
+            return format_plot_date(t)
+        return format_plot_date_range(t, end)
 
     start = np.asarray(t).astype("datetime64[D]")
-    start_s = np.datetime_as_string(start, unit="D")
     if width is None:
-        return start_s
+        return format_plot_date(start)
     end = (
         start.astype("datetime64[ns]")
         + np.timedelta64(int(bin_width_ns), "ns")
         - np.timedelta64(1, "D")
     ).astype("datetime64[D]")
-    return f"{start_s} to {np.datetime_as_string(end, unit='D')}"
+    return format_plot_date_range(start, end)
 
 
 def realize_valid_times(ds):

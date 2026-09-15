@@ -95,8 +95,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.z
   mismatch asks you to `aggregate-temporal` first.
 - **Blank cells.** Missing times keep the map frame (extent, coast/borders)
   and show `n/a`. The axes stay visible so the grid is rectangular.
-- **Column titles.** `YYYY-MM-DD`. When median spacing is at least 2 days,
-  a left-edge range (`YYYY-MM-DD to YYYY-MM-DD`) is used, matching
+- **Column titles.** `14 Sept '26`. When median spacing is at least 2 days,
+  a left-edge range (`4–10 Aug '26`) is used, matching
   `aggregate-temporal`. A `+7d`-style lead is appended when the source still
   has a `step` coord.
 - **Color scale.** One scale from all present (non-`n/a`) cells. Differing
