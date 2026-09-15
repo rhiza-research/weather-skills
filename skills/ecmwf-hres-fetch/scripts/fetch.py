@@ -243,11 +243,9 @@ def _to_celsius(da):
 
 
 def _standardize(ds):
-    """CF attrs + standard units. HRES ``tp`` is cumulative since step 0; convert to a rate."""
+    """CF attrs + standard units."""
     stamp_cf_attrs(ds)
     if "tp" in ds.data_vars:
-        ds["tp"].attrs["standard_name"] = "precipitation_amount"
-        ds["tp"].attrs["units"] = "kg m-2"
         ds["tp"].attrs["long_name"] = "Total precipitation"
     ds = to_standard_units(ds)
     for name in _KELVIN_TEMPS:
