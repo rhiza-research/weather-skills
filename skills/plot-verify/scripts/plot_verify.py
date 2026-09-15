@@ -399,24 +399,24 @@ def _order_week1_first(leads, forecasts, verify_sets, labels=None):
 
 
 def _verify_figure_layout(fig, n_cols):
-    """Two tight map rows plus compact value/error colorbars side by side."""
+    """Two tight map rows plus a long value colorbar and a shorter verify bar."""
     outer = fig.add_gridspec(
         2,
         1,
-        height_ratios=[1.0, 0.055],
+        height_ratios=[1.0, 0.07],
         hspace=0.08,
         left=0.05,
         right=0.99,
         top=0.90,
-        bottom=0.11,
+        bottom=0.10,
     )
     map_gs = outer[0].subgridspec(2, n_cols, hspace=0.05, wspace=0.04)
-    # Spacers keep each bar from stretching across half the figure.
+    # Value bar is long enough for every discrete class tick; verify bar is shorter.
     cbar_gs = outer[1].subgridspec(
         1,
         5,
-        width_ratios=[0.35, 1.0, 0.3, 1.0, 0.35],
-        wspace=0.15,
+        width_ratios=[0.04, 2.6, 0.14, 1.0, 0.04],
+        wspace=0.10,
     )
     field_cax = fig.add_subplot(cbar_gs[0, 1])
     verify_cax = fig.add_subplot(cbar_gs[0, 3])
