@@ -3319,7 +3319,7 @@ def plot(
             ylabel=ylabel,
             figsize=figsize,
         )
-        return save_figure(fig, output)
+        return save_figure(fig, output, tight=figsize is None)
     map_only = {
         "--extent": bool(extent),
         "--cities": bool(cities),
@@ -3541,7 +3541,7 @@ def plot(
             _apply_date_ticks(ax)
             fig.autofmt_xdate()
 
-    return save_figure(fig, output)
+    return save_figure(fig, output, tight=figsize is None)
 
 
 if __name__ == "__main__":

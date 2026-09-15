@@ -774,7 +774,7 @@ def plot_timeseries(
     elif _is_datetime_axis(x_for_label):
         _apply_date_ticks(ax)
         fig.autofmt_xdate()
-    return save_figure(fig, output)
+    return save_figure(fig, output, tight=figsize is None)
 
 
 if __name__ == "__main__":

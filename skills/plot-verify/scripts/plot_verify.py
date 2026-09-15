@@ -939,7 +939,7 @@ def plot_verify(
             caption = f"{metric_label} [{units}]" if units else metric_label
             add_shared_colorbar(fig, verify_mesh, map_axes, caption)
 
-    return save_figure(fig, output)
+    return save_figure(fig, output, tight=figsize is None)
 
 
 if __name__ == "__main__":

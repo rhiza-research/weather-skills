@@ -77,5 +77,10 @@ def test_figsize_writes_png(tmp_path, plot_mediogram):
     )
 
     assert Path(out).exists()
+    import matplotlib.image as mpimg
+
+    img = mpimg.imread(out)
+    assert img.shape[1] == 8 * 150
+    assert img.shape[0] == 4 * 150
     history = load_figure_history(out)
     assert history[-1]["args"]["figsize"] == [8.0, 4.0]

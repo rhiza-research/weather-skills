@@ -251,7 +251,7 @@ def plot_mediogram(
             Patch(facecolor="red", edgecolor="black", label="m-climate"),
         ],
     )
-    return save_figure(fig, output)
+    return save_figure(fig, output, tight=figsize is None)
 
 
 if __name__ == "__main__":

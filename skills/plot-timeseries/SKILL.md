@@ -95,7 +95,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
 - `--fontsize` — base font size for titles, axis labels, ticks, and legend
   (default 16). Raise on user request (e.g. `--fontsize 22`).
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `10,6`).
-  Default `10×6`.
+  When set, the PNG is that canvas at 150 dpi. Default `10×6`, cropped tightly.
 - `--style` — `line` (default) or `bar`. Default for every series; a per-trace
   `style=line|bar` on `--trace` overrides it. `bar` draws grouped bars (one
   group per time step; one bar per bar-styled `--input`, offset within the

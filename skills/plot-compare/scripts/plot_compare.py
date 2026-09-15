@@ -945,7 +945,7 @@ def plot_compare(
         location="right",
         **_cbar_kwargs(bottom[-1][1], bottom[-1][0]),
     )
-    return save_figure(fig, output)
+    return save_figure(fig, output, tight=figsize is None)
 
 
 if __name__ == "__main__":

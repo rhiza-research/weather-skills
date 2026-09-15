@@ -127,7 +127,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
 - `--fontsize` — base font size for panel titles, row labels, ticks, and
   colorbars (default 16). Raise on user request (e.g. `--fontsize 18`).
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `16,8`).
-  Default `22×10`.
+  When set, the PNG is that canvas at 150 dpi. Default `22×10`, cropped tightly.
 - `--panels` — number of panels per row (default 3).
 - `--time-dim` — override the time axis. Defaults to `time` if present, else `step`.
 - `--bbox` — optional `N/W/S/E` decimal degrees. Rectangular clipping:

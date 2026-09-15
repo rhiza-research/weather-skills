@@ -98,15 +98,17 @@ def add_shared_colorbar(fig, mappable, axes, label="", *, location=None, **kwarg
     return cbar
 
 
-def save_figure(fig, path, *, pad_inches=None):
-    """Write a PNG with a tight bbox so titles and colorbars are included."""
+def save_figure(fig, path, *, pad_inches=None, tight=True):
+    """Write a PNG. Default tight-crops chrome; ``tight=False`` keeps ``figsize``."""
     import matplotlib.pyplot as plt
 
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    kw = {"dpi": DEFAULT_DPI, "bbox_inches": "tight"}
-    if pad_inches is not None:
-        kw["pad_inches"] = pad_inches
+    kw = {"dpi": DEFAULT_DPI}
+    if tight:
+        kw["bbox_inches"] = "tight"
+        if pad_inches is not None:
+            kw["pad_inches"] = pad_inches
     fig.savefig(output, **kw)
     plt.close(fig)
     return output

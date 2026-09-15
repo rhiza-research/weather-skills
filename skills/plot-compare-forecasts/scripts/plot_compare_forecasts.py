@@ -869,7 +869,7 @@ def plot_compare_forecasts(
             **_cbar_boundary_kwargs(norm, cmap),
         )
 
-    return save_figure(fig, output)
+    return save_figure(fig, output, tight=figsize is None)
 
 
 if __name__ == "__main__":

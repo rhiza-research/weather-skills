@@ -74,7 +74,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
 - `--fontsize` — base font size (default 16). Title is larger than column
   headers; lat/lon ticks stay smaller.
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `14,8`).
-  When omitted, size follows the map grid, title band, and colorbars.
+  When set, the PNG is that canvas at 150 dpi. When omitted, size follows
+  the map grid and crops tightly.
 - `--colormap`, `--title`, `--bbox`, `--mask-geojson`, `--output` — as before.
   A long `--title` (or title plus verifying-week dates) wraps onto a second
   line.

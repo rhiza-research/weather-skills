@@ -231,8 +231,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   labels, city labels, and colorbar text (default 16). Raise on user request
   (e.g. `--fontsize 22`).
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `10,6`).
-  When omitted, maps size from the geographic extent, timeseries is `10×6`,
-  xy is `8×6`, and windrose is `8.5×7`.
+  When set, the PNG is that canvas at 150 dpi. When omitted, maps size from
+  the geographic extent and crop tightly; timeseries is `10×6`, xy is `8×6`,
+  and windrose is `8.5×7`.
 - `--legend` — legend placement: a matplotlib loc (`best`, `upper right`,
   `upper left`, `lower left`, `lower right`, `right`, `center left`,
   `center right`, `lower center`, `upper center`, `center`), `outside right`,

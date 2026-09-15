@@ -58,6 +58,11 @@ def test_figsize_writes_png(tmp_path, plot_fn):
 
     assert Path(out).exists()
     assert out.stat().st_size > 0
+    import matplotlib.image as mpimg
+
+    img = mpimg.imread(out)
+    assert img.shape[1] == 7 * 150
+    assert img.shape[0] == 5 * 150
     history = load_figure_history(out)
     assert history[-1]["args"]["figsize"] == [7.0, 5.0]
 
