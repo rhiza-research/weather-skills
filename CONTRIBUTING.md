@@ -37,6 +37,11 @@ helpers are in `tests/conftest.py`. Run them with
 currently trigger a version bump on merge to `main` (same as any other file
 under `skills/<name>/`).
 
+Each skill has exactly one `scripts/*.py`. That file is the entry point: CI
+runs `--help` on every `scripts/*.py`, and the skill runner does the same.
+Shared helpers belong in `weather-skills-core`, not a second script in the
+skill directory.
+
 ## Version bumps
 
 The `.github/workflows/version-bump.yml` workflow runs on every push to `main`.

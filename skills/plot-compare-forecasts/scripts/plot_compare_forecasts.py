@@ -41,33 +41,16 @@ from weather_skills_core.units import (
     variable_units,
 )
 
-try:
-    from weather_skills_core.figure import (
-        DEFAULT_FONTSIZE,
-        add_shared_colorbar,
-        apply_style,
-        format_plot_date,
-        format_plot_date_range,
-        parse_figsize,
-        resolve_figsize,
-        save_figure,
-    )
-except ImportError:
-    import importlib.util as _ilu
-
-    _spec = _ilu.spec_from_file_location(
-        "_ws_figure", Path(__file__).resolve().parent / "_figure.py"
-    )
-    _mod = _ilu.module_from_spec(_spec)
-    _spec.loader.exec_module(_mod)
-    DEFAULT_FONTSIZE = _mod.DEFAULT_FONTSIZE
-    add_shared_colorbar = _mod.add_shared_colorbar
-    apply_style = _mod.apply_style
-    format_plot_date = _mod.format_plot_date
-    format_plot_date_range = _mod.format_plot_date_range
-    parse_figsize = _mod.parse_figsize
-    resolve_figsize = _mod.resolve_figsize
-    save_figure = _mod.save_figure
+from weather_skills_core.figure import (
+    DEFAULT_FONTSIZE,
+    add_shared_colorbar,
+    apply_style,
+    format_plot_date,
+    format_plot_date_range,
+    parse_figsize,
+    resolve_figsize,
+    save_figure,
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
