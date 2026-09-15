@@ -32,8 +32,8 @@ metadata:
 
 # ecmwf-hres-fetch
 
-Retrieves the deterministic ECMWF HRES (`oper`/`scda` stream, `fc` type)
-single-level and pressure-level fields from the public
+Retrieves the deterministic ECMWF HRES (`oper` stream, `fc` type) single-level
+and pressure-level fields from the public
 [ECMWF Open Data](https://www.ecmwf.int/en/forecasts/datasets/open-data) feed
 via `ecmwf-opendata`, decodes the GRIB2 with cfgrib, subsets to the requested
 bbox, and writes a consolidated Zarr store. Default field is `tp`.
@@ -41,8 +41,8 @@ bbox, and writes a consolidated Zarr store. Default field is `tp`.
 ## When to use
 
 - A task asks for the deterministic ECMWF forecast ("HRES", "the ECMWF
-  deterministic run", "IFS high-res") for a specific init date, out to 10
-  days (00/12 UTC) or 90h (06/18 UTC).
+  deterministic run", "IFS high-res") for a specific init date, out to 15
+  days (00/12 UTC) or 144h (06/18 UTC).
 - Prefer `dynamical-fetch` (`ecmwf-ifs-ens-forecast-15-day-0-25-degree`) if an
   **ensemble** is acceptable — same underlying model, same free access, and
   its control member (`number=0`) is close to HRES but not identical
@@ -75,9 +75,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
   published yet exits non-zero with a clear message — publication lags real
   time by roughly 6-9 hours, there is no fixed multi-day embargo like S2S.
 - `--run` — init hour, `0`/`6`/`12`/`18` UTC. Default `0`. The 00/12 runs
-  (`oper` stream) publish the full 10-day range (3-hourly to 144h, then
-  6-hourly to 240h). The 06/18 runs (`scda`, short-cutoff) only publish to
-  90h, 3-hourly throughout.
+  publish the full 15-day range (3-hourly to 144h, then 6-hourly to 360h).
+  The 06/18 runs (short cutoff) only publish to 144h, 3-hourly throughout.
+  Every run hour is requested as `stream=oper` — there is no separate `scda`
+  stream on the public feed.
 - `--bbox` — required; `N/W/S/E` decimal degrees. Open Data serves whole-globe
   GRIB2 files (no server-side area subsetting) — this skill downloads the
   global grid and clips locally, so a smaller bbox only saves decode/output

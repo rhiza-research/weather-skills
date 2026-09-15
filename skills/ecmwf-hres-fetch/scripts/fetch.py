@@ -3,7 +3,9 @@
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@main",
 #   "cftime",
-#   "ecmwf-opendata==0.3.19",
+#   # >=0.3.34 for the IFS Cycle 50r1 (2026-05-12) date-aware oper/scda
+#   # stream fix in Client.patch_stream — older pins misroute 06/18Z runs.
+#   "ecmwf-opendata==0.3.34",
 #   "xarray",
 #   "cfgrib",
 #   # eccodeslib carries the native libeccodes that cfgrib loads on macOS/Linux;
@@ -38,10 +40,9 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
 
-# HRES ("oper") steps: 3-hourly to 144h, then 6-hourly to 240h. The 06/18 UTC
-# runs ("scda", short cutoff) only publish to 90h, 3-hourly throughout.
-_OPER_STEPS = list(range(0, 144 + 1, 3)) + list(range(150, 240 + 1, 6))
-_SCDA_STEPS = list(range(0, 90 + 1, 3))
+# HRES steps
+_FULL_RUN_STEPS = list(range(0, 144 + 1, 3)) + list(range(150, 360 + 1, 6))
+_SHORT_CUTOFF_STEPS = list(range(0, 144 + 1, 3))
 
 PRESSURE_LEVELS = ("1000", "925", "850", "700", "500", "400", "300", "250", "200", "150", "100", "50")
 
@@ -149,7 +150,7 @@ def _resolve_variables(raw: list[str] | None) -> list[str]:
 
 
 def _steps_for(run_hour: int) -> list[int]:
-    return _SCDA_STEPS if run_hour in (6, 18) else _OPER_STEPS
+    return _SHORT_CUTOFF_STEPS if run_hour in (6, 18) else _FULL_RUN_STEPS
 
 
 def _group_for_request(names: list[str]) -> list[tuple[tuple, list[str]]]:
@@ -165,7 +166,12 @@ def _build_request(date_iso: str, run_hour: int, group_vars: list[str], level_ty
     req: dict = {
         "date": dt.date.fromisoformat(date_iso),
         "time": run_hour,
-        "stream": "scda" if run_hour in (6, 18) else "oper",
+        # Deliberately omit `stream`. ecmwf-opendata's Client resolves it
+        # itself (Client.patch_stream), and that resolution is date-aware:
+        # IFS Cycle 50r1 (2026-05-12) moved 06/18Z runs from stream=scda to
+        # stream=oper. Passing an explicit "oper" gets inconsistently
+        # remapped back to "scda" by Client.retrieve()'s index-file path for
+        # some 06/18Z requests — let the client infer it instead.
         "type": "fc",
         "step": _steps_for(run_hour),
         "levtype": level_type,
@@ -267,9 +273,9 @@ def _standardize(ds):
     default=0,
     choices=(0, 6, 12, 18),
     help=(
-        "Init hour (UTC). 00/12 publish the full 10-day range (3-hourly to "
-        "144h, 6-hourly to 240h); 06/18 (short-cutoff 'scda') only to 90h, "
-        "3-hourly. Default 0."
+        "Init hour (UTC). 00/12 publish the full 15-day range (3-hourly to "
+        "144h, 6-hourly to 360h); 06/18 (short cutoff) only to 144h, "
+        "3-hourly throughout. Default 0."
     ),
 )
 @weather_skill.argument(
