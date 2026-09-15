@@ -431,11 +431,22 @@ def _add_horizontal_colorbar(fig, mappable, cax, label="", **kwargs):
     cbar = fig.colorbar(mappable, cax=cax, orientation="horizontal", **kwargs)
     if label:
         cbar.set_label(label)
-    n_ticks = len(list(ticks)) if ticks is not None else 0
-    if n_ticks >= 8:
-        for i, tick in enumerate(cbar.ax.get_xticklabels()):
-            if i % 2:
-                tick.set_visible(False)
+    if ticks is not None:
+        tick_list = list(ticks)
+        labels = []
+        for t in tick_list:
+            try:
+                number = float(t)
+            except (TypeError, ValueError):
+                labels.append(str(t))
+                continue
+            labels.append(
+                str(int(round(number)))
+                if abs(number - round(number)) < 1e-9
+                else f"{number:g}"
+            )
+        cbar.set_ticks(tick_list)
+        cbar.set_ticklabels(labels)
     return cbar
 
 
