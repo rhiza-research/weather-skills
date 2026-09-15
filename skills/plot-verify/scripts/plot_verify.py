@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
@@ -28,6 +27,14 @@ from weather_skills_core.display_labels import (
     dataset_display_label,
     resolve_input_labels,
 )
+from weather_skills_core.figure import (
+    DEFAULT_FONTSIZE,
+    apply_style,
+    format_plot_date_range,
+    parse_figsize,
+    resolve_figsize,
+    save_figure,
+)
 from weather_skills_core.standard_utils import (
     ensure_normalized_longitude,
     lat_slice,
@@ -35,22 +42,12 @@ from weather_skills_core.standard_utils import (
 )
 from weather_skills_core.units import (
     classify_variable,
-    parse_aggregation_period,
     format_units_for_display,
+    parse_aggregation_period,
     precip_for_display,
     to_standard_units,
     units_equal,
     variable_units,
-)
-
-from weather_skills_core.figure import (
-    DEFAULT_FONTSIZE,
-    add_shared_colorbar,
-    apply_style,
-    format_plot_date_range,
-    parse_figsize,
-    resolve_figsize,
-    save_figure,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
@@ -319,7 +316,6 @@ def _precip_scale(da=None):
     return cmap, BoundaryNorm(bounds, ncolors=cmap.N, clip=False)
 
 
-
 def _is_precip_anomaly(da):
     """True when precip looks like an anomaly (negatives or 'anomal' in name)."""
     import numpy as np
@@ -368,6 +364,64 @@ def _cbar_boundary_kwargs(norm, cmap=None):
     if getattr(cmap, "name", None) in ("chirps_anom", "chirps_total", "chirps_short"):
         kw["extend"] = "both"
     return kw
+
+
+def _lead_week_number(label):
+    """Week index from a lead title, or None if the label has no week number."""
+    import re
+
+    text = str(label)
+    match = re.search(r"week[-\s]*(\d+)", text, re.I)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"(\d+)[-\s]*week", text, re.I)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _order_week1_first(leads, forecasts, verify_sets, labels=None):
+    """Sort paired lead columns week-1 … week-N when every label names a week."""
+    keys = [_lead_week_number(label) for label in leads]
+    if any(key is None for key in keys):
+        return leads, forecasts, verify_sets, labels
+    order = sorted(range(len(leads)), key=lambda i: keys[i])
+
+    def _reorder(items):
+        return [items[i] for i in order]
+
+    leads = _reorder(leads)
+    forecasts = _reorder(forecasts)
+    verify_sets = _reorder(verify_sets)
+    if labels and len(labels) == 1 + len(order):
+        labels = [labels[0], *_reorder(labels[1:])]
+    return leads, forecasts, verify_sets, labels
+
+
+def _verify_figure_layout(fig, n_cols):
+    """Two map rows plus a bottom row with value and error colorbars side by side."""
+    outer = fig.add_gridspec(2, 1, height_ratios=[1.0, 0.16], hspace=0.22)
+    map_gs = outer[0].subgridspec(2, n_cols, hspace=0.32, wspace=0.12)
+    cbar_gs = outer[1].subgridspec(1, 2, wspace=0.35)
+    field_cax = fig.add_subplot(cbar_gs[0, 0])
+    verify_cax = fig.add_subplot(cbar_gs[0, 1])
+    return map_gs, field_cax, verify_cax
+
+
+def _add_horizontal_colorbar(fig, mappable, cax, label="", **kwargs):
+    if mappable is None:
+        cax.set_visible(False)
+        return None
+    ticks = kwargs.get("ticks")
+    cbar = fig.colorbar(mappable, cax=cax, orientation="horizontal", **kwargs)
+    if label:
+        cbar.set_label(label)
+    n_ticks = len(list(ticks)) if ticks is not None else 0
+    if n_ticks >= 8:
+        for i, tick in enumerate(cbar.ax.get_xticklabels()):
+            if i % 2:
+                tick.set_visible(False)
+    return cbar
 
 
 def _map_panel_inches(extent, *, base_height=3.8):
@@ -447,7 +501,12 @@ def _error_scale(da, metric):
     finite = vals[np.isfinite(vals)]
     if finite.size == 0:
         if metric == "bias":
-            return _bias_diverging_cmap(), TwoSlopeNorm(vcenter=0.0, vmin=-1.0, vmax=1.0), None, None
+            return (
+                _bias_diverging_cmap(),
+                TwoSlopeNorm(vcenter=0.0, vmin=-1.0, vmax=1.0),
+                None,
+                None,
+            )
         return _mae_from_white_cmap(), None, 0.0, 1.0
 
     if metric == "bias":
@@ -599,7 +658,10 @@ def _prepare(ds, variable):
     "--lead",
     action="append",
     default=None,
-    help="Column label, once per --forecast. Default: 1-week lead … N-week lead (week-1 first).",
+    help=(
+        "Column label, once per --forecast. Default: 1-week lead … N-week lead "
+        "(week-1 first). Labels that name a week are sorted week-1 → week-N."
+    ),
 )
 @weather_skill.argument(
     "--colormap",
@@ -670,14 +732,16 @@ def plot_verify(
         )
     if not leads:
         leads = [f"{i}-week lead" for i in range(1, len(forecasts) + 1)]
+    labels = _as_list(label) or None
+    leads, forecasts, verify_sets, labels = _order_week1_first(
+        leads, forecasts, verify_sets, labels
+    )
 
     metrics = [_metric_from_verify(ds, f"--verify {i + 1}") for i, ds in enumerate(verify_sets)]
     if len(set(metrics)) != 1:
-        raise UsageError(
-            f"all --verify inputs must share the same verify_metric; got {metrics}."
-        )
+        raise UsageError(f"all --verify inputs must share the same verify_metric; got {metrics}.")
     metric = metrics[0]
-    row_labels = _row_labels(obs, forecasts, metric, labels=label)
+    row_labels = _row_labels(obs, forecasts, metric, labels=labels)
 
     import matplotlib
 
@@ -772,17 +836,17 @@ def plot_verify(
     if week_dates and not (title and week_dates in title):
         fig_title = f"{title} · {week_dates}" if title else week_dates
     map_w, map_h = _map_panel_inches(extent)
-    fig_w, fig_h = resolve_figsize(figsize, (max(map_w * n_cols, 8.0), max(2 * map_h, 6.0)))
+    fig_w, fig_h = resolve_figsize(figsize, (max(map_w * n_cols, 8.0), max(2 * map_h + 0.8, 6.5)))
     fig = plt.figure(figsize=(fig_w, fig_h))
-    gs = fig.add_gridspec(2, n_cols)
-    obs_ax = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
+    map_gs, field_cax, verify_cax = _verify_figure_layout(fig, n_cols)
+    obs_ax = fig.add_subplot(map_gs[0, 0], projection=ccrs.PlateCarree())
     fc_axes = [
-        fig.add_subplot(gs[0, i + 1], projection=ccrs.PlateCarree()) for i in range(n_leads)
+        fig.add_subplot(map_gs[0, i + 1], projection=ccrs.PlateCarree()) for i in range(n_leads)
     ]
-    blank = fig.add_subplot(gs[1, 0], projection=ccrs.PlateCarree())
+    blank = fig.add_subplot(map_gs[1, 0], projection=ccrs.PlateCarree())
     blank.set_visible(False)
     verify_axes = [
-        fig.add_subplot(gs[1, i + 1], projection=ccrs.PlateCarree()) for i in range(n_leads)
+        fig.add_subplot(map_gs[1, i + 1], projection=ccrs.PlateCarree()) for i in range(n_leads)
     ]
 
     if fig_title:
@@ -878,28 +942,22 @@ def plot_verify(
 
     verify_axes[0].set_ylabel(row_labels[2])
 
-    map_axes = [obs_ax, *fc_axes, *verify_axes]
-    if field_mesh is not None:
-        add_shared_colorbar(
-            fig,
-            field_mesh,
-            map_axes,
-            _variable_label(obs_da),
-            **_cbar_boundary_kwargs(norm, cmap),
-        )
-    if verify_mesh is not None:
-        if metric == "hits":
-            caption = "event"
-            cbar = add_shared_colorbar(
-                fig, verify_mesh, map_axes, caption, ticks=[-1, 0, 1]
-            )
-            if cbar is not None:
-                cbar.set_ticklabels(verify_labels)
-        else:
-            units = format_units_for_display(u_obs)
-            metric_label = _METRIC_ROW_LABELS[metric]
-            caption = f"{metric_label} [{units}]" if units else metric_label
-            add_shared_colorbar(fig, verify_mesh, map_axes, caption)
+    _add_horizontal_colorbar(
+        fig,
+        field_mesh,
+        field_cax,
+        _variable_label(obs_da),
+        **_cbar_boundary_kwargs(norm, cmap),
+    )
+    if metric == "hits":
+        cbar = _add_horizontal_colorbar(fig, verify_mesh, verify_cax, "event", ticks=[-1, 0, 1])
+        if cbar is not None:
+            cbar.set_ticklabels(verify_labels)
+    else:
+        units = format_units_for_display(u_obs)
+        metric_label = _METRIC_ROW_LABELS[metric]
+        caption = f"{metric_label} [{units}]" if units else metric_label
+        _add_horizontal_colorbar(fig, verify_mesh, verify_cax, caption)
 
     return save_figure(fig, output, tight=figsize is None)
 

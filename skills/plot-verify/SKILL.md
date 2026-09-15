@@ -21,8 +21,10 @@ see `has time size N; select the verifying week`, run `select` first
 (`--dim time --value <week start>`). A leftover `step` axis needs
 `step-to-time` first.
 
-Columns are **observation, then week-1 through week-4** (most recent lead
-on the left). Pass `--forecast` in that order (week-1 first).
+Columns are **observation, then week-1 through week-4** (week-1 next to
+obs). Pass `--forecast` week-1 first. If `--lead` titles include week
+numbers (e.g. `Week 4 (init …)`), columns are sorted week-1 → week-4
+even when you pass week-4 first.
 
 | | Obs | 1-week lead | 2-week lead | 3-week lead | 4-week lead |
 | --- | --- | --- | --- | --- |
@@ -67,7 +69,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
 - `--variable`, `-v` — obs/forecast data variable (verify Zarrs carry
   their own verification variable).
 - `--lead` — column title, once per `--forecast`. Default: `1-week lead`
-  … `N-week lead`.
+  … `N-week lead`. Titles that name a week (`Week 4`, `1-week lead`) are
+  sorted so week-1 is left of week-4.
 - `--label` — pass once for `--obs`, then once per `--forecast`. The obs
   value titles the observation column; the verify row uses the metric
   name (Hits, Bias, MAE). When omitted, labels are inferred from provenance.
@@ -83,11 +86,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
 ### Output
 
 A PNG with observation in column 0 and N lead columns of forecast +
-verify maps. Stdout echoes each column's `verify_score_summary`. The
-verify colorbar is metric-specific: hits use disagree / below / hit;
-bias uses a diverging scale centered on zero; MAE uses white at zero
-through warm colors. The verifying week dates are added to the figure
-title when the obs time coordinate can be read.
+verify maps. Two colorbars sit **side by side at the bottom**: values
+(obs/forecast) on the left, the verify metric (hits / bias / MAE) on
+the right. Stdout echoes each column's `verify_score_summary`. Hits
+use disagree / below / hit; bias uses a diverging scale centered on
+zero; MAE uses white at zero through warm colors. The verifying week
+dates are added to the figure title when the obs time coordinate can
+be read.
 
 ## Example
 

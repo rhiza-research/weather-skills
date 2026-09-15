@@ -163,9 +163,11 @@ def test_row_labels_explicit_overrides(plot_mod):
     obs = _week(event_at=[])
     a = _week(event_at=[])
     b = _week(event_at=[])
-    assert plot_mod._row_labels(
-        obs, [a, b], "hits", labels=["Obs custom", "Fc A", "Fc B"]
-    ) == ("Obs custom", "Fc A / Fc B", "Hits")
+    assert plot_mod._row_labels(obs, [a, b], "hits", labels=["Obs custom", "Fc A", "Fc B"]) == (
+        "Obs custom",
+        "Fc A / Fc B",
+        "Hits",
+    )
 
 
 def test_label_count_mismatch_is_refused(plot_mod):
@@ -298,3 +300,76 @@ def test_bbox_slices_before_draw(tmp_path, plot_fn, verify_fn):
 
 def test_lakes_are_filled_blue(plot_mod):
     assert plot_mod._LAKE_FACECOLOR == "#4da6ff"
+
+
+def test_order_week1_first_sorts_week_labels(plot_mod):
+    leads, forecasts, verifies, labels = plot_mod._order_week1_first(
+        ["Week 4 (init Sep 1)", "Week 1 (init Sep 22)"],
+        ["w4", "w1"],
+        ["v4", "v1"],
+        ["Obs", "GEFS w4", "GEFS w1"],
+    )
+    assert leads == ["Week 1 (init Sep 22)", "Week 4 (init Sep 1)"]
+    assert forecasts == ["w1", "w4"]
+    assert verifies == ["v1", "v4"]
+    assert labels == ["Obs", "GEFS w1", "GEFS w4"]
+
+
+def test_order_week1_first_keeps_custom_labels(plot_mod):
+    leads, forecasts, verifies, labels = plot_mod._order_week1_first(
+        ["W1", "W2"],
+        ["a", "b"],
+        ["va", "vb"],
+        None,
+    )
+    assert leads == ["W1", "W2"]
+    assert forecasts == ["a", "b"]
+    assert verifies == ["va", "vb"]
+    assert labels is None
+
+
+def test_week_labels_print_week1_to_week4(tmp_path, plot_fn, verify_fn, capsys):
+    obs = write_zarr(_week(event_at=[(0, 0)]), tmp_path / "obs.zarr")
+    w4 = write_zarr(_week(event_at=[]), tmp_path / "w4.zarr")
+    w1 = write_zarr(_week(event_at=[(0, 0)]), tmp_path / "w1.zarr")
+    v4 = tmp_path / "v4.zarr"
+    v1 = tmp_path / "v1.zarr"
+    _run_verify(verify_fn, w4, obs, v4)
+    _run_verify(verify_fn, w1, obs, v1)
+    out = tmp_path / "verify.png"
+    run_skill(
+        plot_fn,
+        "--obs",
+        str(obs),
+        "--forecast",
+        str(w4),
+        "--verify",
+        str(v4),
+        "--forecast",
+        str(w1),
+        "--verify",
+        str(v1),
+        "--lead",
+        "Week 4",
+        "--lead",
+        "Week 1",
+        "-o",
+        str(out),
+    )
+    printed = capsys.readouterr().out
+    lines = [ln.split("  ", 1)[0] for ln in printed.splitlines() if ln.startswith("Week ")]
+    assert lines == ["Week 1", "Week 4"]
+
+
+def test_colorbars_sit_side_by_side_at_bottom(plot_mod):
+    import matplotlib.pyplot as plt
+
+    fig = plt.figure(figsize=(10, 6))
+    _map_gs, field_cax, verify_cax = plot_mod._verify_figure_layout(fig, n_cols=5)
+    fig.canvas.draw()
+    fx0, fy0, fw, _fh = field_cax.get_position().bounds
+    vx0, vy0, _vw, _vh = verify_cax.get_position().bounds
+    plt.close(fig)
+    assert fy0 < 0.25 and vy0 < 0.25
+    assert abs(fy0 - vy0) < 0.05
+    assert fx0 + fw <= vx0 + 0.02
