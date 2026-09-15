@@ -367,9 +367,10 @@ def test_colorbars_sit_side_by_side_at_bottom(plot_mod):
     fig = plt.figure(figsize=(10, 6))
     _map_gs, field_cax, verify_cax = plot_mod._verify_figure_layout(fig, n_cols=5)
     fig.canvas.draw()
-    fx0, fy0, fw, _fh = field_cax.get_position().bounds
-    vx0, vy0, _vw, _vh = verify_cax.get_position().bounds
+    fx0, fy0, fw, fh = field_cax.get_position().bounds
+    vx0, vy0, _vw, vh = verify_cax.get_position().bounds
     plt.close(fig)
     assert fy0 < 0.25 and vy0 < 0.25
     assert abs(fy0 - vy0) < 0.05
     assert fx0 + fw <= vx0 + 0.02
+    assert fh < 0.08 and vh < 0.08

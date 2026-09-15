@@ -399,12 +399,27 @@ def _order_week1_first(leads, forecasts, verify_sets, labels=None):
 
 
 def _verify_figure_layout(fig, n_cols):
-    """Two map rows plus a bottom row with value and error colorbars side by side."""
-    outer = fig.add_gridspec(2, 1, height_ratios=[1.0, 0.16], hspace=0.22)
-    map_gs = outer[0].subgridspec(2, n_cols, hspace=0.32, wspace=0.12)
-    cbar_gs = outer[1].subgridspec(1, 2, wspace=0.35)
-    field_cax = fig.add_subplot(cbar_gs[0, 0])
-    verify_cax = fig.add_subplot(cbar_gs[0, 1])
+    """Two tight map rows plus compact value/error colorbars side by side."""
+    outer = fig.add_gridspec(
+        2,
+        1,
+        height_ratios=[1.0, 0.035],
+        hspace=0.08,
+        left=0.05,
+        right=0.99,
+        top=0.90,
+        bottom=0.10,
+    )
+    map_gs = outer[0].subgridspec(2, n_cols, hspace=0.05, wspace=0.04)
+    # Spacers keep each bar from stretching across half the figure.
+    cbar_gs = outer[1].subgridspec(
+        1,
+        5,
+        width_ratios=[0.55, 1.0, 0.4, 1.0, 0.55],
+        wspace=0.15,
+    )
+    field_cax = fig.add_subplot(cbar_gs[0, 1])
+    verify_cax = fig.add_subplot(cbar_gs[0, 3])
     return map_gs, field_cax, verify_cax
 
 
@@ -836,7 +851,7 @@ def plot_verify(
     if week_dates and not (title and week_dates in title):
         fig_title = f"{title} · {week_dates}" if title else week_dates
     map_w, map_h = _map_panel_inches(extent)
-    fig_w, fig_h = resolve_figsize(figsize, (max(map_w * n_cols, 8.0), max(2 * map_h + 0.8, 6.5)))
+    fig_w, fig_h = resolve_figsize(figsize, (max(map_w * n_cols, 8.0), max(2 * map_h + 0.4, 6.0)))
     fig = plt.figure(figsize=(fig_w, fig_h))
     map_gs, field_cax, verify_cax = _verify_figure_layout(fig, n_cols)
     obs_ax = fig.add_subplot(map_gs[0, 0], projection=ccrs.PlateCarree())
