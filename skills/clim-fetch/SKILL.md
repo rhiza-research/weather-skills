@@ -1,6 +1,6 @@
 ---
 name: clim-fetch
-description: Fetch a precomputed daily climatology (avg + std) for a `--dataset` (imerg_final, era5, chirps, ...) from Sheerwater's public GCS mirror, select one `--prediction-timedelta` lead, optionally roll it up to a coarser `--window` in days, and expand it onto a requested `--start-time`/`--end-time` calendar window, so timestamps line up with the rest of a pipeline's data. Optional `--bbox N/W/S/E` (compose with resolve-region) subsets before download. Use when a task needs a climatological baseline for anomalies, verification, or comparison — not live observations (use imerg-fetch, dynamical-fetch, arco-era5-fetch, etc. for those).
+description: Fetch a precomputed daily climatology (avg + std) for a `--dataset` (imerg_final, era5, chirps, ecmwf_ifs, oisst) from Sheerwater's public GCS mirror, select one `--prediction-timedelta` lead, optionally roll it up to a coarser `--window` in days, and expand it onto a requested `--start-time`/`--end-time` calendar window, so timestamps line up with the rest of a pipeline's data. Optional `--bbox N/W/S/E` (compose with resolve-region) subsets before download. `oisst` is a sea-surface temperature climatology — pass `-v sst`. Use when a task needs a climatological baseline for anomalies, verification, or comparison — not live observations (use imerg-fetch, dynamical-fetch, arco-era5-fetch, oisst-fetch, etc. for those).
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads a static climatology Zarr from the public GCS bucket sheerwater-public-datalake over anonymous HTTPS; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -8,6 +8,7 @@ metadata:
   catalog-group: fetchers
   variables:
     - precip
+    - sst
 ---
 
 # clim-fetch
@@ -53,6 +54,7 @@ datasets not yet mirrored — see "Supported datasets" below.
 | `era5` | ERA5 daily climatology |
 | `chirps` | CHIRPS daily precipitation climatology |
 | `ecmwf_ifs` | ECMWF IFS reforecast daily climatology — `precip`, `sst`, `uwind10m`, `vwind10m` |
+| `oisst` | OISST sea-surface temperature daily climatology — `sst` only, no default `--variable`, pass `-v sst` |
 
 More datasets are added by mirroring a new Zarr under the same bucket
 convention — no CLI change needed once added.
@@ -190,6 +192,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
   --dataset ecmwf_ifs --variable vwind10m \
   --start-time 2020-01-01 --end-time 2020-12-31 -o /tmp/ecmwf_vwind10m_2020.zarr
+
+# OISST sea-surface temperature climatology — sst-only, no default variable.
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
+  --dataset oisst --variable sst \
+  --start-time 2020-01-01 --end-time 2020-12-31 -o /tmp/oisst_clim_2020.zarr
 ```
 
 ### Recipe: weekly accumulation climatology (3-skill)

@@ -44,7 +44,7 @@ _BUCKET = "sheerwater-public-datalake"
 _GCS_MEDIA = f"https://storage.googleapis.com/{_BUCKET}"
 
 # Valid --dataset ids — exactly the bucket's product prefix, no aliasing.
-_DATASETS = ("imerg_final", "era5", "chirps", "ecmwf_ifs")
+_DATASETS = ("imerg_final", "era5", "chirps", "ecmwf_ifs", "oisst")
 
 # Some mirrors carry no units metadata at all (neither per-variable nor
 # dataset-level) — known source units for those variables, hardcoded here.
