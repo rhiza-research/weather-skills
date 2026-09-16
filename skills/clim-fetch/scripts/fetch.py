@@ -179,7 +179,13 @@ def _expand_climatology(clim: xr.Dataset, start, end) -> xr.Dataset:
     "--variable",
     "-v",
     default=_DEFAULT_VARIABLE,
-    help=f"Climate variable (default: {_DEFAULT_VARIABLE}).",
+    help=(
+        f"Climate variable used in the remote object key "
+        f"{_BUCKET}/climatologies/<dataset>_<variable>_<window>d.zarr "
+        f"(default: {_DEFAULT_VARIABLE}). Precipitation sources use the "
+        "default; OISST SST requires --variable sst. Also used as a "
+        "fallback name if the cached Zarr has no variable global attr."
+    ),
 )
 @weather_skill.argument(
     "--prediction-timedelta",

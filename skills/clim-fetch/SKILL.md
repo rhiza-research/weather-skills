@@ -41,12 +41,17 @@ One skill covers every mirrored climatology — the source is selected with
   climatological baseline) rather than just the init-date value.
 
 Not for live observations — use `imerg-fetch` / `dynamical-fetch` for IMERG,
-`chirps-fetch` for live CHIRPS, `arco-era5-fetch` for ERA5, etc. Not for
-datasets not yet mirrored — see "Supported datasets" below.
+`chirps-fetch` for live CHIRPS, `arco-era5-fetch` for ERA5, `oisst-fetch` for
+live OISST SST, etc. Not for datasets not yet mirrored — see "Supported
+datasets" below.
 
 ### Supported datasets
 
 `--dataset` must be the exact bucket product prefix — no aliasing.
+`--variable` is part of the object key
+(`climatologies/<dataset>_<variable>_<window>d.zarr`); the default `precip`
+is correct for the precipitation sources below. OISST SST is a different
+variable — pass `--variable sst`.
 
 | `--dataset` | Source |
 | --- | --- |
@@ -64,7 +69,7 @@ convention — no CLI change needed once added.
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
   --dataset <id> --start-time YYYY-MM-DD --end-time YYYY-MM-DD -o <path.zarr> \
-  [--variable precip] [--prediction-timedelta 0] [--window 1] [--align left] \
+  [--variable precip|sst] [--prediction-timedelta 0] [--window 1] [--align left] \
   [--bbox N/W/S/E]
 ```
 
@@ -74,8 +79,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
 - `--start-time`, `--end-time` — inclusive calendar window, absolute ISO dates
   `YYYY-MM-DD`. The output has one row per calendar day in this window.
 - `--output`, `-o` — output Zarr path (overwritten if it exists).
-- `--variable`, `-v` — climate variable (default: `precip`); used only as a
-  fallback name if the cached Zarr has no `variable` global attr of its own.
+- `--variable`, `-v` — climate variable (default: `precip`). Selects the
+  remote object key `climatologies/<dataset>_<variable>_<window>d.zarr`,
+  and is also a fallback name if the cached Zarr has no `variable` global
+  attr of its own. Precipitation sources use the default. For OISST SST
+  pass `--dataset oisst --variable sst` (the default `precip` looks for a
+  store that does not exist).
 - `--prediction-timedelta` — forecast lead in whole days to select from the
   source's `prediction_timedelta` dim (default: `0`). Errors listing the
   available leads if the requested value isn't cached.
