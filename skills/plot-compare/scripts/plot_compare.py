@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@main",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 #   "cartopy",
 #   "cf-xarray",
 #   "cftime",
@@ -23,30 +23,254 @@ from pathlib import Path
 
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
+from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
 from weather_skills_core.standard_utils import (
-    dataset_label,
+    ensure_normalized_longitude,
     lat_slice,
     pick_time_dim,
     polygon_from_geojson,
 )
-from weather_skills_core.units import precip_for_display, to_standard_units, units_equal
+from weather_skills_core.units import (
+    classify_variable,
+    parse_aggregation_period,
+    precip_for_display,
+    to_standard_units,
+    units_equal,
+    variable_label_for_display,
+    variable_units,
+)
+
+from weather_skills_core.figure import (
+    DEFAULT_FONTSIZE,
+    add_shared_colorbar,
+    apply_style,
+    format_plot_date,
+    format_plot_date_range,
+    parse_figsize,
+    resolve_figsize,
+    save_figure,
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
+# CHIRPS-GEFS / Early Warning eXplorer rainfall-total classes (mm).
+# Under (<2) is white; over (>2500) is pale pink.
 PRECIP_COLORS = [
-    "#bdbdbd",
-    "wheat",
-    "lightgreen",
-    "green",
-    "lightblue",
-    "blue",
-    "yellow",
-    "orange",
-    "red",
-    "purple",
+    "#ffffff",
+    "#c7ffbb",
+    "#75f676",
+    "#1bb61d",
+    "#b8edfb",
+    "#50a5f8",
+    "#1e6eec",
+    "#dcdcff",
+    "#a08bff",
+    "#7060de",
+    "#fff8ad",
+    "#ff9d00",
+    "#ff1400",
+    "#a30005",
+    "#e58d8b",
+    "#ffe5e4",
 ]
-PRECIP_BOUNDS = [0, 10, 20, 40, 60, 80, 110, 150, 200, 250, 350]
+PRECIP_BOUNDS = [2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]
+# Sub-pentad / daily totals (< 5 day aggregation): same colors, lower breaks.
+PRECIP_SHORT_BOUNDS = [0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30, 50, 75, 100, 150, 200]
+PRECIP_LONG_MIN_DAYS = 5
+
+# CHIRPS-GEFS / Early Warning eXplorer rainfall-anomaly classes (mm).
+PRECIP_ANOMALY_COLORS = [
+    "#c00006",
+    "#ff3300",
+    "#ff9d00",
+    "#ffe772",
+    "#7a5044",
+    "#b68c80",
+    "#f2dcd1",
+    "#ffffff",
+    "#c7ffbb",
+    "#75f676",
+    "#1bb61c",
+    "#9bd1f5",
+    "#2583f5",
+    "#dcdcff",
+    "#8070ee",
+]
+PRECIP_ANOMALY_BOUNDS = [-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]
+
+
+def _axis_label(text):
+    """Sentence-case an axis label; map lon/lat shorthand to Longitude/Latitude."""
+    if text is None:
+        return text
+    s = str(text).strip()
+    if not s:
+        return s
+    known = {
+        "lon": "Longitude",
+        "lat": "Latitude",
+        "longitude": "Longitude",
+        "latitude": "Latitude",
+        "valid time": "Valid time",
+        "calendar day": "Calendar day",
+        "time": "Time",
+        "step": "Step",
+        "forecast step": "Forecast step",
+    }
+    key = s.lower()
+    if key in known:
+        return known[key]
+    if s[:1].islower():
+        return s[:1].upper() + s[1:]
+    return s
+
+
+def _resolve_axis_label(override, default):
+    """Use ``override`` verbatim when set; otherwise sentence-case ``default``."""
+    if override is not None and str(override).strip() != "":
+        return str(override)
+    return _axis_label(default)
+
+
+def _parse_colormap(spec):
+    """Matplotlib name, or a LinearSegmentedColormap from comma-separated colors."""
+    if spec is None or "," not in spec:
+        return spec
+    from matplotlib.colors import LinearSegmentedColormap
+
+    parts = [p.strip() for p in spec.split(",") if p.strip()]
+    return LinearSegmentedColormap.from_list("custom", parts)
+
+
+def _is_precip(da):
+    kind = classify_variable(
+        da.name or "",
+        units=variable_units(da),
+        standard_name=da.attrs.get("standard_name"),
+    )
+    return kind in ("precip", "precip_amount")
+
+
+def _is_precip_anomaly(da):
+    """True when precip looks like an anomaly (negatives or 'anomal' in name)."""
+    import numpy as np
+
+    name = f"{da.name or ''} {da.attrs.get('long_name', '')}".lower()
+    if "anomal" in name:
+        return True
+    try:
+        vmin = float(np.nanmin(np.asarray(da.values, dtype=float)))
+    except (TypeError, ValueError):
+        return False
+    return np.isfinite(vmin) and vmin < 0
+
+
+def _aggregation_days(da):
+    """Return stamped ``aggregation_period`` in days, or None."""
+    period = da.attrs.get("aggregation_period")
+    if not (isinstance(period, str) and period.strip()):
+        return None
+    try:
+        return float(parse_aggregation_period(period).to("day").magnitude)
+    except UsageError:
+        return None
+
+
+def _precip_scale(da=None):
+    """Discrete CHIRPS-GEFS rainfall-total classes with under/over colors.
+
+    Periods shorter than ``PRECIP_LONG_MIN_DAYS`` use ``PRECIP_SHORT_BOUNDS``;
+    longer (or unknown) periods use the dekadal-style ``PRECIP_BOUNDS``.
+    """
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+
+    days = _aggregation_days(da) if da is not None else None
+    short = days is not None and days < PRECIP_LONG_MIN_DAYS
+    colors = PRECIP_COLORS
+    bounds = PRECIP_SHORT_BOUNDS if short else PRECIP_BOUNDS
+    name = "chirps_short" if short else "chirps_total"
+    cmap = ListedColormap(colors[1:-1], name=name)
+    cmap.set_under(colors[0])
+    cmap.set_over(colors[-1])
+    return cmap, BoundaryNorm(bounds, ncolors=cmap.N, clip=False)
+
+
+def _precip_anomaly_scale():
+    """Discrete CHIRPS-GEFS rainfall-anomaly classes with under/over colors."""
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+
+    colors = PRECIP_ANOMALY_COLORS
+    cmap = ListedColormap(colors[1:-1], name="chirps_anom")
+    cmap.set_under(colors[0])
+    cmap.set_over(colors[-1])
+    return cmap, BoundaryNorm(PRECIP_ANOMALY_BOUNDS, ncolors=cmap.N, clip=False)
+
+
+def _default_precip_scale(da):
+    if _is_precip_anomaly(da):
+        return _precip_anomaly_scale()
+    return _precip_scale(da)
+
+
+def _resolve_color_limits(da, vmin=None, vmax=None, *, norm=None, flag="--vmin/--vmax"):
+    """Resolve colorbar limits. User limits drop a discrete ``BoundaryNorm``."""
+    import numpy as np
+    from matplotlib.colors import BoundaryNorm
+
+    user_set = vmin is not None or vmax is not None
+    if user_set and isinstance(norm, BoundaryNorm):
+        norm = None
+    if norm is not None and not user_set:
+        return None, None, norm
+
+    data_min = float(da.min(skipna=True).values)
+    data_max = float(da.max(skipna=True).values)
+    if not np.isfinite(data_min) or not np.isfinite(data_max):
+        data_min, data_max = 0.0, 1.0
+    lo = data_min if vmin is None else float(vmin)
+    hi = data_max if vmax is None else float(vmax)
+    if not user_set and hi > 0 and lo < 0:
+        m = max(abs(hi), abs(lo))
+        lo, hi = -m, m
+    if lo > hi:
+        raise UsageError(f"{flag}: lower limit {lo} is greater than upper limit {hi}")
+    if lo == hi:
+        pad = abs(lo) * 0.05 if lo != 0 else 1.0
+        lo, hi = lo - pad, hi + pad
+    return lo, hi, None
+
+
+def _stretched_precip_cmap(da):
+    colors = PRECIP_ANOMALY_COLORS if _is_precip_anomaly(da) else PRECIP_COLORS
+    return _parse_colormap(",".join(colors))
+
+
+def _row_scale(da, colormap, vmin=None, vmax=None):
+    """Per-row ``(cmap, norm, vmin, vmax)``. Default precip is discrete CHIRPS classes."""
+    stretch = vmin is not None or vmax is not None
+    if colormap:
+        cmap, norm = _parse_colormap(colormap), None
+    elif _is_precip(da) and not stretch:
+        cmap, norm = _default_precip_scale(da)
+        return cmap, norm, None, None
+    elif _is_precip(da):
+        cmap, norm = _stretched_precip_cmap(da), None
+    else:
+        cmap, norm = "viridis", None
+    lo, hi, norm = _resolve_color_limits(da, vmin, vmax, norm=norm)
+    return cmap, norm, lo, hi
+
+
+def _cbar_kwargs(norm, cmap=None):
+    from matplotlib.colors import BoundaryNorm
+
+    if isinstance(norm, BoundaryNorm):
+        kw = {"spacing": "uniform", "ticks": list(norm.boundaries)}
+        if getattr(cmap, "name", None) in ("chirps_anom", "chirps_total", "chirps_short"):
+            kw["extend"] = "both"
+        return kw
+    return {}
 
 
 def _is_station(ds):
@@ -54,31 +278,33 @@ def _is_station(ds):
 
 
 def _format_single(t, bin_width=None):
-    """Render a time-bin label; with bin_width, ``YYYY-MM-DD to YYYY-MM-DD`` (right-edge)."""
+    """Render a time-bin label; with bin_width, ``4–10 Aug '26`` (left-edge)."""
     import datetime as _dt
 
     import pandas as pd
 
     if hasattr(t, "calendar"):
         if bin_width is None:
-            return t.strftime("%Y-%m-%d")
+            return format_plot_date(t)
         try:
-            start = t - bin_width + _dt.timedelta(days=1)
+            end = t + bin_width - _dt.timedelta(days=1)
         except (TypeError, ValueError):
-            return t.strftime("%Y-%m-%d")
-        return f"{start.strftime('%Y-%m-%d')} to {t.strftime('%Y-%m-%d')}"
+            return format_plot_date(t)
+        return format_plot_date_range(t, end)
 
     try:
-        end = pd.Timestamp(t)
+        start = pd.Timestamp(t)
     except (TypeError, ValueError):
-        return str(t)
+        if hasattr(t, "year") and hasattr(t, "month") and hasattr(t, "day"):
+            return format_plot_date(t)
+        return format_plot_date(t)
     if bin_width is None:
-        return end.date().isoformat()
+        return format_plot_date(start)
     try:
-        start = end - bin_width + pd.Timedelta(days=1)
+        end = start + bin_width - pd.Timedelta(days=1)
     except (TypeError, ValueError):
-        return end.date().isoformat()
-    return f"{start.date().isoformat()} to {end.date().isoformat()}"
+        return format_plot_date(start)
+    return format_plot_date_range(start, end)
 
 
 def _load_admin_boundaries(bbox=None):
@@ -217,17 +443,20 @@ def _axis_kind(values):
 @weather_skill.argument(
     "--colormap",
     default=None,
-    help="matplotlib colormap. Shared-scale default: categorical precip BoundaryNorm.",
+    help=(
+        "matplotlib colormap name, or comma-separated colors. "
+        "Precip default: discrete CHIRPS-GEFS classes (BoundaryNorm)."
+    ),
 )
 @weather_skill.argument(
     "--colormap-a",
     default=None,
-    help="Colormap for row A in independent-scale mode.",
+    help="Colormap for row A in independent-scale mode (name or comma-separated colors).",
 )
 @weather_skill.argument(
     "--colormap-b",
     default=None,
-    help="Colormap for row B in independent-scale mode.",
+    help="Colormap for row B in independent-scale mode (name or comma-separated colors).",
 )
 @weather_skill.argument(
     "--shared-scale",
@@ -245,9 +474,44 @@ def _axis_kind(values):
 )
 @weather_skill.argument("--title", default=None, help="Optional figure title.")
 @weather_skill.argument(
+    "--xlabel",
+    default=None,
+    help="Override the bottom x-axis label (default: Longitude).",
+)
+@weather_skill.argument(
+    "--fontsize",
+    type=int,
+    default=DEFAULT_FONTSIZE,
+    help="Base font size for panel titles, row labels, ticks, and colorbars (default 16).",
+)
+@weather_skill.argument(
+    "--figsize",
+    default=None,
+    type=parse_figsize,
+    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default 22,10.",
+)
+@weather_skill.argument(
+    "--label",
+    action="append",
+    default=None,
+    help="Row label for each --input, in order. Omit to infer from metadata.",
+)
+@weather_skill.argument(
     "--mask-geojson",
     default=None,
     help="GeoJSON polygon; gridded cells outside become NaN.",
+)
+@weather_skill.argument(
+    "--vmin",
+    type=float,
+    default=None,
+    help="Colorbar lower limit. Unset = data min (or discrete precip classes).",
+)
+@weather_skill.argument(
+    "--vmax",
+    type=float,
+    default=None,
+    help="Colorbar upper limit. Unset = data max (or discrete precip classes).",
 )
 def plot_compare(
     ds,
@@ -261,10 +525,16 @@ def plot_compare(
     shared_scale,
     independent_scale,
     title,
+    xlabel,
+    fontsize,
+    figsize,
     panels,
     time_dim,
+    label,
     mask_geojson,
     output,
+    vmin=None,
+    vmax=None,
     **kwargs,
 ):
     """Side-by-side multi-panel PNG comparing two weather-skills standard dataset Zarrs."""
@@ -274,16 +544,17 @@ def plot_compare(
     if shared_scale and independent_scale:
         raise UsageError("--shared-scale and --independent-scale are mutually exclusive.")
 
-    label_a = dataset_label(ds_a, "A")
-    label_b = dataset_label(ds_b, "B")
+    label_slots = resolve_input_labels(label, 2)
+    label_a = label_slots[0] or dataset_display_label(ds_a, "A")
+    label_b = label_slots[1] or dataset_display_label(ds_b, "B")
 
     import matplotlib
 
     matplotlib.use("Agg")
+    apply_style(fontsize)
     import cf_xarray  # noqa: F401 — registers the .cf accessor
     import matplotlib.pyplot as plt
     import numpy as np
-    from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap
     from matplotlib.gridspec import GridSpec
 
     var_a = variable_a or variable or auto_variable(ds_a)
@@ -436,8 +707,8 @@ def plot_compare(
 
     da_a = ds_a[var_a]
     da_b = ds_b[var_b]
-    units_a = da_a.attrs.get("units")
-    units_b = da_b.attrs.get("units")
+    units_a = variable_units(da_a)
+    units_b = variable_units(da_b)
     units_match = (
         isinstance(units_a, str) and isinstance(units_b, str) and units_equal(units_a, units_b)
     )
@@ -512,13 +783,8 @@ def plot_compare(
                 lat_dim = cf_dim(da, "latitude")
                 lon_dim = cf_dim(da, "longitude")
                 if lat_dim is not None and lon_dim is not None:
-                    lon_vals = da[lon_dim].values
-                    if lon_vals.size and float(np.nanmax(lon_vals)) > 180.0:
-                        wrap = (ds[lon_dim] + 180) % 360 - 180
-                        ds = ds.assign_coords({lon_dim: wrap}).sortby(lon_dim)
-                        da = da.assign_coords({lon_dim: ((da[lon_dim] + 180) % 360 - 180)}).sortby(
-                            lon_dim
-                        )
+                    ds = ensure_normalized_longitude(ds, lon_dim)
+                    da = ensure_normalized_longitude(da, lon_dim)
                     if region_bbox is not None:
                         lat_sl = lat_slice(da[lat_dim].values, r_n, r_s)
                         ds = ds.sel({lat_dim: lat_sl})
@@ -570,40 +836,60 @@ def plot_compare(
     b_station = _is_station(ds_b)
 
     def _row_units(da):
-        u = da.attrs.get("units")
-        return u if isinstance(u, str) else None
+        return variable_units(da)
 
+    user_vlim = vmin is not None or vmax is not None
     if use_shared_scale:
-        if colormap is None:
-            shared_cmap = LinearSegmentedColormap.from_list("wgbrp", PRECIP_COLORS)
-            shared_norm = BoundaryNorm(PRECIP_BOUNDS, shared_cmap.N)
+        if colormap is None and _is_precip(da_a) and _is_precip(da_b) and not user_vlim:
+            if _is_precip_anomaly(da_a) or _is_precip_anomaly(da_b):
+                shared_cmap, shared_norm = _precip_anomaly_scale()
+            else:
+                days_a = _aggregation_days(da_a)
+                days_b = _aggregation_days(da_b)
+                both_short = (
+                    days_a is not None
+                    and days_a < PRECIP_LONG_MIN_DAYS
+                    and days_b is not None
+                    and days_b < PRECIP_LONG_MIN_DAYS
+                )
+                shared_cmap, shared_norm = _precip_scale(da_a if both_short else None)
             shared_vmin = shared_vmax = None
         else:
-            shared_cmap = colormap
+            if colormap is not None:
+                shared_cmap = _parse_colormap(colormap)
+            elif _is_precip(da_a) and _is_precip(da_b):
+                shared_cmap = _stretched_precip_cmap(da_a if _is_precip_anomaly(da_a) else da_b)
+            else:
+                shared_cmap = "viridis"
             shared_norm = None
-            shared_vmax = float(np.nanmax([da_a.max().values, da_b.max().values]))
-            shared_vmin = float(np.nanmin([da_a.min().values, da_b.min().values]))
+            data_min = float(np.nanmin([da_a.min().values, da_b.min().values]))
+            data_max = float(np.nanmax([da_a.max().values, da_b.max().values]))
+            if not np.isfinite(data_min) or not np.isfinite(data_max):
+                data_min, data_max = 0.0, 1.0
+            shared_vmin = data_min if vmin is None else float(vmin)
+            shared_vmax = data_max if vmax is None else float(vmax)
+            if not user_vlim and shared_vmax > 0 and shared_vmin < 0:
+                m = max(abs(shared_vmax), abs(shared_vmin))
+                shared_vmin, shared_vmax = -m, m
+            if shared_vmin > shared_vmax:
+                raise UsageError(
+                    f"--vmin/--vmax: lower limit {shared_vmin} is greater than "
+                    f"upper limit {shared_vmax}"
+                )
+            if shared_vmin == shared_vmax:
+                pad = abs(shared_vmin) * 0.05 if shared_vmin != 0 else 1.0
+                shared_vmin, shared_vmax = shared_vmin - pad, shared_vmax + pad
         scale_a = scale_b = (shared_cmap, shared_norm, shared_vmin, shared_vmax)
     else:
-        scale_a = (
-            colormap_a or colormap or "viridis",
-            None,
-            float(da_a.min().values),
-            float(da_a.max().values),
-        )
-        scale_b = (
-            colormap_b or colormap or "viridis",
-            None,
-            float(da_b.min().values),
-            float(da_b.max().values),
-        )
+        scale_a = _row_scale(da_a, colormap_a or colormap, vmin, vmax)
+        scale_b = _row_scale(da_b, colormap_b or colormap, vmin, vmax)
 
     side_a = (ds_a, da_a, td_a, label_a, var_a, _row_units(da_a), scale_a)
     side_b = (ds_b, da_b, td_b, label_b, var_b, _row_units(da_b), scale_b)
     top, bottom = (side_b, side_a) if b_station and not a_station else (side_a, side_b)
 
-    fig = plt.figure(figsize=(22, 10))
-    gs = GridSpec(2, n, figure=fig, wspace=0.08, hspace=0.15)
+    fig = plt.figure(figsize=resolve_figsize(figsize, (22, 10)))
+    gs = GridSpec(2, n, figure=fig, wspace=0.08, hspace=0.32)
     top_axes = [fig.add_subplot(gs[0, i]) for i in range(n)]
     bottom_axes = [fig.add_subplot(gs[1, i]) for i in range(n)]
     if title:
@@ -642,7 +928,21 @@ def plot_compare(
         cmap, norm, vmin, vmax = scale
         is_station = _is_station(ds)
         row_sel = da.sel({td: common_labels}, method="nearest", tolerance=common_tol)
-        bin_width = _median_bin_width(da[td].values)
+        import pandas as pd
+
+        bin_width = None
+        agg_days = _aggregation_days(da)
+        if agg_days is not None and agg_days >= 2:
+            bin_width = pd.Timedelta(days=float(agg_days))
+        else:
+            median = _median_bin_width(da[td].values)
+            if median is not None:
+                try:
+                    seconds = float(median.total_seconds())
+                except AttributeError:
+                    seconds = float(pd.Timedelta(median).total_seconds())
+                if seconds >= 2 * 86_400:
+                    bin_width = median
         last_im = None
         for col in range(n_panels):
             ax = axes[col]
@@ -652,14 +952,11 @@ def plot_compare(
                 last_im = _scatter_panel(ax, ds, sel, cmap, norm, vmin, vmax)
             else:
                 last_im = _grid_panel(ax, sel, cmap, norm, vmin, vmax)
-            ax.set_title(f"{label}: {title_t}", fontsize=9)
+            ax.set_title(title_t)
             if boundaries is not None:
                 boundaries.boundary.plot(edgecolor="grey", linewidth=1.0, ax=ax)
-            if col != 0:
-                ax.set_ylabel("")
-                ax.tick_params(left=False, labelleft=False)
-            else:
-                ax.set_ylabel("lat")
+            ax.set_ylabel(_axis_label(label))
+            ax.tick_params(bottom=False, labelbottom=False, left=False, labelleft=False)
         return last_im
 
     sc_top = _plot_row(top_axes, top, n)
@@ -672,24 +969,29 @@ def plot_compare(
     for col, ax in enumerate(bottom_axes):
         ax.set_xlim(g_xmin, g_xmax)
         ax.set_ylim(g_ymin, g_ymax)
-        ax.set_xlabel("lon" if col == n // 2 else "")
+        ax.set_xlabel(_resolve_axis_label(xlabel, "Longitude") if col == n // 2 else "")
 
     def _cbar_label(row):
-        _ds, _da, _td, label, var, units, _scale = row
-        if not use_shared_scale and units:
-            return f"{label} {var} [{units}]"
-        return f"{label} {var}"
+        _ds, da, _td, label, var, _units, _scale = row
+        return f"{label} {variable_label_for_display(da, fallback=var)}"
 
-    fig.colorbar(sc_top, ax=top_axes, label=_cbar_label(top), shrink=0.6, fraction=0.02, pad=0.02)
-    fig.colorbar(
-        im_bottom, ax=bottom_axes, label=_cbar_label(bottom), shrink=0.6, fraction=0.02, pad=0.02
+    add_shared_colorbar(
+        fig,
+        sc_top,
+        top_axes,
+        _cbar_label(top),
+        location="right",
+        **_cbar_kwargs(top[-1][1], top[-1][0]),
     )
-
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return output
+    add_shared_colorbar(
+        fig,
+        im_bottom,
+        bottom_axes,
+        _cbar_label(bottom),
+        location="right",
+        **_cbar_kwargs(bottom[-1][1], bottom[-1][0]),
+    )
+    return save_figure(fig, output, tight=figsize is None)
 
 
 if __name__ == "__main__":
