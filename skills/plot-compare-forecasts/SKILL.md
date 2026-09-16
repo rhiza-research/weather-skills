@@ -49,7 +49,7 @@ forecasts with a hits row, use `plot-verify`.
 
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.zarr> [-i <c.zarr> ...] \
-    --output <out.png> [--variable NAME] [--title TEXT] [--fontsize N] [--figsize W,H] [--colormap NAME] \
+    --output <out.png> [--variable NAME] [--title TEXT] [--fontsize N] [--figsize W,H] [--colormap NAME] [--vmin N] [--vmax N] \
     [--bbox N/W/S/E] [--mask-geojson PATH] [--panels N]
 ```
 
@@ -69,6 +69,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.z
   anomalies (negatives, or `anomal` in the name) use the CHIRPS-GEFS
   diverging classes. Every other variable uses `viridis`. One shared
   scale across all present cells.
+- `--vmin` / `--vmax` — shared colorbar limits. Either may be omitted
+  (the unset end uses the data min/max). Setting either one drops the
+  default discrete CHIRPS precip classes and stretches those colors (or
+  `--colormap`) across the requested range.
 - `--title` — optional figure title. Long titles wrap onto a second line.
 - `--fontsize` — base font size for column titles, row labels, ticks, and
   colorbars (default 16). Raise on user request (e.g. `--fontsize 18`).

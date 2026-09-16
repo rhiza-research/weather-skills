@@ -196,7 +196,6 @@ def _precip_scale(da=None):
     return cmap, BoundaryNorm(bounds, ncolors=cmap.N, clip=False)
 
 
-
 def _precip_anomaly_scale():
     """Discrete CHIRPS-GEFS rainfall-anomaly classes with under/over colors."""
     from matplotlib.colors import BoundaryNorm, ListedColormap
@@ -214,19 +213,53 @@ def _default_precip_scale(da):
     return _precip_scale(da)
 
 
-def _row_scale(da, colormap):
+def _resolve_color_limits(da, vmin=None, vmax=None, *, norm=None, flag="--vmin/--vmax"):
+    """Resolve colorbar limits. User limits drop a discrete ``BoundaryNorm``."""
+    import numpy as np
+    from matplotlib.colors import BoundaryNorm
+
+    user_set = vmin is not None or vmax is not None
+    if user_set and isinstance(norm, BoundaryNorm):
+        norm = None
+    if norm is not None and not user_set:
+        return None, None, norm
+
+    data_min = float(da.min(skipna=True).values)
+    data_max = float(da.max(skipna=True).values)
+    if not np.isfinite(data_min) or not np.isfinite(data_max):
+        data_min, data_max = 0.0, 1.0
+    lo = data_min if vmin is None else float(vmin)
+    hi = data_max if vmax is None else float(vmax)
+    if not user_set and hi > 0 and lo < 0:
+        m = max(abs(hi), abs(lo))
+        lo, hi = -m, m
+    if lo > hi:
+        raise UsageError(f"{flag}: lower limit {lo} is greater than upper limit {hi}")
+    if lo == hi:
+        pad = abs(lo) * 0.05 if lo != 0 else 1.0
+        lo, hi = lo - pad, hi + pad
+    return lo, hi, None
+
+
+def _stretched_precip_cmap(da):
+    colors = PRECIP_ANOMALY_COLORS if _is_precip_anomaly(da) else PRECIP_COLORS
+    return _parse_colormap(",".join(colors))
+
+
+def _row_scale(da, colormap, vmin=None, vmax=None):
     """Per-row ``(cmap, norm, vmin, vmax)``. Default precip is discrete CHIRPS classes."""
+    stretch = vmin is not None or vmax is not None
     if colormap:
-        return (
-            _parse_colormap(colormap),
-            None,
-            float(da.min().values),
-            float(da.max().values),
-        )
-    if _is_precip(da):
+        cmap, norm = _parse_colormap(colormap), None
+    elif _is_precip(da) and not stretch:
         cmap, norm = _default_precip_scale(da)
         return cmap, norm, None, None
-    return "viridis", None, float(da.min().values), float(da.max().values)
+    elif _is_precip(da):
+        cmap, norm = _stretched_precip_cmap(da), None
+    else:
+        cmap, norm = "viridis", None
+    lo, hi, norm = _resolve_color_limits(da, vmin, vmax, norm=norm)
+    return cmap, norm, lo, hi
 
 
 def _cbar_kwargs(norm, cmap=None):
@@ -468,6 +501,18 @@ def _axis_kind(values):
     default=None,
     help="GeoJSON polygon; gridded cells outside become NaN.",
 )
+@weather_skill.argument(
+    "--vmin",
+    type=float,
+    default=None,
+    help="Colorbar lower limit. Unset = data min (or discrete precip classes).",
+)
+@weather_skill.argument(
+    "--vmax",
+    type=float,
+    default=None,
+    help="Colorbar upper limit. Unset = data max (or discrete precip classes).",
+)
 def plot_compare(
     ds,
     bbox,
@@ -488,6 +533,8 @@ def plot_compare(
     label,
     mask_geojson,
     output,
+    vmin=None,
+    vmax=None,
     **kwargs,
 ):
     """Side-by-side multi-panel PNG comparing two weather-skills standard dataset Zarrs."""
@@ -791,8 +838,9 @@ def plot_compare(
     def _row_units(da):
         return variable_units(da)
 
+    user_vlim = vmin is not None or vmax is not None
     if use_shared_scale:
-        if colormap is None and _is_precip(da_a) and _is_precip(da_b):
+        if colormap is None and _is_precip(da_a) and _is_precip(da_b) and not user_vlim:
             if _is_precip_anomaly(da_a) or _is_precip_anomaly(da_b):
                 shared_cmap, shared_norm = _precip_anomaly_scale()
             else:
@@ -806,20 +854,35 @@ def plot_compare(
                 )
                 shared_cmap, shared_norm = _precip_scale(da_a if both_short else None)
             shared_vmin = shared_vmax = None
-        elif colormap is None:
-            shared_cmap = "viridis"
-            shared_norm = None
-            shared_vmax = float(np.nanmax([da_a.max().values, da_b.max().values]))
-            shared_vmin = float(np.nanmin([da_a.min().values, da_b.min().values]))
         else:
-            shared_cmap = _parse_colormap(colormap)
+            if colormap is not None:
+                shared_cmap = _parse_colormap(colormap)
+            elif _is_precip(da_a) and _is_precip(da_b):
+                shared_cmap = _stretched_precip_cmap(da_a if _is_precip_anomaly(da_a) else da_b)
+            else:
+                shared_cmap = "viridis"
             shared_norm = None
-            shared_vmax = float(np.nanmax([da_a.max().values, da_b.max().values]))
-            shared_vmin = float(np.nanmin([da_a.min().values, da_b.min().values]))
+            data_min = float(np.nanmin([da_a.min().values, da_b.min().values]))
+            data_max = float(np.nanmax([da_a.max().values, da_b.max().values]))
+            if not np.isfinite(data_min) or not np.isfinite(data_max):
+                data_min, data_max = 0.0, 1.0
+            shared_vmin = data_min if vmin is None else float(vmin)
+            shared_vmax = data_max if vmax is None else float(vmax)
+            if not user_vlim and shared_vmax > 0 and shared_vmin < 0:
+                m = max(abs(shared_vmax), abs(shared_vmin))
+                shared_vmin, shared_vmax = -m, m
+            if shared_vmin > shared_vmax:
+                raise UsageError(
+                    f"--vmin/--vmax: lower limit {shared_vmin} is greater than "
+                    f"upper limit {shared_vmax}"
+                )
+            if shared_vmin == shared_vmax:
+                pad = abs(shared_vmin) * 0.05 if shared_vmin != 0 else 1.0
+                shared_vmin, shared_vmax = shared_vmin - pad, shared_vmax + pad
         scale_a = scale_b = (shared_cmap, shared_norm, shared_vmin, shared_vmax)
     else:
-        scale_a = _row_scale(da_a, colormap_a or colormap)
-        scale_b = _row_scale(da_b, colormap_b or colormap)
+        scale_a = _row_scale(da_a, colormap_a or colormap, vmin, vmax)
+        scale_b = _row_scale(da_b, colormap_b or colormap, vmin, vmax)
 
     side_a = (ds_a, da_a, td_a, label_a, var_a, _row_units(da_a), scale_a)
     side_b = (ds_b, da_b, td_b, label_b, var_b, _row_units(da_b), scale_b)

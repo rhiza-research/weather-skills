@@ -228,3 +228,38 @@ def test_precip_anomaly_colormap_is_chirps_palette(plot_mod):
 
 def test_lakes_are_filled_blue(plot_mod):
     assert plot_mod._LAKE_FACECOLOR == "#4da6ff"
+
+
+def test_heatmap_scale_stretch_drops_precip_boundary_norm(plot_mod):
+    from matplotlib.colors import LinearSegmentedColormap
+
+    da = make_forecast()["tp"]
+    da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
+    cmap, norm = plot_mod._heatmap_scale(da, None, stretch=True)
+    assert isinstance(cmap, LinearSegmentedColormap)
+    assert norm is None
+
+
+def test_vmin_vmax_writes_png_and_stamps_history(tmp_path, plot_fn):
+    a = write_zarr(make_forecast(fill=1.0), tmp_path / "a.zarr")
+    b = write_zarr(make_forecast(fill=2.0), tmp_path / "b.zarr")
+    out = tmp_path / "grid.png"
+
+    run_skill(
+        plot_fn,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(out),
+        "--vmin",
+        "0",
+        "--vmax",
+        "5",
+    )
+
+    assert Path(out).exists()
+    history = load_figure_history(out)
+    assert history[-1]["args"]["vmin"] == 0.0
+    assert history[-1]["args"]["vmax"] == 5.0

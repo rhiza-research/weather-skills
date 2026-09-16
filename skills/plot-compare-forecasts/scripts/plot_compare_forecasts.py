@@ -56,7 +56,6 @@ from weather_skills_core.figure import (
 _SKILL_VERSION = "0.0.2"
 
 
-
 # CHIRPS-GEFS / Early Warning eXplorer rainfall-total classes (mm).
 # Under (<2) is white; over (>2500) is pale pink.
 PRECIP_COLORS = [
@@ -174,7 +173,6 @@ def _precip_scale(da=None):
     return cmap, BoundaryNorm(bounds, ncolors=cmap.N, clip=False)
 
 
-
 def _is_precip_anomaly(da):
     """True when precip looks like an anomaly (negatives or 'anomal' in name)."""
     import numpy as np
@@ -200,7 +198,7 @@ def _precip_anomaly_scale():
     return cmap, BoundaryNorm(PRECIP_ANOMALY_BOUNDS, ncolors=cmap.N, clip=False)
 
 
-def _heatmap_scale(da, colormap):
+def _heatmap_scale(da, colormap, *, stretch=False):
     """Return ``(cmap, norm)``. ``norm`` is set for the default precip scale."""
     if colormap:
         return _parse_colormap(colormap), None
@@ -210,10 +208,35 @@ def _heatmap_scale(da, colormap):
         standard_name=da.attrs.get("standard_name"),
     )
     if kind in ("precip", "precip_amount"):
+        if stretch:
+            colors = PRECIP_ANOMALY_COLORS if _is_precip_anomaly(da) else PRECIP_COLORS
+            return _parse_colormap(",".join(colors)), None
         if _is_precip_anomaly(da):
             return _precip_anomaly_scale()
         return _precip_scale(da)
     return "viridis", None
+
+
+def _resolve_color_limits(vmin=None, vmax=None, *, data_min=None, data_max=None):
+    """Resolve colorbar limits from user values and/or data range."""
+    import numpy as np
+
+    user_set = vmin is not None or vmax is not None
+    if data_min is None or not np.isfinite(data_min):
+        data_min = 0.0
+    if data_max is None or not np.isfinite(data_max):
+        data_max = 1.0
+    lo = data_min if vmin is None else float(vmin)
+    hi = data_max if vmax is None else float(vmax)
+    if not user_set and hi > 0 and lo < 0:
+        m = max(abs(hi), abs(lo))
+        lo, hi = -m, m
+    if lo > hi:
+        raise UsageError(f"--vmin/--vmax: lower limit {lo} is greater than upper limit {hi}")
+    if lo == hi:
+        pad = abs(lo) * 0.05 if lo != 0 else 1.0
+        lo, hi = lo - pad, hi + pad
+    return lo, hi
 
 
 def _cbar_boundary_kwargs(norm, cmap=None):
@@ -645,6 +668,18 @@ def _extent_from_da(da, lat_dim, lon_dim, bbox):
     default=None,
     help="GeoJSON polygon; gridded cells outside become NaN.",
 )
+@weather_skill.argument(
+    "--vmin",
+    type=float,
+    default=None,
+    help="Colorbar lower limit. Unset = data min (or discrete precip classes).",
+)
+@weather_skill.argument(
+    "--vmax",
+    type=float,
+    default=None,
+    help="Colorbar upper limit. Unset = data max (or discrete precip classes).",
+)
 def plot_compare_forecasts(
     ds,
     bbox,
@@ -657,6 +692,8 @@ def plot_compare_forecasts(
     label,
     mask_geojson,
     output,
+    vmin=None,
+    vmax=None,
     **kwargs,
 ):
     """Compare two or more gridded datasets as a heatmap grid PNG."""
@@ -735,14 +772,18 @@ def plot_compare_forecasts(
     wrap_lon = not (bbox is not None and bbox[1] > bbox[3])
     extent = _extent_from_da(das[0], lat_dims[0], lon_dims[0], bbox)
 
-    cmap, norm = _heatmap_scale(das[0], colormap)
+    user_vlim = vmin is not None or vmax is not None
+    cmap, norm = _heatmap_scale(das[0], colormap, stretch=user_vlim)
     if (
         colormap is None
+        and not user_vlim
         and getattr(cmap, "name", None) in ("chirps_total", "chirps_short")
         and any(_is_precip_anomaly(da) for da in das)
     ):
         cmap, norm = _precip_anomaly_scale()
-    vmin = vmax = None
+    if user_vlim:
+        norm = None
+    data_min = data_max = None
     if norm is None:
         present_min = []
         present_max = []
@@ -755,15 +796,11 @@ def plot_compare_forecasts(
                 present_min.append(float(slab.min(skipna=True).values))
                 present_max.append(float(slab.max(skipna=True).values))
         if present_max:
-            vmin = float(np.nanmin(present_min))
-            vmax = float(np.nanmax(present_max))
-            if vmax > 0 and vmin < 0:
-                m = max(abs(vmax), abs(vmin))
-                vmin, vmax = -m, m
-            if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
-                vmin, vmax = 0.0, 1.0
+            data_min = float(np.nanmin(present_min))
+            data_max = float(np.nanmax(present_max))
         else:
-            vmin, vmax = 0.0, 1.0
+            data_min, data_max = 0.0, 1.0
+        vmin, vmax = _resolve_color_limits(vmin, vmax, data_min=data_min, data_max=data_max)
     fig_w, fig_h = resolve_figsize(figsize, (max(3.2 * ncols, 6.0), max(2.8 * nrows, 4.0)))
     fig, axes = plt.subplots(
         nrows,

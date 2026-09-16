@@ -176,6 +176,8 @@ _LAYER_OPTION_KEYS = frozenset(
         "v-variable",
         "quiver-scale",
         "quiver-step",
+        "vmin",
+        "vmax",
     }
 )
 _KIND_ZORDER = {"heatmap": 1.0, "quiver": 5.0, "scatter": 6.0, "outline": 7.0}
@@ -653,15 +655,82 @@ def _precip_anomaly_scale():
     return cmap, BoundaryNorm(PRECIP_ANOMALY_BOUNDS, ncolors=cmap.N, clip=False)
 
 
-def _heatmap_scale(da, colormap):
-    """Return ``(cmap, norm)``. ``norm`` is set for the default precip scale."""
+def _heatmap_scale(da, colormap, *, stretch=False):
+    """Return ``(cmap, norm)``. ``norm`` is set for the default precip scale.
+
+    ``stretch=True`` (user ``--vmin`` / ``--vmax``) keeps the CHIRPS colors
+    but drops ``BoundaryNorm`` so the colorbar can use arbitrary limits.
+    """
     if colormap:
         return _parse_colormap(colormap), None
     if _is_precip(da):
+        if stretch:
+            colors = PRECIP_ANOMALY_COLORS if _is_precip_anomaly(da) else PRECIP_COLORS
+            return _parse_colormap(",".join(colors)), None
         if _is_precip_anomaly(da):
             return _precip_anomaly_scale()
         return _precip_scale(da)
     return "viridis", None
+
+
+def _layer_optional_float(spec, key):
+    raw = spec.options.get(key)
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise UsageError(f"--layer option {key}={raw!r} is not a number") from exc
+
+
+def _resolve_color_limits(da, vmin=None, vmax=None, *, norm=None, flag="--vmin/--vmax"):
+    """Resolve colorbar limits. User limits drop a discrete ``BoundaryNorm``.
+
+    When both limits are omitted, diverging data is recentered on zero.
+    """
+    import numpy as np
+    from matplotlib.colors import BoundaryNorm
+
+    user_set = vmin is not None or vmax is not None
+    if user_set and isinstance(norm, BoundaryNorm):
+        norm = None
+    if norm is not None and not user_set:
+        return None, None, norm
+
+    data_min = float(da.min(skipna=True).values)
+    data_max = float(da.max(skipna=True).values)
+    if not np.isfinite(data_min) or not np.isfinite(data_max):
+        data_min, data_max = 0.0, 1.0
+    lo = data_min if vmin is None else float(vmin)
+    hi = data_max if vmax is None else float(vmax)
+    if not user_set and hi > 0 and lo < 0:
+        m = max(abs(hi), abs(lo))
+        lo, hi = -m, m
+    if lo > hi:
+        raise UsageError(f"{flag}: lower limit {lo} is greater than upper limit {hi}")
+    if lo == hi:
+        pad = abs(lo) * 0.05 if lo != 0 else 1.0
+        lo, hi = lo - pad, hi + pad
+    return lo, hi, None
+
+
+def _cbar_extend_for_limits(da, vmin, vmax):
+    """``colorbar(extend=...)`` when data sits outside the user limits."""
+    import numpy as np
+
+    if vmin is None or vmax is None:
+        return None
+    data_min = float(da.min(skipna=True).values)
+    data_max = float(da.max(skipna=True).values)
+    lo = np.isfinite(data_min) and data_min < vmin
+    hi = np.isfinite(data_max) and data_max > vmax
+    if lo and hi:
+        return "both"
+    if lo:
+        return "min"
+    if hi:
+        return "max"
+    return None
 
 
 def _cbar_boundary_kwargs(norm, cmap=None):
@@ -1128,9 +1197,7 @@ def _xy_1d(ds, variable, overrides, bbox_nwse, region_polygon, role: str):
         if da.ndim == 1:
             sdim = da.dims[0]
         else:
-            raise UsageError(
-                f"{role} needs a time/step axis to pair samples; got {list(da.dims)}."
-            )
+            raise UsageError(f"{role} needs a time/step axis to pair samples; got {list(da.dims)}.")
     reduce_dims = [d for d in da.dims if d != sdim]
     reduced = da.mean(reduce_dims, keep_attrs=True) if reduce_dims else da
     axis_vals, _ = _timeseries_axis(reduced, sdim)
@@ -1173,9 +1240,7 @@ def _pair_xy(x_axis, x_vals, y_axis, y_vals, pair_on: str):
         y_map[key] = i
     shared = [key for key in x_keys if key in y_map]
     if not shared:
-        raise UsageError(
-            f"--pair-on {pair_on} found no matching samples between --x and --y."
-        )
+        raise UsageError(f"--pair-on {pair_on} found no matching samples between --x and --y.")
     x_out = np.array([x_vals[x_map[k]] for k in shared], dtype=float)
     y_out = np.array([y_vals[y_map[k]] for k in shared], dtype=float)
     return x_out, y_out, shared
@@ -1201,12 +1266,8 @@ def _plot_xy(
     import numpy as np
 
     region_polygon = polygon_from_geojson(mask_geojson) if mask_geojson else None
-    x_da, x_axis, x_raw = _xy_1d(
-        x_ds, x_variable, overrides, bbox_nwse, region_polygon, "--x"
-    )
-    y_da, y_axis, y_raw = _xy_1d(
-        y_ds, y_variable, overrides, bbox_nwse, region_polygon, "--y"
-    )
+    x_da, x_axis, x_raw = _xy_1d(x_ds, x_variable, overrides, bbox_nwse, region_polygon, "--x")
+    y_da, y_axis, y_raw = _xy_1d(y_ds, y_variable, overrides, bbox_nwse, region_polygon, "--y")
     x_vals, y_vals, keys = _pair_xy(x_axis, x_raw, y_axis, y_raw, pair_on)
     finite = np.isfinite(x_vals) & np.isfinite(y_vals)
     x_vals, y_vals = x_vals[finite], y_vals[finite]
@@ -1242,11 +1303,7 @@ def _panel_title(da, sdim, step_value, all_steps):
     value_arr = np.asarray(step_value)
 
     # Forecast ``step`` (timedelta) + scalar init ``time`` → valid-time window.
-    if (
-        step_arr.dtype.kind == "m"
-        and "time" in da.coords
-        and getattr(da["time"], "ndim", 1) == 0
-    ):
+    if step_arr.dtype.kind == "m" and "time" in da.coords and getattr(da["time"], "ndim", 1) == 0:
         fallback = f"{sdim}={_format_step(step_value)}"
         try:
             time_val = np.asarray(da["time"].values)
@@ -1730,6 +1787,8 @@ def _quiver_map(
     xlabel=None,
     ylabel=None,
     figsize=None,
+    vmin=None,
+    vmax=None,
 ):
     """Speed pcolormesh with native-grid u/v arrows (plot_wind_and_sst_anomaly)."""
     import cartopy.crs as ccrs
@@ -1766,11 +1825,7 @@ def _quiver_map(
     if extent is None:
         extent = _extent_from_field(speed, lat_dim, lon_dim)
 
-    vmax = float(speed.max(skipna=True).values)
-    vmin = float(speed.min(skipna=True).values)
-    if vmax > 0 and vmin < 0:
-        m = max(abs(vmax), abs(vmin))
-        vmin, vmax = -m, m
+    vmin, vmax, _ = _resolve_color_limits(speed, vmin, vmax)
 
     sw, sh = _figsize_from_extent(*extent)
     fig, axes = plt.subplots(
@@ -1876,7 +1931,11 @@ def _quiver_map(
     if title:
         fig.suptitle(title)
     visible = [ax for ax in axes if ax.get_visible()]
-    add_shared_colorbar(fig, mesh, visible, cbar_label or _wind_speed_cbar_label(u_da))
+    cbar_kw = {}
+    extend = _cbar_extend_for_limits(speed, vmin, vmax)
+    if extend:
+        cbar_kw["extend"] = extend
+    add_shared_colorbar(fig, mesh, visible, cbar_label or _wind_speed_cbar_label(u_da), **cbar_kw)
     return fig
 
 
@@ -1901,6 +1960,8 @@ def _plot_quiver(
     xlabel=None,
     ylabel=None,
     figsize=None,
+    vmin=None,
+    vmax=None,
 ):
     """Map panels of wind speed with S2S-style u/v quiver overlay."""
     if variable:
@@ -1948,6 +2009,8 @@ def _plot_quiver(
         xlabel=xlabel,
         ylabel=ylabel,
         figsize=figsize,
+        vmin=vmin,
+        vmax=vmax,
     )
 
 
@@ -2154,20 +2217,19 @@ def _prep_heatmap_layer(spec, bbox_nwse, region_polygon, extent):
         da = ensure_normalized_longitude(da, lon_dim)
     if "number" in da.dims:
         da = da.mean("number", keep_attrs=True)
+    user_vmin = _layer_optional_float(spec, "vmin")
+    user_vmax = _layer_optional_float(spec, "vmax")
+    user_vlim = user_vmin is not None or user_vmax is not None
     flag_scale = _discrete_flag_scale(da, spec.options.get("colormap"))
     if flag_scale is not None:
+        if user_vlim:
+            raise UsageError("--vmin/--vmax cannot be used with CF flag_values fields")
         cmap, norm, flag_ticks, flag_labels = flag_scale
         vmin = vmax = None
     else:
-        cmap, norm = _heatmap_scale(da, spec.options.get("colormap"))
+        cmap, norm = _heatmap_scale(da, spec.options.get("colormap"), stretch=user_vlim)
         flag_ticks = flag_labels = None
-        vmin = vmax = None
-        if norm is None:
-            vmax = float(da.max(skipna=True).values)
-            vmin = float(da.min(skipna=True).values)
-            if vmax > 0 and vmin < 0:
-                m = max(abs(vmax), abs(vmin))
-                vmin, vmax = -m, m
+        vmin, vmax, norm = _resolve_color_limits(da, user_vmin, user_vmax, norm=norm)
     return {
         "kind": "heatmap",
         "spec": spec,
@@ -2178,6 +2240,7 @@ def _prep_heatmap_layer(spec, bbox_nwse, region_polygon, extent):
         "norm": norm,
         "vmin": vmin,
         "vmax": vmax,
+        "vlim_user": user_vlim,
         "flag_ticks": flag_ticks,
         "flag_labels": flag_labels,
         "wrap_lon": wrap_lon,
@@ -2219,14 +2282,11 @@ def _prep_scatter_layer(spec, bbox_nwse, region_polygon):
                 f"--layer scatter:{spec.path} still has dimension(s) {extra}; "
                 "select a position with index= or reduce them first"
             )
-    cmap, norm = _heatmap_scale(da, spec.options.get("colormap"))
-    vmin = vmax = None
-    if norm is None:
-        vmax = float(da.max(skipna=True).values)
-        vmin = float(da.min(skipna=True).values)
-        if vmax > 0 and vmin < 0:
-            m = max(abs(vmax), abs(vmin))
-            vmin, vmax = -m, m
+    user_vmin = _layer_optional_float(spec, "vmin")
+    user_vmax = _layer_optional_float(spec, "vmax")
+    user_vlim = user_vmin is not None or user_vmax is not None
+    cmap, norm = _heatmap_scale(da, spec.options.get("colormap"), stretch=user_vlim)
+    vmin, vmax, norm = _resolve_color_limits(da, user_vmin, user_vmax, norm=norm)
     return {
         "kind": "scatter",
         "spec": spec,
@@ -2237,6 +2297,7 @@ def _prep_scatter_layer(spec, bbox_nwse, region_polygon):
         "norm": norm,
         "vmin": vmin,
         "vmax": vmax,
+        "vlim_user": user_vlim,
         "panel_dim": _step_dim(da),
         "cbar_label": _variable_label(da),
         "variable": variable,
@@ -2291,6 +2352,10 @@ def _prep_quiver_layer(spec, bbox_nwse, region_polygon, extent):
     )
     qscale = spec.options.get("quiver-scale")
     qstep = spec.options.get("quiver-step")
+    user_vmin = _layer_optional_float(spec, "vmin")
+    user_vmax = _layer_optional_float(spec, "vmax")
+    user_vlim = user_vmin is not None or user_vmax is not None
+    vmin, vmax, _ = _resolve_color_limits(speed, user_vmin, user_vmax)
     return {
         "kind": "quiver",
         "spec": spec,
@@ -2301,8 +2366,9 @@ def _prep_quiver_layer(spec, bbox_nwse, region_polygon, extent):
         "lon_dim": lon_dim,
         "cmap": cmap,
         "norm": None,
-        "vmin": float(speed.min(skipna=True).values),
-        "vmax": float(speed.max(skipna=True).values),
+        "vmin": vmin,
+        "vmax": vmax,
+        "vlim_user": user_vlim,
         "wrap_lon": wrap_lon,
         "native_step_dim": native_step_dim,
         "native_steps": native_steps,
@@ -2484,17 +2550,28 @@ def _apply_shared_scale(prepared_layers):
     data = [p for p in prepared_layers if p["kind"] in ("heatmap", "scatter")]
     if not data:
         return
-    cmap, norm = data[0]["cmap"], data[0]["norm"]
-    if norm is None:
-        vmins = [p["vmin"] for p in data if p["vmin"] is not None]
-        vmaxs = [p["vmax"] for p in data if p["vmax"] is not None]
-        vmin = min(vmins) if vmins else None
-        vmax = max(vmaxs) if vmaxs else None
-        if vmin is not None and vmax is not None and vmax > 0 and vmin < 0:
-            m = max(abs(vmax), abs(vmin))
-            vmin, vmax = -m, m
+    user = [p for p in data if p.get("vlim_user")]
+    if user:
+        limits = {(p["vmin"], p["vmax"]) for p in user}
+        if len(limits) > 1:
+            raise UsageError(
+                "shared-scale layers disagree on vmin/vmax; "
+                "use --independent-scale or one set of limits"
+            )
+        cmap, norm = user[0]["cmap"], user[0]["norm"]
+        vmin, vmax = user[0]["vmin"], user[0]["vmax"]
     else:
-        vmin = vmax = None
+        cmap, norm = data[0]["cmap"], data[0]["norm"]
+        if norm is None:
+            vmins = [p["vmin"] for p in data if p["vmin"] is not None]
+            vmaxs = [p["vmax"] for p in data if p["vmax"] is not None]
+            vmin = min(vmins) if vmins else None
+            vmax = max(vmaxs) if vmaxs else None
+            if vmin is not None and vmax is not None and vmax > 0 and vmin < 0:
+                m = max(abs(vmax), abs(vmin))
+                vmin, vmax = -m, m
+        else:
+            vmin = vmax = None
     for p in data:
         p["cmap"] = cmap
         p["norm"] = norm
@@ -2526,6 +2603,8 @@ def _plot_layers(
     xlabel=None,
     ylabel=None,
     figsize=None,
+    vmin=None,
+    vmax=None,
 ):
     """Stack ``--layer`` entries on shared Cartopy panels."""
     import cartopy.crs as ccrs
@@ -2554,6 +2633,10 @@ def _plot_layers(
             opts["quiver-scale"] = str(quiver_scale)
         if "quiver-step" not in opts and quiver_step is not None:
             opts["quiver-step"] = str(quiver_step)
+        if "vmin" not in opts and vmin is not None:
+            opts["vmin"] = str(vmin)
+        if "vmax" not in opts and vmax is not None:
+            opts["vmax"] = str(vmax)
         inherited.append(_copy_layer(spec, opts))
 
     region_polygon = _combined_mask_polygon(mask_geojson, inherited)
@@ -2576,9 +2659,7 @@ def _plot_layers(
         if label_override:
             item["cbar_label"] = label_override
         elif spec.ds is not None and spec.kind in {"heatmap", "scatter", "quiver"}:
-            item["cbar_label"] = dataset_display_label(
-                spec.ds, item.get("cbar_label") or spec.path
-            )
+            item["cbar_label"] = dataset_display_label(spec.ds, item.get("cbar_label") or spec.path)
         item["zorder"] = item["zorder"] + i * 0.01
         prepared.append(item)
 
@@ -2784,6 +2865,12 @@ def _plot_layers(
         kw = dict(_cbar_boundary_kwargs(p.get("norm"), p.get("cmap")))
         if p.get("flag_ticks") is not None:
             kw["ticks"] = p["flag_ticks"]
+        field = p.get("da") if p.get("da") is not None else p.get("speed")
+        extend = None
+        if field is not None:
+            extend = _cbar_extend_for_limits(field, p.get("vmin"), p.get("vmax"))
+        if extend and "extend" not in kw:
+            kw["extend"] = extend
         cbar = add_shared_colorbar(
             fig,
             mappable,
@@ -2833,6 +2920,8 @@ def _heatmap(
     xlabel=None,
     ylabel=None,
     figsize=None,
+    vmin=None,
+    vmax=None,
 ):
     import cartopy.crs as ccrs
     import matplotlib.pyplot as plt
@@ -2865,13 +2954,7 @@ def _heatmap(
     if extent is None:
         extent = _extent_from_field(da, lat_dim, lon_dim)
 
-    vmax = float(da.max(skipna=True).values)
-    vmin = float(da.min(skipna=True).values)
-    if vmax > 0 and vmin < 0:
-        m = max(abs(vmax), abs(vmin))
-        vmin, vmax = -m, m
-    if norm is not None:
-        vmin, vmax = None, None
+    vmin, vmax, norm = _resolve_color_limits(da, vmin, vmax, norm=norm)
 
     sw, sh = _figsize_from_extent(*extent)
     fig, axes = plt.subplots(
@@ -2966,6 +3049,9 @@ def _heatmap(
     cbar_kw = dict(_cbar_boundary_kwargs(norm, cmap))
     if flag_ticks is not None:
         cbar_kw["ticks"] = flag_ticks
+    extend = _cbar_extend_for_limits(da, vmin, vmax)
+    if extend and "extend" not in cbar_kw:
+        cbar_kw["extend"] = extend
     cbar = add_shared_colorbar(fig, mappable, visible, _variable_label(da), **cbar_kw)
     if cbar is not None and flag_labels is not None:
         cbar.set_ticklabels(flag_labels)
@@ -3002,7 +3088,7 @@ def _heatmap(
         "Map layer KIND:PATH or KIND:PATH::k=v. Repeat for overlays. "
         "Kinds: heatmap, scatter, quiver, outline, mask. "
         "Options: variable, colormap, index, u-variable, v-variable, "
-        "quiver-scale, quiver-step. Mutually exclusive with -i/--input."
+        "quiver-scale, quiver-step, vmin, vmax. Mutually exclusive with -i/--input."
     ),
 )
 @weather_skill.argument("--bbox")
@@ -3168,6 +3254,18 @@ def _heatmap(
     action="store_true",
     help="Force a separate color scale per heatmap/scatter layer.",
 )
+@weather_skill.argument(
+    "--vmin",
+    type=float,
+    default=None,
+    help="Colorbar lower limit (heatmap, contour, quiver, scatter). Unset = data min.",
+)
+@weather_skill.argument(
+    "--vmax",
+    type=float,
+    default=None,
+    help="Colorbar upper limit (heatmap, contour, quiver, scatter). Unset = data max.",
+)
 def plot(
     ds,
     bbox,
@@ -3201,6 +3299,8 @@ def plot(
     x_variable=None,
     y_variable=None,
     pair_on="time",
+    vmin=None,
+    vmax=None,
     **kwargs,
 ):
     """Render a heatmap, contour, timeseries, xy scatter, wind-rose, quiver, or layered map PNG from weather-skills Zarrs."""
@@ -3284,6 +3384,8 @@ def plot(
             xlabel=xlabel,
             ylabel=ylabel,
             figsize=figsize,
+            vmin=vmin,
+            vmax=vmax,
         )
         return save_figure(fig, output, tight=figsize is None)
     map_only = {
@@ -3306,6 +3408,10 @@ def plot(
         "--quiver-scale": quiver_scale is not None,
         "--quiver-step": quiver_step is not None,
     }
+    vlim_flags = {
+        "--vmin": vmin is not None,
+        "--vmax": vmax is not None,
+    }
 
     def _flag_detail(flag):
         if flag == "--bbox" and bbox_nwse is not None:
@@ -3326,7 +3432,7 @@ def plot(
                     f"ignored for --style {style}.",
                     file=sys.stderr,
                 )
-        for flag, set_ in {**uv_flags, **quiver_only}.items():
+        for flag, set_ in {**uv_flags, **quiver_only, **vlim_flags}.items():
             if set_:
                 print(
                     f"Warning: {flag} is ignored for --style {style}.",
@@ -3340,7 +3446,7 @@ def plot(
                     f"ignored for --style {style}.",
                     file=sys.stderr,
                 )
-        for flag, set_ in {**uv_flags, **quiver_only}.items():
+        for flag, set_ in {**uv_flags, **quiver_only, **vlim_flags}.items():
             if set_:
                 print(
                     f"Warning: {flag} is ignored for --style {style}.",
@@ -3348,8 +3454,7 @@ def plot(
                 )
         if variable:
             print(
-                "Warning: --variable is ignored for --style xy; "
-                "use --x-variable/--y-variable.",
+                "Warning: --variable is ignored for --style xy; use --x-variable/--y-variable.",
                 file=sys.stderr,
             )
         if legend_used:
@@ -3377,7 +3482,7 @@ def plot(
                 file=sys.stderr,
             )
     elif style == "windrose":
-        for flag, set_ in {**map_only, **quiver_only}.items():
+        for flag, set_ in {**map_only, **quiver_only, **vlim_flags}.items():
             if set_:
                 print(
                     f"Warning: {flag}{_flag_detail(flag)} is ignored for --style windrose.",
@@ -3437,6 +3542,8 @@ def plot(
             xlabel=xlabel,
             ylabel=ylabel,
             figsize=figsize,
+            vmin=vmin,
+            vmax=vmax,
         )
     else:
         variable = variable or auto_variable(ds)
@@ -3457,11 +3564,14 @@ def plot(
             native_steps,
         ) = _prepare_gridded_map(da, overrides, bbox_nwse, mask_geojson, extent, style=style)
         cities_map = _parse_cities(cities)
+        user_vlim = vmin is not None or vmax is not None
         flag_scale = _discrete_flag_scale(da, colormap)
         if flag_scale is not None:
+            if user_vlim:
+                raise UsageError("--vmin/--vmax cannot be used with CF flag_values fields")
             cmap, norm, flag_ticks, flag_labels = flag_scale
         else:
-            cmap, norm = _heatmap_scale(da, colormap)
+            cmap, norm = _heatmap_scale(da, colormap, stretch=user_vlim)
             flag_ticks, flag_labels = None, None
         fig = _heatmap(
             da,
@@ -3485,6 +3595,8 @@ def plot(
             xlabel=xlabel,
             ylabel=ylabel,
             figsize=figsize,
+            vmin=vmin,
+            vmax=vmax,
         )
     elif style == "timeseries":
         fig, ax = plt.subplots(figsize=resolve_figsize(figsize, (10, 6)))

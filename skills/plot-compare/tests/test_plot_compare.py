@@ -129,3 +129,43 @@ def test_custom_color_list_writes_png(tmp_path, plot_compare):
 
     assert Path(out).exists()
     assert out.stat().st_size > 0
+
+
+def test_row_scale_vmin_vmax_drops_precip_boundary_norm():
+    from matplotlib.colors import BoundaryNorm
+
+    plot_mod = load_skill("plot-compare", "plot_compare")
+    da = make_gridded(fill=8.0)["precip"]
+    da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
+    cmap, norm, vmin, vmax = plot_mod._row_scale(da, None, 0.0, 25.0)
+    assert not isinstance(norm, BoundaryNorm)
+    assert vmin == 0.0
+    assert vmax == 25.0
+    assert cmap is not None
+
+
+def test_vmin_vmax_writes_png_and_stamps_history(tmp_path, plot_compare):
+    a = write_zarr(make_gridded(fill=1.0), tmp_path / "a.zarr")
+    b = write_zarr(make_gridded(fill=2.0), tmp_path / "b.zarr")
+    out = tmp_path / "cmp.png"
+
+    run_skill(
+        plot_compare,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(out),
+        "--panels",
+        "2",
+        "--vmin",
+        "0",
+        "--vmax",
+        "10",
+    )
+
+    assert Path(out).exists()
+    history = load_figure_history(out)
+    assert history[-1]["args"]["vmin"] == 0.0
+    assert history[-1]["args"]["vmax"] == 10.0

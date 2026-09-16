@@ -453,6 +453,73 @@ def test_explicit_colormap_overrides_precip_default():
     assert norm is None
 
 
+def test_heatmap_scale_stretch_drops_precip_boundary_norm():
+    from matplotlib.colors import LinearSegmentedColormap
+
+    plot_mod = load_skill("plot", "plot")
+    da = make_forecast()["tp"]
+    da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
+    cmap, norm = plot_mod._heatmap_scale(da, None, stretch=True)
+    assert isinstance(cmap, LinearSegmentedColormap)
+    assert norm is None
+
+
+def test_resolve_color_limits_user_and_auto():
+    from weather_skills_core import UsageError
+
+    plot_mod = load_skill("plot", "plot")
+    da = make_gridded(fill=12.0)["precip"]
+    lo, hi, norm = plot_mod._resolve_color_limits(da, 0.0, 50.0)
+    assert (lo, hi, norm) == (0.0, 50.0, None)
+    lo, hi, norm = plot_mod._resolve_color_limits(da, None, 40.0)
+    assert lo == 12.0
+    assert hi == 40.0
+    assert norm is None
+    with pytest.raises(UsageError, match="greater than"):
+        plot_mod._resolve_color_limits(da, 10.0, 1.0)
+
+
+def test_vmin_vmax_writes_png_and_stamps_history(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(fill=8.0), tmp_path / "in.zarr")
+    out = tmp_path / "vlim.png"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--vmin",
+        "0",
+        "--vmax",
+        "20",
+        "--title",
+        "Pinned",
+    )
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+    history = load_figure_history(out)
+    assert history[-1]["args"]["vmin"] == 0.0
+    assert history[-1]["args"]["vmax"] == 20.0
+
+
+def test_layer_vmin_vmax_option(tmp_path, plot_fn):
+    plot_mod = load_skill("plot", "plot")
+    spec = plot_mod.parse_layer("heatmap:/tmp/a.zarr::vmin=0,vmax=25")
+    assert spec.options["vmin"] == "0"
+    assert spec.options["vmax"] == "25"
+    src = write_zarr(make_gridded(fill=8.0), tmp_path / "in.zarr")
+    out = tmp_path / "layer_vlim.png"
+    run_skill(
+        plot_fn,
+        "--layer",
+        f"heatmap:{src}::vmin=0,vmax=15",
+        "-o",
+        str(out),
+    )
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+
+
 def test_amount_colorbar_drops_leftover_rate_name():
     plot_mod = load_skill("plot", "plot")
     da = make_forecast()["tp"]

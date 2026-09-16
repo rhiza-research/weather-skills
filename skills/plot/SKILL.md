@@ -88,8 +88,8 @@ Kinds: `heatmap` (gridded Zarr), `scatter` (`station_id` / `point_id` Zarr),
 `quiver` (gridded u/v arrows; speed mesh only if there is no heatmap layer),
 `outline` (GeoJSON edges), `mask` (GeoJSON NaN mask, same as `--mask-geojson`).
 Optional `::k=v` suffix: `variable`, `colormap`, `index`, `u-variable`,
-`v-variable`, `quiver-scale`, `quiver-step`. Figure-level `--variable` /
-`--colormap` / `--index` are defaults a layer inherits. A forecast `step` axis
+`v-variable`, `quiver-scale`, `quiver-step`, `vmin`, `vmax`. Figure-level `--variable` /
+`--colormap` / `--index` / `--vmin` / `--vmax` are defaults a layer inherits. A forecast `step` axis
 still panels one map per lead; static layers (outline, cities, a single-time
 field) repeat on every panel. Another data layer on the same axis kind is
 intersected on labels. Overlaying calendar `time` on a raw `step` forecast is
@@ -123,7 +123,7 @@ with a hits row, use `plot-verify`.
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --input <in.zarr> --output <out.png> \
     [--variable NAME] [--style heatmap|contour|timeseries|xy|windrose|quiver] \
     [--u-variable NAME] [--v-variable NAME] [--quiver-scale N] [--quiver-step N] \
-    [--colormap NAME] [--title TEXT] [--xlabel TEXT] [--ylabel TEXT] \
+    [--colormap NAME] [--vmin N] [--vmax N] [--title TEXT] [--xlabel TEXT] [--ylabel TEXT] \
     [--index DIM=POS,...] \
     [--extent LON_MIN,LON_MAX,LAT_MIN,LAT_MAX] \
     [--cities JSON_OR_PATH] [--fontsize N] [--figsize W,H] [--legend LOC] \
@@ -196,6 +196,14 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   anomaly quivers. A variable with CF `flag_values` (e.g. `verify --metric hits`) uses a
   discrete colormap and labeled colorbar ticks; `--colormap` as comma-separated
   colors must then match the flag count.
+- `--vmin` / `--vmax` — colorbar limits for heatmap, contour, quiver, and
+  scatter. Either may be omitted (the unset end uses the data min/max).
+  Setting either one drops the default discrete CHIRPS precip classes and
+  stretches those colors (or `--colormap`) across the requested range.
+  Values outside the range saturate and the colorbar gains an extend arrow.
+  Diverging auto-symmetry (centered on zero) is skipped when either flag
+  is set. Ignored for timeseries / xy / windrose. Cannot be used with CF
+  `flag_values` fields. Layers may override with `::vmin=` / `::vmax=`.
 - `--title` — optional plot title. Prefer a short name that fits on one
   line (about 56 characters or less), e.g. `S2S precip`, not a full
   sentence. Longer titles wrap onto a second line at a `·` / `:` / word
@@ -332,6 +340,12 @@ Override the palette (e.g. magma):
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/ecmwf_namibia.zarr -o /tmp/ecmwf.png \
     --variable tp --style heatmap --colormap magma --title "S2S precip"
+```
+
+Pin the colorbar range (stretches the scale; values outside saturate):
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/ecmwf_namibia.zarr -o /tmp/ecmwf.png \
+    --variable tp --style heatmap --vmin 0 --vmax 50 --title "S2S precip"
 ```
 
 Six weekly maps in two rows of three (a 5-step cube on the same 2×3 grid leaves one panel blank):

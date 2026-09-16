@@ -82,7 +82,7 @@ dataset has no matching time, use `plot-compare-forecasts`.
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --output <out.png> \
     [--variable NAME] [--variable-a NAME] [--variable-b NAME] \
-    [--colormap NAME] [--colormap-a NAME] [--colormap-b NAME] \
+    [--colormap NAME] [--colormap-a NAME] [--colormap-b NAME] [--vmin N] [--vmax N] \
     [--shared-scale | --independent-scale] [--title TEXT] [--xlabel TEXT] [--fontsize N] [--figsize W,H] \
     [--panels N] [--time-dim DIM] \
     [--bbox N/W/S/E] [--mask-geojson PATH]
@@ -117,6 +117,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
   comma-separated colors in independent-scale mode. Precedence per row:
   `--colormap-a`/`-b`, then `--colormap`, then the CHIRPS total / anomaly
   precip classes or `viridis`.
+- `--vmin` / `--vmax` — shared colorbar limits. Either may be omitted
+  (the unset end uses the data min/max). Setting either one drops the
+  default discrete CHIRPS precip classes and stretches those colors (or
+  `--colormap`) across the requested range. In independent-scale mode the
+  same limits apply to both rows.
 - `--shared-scale` / `--independent-scale` — mutually exclusive; force one
   shared color scale across both rows or a per-row scale + colorbar. When
   neither is given, the mode is chosen automatically: shared when both
