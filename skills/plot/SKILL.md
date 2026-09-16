@@ -1,6 +1,6 @@
 ---
 name: plot
-description: Render a 2D heatmap, filled-contour map, 1D time series, xy scatter, wind-rose, u/v quiver, or layered map PNG from weather-skills standard dataset Zarrs. Overlay multiple inputs with repeatable --layer KIND:PATH (heatmap, scatter, quiver, GeoJSON outline/mask). Heatmaps overlay scale-appropriate coastlines, country borders, lakes, and admin-1 boundaries. Use for a single dataset as a map/profile/rose/vectors, or stacked layers (e.g. precip heatmap + station scatter). --style xy plots one 1D series against another (--x/--y, or -i with --x-variable/--y-variable), pairing on time, year, or index. For precipitation, run aggregate-temporal then convert-to-totals first. For side-by-side two-row comparison, use plot-compare. Use --fontsize to enlarge titles, axis labels, city labels, and colorbar text (default 16).
+description: Render a 2D heatmap, filled-contour map, 1D time series, xy scatter, wind-rose, u/v quiver, or layered map PNG from weather-skills standard dataset Zarrs. Overlay multiple inputs with repeatable --layer KIND:PATH (heatmap, scatter, quiver, GeoJSON outline/mask). Heatmaps overlay scale-appropriate coastlines, country borders, lakes, and admin-1 boundaries. Use for a single dataset as a map/profile/rose/vectors, or stacked layers (e.g. precip heatmap + station scatter). --style xy plots one 1D series against another (--x/--y, or -i with --x-variable/--y-variable), pairing on time, year, or index. Override figure text with --title, --subplot-title (repeatable panel titles), --xlabel/--ylabel, and --cbar-label. For precipitation, run aggregate-temporal then convert-to-totals first. For side-by-side two-row comparison, use plot-compare. Use --fontsize to enlarge titles, axis labels, city labels, and colorbar text (default 16).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py *)
@@ -13,31 +13,18 @@ metadata:
 
 Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
 (`--layer`, repeatable):
-- `heatmap` — CartoPy `PlateCarree` map with scale-appropriate geographic
-  overlays (Natural Earth, fetched and cached via `cartopy`): coastlines,
-  country borders, and lakes filled in a distinct blue at 10m / 50m / 110m
-  depending on the view size, plus admin-1 (states / provinces / counties)
-  on country-scale maps (span ≤ 20°). Overlays are clipped to the map extent. If
-  the input has a `step` (or `time`) dimension, panels are laid out one per
-  step with a shared color scale and a horizontal colorbar spanning all
-  panels at the bottom. Panel titles show calendar dates (`14 Sept '26`) or,
-  for multi-day bins (from `aggregation_period` or time spacing), inclusive
-  ranges (`4–10 Aug '26`); forecast lead panels keep
-  `<start> until <end>`. Default layout is up to 4 columns (rows added as
+- `heatmap` — lon/lat heatmap (Plotly) with country outlines from bundled
+  Natural Earth, geographic aspect (`scaleanchor`), and a shared coloraxis.
+  If the input has a `step` (or `time`) dimension, panels are laid out one per
+  step with a shared color scale and a colorbar (right if one panel, bottom if
+  several). Panel titles show calendar dates (`14 Sept '26`) or,
+  for multi-day bins, inclusive ranges (`4–10 Aug '26`); forecast lead panels
+  keep `<start> until <end>`. Default layout is up to 4 columns (rows added as
   needed). `--rows` and/or `--columns` override that; leftover cells stay
-  blank when the grid is larger than the data (`--rows 2 --columns 3` with
-  5 steps leaves one empty panel). A grid smaller than the data is an
-  error. Ensemble members
-  (`number` dim) are averaged before plotting. Use `--index` to override the
-  default reduction for any other extra dim. Precipitation totals default to
-  the CHIRPS-GEFS total-rainfall classes (white `<2` through green→blue→
-  purple→yellow→red→pink at 2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500,
-  750, 1000, 1500, 2500 mm) when `aggregation_period` is missing or ≥ 5 days.
-  Sub-pentad totals (`aggregation_period` < 5 days) use the same colors with
-  lower breaks (0.5 … 200 mm). Precipitation anomalies (negative values, or
-  `anomal` in the variable / long name — e.g. after `difference`) use the
-  CHIRPS-GEFS diverging classes (brown/red dry ↔ white ↔ green/blue wet at
-  ±10, 25, 50, 100, 200, 300, 500 mm). Other variables default to `viridis`.
+  blank. Ensemble members (`number` dim) are averaged. Use `--index` to
+  override the default reduction for any other extra dim. Precipitation totals
+  default to the CHIRPS-GEFS classes. A default run writes `*.plot.json` next
+  to the PNG so you can edit layout/annotations and replot with `--spec`.
 - `contour` — the same map layout as `heatmap` (panels, shared color scale,
   colorbar, geo overlays, `--bbox` / `--mask-geojson` / `--extent` /
   `--cities` / `--index` / `--draw-box` / `--rows` / `--columns`), but filled
@@ -116,7 +103,8 @@ For two-dataset **side-by-side** (two-row) comparison, use `plot-compare`.
 To overlay stations on a heatmap, use `--layer` here instead. For N gridded
 datasets as a valid-time grid with blank cells where a dataset has no time,
 use `plot-compare-forecasts`. For one obs week versus week-4 through week-1 forecasts
-with a hits row, use `plot-verify`.
+with a hits row, use `plot-verify`. For rainy-season onset dates from
+`indicator --detect first`, use `plot-onset`.
 
 ## Usage
 
@@ -124,13 +112,16 @@ with a hits row, use `plot-verify`.
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --input <in.zarr> --output <out.png> \
     [--variable NAME] [--style heatmap|contour|timeseries|xy|windrose|quiver] \
     [--u-variable NAME] [--v-variable NAME] [--quiver-scale N] [--quiver-step N] \
-    [--colormap NAME] [--vmin N] [--vmax N] [--title TEXT] [--xlabel TEXT] [--ylabel TEXT] \
+    [--colormap NAME] [--vmin N] [--vmax N] [--title TEXT] [--subplot-title TEXT ...] \
+    [--xlabel TEXT] [--ylabel TEXT] [--cbar-label TEXT] \
     [--index DIM=POS,...] \
     [--extent LON_MIN,LON_MAX,LAT_MIN,LAT_MAX] \
     [--cities JSON_OR_PATH] [--fontsize N] [--figsize W,H] [--legend LOC] \
     [--bbox N/W/S/E] \
     [--mask-geojson PATH] [--draw-box N/W/S/E ...] \
-    [--rows N] [--columns N]
+    [--rows N] [--columns N] \
+    [--spec PATH_OR_JSON] [--plotly-patch PATH_OR_JSON] [--dump-spec PATH|-|none] \
+    [--style-file PATH]
 
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --output <out.png> \
     --layer heatmap:<a.zarr>[::variable=NAME] \
@@ -144,8 +135,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
 
 ### Arguments
 - `--input`, `-i` — Zarr input (single-dataset mode). Mutually exclusive with `--layer`
-  and with `--x` / `--y`. For `--style xy`, a single `-i` requires both
-  `--x-variable` and `--y-variable`.
+  and with `--x` / `--y`. Optional when `--spec` already lists input paths.
+- `--spec` — plot spec JSON (file or inline). A default heatmap/timeseries run
+  writes `<output-stem>.plot.json` with resolved defaults (facet columns, colormap,
+  extent, input path). Edit that file (or add a `plotly` layout/annotations patch)
+  and re-run with `--spec`. CLI flags overlay the spec. Spec input paths are opened
+  as Datasets so provenance still chains from the Zarr.
 - `--x` / `--y` — X- and Y-axis Zarrs for `--style xy`. Mutually exclusive
   with `-i` and `--layer`.
 - `--x-variable` / `--y-variable` — variables for `--style xy`. Default: first
@@ -155,8 +150,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   `heatmap`, `scatter`, `quiver`, `outline`, `mask`. Cannot mix with `-i` or
   with `--style timeseries|xy|contour|windrose|quiver`.
 - `--label` — colorbar label for each `--layer`, in order. When omitted,
-  heatmap/scatter/quiver layers infer a short product name from provenance;
-  outline/mask layers ignore it.
+  heatmap/scatter/quiver layers infer a short product name from provenance
+  (or `--cbar-label` if that is set); outline/mask layers ignore it.
 - `--shared-scale` / `--independent-scale` — layered heatmap/scatter color
   scales. Default: share when the layers resolve to the same variable and
   matching units.
@@ -205,14 +200,27 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   Diverging auto-symmetry (centered on zero) is skipped when either flag
   is set. Ignored for timeseries / xy / windrose. Cannot be used with CF
   `flag_values` fields. Layers may override with `::vmin=` / `::vmax=`.
-- `--title` — optional plot title. Prefer a short name that fits on one
-  line (about 56 characters or less), e.g. `S2S precip`, not a full
-  sentence. Longer titles wrap onto a second line at a `·` / `:` / word
-  break.
+- `--title` — optional figure title (above all panels). Prefer a short name
+  that fits on one line (about 56 characters or less), e.g. `S2S precip`,
+  not a full sentence. Longer titles wrap onto a second line at a `·` / `:` /
+  word break.
+- `--subplot-title` — optional map panel title, in panel order. Repeat the
+  flag once per panel (`--subplot-title "Week 1" --subplot-title "Week 2"`).
+  Fewer titles than panels keep the auto date/lead labels for the rest; more
+  titles than panels is an error. An empty string hides that panel's title.
+  On a single-panel map this is the axes title under `--title`. Heatmap /
+  contour / quiver / layered maps — timeseries, xy, and windrose ignore it
+  with a stderr warning (`--title` is their axes title).
 - `--xlabel` / `--ylabel` — optional axis-label overrides. When omitted, maps
   use `Longitude` / `Latitude`, timeseries omits the x label when ticks are
-  dates (otherwise the time dim) and uses the variable label on y, and `xy`
-  uses each series' variable label. Passed text is used as-is (not re-cased).
+  dates (otherwise the time dim) and uses the variable label on y, `xy`
+  uses each series' variable label, and windrose uses `Frequency (%)`.
+  Passed text is used as-is (not re-cased).
+- `--cbar-label` — optional colorbar label. When omitted, the skill uses the
+  variable `long_name` (then GRIB name, then the variable name) plus units
+  (`Total precipitation [mm]`, `Wind speed [m/s]`, …). Layered maps: per-layer
+  `--label` wins; `--cbar-label` fills in unlabeled heatmap/scatter/quiver
+  layers. Ignored for timeseries / xy / windrose.
 - `--index` — dim selections like `step=3,number=0`. A dim may take several
   comma-separated positions, e.g. `step=0,1,2`, which keeps the dim with just
   those positions. Negative positions are accepted and count from the end,
@@ -297,7 +305,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
 
 ### Output
 
-A PNG at `--output`. The colorbar (and timeseries y-axis) label resolves
+A PNG at `--output`. Heatmap and timeseries also write a resolved
+`<stem>.plot.json` sidecar (override with `--dump-spec`). The colorbar (and timeseries y-axis) label resolves
 from variable attrs: `long_name` → `GRIB_name` → bare variable name →
 `"value"`, suffixed with `[units]` when the `units` attr is present. Units
 on the figure are a short display form (`mm/day`, `°C`, `mm`, `m/s`), not the
@@ -354,6 +363,14 @@ Six weekly maps in two rows of three (a 5-step cube on the same 2×3 grid leaves
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/weekly.zarr -o /tmp/weekly.png \
     --variable tp --rows 2 --columns 3
+```
+
+Custom figure title, panel titles, axis labels, and colorbar text:
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/weekly.zarr -o /tmp/weekly.png \
+    --variable tp --title "Kenya rainfall" \
+    --subplot-title "Week 1" --subplot-title "Week 2" \
+    --xlabel "Lon" --ylabel "Lat" --cbar-label "Rain (mm)"
 ```
 
 Single-step map with cities and an explicit extent:

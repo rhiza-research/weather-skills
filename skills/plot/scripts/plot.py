@@ -1,14 +1,16 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@plot-refactor",
 #   "cartopy",
 #   "cf-xarray",
 #   "cftime",
+#   "kaleido>=1",
 #   # matplotlib<3.10: cartopy gridliner crash
 #   "matplotlib>=3.8,<3.10",
 #   "nc-time-axis",
 #   "numpy",
+#   "plotly>=6,<7",
 #   "shapely>=2.1",
 #   "xarray",
 #   "zarr",
@@ -26,6 +28,19 @@ from pathlib import Path
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
 from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
+from weather_skills_core.figure import (
+    DEFAULT_FONTSIZE,
+    add_shared_colorbar,
+    apply_date_ticks,
+    apply_style,
+    format_plot_date,
+    format_plot_date_range,
+    parse_figsize,
+    resolve_figsize,
+    save_figure,
+)
+from weather_skills_core.plot_spec import PlotSpec, load_spec, overlay_spec, spec_from_flags
+from weather_skills_core.plot_style import load_user_style
 from weather_skills_core.standard_utils import (
     ensure_normalized_longitude,
     lat_slice,
@@ -41,18 +56,6 @@ from weather_skills_core.units import (
     units_equal,
     variable_label_for_display,
     variable_units,
-)
-
-from weather_skills_core.figure import (
-    DEFAULT_FONTSIZE,
-    add_shared_colorbar,
-    apply_date_ticks,
-    apply_style,
-    format_plot_date,
-    format_plot_date_range,
-    parse_figsize,
-    resolve_figsize,
-    save_figure,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
@@ -261,6 +264,31 @@ def parse_layer(value):
     except ValueError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from None
     return LayerSpec(kind, path, options, raw)
+
+
+def parse_plot_spec(value):
+    """Argparse converter for a plot spec path or inline JSON object."""
+    try:
+        return load_spec(value)
+    except UsageError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+
+
+def parse_json_object(value):
+    """Argparse converter for a JSON object (inline or file path)."""
+    if value is None or not str(value).strip():
+        return None
+    raw = str(value).strip()
+    path = Path(raw)
+    if path.is_file():
+        raw = path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError(f"expected a JSON object: {exc}") from None
+    if not isinstance(data, dict):
+        raise argparse.ArgumentTypeError("JSON patch must be an object")
+    return data
 
 
 _MPL_LEGEND_LOCS = frozenset(
@@ -1356,6 +1384,25 @@ def _panel_title(da, sdim, step_value, all_steps):
     return f"{sdim}={_format_step(step_value)}"
 
 
+def _resolve_subplot_titles(overrides, n_panels):
+    """Return user panel titles; extra flags are an error, fewer fall back to auto."""
+    titles = list(overrides or [])
+    if len(titles) > n_panels:
+        raise UsageError(
+            f"--subplot-title was passed {len(titles)} time(s) but this figure "
+            f"has {n_panels} panel(s)"
+        )
+    return titles
+
+
+def _set_panel_title(ax, index, auto, subplot_titles):
+    """Apply ``--subplot-title`` when given for this panel; otherwise ``auto``."""
+    if index < len(subplot_titles):
+        ax.set_title(subplot_titles[index])
+    elif auto:
+        ax.set_title(auto)
+
+
 def _apply_geo_axis_labels(ax, xlabel, ylabel, *, xlabel_on=True, ylabel_on=True):
     """Lon/lat names; matplotlib places them relative to the colorbar slot."""
     xlab = _resolve_axis_label(xlabel, "Longitude")
@@ -1540,7 +1587,17 @@ def _wind_rose_hist(speed, direction, speed_edges, nsector=WIND_ROSE_SECTORS):
 
 
 def _windrose(
-    speed, direction, *, title, fontsize, units_disp, colormap, units, figsize=None, legend=None
+    speed,
+    direction,
+    *,
+    title,
+    fontsize,
+    units_disp,
+    colormap,
+    units,
+    figsize=None,
+    legend=None,
+    ylabel=None,
 ):
     """Polar stacked-bar wind rose; radial axis is frequency percent."""
     import matplotlib.pyplot as plt
@@ -1587,7 +1644,7 @@ def _windrose(
         ["N", "NE", "E", "SE", "S", "SW", "W", "NW"],
     )
     ax.set_ylim(0, max(float(bottom.max()) * 1.08, 1.0))
-    ax.set_ylabel("Frequency (%)")
+    ax.set_ylabel(_resolve_axis_label(ylabel, "Frequency (%)"))
     handles = [
         Patch(facecolor=colors[i], edgecolor="white", label=legend_labels[i])
         for i in range(n_speed)
@@ -1611,6 +1668,7 @@ def _plot_windrose(
     colormap,
     figsize=None,
     legend=None,
+    ylabel=None,
 ):
     """Flatten u/v samples into one meteorological-from wind rose."""
     import numpy as np
@@ -1670,6 +1728,7 @@ def _plot_windrose(
         units=u_units,
         figsize=figsize,
         legend=legend,
+        ylabel=ylabel,
     )
 
 
@@ -1808,6 +1867,7 @@ def _quiver_map(
     figsize=None,
     vmin=None,
     vmax=None,
+    subplot_titles=None,
 ):
     """Speed pcolormesh with native-grid u/v arrows (plot_wind_and_sst_anomaly)."""
     import cartopy.crs as ccrs
@@ -1839,6 +1899,7 @@ def _quiver_map(
 
     title_steps = native_steps if native_steps is not None and native_step_dim == sdim else steps
     num_steps = len(steps)
+    subplot_titles = _resolve_subplot_titles(subplot_titles, num_steps)
     nrows, ncols = _panel_shape(num_steps, rows=rows, columns=columns)
 
     if extent is None:
@@ -1927,8 +1988,8 @@ def _quiver_map(
             )
         if boxes:
             _draw_boxes_on_ax(ax, boxes, ccrs.PlateCarree())
-        if s is not None:
-            ax.set_title(_panel_title(speed, sdim, s, title_steps))
+        auto = _panel_title(speed, sdim, s, title_steps) if s is not None else None
+        _set_panel_title(ax, i, auto, subplot_titles)
 
     for j in range(num_steps, len(axes)):
         axes[j].set_visible(False)
@@ -1982,6 +2043,8 @@ def _plot_quiver(
     figsize=None,
     vmin=None,
     vmax=None,
+    subplot_titles=None,
+    cbar_label=None,
 ):
     """Map panels of wind speed with S2S-style u/v quiver overlay."""
     if variable:
@@ -2025,12 +2088,13 @@ def _plot_quiver(
         columns=columns,
         quiver_scale=quiver_scale,
         quiver_step=quiver_step,
-        cbar_label=_wind_speed_cbar_label(u_da),
+        cbar_label=cbar_label or _wind_speed_cbar_label(u_da),
         xlabel=xlabel,
         ylabel=ylabel,
         figsize=figsize,
         vmin=vmin,
         vmax=vmax,
+        subplot_titles=subplot_titles,
     )
 
 
@@ -2625,6 +2689,8 @@ def _plot_layers(
     figsize=None,
     vmin=None,
     vmax=None,
+    subplot_titles=None,
+    cbar_label=None,
 ):
     """Stack ``--layer`` entries on shared Cartopy panels."""
     import cartopy.crs as ccrs
@@ -2678,6 +2744,8 @@ def _plot_layers(
         label_override = label_slots[i]
         if label_override:
             item["cbar_label"] = label_override
+        elif cbar_label:
+            item["cbar_label"] = cbar_label
         elif spec.ds is not None and spec.kind in {"heatmap", "scatter", "quiver"}:
             item["cbar_label"] = dataset_display_label(spec.ds, item.get("cbar_label") or spec.path)
         item["zorder"] = item["zorder"] + i * 0.01
@@ -2771,6 +2839,7 @@ def _plot_layers(
         _apply_shared_scale(prepared)
 
     num_steps = len(steps)
+    subplot_titles = _resolve_subplot_titles(subplot_titles, num_steps)
     nrows, ncols = _panel_shape(num_steps, rows=rows, columns=columns)
     sw, sh = _figsize_from_extent(*extent_vals)
     fig, axes = plt.subplots(
@@ -2855,8 +2924,12 @@ def _plot_layers(
             )
         if boxes:
             _draw_boxes_on_ax(ax, boxes, transform)
-        if s is not None and title_da is not None:
-            ax.set_title(_panel_title(title_da, sdim, s, title_steps))
+        auto = (
+            _panel_title(title_da, sdim, s, title_steps)
+            if s is not None and title_da is not None
+            else None
+        )
+        _set_panel_title(ax, i, auto, subplot_titles)
 
     for j in range(num_steps, len(axes)):
         axes[j].set_visible(False)
@@ -2943,6 +3016,8 @@ def _heatmap(
     figsize=None,
     vmin=None,
     vmax=None,
+    subplot_titles=None,
+    cbar_label=None,
 ):
     import cartopy.crs as ccrs
     import matplotlib.pyplot as plt
@@ -2970,6 +3045,7 @@ def _heatmap(
     title_steps = native_steps if native_steps is not None and native_step_dim == sdim else steps
 
     num_steps = len(steps)
+    subplot_titles = _resolve_subplot_titles(subplot_titles, num_steps)
     nrows, ncols = _panel_shape(num_steps, rows=rows, columns=columns)
 
     if extent is None:
@@ -3059,8 +3135,8 @@ def _heatmap(
             )
         if boxes:
             _draw_boxes_on_ax(ax, boxes, ccrs.PlateCarree())
-        if s is not None:
-            ax.set_title(_panel_title(da, sdim, s, title_steps))
+        auto = _panel_title(da, sdim, s, title_steps) if s is not None else None
+        _set_panel_title(ax, i, auto, subplot_titles)
 
     for j in range(num_steps, len(axes)):
         axes[j].set_visible(False)
@@ -3074,10 +3150,165 @@ def _heatmap(
     extend = _cbar_extend_for_limits(da, vmin, vmax)
     if extend and "extend" not in cbar_kw:
         cbar_kw["extend"] = extend
-    cbar = add_shared_colorbar(fig, mappable, visible, _variable_label(da), **cbar_kw)
+    cbar = add_shared_colorbar(fig, mappable, visible, cbar_label or _variable_label(da), **cbar_kw)
     if cbar is not None and flag_labels is not None:
         cbar.set_ticklabels(flag_labels)
     return fig
+
+
+_PLOTLY_STYLES = frozenset({"heatmap", "timeseries"})
+
+
+def _input_path_of(ds):
+    from weather_skills_core.decorator import INPUT_PATH_ATTR
+
+    if ds is None:
+        return None
+    return ds.attrs.get(INPUT_PATH_ATTR)
+
+
+def _render_plotly_plot(
+    ds,
+    spec,
+    *,
+    variable,
+    style,
+    colormap,
+    title,
+    subplot_title,
+    xlabel,
+    ylabel,
+    cbar_label,
+    index,
+    extent,
+    cities,
+    fontsize,
+    figsize,
+    legend,
+    mask_geojson,
+    draw_boxes,
+    rows,
+    columns,
+    bbox_nwse,
+    vmin,
+    vmax,
+    style_file,
+    plotly_patch,
+    dump_spec_path,
+    output,
+):
+    """Compile heatmap/timeseries through Plotly and write PNG + spec sidecar."""
+    from weather_skills_core.plot_compile import compile_figure
+    from weather_skills_core.plot_export import write_plot_outputs
+    from weather_skills_core.plot_style import deep_merge
+
+    user_style = load_user_style(style_file)
+    input_path = _input_path_of(ds)
+    if spec is not None:
+        merged = overlay_spec(spec.to_dict() if isinstance(spec, PlotSpec) else spec, {})
+        if input_path:
+            inputs = list(merged.get("inputs") or [])
+            if inputs:
+                inputs[0] = {**inputs[0], "path": inputs[0].get("path") or input_path}
+                if variable:
+                    inputs[0]["variable"] = variable
+                if index:
+                    inputs[0]["index"] = index
+            else:
+                inputs = [{"id": "a", "path": input_path, "variable": variable, "index": index}]
+            merged["inputs"] = inputs
+        if title is not None:
+            merged["title"] = title
+        if colormap is not None:
+            merged.setdefault("style", {})["colormap"] = colormap
+        if fontsize is not None:
+            merged.setdefault("style", {})["fontsize"] = fontsize
+        if subplot_title:
+            merged["subplot_titles"] = list(subplot_title)
+        if xlabel is not None:
+            merged["xlabel"] = xlabel
+        if ylabel is not None:
+            merged["ylabel"] = ylabel
+        if cbar_label is not None:
+            merged["cbar_label"] = cbar_label
+        if legend is not None:
+            merged["legend"] = legend
+        if vmin is not None:
+            merged["vmin"] = vmin
+        if vmax is not None:
+            merged["vmax"] = vmax
+        if figsize is not None:
+            merged.setdefault("layout", {})["figsize"] = list(figsize)
+            merged["layout"]["autosize"] = False
+        if extent is not None:
+            merged.setdefault("geo", {})["extent"] = extent
+        if cities:
+            merged.setdefault("geo", {})["cities"] = cities
+        if bbox_nwse is not None:
+            merged.setdefault("geo", {})["bbox"] = list(bbox_nwse)
+        if mask_geojson:
+            merged.setdefault("geo", {})["mask_geojson"] = str(mask_geojson)
+        if draw_boxes:
+            merged.setdefault("geo", {})["draw_boxes"] = list(draw_boxes)
+        if rows is not None:
+            merged.setdefault("layout", {}).setdefault("facet", {})["rows"] = rows
+        if columns is not None:
+            merged.setdefault("layout", {}).setdefault("facet", {})["columns"] = columns
+        if plotly_patch:
+            merged["plotly"] = deep_merge(merged.get("plotly") or {}, plotly_patch)
+        if not merged.get("traces"):
+            merged["traces"] = [{"type": style, "input": "a"}]
+    else:
+        merged = spec_from_flags(
+            input_path=input_path,
+            variable=variable,
+            style=style,
+            colormap=colormap or user_style.get("colormap"),
+            title=title,
+            subplot_titles=subplot_title,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            cbar_label=cbar_label,
+            index=index,
+            extent=extent,
+            cities=cities,
+            fontsize=fontsize if fontsize is not None else user_style.get("fontsize"),
+            figsize=figsize,
+            legend=legend,
+            bbox=list(bbox_nwse) if bbox_nwse is not None else None,
+            mask_geojson=mask_geojson,
+            draw_boxes=draw_boxes,
+            rows=rows,
+            columns=columns,
+            vmin=vmin,
+            vmax=vmax,
+            plotly_patch=plotly_patch,
+        )
+    if user_style.get("max_columns") and not (rows or columns):
+        merged.setdefault("layout", {}).setdefault("facet", {}).setdefault(
+            "max_columns", user_style["max_columns"]
+        )
+
+    datasets = {"a": ds}
+    if spec is not None and spec.datasets:
+        for i, extra in enumerate(spec.datasets):
+            key = (
+                (spec.data.get("inputs") or [{}])[i].get("id") if spec.data.get("inputs") else None
+            )
+            datasets[key or f"i{i}"] = extra
+        datasets["a"] = ds
+
+    fig, resolved = compile_figure(merged, datasets)
+    spec_dest = dump_spec_path
+    if spec_dest is not None and str(spec_dest).lower() in {"none", "off", "false"}:
+        spec_dest = False
+    return write_plot_outputs(
+        fig,
+        resolved,
+        output,
+        datasets=datasets,
+        dump_spec_path=spec_dest,
+    )
 
 
 @weather_skill(
@@ -3199,7 +3430,17 @@ def _heatmap(
         "Timeseries draws a legend only when this is set."
     ),
 )
-@weather_skill.argument("--title", default=None, help="Optional plot title.")
+@weather_skill.argument("--title", default=None, help="Optional figure title (above all panels).")
+@weather_skill.argument(
+    "--subplot-title",
+    action="append",
+    default=None,
+    help=(
+        "Override one map panel title, in panel order. Repeat for each panel. "
+        "Fewer than the panel count keeps auto date/lead titles for the rest; "
+        "more than the panel count is an error. Maps only."
+    ),
+)
 @weather_skill.argument(
     "--xlabel",
     default=None,
@@ -3208,7 +3449,15 @@ def _heatmap(
 @weather_skill.argument(
     "--ylabel",
     default=None,
-    help="Override the y-axis label (default: Latitude / variable label / …).",
+    help="Override the y-axis label (default: Latitude / variable label / Frequency (%)).",
+)
+@weather_skill.argument(
+    "--cbar-label",
+    default=None,
+    help=(
+        "Override the colorbar label (heatmap, contour, quiver, layered maps). "
+        "Default is the variable long_name + units. Per-layer --label wins."
+    ),
 )
 @weather_skill.argument(
     "--rows",
@@ -3288,6 +3537,32 @@ def _heatmap(
     default=None,
     help="Colorbar upper limit (heatmap, contour, quiver, scatter). Unset = data max.",
 )
+@weather_skill.argument(
+    "--spec",
+    default=None,
+    type=parse_plot_spec,
+    help=(
+        "Plot spec JSON (path or inline). Dump from a default run (sidecar *.plot.json), "
+        "edit, and pass back. CLI flags overlay the spec. Inputs listed in the spec are "
+        "opened for provenance; -i is optional when the spec has paths."
+    ),
+)
+@weather_skill.argument(
+    "--style-file",
+    default=None,
+    help="User plot style TOML/JSON (colormap, fontsize, template). Overrides ~/.config/weather-skills/plot.toml.",
+)
+@weather_skill.argument(
+    "--plotly-patch",
+    default=None,
+    type=parse_json_object,
+    help="Partial Plotly figure update (layout/annotations/shapes) merged after compile.",
+)
+@weather_skill.argument(
+    "--dump-spec",
+    default=None,
+    help="Where to write the resolved plot spec. Default: <output-stem>.plot.json. Use '-' for stdout, 'none' to skip.",
+)
 def plot(
     ds,
     bbox,
@@ -3295,8 +3570,10 @@ def plot(
     style,
     colormap,
     title,
+    subplot_title,
     xlabel,
     ylabel,
+    cbar_label,
     index,
     extent,
     cities,
@@ -3323,19 +3600,18 @@ def plot(
     pair_on="time",
     vmin=None,
     vmax=None,
+    spec=None,
+    style_file=None,
+    plotly_patch=None,
+    dump_spec=None,
     **kwargs,
 ):
     """Render a heatmap, contour, timeseries, xy scatter, wind-rose, quiver, or layered map PNG from weather-skills Zarrs."""
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import cf_xarray  # noqa: F401 — registers the .cf accessor
-    import matplotlib.pyplot as plt
-    import nc_time_axis  # noqa: F401 — registers the cftime→matplotlib axis converter
-
-    apply_style(fontsize)
-
     layers = layer or []
+    if spec is not None and ds is None:
+        ds = spec.ds if spec.ds is not None else None
+        if ds is None and spec.datasets:
+            ds = spec.datasets[0]
     if layers and ds is not None:
         raise UsageError("pass either -i/--input or --layer, not both")
     if layers and (x_ds is not None or y_ds is not None):
@@ -3359,7 +3635,7 @@ def plot(
         elif x_ds is None or y_ds is None:
             raise UsageError("--style xy needs both --x and --y")
     elif not layers and ds is None:
-        raise UsageError("pass -i/--input or at least one --layer")
+        raise UsageError("pass -i/--input, a --spec with inputs, or at least one --layer")
     if layers and style in ("timeseries", "xy", "windrose", "contour"):
         raise UsageError(f"--layer cannot be used with --style {style}")
     if layers and style == "quiver":
@@ -3381,6 +3657,74 @@ def plot(
             "Warning: --legend is ignored for layered maps (they use colorbars).",
             file=sys.stderr,
         )
+    if not layers and style in _PLOTLY_STYLES:
+        if style == "timeseries":
+            for flag, set_ in {
+                "--extent": bool(extent),
+                "--cities": bool(cities),
+                "--draw-box": bool(draw_boxes),
+                "--rows": rows is not None,
+                "--columns": columns is not None,
+                "--subplot-title": bool(subplot_title),
+                "--bbox": bbox_nwse is not None,
+                "--mask-geojson": bool(mask_geojson),
+                "--index": bool(overrides),
+            }.items():
+                if set_:
+                    print(
+                        f"Warning: {flag} is a map-only option; ignored for --style {style}.",
+                        file=sys.stderr,
+                    )
+        elif legend_used:
+            print(
+                f"Warning: --legend is ignored for --style {style} (maps use a colorbar).",
+                file=sys.stderr,
+            )
+        if style == "heatmap" and (u_variable or v_variable):
+            print(
+                "Warning: --u-variable/--v-variable is only used with --style windrose or "
+                "--style quiver; ignored for --style heatmap.",
+                file=sys.stderr,
+            )
+        return _render_plotly_plot(
+            ds,
+            spec,
+            variable=variable,
+            style=style,
+            colormap=colormap,
+            title=title,
+            subplot_title=subplot_title,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            cbar_label=cbar_label,
+            index=index,
+            extent=extent,
+            cities=cities,
+            fontsize=fontsize,
+            figsize=figsize,
+            legend=legend,
+            mask_geojson=mask_geojson,
+            draw_boxes=draw_boxes,
+            rows=rows,
+            columns=columns,
+            bbox_nwse=bbox_nwse,
+            vmin=vmin,
+            vmax=vmax,
+            style_file=style_file,
+            plotly_patch=plotly_patch,
+            dump_spec_path=dump_spec,
+            output=output,
+        )
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import cf_xarray  # noqa: F401 — registers the .cf accessor
+    import matplotlib.pyplot as plt
+    import nc_time_axis  # noqa: F401 — registers the cftime→matplotlib axis converter
+
+    apply_style(fontsize)
+
     if layers:
         fig = _plot_layers(
             layers,
@@ -3408,6 +3752,8 @@ def plot(
             figsize=figsize,
             vmin=vmin,
             vmax=vmax,
+            subplot_titles=subplot_title,
+            cbar_label=cbar_label,
         )
         return save_figure(fig, output, tight=figsize is None)
     map_only = {
@@ -3416,6 +3762,7 @@ def plot(
         "--draw-box": bool(draw_boxes),
         "--rows": rows is not None,
         "--columns": columns is not None,
+        "--subplot-title": bool(subplot_title),
     }
     spatial = {
         "--bbox": bbox_nwse is not None,
@@ -3433,6 +3780,7 @@ def plot(
     vlim_flags = {
         "--vmin": vmin is not None,
         "--vmax": vmax is not None,
+        "--cbar-label": bool(cbar_label),
     }
 
     def _flag_detail(flag):
@@ -3541,6 +3889,7 @@ def plot(
             colormap,
             figsize=figsize,
             legend=legend,
+            ylabel=ylabel,
         )
     elif style == "quiver":
         fig = _plot_quiver(
@@ -3566,6 +3915,8 @@ def plot(
             figsize=figsize,
             vmin=vmin,
             vmax=vmax,
+            subplot_titles=subplot_title,
+            cbar_label=cbar_label,
         )
     else:
         variable = variable or auto_variable(ds)
@@ -3619,6 +3970,8 @@ def plot(
             figsize=figsize,
             vmin=vmin,
             vmax=vmax,
+            subplot_titles=subplot_title,
+            cbar_label=cbar_label,
         )
     elif style == "timeseries":
         fig, ax = plt.subplots(

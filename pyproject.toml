@@ -29,6 +29,8 @@ dev = [
     "gcsfs",
     "xarray-regrid",
     "matplotlib>=3.8,<3.10",
+    "plotly>=6",
+    "kaleido>=1",
     "cartopy",
     "nc-time-axis",
     "pillow",
@@ -37,7 +39,7 @@ dev = [
 
 [tool.uv.sources]
 skills-runner = { git = "https://github.com/tescalada/skills-runner" }
-weather-skills-core = { git = "https://github.com/rhiza-research/weather-skills-core", branch = "dev" }
+weather-skills-core = { git = "https://github.com/rhiza-research/weather-skills-core", branch = "plot-refactor" }
 
 [tool.pytest.ini_options]
 testpaths = ["skills"]

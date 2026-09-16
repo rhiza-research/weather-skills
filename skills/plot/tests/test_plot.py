@@ -1,11 +1,11 @@
 """Correctness tests for plot."""
 
+import json
 from pathlib import Path
 
 import numpy as np
 import pytest
 from conftest import load_skill, make_forecast, make_gridded, make_point_obs, run_skill, write_zarr
-
 from weather_skills_core.provenance import load_figure_history
 
 
@@ -293,6 +293,91 @@ def test_heatmap_axis_label_overrides(tmp_path, plot_fn):
     import matplotlib.pyplot as plt
 
     plt.close(fig)
+
+
+def test_resolve_subplot_titles_count():
+    from weather_skills_core import UsageError
+
+    plot_mod = load_skill("plot", "plot")
+    assert plot_mod._resolve_subplot_titles(None, 3) == []
+    assert plot_mod._resolve_subplot_titles(["Week 1"], 3) == ["Week 1"]
+    with pytest.raises(UsageError, match="3 panel"):
+        plot_mod._resolve_subplot_titles(["a", "b", "c", "d"], 3)
+
+
+def test_subplot_title_overrides_heatmap_panels():
+    import matplotlib
+
+    matplotlib.use("Agg")
+    plot_mod = load_skill("plot", "plot")
+    da = make_gridded(n_time=2)["precip"]
+    fig = plot_mod._heatmap(
+        da,
+        "latitude",
+        "longitude",
+        "viridis",
+        extent=(10.0, 11.0, 1.0, 2.0),
+        cities={},
+        title="Season",
+        fontsize=14,
+        wrap_lon=True,
+        subplot_titles=["Week 1", "Week 2"],
+        cbar_label="Rain (mm)",
+    )
+    titles = [ax.get_title() for ax in fig.axes if ax.get_visible() and hasattr(ax, "get_title")]
+    assert "Week 1" in titles
+    assert "Week 2" in titles
+    cbars = [ax for ax in fig.axes if ax.get_label() == "<colorbar>"]
+    assert cbars
+    assert cbars[0].get_ylabel() == "Rain (mm)" or cbars[0].get_xlabel() == "Rain (mm)"
+    import matplotlib.pyplot as plt
+
+    plt.close(fig)
+
+
+def test_subplot_title_too_many_exits(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(n_time=1), tmp_path / "in.zarr")
+    out = tmp_path / "map.png"
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            plot_fn,
+            "-i",
+            str(src),
+            "-o",
+            str(out),
+            "--subplot-title",
+            "A",
+            "--subplot-title",
+            "B",
+        )
+    assert exc.value.code == 2
+
+
+def test_cbar_label_writes_png(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(n_time=1), tmp_path / "in.zarr")
+    out = tmp_path / "map.png"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--title",
+        "Kenya rainfall",
+        "--subplot-title",
+        "Latest day",
+        "--xlabel",
+        "Lon",
+        "--ylabel",
+        "Lat",
+        "--cbar-label",
+        "Rain (mm)",
+    )
+    assert Path(out).exists()
+    history = load_figure_history(out)
+    assert history[-1]["args"]["title"] == "Kenya rainfall"
+    assert history[-1]["args"]["subplot_title"] == ["Latest day"]
+    assert history[-1]["args"]["cbar_label"] == "Rain (mm)"
 
 
 def test_panel_title_lead_zero_is_first_24h(plot_fn):
@@ -1482,3 +1567,35 @@ def test_layer_independent_scale(tmp_path, plot_fn):
     )
     assert Path(out).exists()
     assert out.stat().st_size > 0
+
+
+def test_heatmap_writes_plot_spec_sidecar(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "map.png"
+
+    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--title", "Precip")
+
+    sidecar = tmp_path / "map.plot.json"
+    assert sidecar.is_file()
+    spec = json.loads(sidecar.read_text())
+    assert spec["title"] == "Precip"
+    assert spec["traces"][0]["type"] == "heatmap"
+    assert spec["layout"]["facet"]["n_panels"] == 2
+    assert spec["inputs"][0]["path"].endswith("in.zarr")
+
+
+def test_replot_from_spec(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    first = tmp_path / "map.png"
+    run_skill(plot_fn, "-i", str(src), "-o", str(first), "--title", "Original")
+    spec_path = tmp_path / "map.plot.json"
+    data = json.loads(spec_path.read_text())
+    data["title"] = "Edited"
+    data["plotly"] = {"layout": {"title": {"text": "Edited"}}}
+    spec_path.write_text(json.dumps(data))
+    second = tmp_path / "map2.png"
+    run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
+    assert second.is_file() and second.stat().st_size > 0
+    history = load_figure_history(second)
+    assert history[-1]["skill"] == "plot"
+    assert history[-1]["input"]["basename"] == "in.zarr"
