@@ -303,16 +303,39 @@ def parse_legend(value):
     raise argparse.ArgumentTypeError(f"--legend {value!r} is not a placement ({allowed})")
 
 
+_OUTSIDE_LEGEND_LOCS = {
+    "outside right": "outside right",
+    "below": "outside lower center",
+}
+
+
 def _legend_kwargs(loc, *, default="outside right"):
     """Matplotlib ``legend()`` kwargs, or ``None`` to omit the legend."""
     resolved = default if loc is None else loc
     if resolved == "none":
         return None
-    if resolved == "outside right":
-        return {"loc": "center left", "bbox_to_anchor": (1.15, 0.5)}
-    if resolved == "below":
-        return {"loc": "upper center", "bbox_to_anchor": (0.5, -0.18)}
+    if resolved in _OUTSIDE_LEGEND_LOCS:
+        return {"loc": _OUTSIDE_LEGEND_LOCS[resolved]}
     return {"loc": resolved}
+
+
+def _place_legend(ax, loc, *, default="none", **extra):
+    """Draw an axes or figure legend. Outside placements stay on-canvas."""
+    kw = _legend_kwargs(loc, default=default)
+    if kw is None:
+        return None
+    extra = {"frameon": False, **extra}
+    loc_name = kw.get("loc")
+    if isinstance(loc_name, str) and loc_name.startswith("outside"):
+        return ax.figure.legend(**kw, **extra)
+    return ax.legend(**kw, **extra)
+
+
+def _rotate_date_labels(ax) -> None:
+    """Rotate date tick labels without ``subplots_adjust`` (constrained-layout safe)."""
+    for label in ax.get_xticklabels():
+        label.set_ha("right")
+        label.set_rotation(30)
 
 
 def _parse_index(spec):
@@ -1275,7 +1298,10 @@ def _plot_xy(
     if x_vals.size == 0:
         raise UsageError("xy scatter has no finite paired samples to plot.")
 
-    fig, ax = plt.subplots(figsize=resolve_figsize(figsize, (8, 6)))
+    fig, ax = plt.subplots(
+        figsize=resolve_figsize(figsize, (8, 6)),
+        layout="constrained",
+    )
     ax.scatter(x_vals, y_vals, s=36, zorder=3)
     if pair_on == "year" or (pair_on == "time" and x_vals.size <= 25):
         for xv, yv, key in zip(x_vals, y_vals, keys, strict=True):
@@ -1538,7 +1564,7 @@ def _windrose(
     nsector = WIND_ROSE_SECTORS
     width = 2.0 * np.pi / nsector
     theta = np.arange(nsector) * width
-    fig = plt.figure(figsize=resolve_figsize(figsize, (8.5, 7.0)))
+    fig = plt.figure(figsize=resolve_figsize(figsize, (8.5, 7.0)), layout="constrained")
     ax = fig.add_subplot(111, projection="polar")
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
@@ -1566,14 +1592,7 @@ def _windrose(
         Patch(facecolor=colors[i], edgecolor="white", label=legend_labels[i])
         for i in range(n_speed)
     ]
-    legend_kw = _legend_kwargs(legend, default="outside right")
-    if legend_kw is not None:
-        ax.legend(
-            handles=handles,
-            title="Wind speed",
-            frameon=False,
-            **legend_kw,
-        )
+    _place_legend(ax, legend, default="outside right", handles=handles, title="Wind speed")
     if title:
         fig.suptitle(title)
     return fig
@@ -1835,6 +1854,7 @@ def _quiver_map(
         sharex=True,
         sharey=True,
         subplot_kw={"projection": ccrs.PlateCarree()},
+        layout="compressed",
     )
     axes = np.array(axes).reshape(nrows, ncols).flatten()
 
@@ -2760,6 +2780,7 @@ def _plot_layers(
         sharex=True,
         sharey=True,
         subplot_kw={"projection": ccrs.PlateCarree()},
+        layout="compressed",
     )
     axes = np.array(axes).reshape(nrows, ncols).flatten()
     overlays = _load_geo_overlays(extent_vals)
@@ -2964,6 +2985,7 @@ def _heatmap(
         sharex=True,
         sharey=True,
         subplot_kw={"projection": ccrs.PlateCarree()},
+        layout="compressed",
     )
     axes = np.array(axes).reshape(nrows, ncols).flatten()
 
@@ -3599,7 +3621,10 @@ def plot(
             vmax=vmax,
         )
     elif style == "timeseries":
-        fig, ax = plt.subplots(figsize=resolve_figsize(figsize, (10, 6)))
+        fig, ax = plt.subplots(
+            figsize=resolve_figsize(figsize, (10, 6)),
+            layout="constrained",
+        )
         sdim = "step" if "step" in da.dims else cf_dim(da, "time")
         if sdim is None:
             raise UsageError(f"timeseries needs 'step' or 'time'; got {list(da.dims)}.")
@@ -3612,12 +3637,10 @@ def plot(
         ax.set_xlabel(resolved_xlabel)
         ax.set_ylabel(_resolve_axis_label(ylabel, _variable_label(reduced)))
         ax.set_title(title or f"{qty} ({style})")
-        legend_kw = _legend_kwargs(legend, default="none")
-        if legend_kw is not None:
-            ax.legend(frameon=False, **legend_kw)
+        _place_legend(ax, legend, default="none")
         if _is_datetime_axis(xvals):
             _apply_date_ticks(ax)
-            fig.autofmt_xdate()
+            _rotate_date_labels(ax)
 
     return save_figure(fig, output, tight=figsize is None)
 

@@ -47,12 +47,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py -i <forecast.zarr> -i <mcli
 - `--fontsize` — base font size for titles, axis labels, ticks, and legend
   (default 16). Raise on user request (e.g. `--fontsize 22`).
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `12,6`).
-  When set, the PNG is that canvas at 150 dpi. Default `10×5`, cropped tightly.
+  When set, the PNG is that canvas at 150 dpi (the legend stays inside it).
+  Default `10×5`, cropped tightly.
 
 ### Output
 
 A PNG at `--output`, single axes, default figsize `(10, 5)` (override with
-`--figsize`), up to 6 forecast steps on the x-axis labeled with actual leads (`+7d`, `+10d`, …). The y-axis (and default title) use the variable `long_name`.
+`--figsize`), legend below the boxes. Up to 6 forecast steps on the x-axis labeled with actual leads (`+7d`, `+10d`, …). The y-axis (and default title) use the variable `long_name`.
 
 ### Provenance
 

@@ -89,6 +89,26 @@ def test_timeseries_legend_writes_png(tmp_path, plot_fn):
     assert out.stat().st_size > 0
 
 
+def test_place_legend_below_stays_on_canvas():
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    plot_mod = load_skill("plot", "plot")
+    fig, ax = plt.subplots(figsize=(9, 4), layout="constrained")
+    ax.plot([1, 2], [1, 2], label="series")
+    legend = plot_mod._place_legend(ax, "below")
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    box = legend.get_window_extent(renderer)
+    fig_box = fig.bbox
+    assert box.y0 >= fig_box.y0 - 1
+    assert box.y1 <= fig_box.y1 + 1
+    assert box.y1 < ax.get_window_extent(renderer).y0
+    plt.close(fig)
+
+
 def test_heatmap_ignores_legend(tmp_path, plot_fn, capsys):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "map.png"

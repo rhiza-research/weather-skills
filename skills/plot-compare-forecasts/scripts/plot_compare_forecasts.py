@@ -810,6 +810,7 @@ def plot_compare_forecasts(
         sharey=True,
         subplot_kw={"projection": ccrs.PlateCarree()},
         squeeze=False,
+        layout="compressed",
     )
     if title:
         fig.suptitle(title)

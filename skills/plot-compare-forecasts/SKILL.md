@@ -78,7 +78,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.z
   colorbars (default 16). Raise on user request (e.g. `--fontsize 18`).
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `12,8`).
   When set, the PNG is that canvas at 150 dpi. When omitted, size follows
-  the row/column count and crops tightly.
+  the row/column count and crops tightly. Equal-aspect map panels are packed
+  with compressed layout.
 - `--panels` — cap on columns, keeping the earliest N of the union. Default
   unset → every union column.
 - `--bbox` — optional `N/W/S/E` decimal degrees. Rectangular `sel` slice on

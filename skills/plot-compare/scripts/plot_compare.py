@@ -555,7 +555,6 @@ def plot_compare(
     import cf_xarray  # noqa: F401 — registers the .cf accessor
     import matplotlib.pyplot as plt
     import numpy as np
-    from matplotlib.gridspec import GridSpec
 
     var_a = variable_a or variable or auto_variable(ds_a)
     var_b = variable_b or variable or auto_variable(ds_b)
@@ -888,8 +887,8 @@ def plot_compare(
     side_b = (ds_b, da_b, td_b, label_b, var_b, _row_units(da_b), scale_b)
     top, bottom = (side_b, side_a) if b_station and not a_station else (side_a, side_b)
 
-    fig = plt.figure(figsize=resolve_figsize(figsize, (22, 10)))
-    gs = GridSpec(2, n, figure=fig, wspace=0.08, hspace=0.32)
+    fig = plt.figure(figsize=resolve_figsize(figsize, (22, 10)), layout="compressed")
+    gs = fig.add_gridspec(2, n, wspace=0.05, hspace=0.08)
     top_axes = [fig.add_subplot(gs[0, i]) for i in range(n)]
     bottom_axes = [fig.add_subplot(gs[1, i]) for i in range(n)]
     if title:

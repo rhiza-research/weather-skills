@@ -35,6 +35,7 @@ from weather_skills_core.figure import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
+
 def _axis_label(text):
     """Sentence-case an axis label; map lon/lat shorthand to Longitude/Latitude."""
     if text is None:
@@ -190,7 +191,10 @@ def plot_mediogram(
     snapped_lon = float(pt_fc[lon_dim].values) if lon_dim else lon
 
     time_steps = np.arange(n_steps)
-    fig, ax = plt.subplots(figsize=resolve_figsize(figsize, (10, 5)))
+    fig, ax = plt.subplots(
+        figsize=resolve_figsize(figsize, (10, 5)),
+        layout="constrained",
+    )
 
     fc_outer = [_bxp_stats(fc[:, i], 25, 25, 75, 75) for i in range(n_steps)]
     mc_outer = [_bxp_stats(mc[:, i], 25, 25, 75, 75) for i in range(n_steps)]
@@ -225,17 +229,18 @@ def plot_mediogram(
             tick_labels.append(str(value))
     ax.set_xticklabels(tick_labels)
     ax.set_xlabel(_resolve_axis_label(xlabel, "Forecast step"))
-    ax.set_ylabel(
-        _resolve_axis_label(ylabel, variable_label_for_display(pt_fc, fallback=variable))
-    )
+    ax.set_ylabel(_resolve_axis_label(ylabel, variable_label_for_display(pt_fc, fallback=variable)))
     qty = variable_label_for_display(pt_fc, fallback=variable, include_units=False)
     ax.set_title(title or f"Mediogram: {qty} at lat={snapped_lat:g}, lon={snapped_lon:g}")
     ax.grid(True, linestyle="--", alpha=0.6)
-    ax.legend(
+    ax.figure.legend(
         handles=[
             Patch(facecolor="cyan", edgecolor="black", label="forecast"),
             Patch(facecolor="red", edgecolor="black", label="m-climate"),
         ],
+        loc="outside lower center",
+        frameon=False,
+        ncol=2,
     )
     return save_figure(fig, output, tight=figsize is None)
 
