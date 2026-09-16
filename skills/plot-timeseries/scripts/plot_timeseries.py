@@ -579,7 +579,10 @@ def _place_legend_below(ax, handles, labels):
     "--label",
     action="append",
     default=None,
-    help="Legend label for each --input, in order. Omit to infer from metadata.",
+    help=(
+        "Legend label (overlay) or subplot title (--subplots) for each --input, "
+        "in order. Omit to infer from metadata."
+    ),
 )
 @weather_skill.argument(
     "--trace",
@@ -592,6 +595,14 @@ def _place_legend_below(ax, handles, labels):
         "(e.g. 2026), or * for all. Keys: color, linewidth, linestyle, "
         "marker, markersize, alpha, zorder, style (line|bar, overrides "
         "global --style for that series)."
+    ),
+)
+@weather_skill.argument(
+    "--subplots",
+    action="store_true",
+    help=(
+        "One stacked subplot per --input (shared time axis, independent y-scales) "
+        "instead of overlaying traces on a single axes."
     ),
 )
 def plot_timeseries(
@@ -610,6 +621,7 @@ def plot_timeseries(
     label,
     trace,
     output,
+    subplots=False,
     **kwargs,
 ):
     """Render a multi-input timeseries PNG from weather-skills standard dataset Zarrs."""
@@ -650,17 +662,32 @@ def plot_timeseries(
         if isinstance(u, str) and u.strip():
             unit_vals.append(u)
             seen_units[_trace_label(ds, idx, label_slots[idx])] = u.strip()
-    if unit_vals and any(not units_equal(unit_vals[0], u) for u in unit_vals[1:]):
+    if not subplots and unit_vals and any(not units_equal(unit_vals[0], u) for u in unit_vals[1:]):
         detail = ", ".join(f"{name} units={u!r}" for name, u in seen_units.items())
         print(
             f"Warning: variable '{variable}' has differing units across the "
             f"overlaid inputs ({detail}). The series share one y-axis labeled "
             f"with a single unit, so values in different units are not directly "
-            f"comparable in this figure.",
+            f"comparable in this figure. Pass --subplots to give each input "
+            f"its own y-axis.",
             file=sys.stderr,
         )
 
-    fig, ax = plt.subplots(figsize=resolve_figsize(figsize, (10, 6)))
+    y_labels = [_y_label(variable, ds[variable]) for ds in datasets]
+    n_in = len(datasets)
+    if subplots:
+        fig, axes = plt.subplots(
+            n_in,
+            1,
+            figsize=resolve_figsize(figsize, (10.0, max(2.8 * n_in, 4.0))),
+            sharex=True,
+            squeeze=False,
+        )
+        axes = list(axes.flatten())
+        ax = axes[0]
+    else:
+        fig, ax = plt.subplots(figsize=resolve_figsize(figsize, (10, 6)))
+        axes = [ax]
     first_tdim = None
     axis_label = None
     series = []
@@ -740,26 +767,45 @@ def plot_timeseries(
         if axis_label is None:
             axis_label = series_xlabel
 
-    styles = resolve_trace_styles([label for _, _, label in series], trace)
+    styles = resolve_trace_styles([lab for _, _, lab in series], trace)
     _validate_trace_colors(styles)
-    _draw_traces(ax, series, styles, style)
-
     x_for_label = series[0][0] if series else None
-    ax.set_xlabel(
-        _resolve_time_axis_label(xlabel, axis_label or first_tdim or "time", x_for_label)
+    resolved_xlabel = _resolve_time_axis_label(
+        xlabel, axis_label or first_tdim or "time", x_for_label
     )
-    ax.set_ylabel(_resolve_axis_label(ylabel, _y_label(variable, datasets[0][variable])))
-    if title:
-        ax.set_title(title)
-    handles, legend_labels = _legend_handles(ax, series)
-    _place_legend_below(ax, handles, legend_labels)
-    ax.grid(True, linestyle="--", alpha=0.5)
 
-    if align_day_of_year:
-        _apply_day_of_year_ticks(ax)
-    elif _is_datetime_axis(x_for_label):
-        _apply_date_ticks(ax)
-        fig.autofmt_xdate()
+    if subplots:
+        for i, ((xvals, yvals, series_label), series_style, panel) in enumerate(
+            zip(series, styles, axes, strict=True)
+        ):
+            _draw_traces(panel, [(xvals, yvals, series_label)], [series_style], style)
+            panel.set_ylabel(_resolve_axis_label(ylabel, y_labels[i]))
+            panel.set_title(series_label)
+            panel.grid(True, linestyle="--", alpha=0.5)
+            if align_day_of_year:
+                _apply_day_of_year_ticks(panel)
+            elif _is_datetime_axis(xvals):
+                _apply_date_ticks(panel)
+            if i == len(axes) - 1:
+                panel.set_xlabel(resolved_xlabel)
+        if title:
+            fig.suptitle(title)
+        if not align_day_of_year and _is_datetime_axis(x_for_label):
+            fig.autofmt_xdate()
+    else:
+        _draw_traces(ax, series, styles, style)
+        ax.set_xlabel(resolved_xlabel)
+        ax.set_ylabel(_resolve_axis_label(ylabel, y_labels[0]))
+        if title:
+            ax.set_title(title)
+        handles, legend_labels = _legend_handles(ax, series)
+        _place_legend_below(ax, handles, legend_labels)
+        ax.grid(True, linestyle="--", alpha=0.5)
+        if align_day_of_year:
+            _apply_day_of_year_ticks(ax)
+        elif _is_datetime_axis(x_for_label):
+            _apply_date_ticks(ax)
+            fig.autofmt_xdate()
     return save_figure(fig, output, tight=figsize is None)
 
 

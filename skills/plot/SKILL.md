@@ -48,7 +48,8 @@ Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
   marker at each time point. A forecast cube (`step` lead times + scalar init
   `time`) is plotted against **valid time** (`init + step`) with calendar dates
   on the x-axis, not raw lead-time nanoseconds. An analysis / obs cube with a
-  `time` dim is plotted against that axis as-is.
+  `time` dim is plotted against that axis as-is. For several series as stacked
+  panels, use `plot-timeseries --subplots`.
 - `xy` — scatter one 1D series against another. Pass `--x` and `--y` Zarrs
   (or one `-i` with `--x-variable` and `--y-variable`). Each input is reduced
   the same way as `timeseries` (mean over non-time dims; `--bbox` /

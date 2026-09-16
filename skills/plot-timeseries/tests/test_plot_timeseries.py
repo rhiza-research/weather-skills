@@ -135,6 +135,37 @@ def test_forecast_step_writes_png(tmp_path, plot_timeseries):
     assert out.stat().st_size > 0
 
 
+def test_subplots_two_inputs_write_png(tmp_path, plot_timeseries):
+    a = write_zarr(make_gridded(fill=1.0), tmp_path / "a.zarr")
+    b = write_zarr(make_gridded(fill=2.0), tmp_path / "b.zarr")
+    out = tmp_path / "ts.png"
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(out),
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+        "--subplots",
+        "--label",
+        "A",
+        "--label",
+        "B",
+        "--title",
+        "Two panels",
+    )
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+    history = load_figure_history(out)
+    assert history[-1]["args"]["subplots"] is True
+    assert history[-1]["args"]["title"] == "Two panels"
+
+
 def test_two_inputs_write_png(tmp_path, plot_timeseries):
     a = write_zarr(make_gridded(fill=1.0), tmp_path / "a.zarr")
     b = write_zarr(make_gridded(fill=2.0), tmp_path / "b.zarr")

@@ -1,6 +1,6 @@
 ---
 name: plot-timeseries
-description: Render a single PNG with traces overlaid on a shared time axis, as lines (default) or grouped bars. Each --input can be 1D already, reduced to 1D via --reduce, or fanned along one leftover dim with --along (e.g. --along number for 101 ensemble members as one spaghetti group — one Zarr, one legend entry, not 101 --input files). Repeatable --trace SELECTOR:k=v styles a series (color, linewidth, marker, zorder, style=line|bar) by 1-based input index, legend label, or a unique token in the label (e.g. 2026). Per-trace style=line|bar overrides global --style so one series can be bars and another a line. Use when you want to compare a variable across datasets or plot ensemble-member traces. Inputs whose variable still has non-time dims after selection must --reduce or --along them; no silent averaging. For precipitation, run aggregate-temporal then convert-to-totals first — plot totals (`mm`), not rates. Use --fontsize to enlarge titles, axis labels, ticks, and legend (default 16).
+description: Render a single PNG with traces overlaid on a shared time axis, as lines (default) or grouped bars. Pass --subplots for one stacked panel per --input (shared time axis, independent y-scales). Each --input can be 1D already, reduced to 1D via --reduce, or fanned along one leftover dim with --along (e.g. --along number for 101 ensemble members as one spaghetti group — one Zarr, one legend entry, not 101 --input files). Repeatable --trace SELECTOR:k=v styles a series (color, linewidth, marker, zorder, style=line|bar) by 1-based input index, legend label, or a unique token in the label (e.g. 2026). Per-trace style=line|bar overrides global --style so one series can be bars and another a line. Use when you want to compare a variable across datasets or plot ensemble-member traces. Inputs whose variable still has non-time dims after selection must --reduce or --along them; no silent averaging. For precipitation, run aggregate-temporal then convert-to-totals first — plot totals (`mm`), not rates. Use --fontsize to enlarge titles, axis labels, ticks, and legend (default 16).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py *)
@@ -44,7 +44,7 @@ For a single-input quick-look, use the `plot` skill with
 
 - Comparing the same variable across two or more datasets (e.g. forecast vs.
   observation, or two forecast models) as line traces or grouped bars on one
-  figure.
+  figure, or as stacked `--subplots` when the y-scales should stay independent.
 - Plotting every ensemble member as a spaghetti / difference trace from one
   forecast Zarr (`--along number`), optionally with a 1D overlay (mean, obs).
 - Highlighting one input among analog years (`--trace 2026:color=black,linewidth=2.5`).
@@ -63,14 +63,15 @@ For maps of N forecasts (or forecasts vs gridded obs) over time, use
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> ...] --output <out.png> \
     [--variable NAME] [--time-dim DIM] [--reduce DIM ...] [--along DIM] [--title TEXT] \
     [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H] \
-    [--style line|bar] [--align-day-of-year] [--trace SELECTOR:k=v ...]
+    [--style line|bar] [--subplots] [--align-day-of-year] [--trace SELECTOR:k=v ...]
 ```
 
 ### Arguments
 - `--input`, `-i` — input Zarr; repeat the flag for each input. Order is
   preserved and controls the legend order.
-- `--label` — legend label for each `--input`, in order. When omitted, labels
-  are inferred from station metadata, filename, or provenance.
+- `--label` — legend label (overlay) or subplot title (`--subplots`) for each
+  `--input`, in order. When omitted, labels are inferred from station
+  metadata, filename, or provenance.
 - `--output`, `-o` — PNG output path.
 - `--variable`, `-v` — variable name. Defaults to the first data variable of
   the first input. Must exist in every input.
@@ -102,6 +103,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
   group). Bar width is 80% of the median time spacing, split across bar
   series only (line overlays do not take a bar slot). Single-input `bar` is
   just one bar per time.
+- `--subplots` — one stacked panel per `--input`, sharing the time axis, with
+  an independent y-scale (and y-label) on each. Use this when the series have
+  different units or ranges. Default is overlay on one axes. `--along` still
+  fans members inside that input's panel. `--trace` still selects by `--input`.
 - `--align-day-of-year` — opt-in (default off). Plot each trace against its
   day-of-year (1–366) instead of its absolute date, so inputs from different
   years overlay on a shared x-axis. Tick labels show calendar dates (e.g.
@@ -137,8 +142,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
 
 ### Output
 
-A PNG at `--output`, single axes (default `figsize=(10, 6)`; override with
-`--figsize`), one series per `--input`
+A PNG at `--output`. Overlay mode is a single axes (default `figsize=(10, 6)`).
+`--subplots` is one stacked panel per `--input` (taller default). Override with
+`--figsize`. One series per `--input`
 (line with markers, `--along` spaghetti, or bars; mixed `--trace style=` overlays a line on bars), legend on the axes. The y-axis label is the variable `long_name` (then
 `GRIB_name`, then the variable name) plus `[<units>]` when the variable
 carries a `units` attribute. Units are a short display form (`mm/day`,
@@ -146,11 +152,12 @@ carries a `units` attribute. Units are a short display form (`mm/day`,
 
 ### Input units
 
-All traces share one y-axis whose label takes the units of the first input.
-When the overlaid inputs carry the plotted variable in differing `units`, series
-in different units are drawn against a single scale and labeled with only one of
-them. The skill prints a warning to stderr naming the distinct units and still
-renders the figure (exit status 0); it is a rendering caveat, not a hard error.
+In overlay mode, all traces share one y-axis whose label takes the units of the
+first input. When the overlaid inputs carry the plotted variable in differing
+`units`, series in different units are drawn against a single scale and labeled
+with only one of them. The skill prints a warning to stderr naming the distinct
+units and still renders (exit status 0); pass `--subplots` for independent
+y-axes. It is a rendering caveat, not a hard error.
 Only inputs that carry a `units` attr participate in the comparison.
 
 ### Provenance
@@ -163,6 +170,16 @@ python3 -c "from PIL import Image; import json; img = Image.open('out.png'); pri
 ```
 
 ## Examples
+
+Two series as stacked subplots (independent y-scales, shared time axis):
+
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
+    -i /tmp/chirps.zarr -i /tmp/imerg.zarr \
+    --variable precip --reduce latitude --reduce longitude \
+    --subplots --label CHIRPS --label IMERG \
+    --output /tmp/precip_panels.png
+```
 
 Two forecast Zarrs, both already point-extracted (1D along `step`):
 
