@@ -1,35 +1,29 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@plot-refactor",
 #   "cf-xarray",
 #   "cftime",
+#   "kaleido>=1",
+#   "numpy",
+#   "plotly>=6,<7",
 #   "xarray",
 #   "zarr",
-#   # matplotlib<3.10: keep the plot skills on one tested matplotlib
-#   "matplotlib>=3.8,<3.10",
-#   "numpy",
 #   "pint-xarray>=0.6",
 # ]
 # ///
 """ECMWF-style mediogram: forecast vs m-climate ensemble distributions at a point."""
 
-from pathlib import Path
-
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
+from weather_skills_core.figure import (
+    DEFAULT_FONTSIZE,
+    parse_figsize,
+)
 from weather_skills_core.units import (
     precip_for_display,
     to_standard_units,
     variable_label_for_display,
-)
-
-from weather_skills_core.figure import (
-    DEFAULT_FONTSIZE,
-    apply_style,
-    parse_figsize,
-    resolve_figsize,
-    save_figure,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
@@ -146,14 +140,8 @@ def plot_mediogram(
     if len(ds) != 2:
         raise UsageError(f"expected exactly two --input paths, got {len(ds)}")
     ds_fc, ds_mc = ds
-    import matplotlib
-
-    matplotlib.use("Agg")
-    apply_style(fontsize)
     import cf_xarray  # noqa: F401 — registers the .cf accessor
-    import matplotlib.pyplot as plt
     import numpy as np
-    from matplotlib.patches import Patch
 
     variable = variable or auto_variable(ds_fc)
     if variable is None or variable not in ds_fc or variable not in ds_mc:
@@ -190,26 +178,6 @@ def plot_mediogram(
     snapped_lat = float(pt_fc[lat_dim].values) if lat_dim else lat
     snapped_lon = float(pt_fc[lon_dim].values) if lon_dim else lon
 
-    time_steps = np.arange(n_steps)
-    fig, ax = plt.subplots(
-        figsize=resolve_figsize(figsize, (10, 5)),
-        layout="constrained",
-    )
-
-    fc_outer = [_bxp_stats(fc[:, i], 25, 25, 75, 75) for i in range(n_steps)]
-    mc_outer = [_bxp_stats(mc[:, i], 25, 25, 75, 75) for i in range(n_steps)]
-    fc_inner = [_bxp_stats(fc[:, i], 0, 10, 90, 100) for i in range(n_steps)]
-    mc_inner = [_bxp_stats(mc[:, i], 0, 10, 90, 100) for i in range(n_steps)]
-
-    pos_fc = time_steps - 0.2
-    pos_mc = time_steps + 0.2
-    _draw_bxp(ax, fc_inner, pos_fc, 0.2, "cyan", 1, cap_alpha=0)
-    _draw_bxp(ax, mc_inner, pos_mc, 0.2, "red", 1, cap_alpha=0)
-    _draw_bxp(ax, fc_outer, pos_fc, 0.4, "cyan", 2)
-    _draw_bxp(ax, mc_outer, pos_mc, 0.4, "red", 2)
-
-    ax.plot(time_steps, np.mean(fc, axis=0), color="black", linewidth=1.2)
-    ax.set_xticks(time_steps)
     step_vals = np.asarray(pt_fc["step"].values)
     tick_labels = []
     for value in step_vals:
@@ -227,22 +195,32 @@ def plot_mediogram(
                 )
         else:
             tick_labels.append(str(value))
-    ax.set_xticklabels(tick_labels)
-    ax.set_xlabel(_resolve_axis_label(xlabel, "Forecast step"))
-    ax.set_ylabel(_resolve_axis_label(ylabel, variable_label_for_display(pt_fc, fallback=variable)))
     qty = variable_label_for_display(pt_fc, fallback=variable, include_units=False)
-    ax.set_title(title or f"Mediogram: {qty} at lat={snapped_lat:g}, lon={snapped_lon:g}")
-    ax.grid(True, linestyle="--", alpha=0.6)
-    ax.figure.legend(
-        handles=[
-            Patch(facecolor="cyan", edgecolor="black", label="forecast"),
-            Patch(facecolor="red", edgecolor="black", label="m-climate"),
-        ],
-        loc="outside lower center",
-        frameon=False,
-        ncol=2,
+    from weather_skills_core.plot_export import write_plot_outputs
+    from weather_skills_core.plot_recipes import compile_mediogram
+    from weather_skills_core.plot_spec import spec_inputs_from_datasets
+
+    fig = compile_mediogram(
+        fc,
+        mc,
+        tick_labels,
+        title=title or f"Mediogram: {qty} at lat={snapped_lat:g}, lon={snapped_lon:g}",
+        xlabel=_resolve_axis_label(xlabel, "Forecast step"),
+        ylabel=_resolve_axis_label(ylabel, variable_label_for_display(pt_fc, fallback=variable)),
+        fontsize=fontsize,
+        figsize=figsize,
     )
-    return save_figure(fig, output, tight=figsize is None)
+    named = {"forecast": ds_fc, "mclimate": ds_mc}
+    resolved = {
+        "version": 1,
+        "skill": "plot-mediogram",
+        "inputs": spec_inputs_from_datasets(named),
+        "traces": [{"type": "mediogram"}],
+        "style": {"template": "weather_skills", "fontsize": fontsize},
+        "geo": {"lat": snapped_lat, "lon": snapped_lon},
+        "title": title,
+    }
+    return write_plot_outputs(fig, resolved, output, datasets=named)
 
 
 if __name__ == "__main__":

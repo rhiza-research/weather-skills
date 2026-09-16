@@ -11,7 +11,8 @@ metadata:
 
 # plot-compare-forecasts
 
-N-dataset comparison grid. Each `--input` is one row; columns are the
+N-dataset comparison grid (Plotly heatmap grid with GeoJSON country
+outlines). Each `--input` is one row; columns are the
 **union** of times across those inputs, sorted earliest-first. A cell whose
 dataset has no field at that time stays on the grid as a blank `n/a` panel
 (map frame kept, no mesh) — unlike `plot-compare`, which drops any bin the

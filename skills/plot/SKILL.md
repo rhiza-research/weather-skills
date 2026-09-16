@@ -27,10 +27,11 @@ Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
   to the PNG so you can edit layout/annotations and replot with `--spec`.
 - `contour` — the same map layout as `heatmap` (panels, shared color scale,
   colorbar, geo overlays, `--bbox` / `--mask-geojson` / `--extent` /
-  `--cities` / `--index` / `--draw-box` / `--rows` / `--columns`), but filled
-  isolines (`contourf`) plus thin black contour lines. Values are interpolated
-  between grid points rather than drawn as cell rectangles. Cannot mix with
-  `--layer`.
+  `--cities` / `--index` / `--draw-box` / `--rows` / `--columns`), compiled
+  as Plotly filled contours (`go.Contour`) with thin black isolines.
+  Values are interpolated between grid points rather than drawn as cell
+  rectangles. Cannot mix with `--layer`. Matplotlib contour helpers remain
+  in the skill for tests; the PNG path is Plotly.
 - `timeseries` — 1D profile. Averages across all non-time dims. Line plus a
   marker at each time point. A forecast cube (`step` lead times + scalar init
   `time`) is plotted against **valid time** (`init + step`) with calendar dates
@@ -121,6 +122,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --input <in.zarr> --output <out.png> 
     [--mask-geojson PATH] [--draw-box N/W/S/E ...] \
     [--rows N] [--columns N] \
     [--spec PATH_OR_JSON] [--plotly-patch PATH_OR_JSON] [--dump-spec PATH|-|none] \
+    [--html PATH] [--export-plotly-json PATH] [--export-plotly-json-data] \
     [--style-file PATH]
 
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --output <out.png> \
@@ -305,8 +307,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
 
 ### Output
 
-A PNG at `--output`. Heatmap and timeseries also write a resolved
-`<stem>.plot.json` sidecar (override with `--dump-spec`). The colorbar (and timeseries y-axis) label resolves
+A PNG at `--output`. Heatmap, contour, and timeseries also write a resolved
+`<stem>.plot.json` sidecar (override with `--dump-spec`). Pass `--html` for an
+unstamped interactive sidecar, or `--output out.html` to stamp HTML as the
+canonical artifact. `--export-plotly-json` writes Plotly layout JSON (no
+heatmap `z` unless `--export-plotly-json-data`). The colorbar (and timeseries y-axis) label resolves
 from variable attrs: `long_name` → `GRIB_name` → bare variable name →
 `"value"`, suffixed with `[units]` when the `units` attr is present. Units
 on the figure are a short display form (`mm/day`, `°C`, `mm`, `m/s`), not the
@@ -430,3 +435,24 @@ S2S-style 10 m wind-vector map (YlGn speed + quiver, one panel per step):
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/s2s_10wind.zarr -o /tmp/10m-wind_vectors.png \
     --style quiver --bbox 5/34/-5/42 --title "10 m wind"
 ```
+
+`--style quiver`, `--style windrose`, `--style xy`, and `--layer` still use matplotlib
+(Cartopy for layered maps). Do not dump a Plotly spec for those styles.
+
+## Iterate on a plot (dump → edit → replot)
+
+Heatmap, contour, and timeseries compile a small weather-skills JSON spec
+(not a full Plotly `fig.to_json()` with `z` arrays). A default run writes
+`<output-stem>.plot.json` next to the PNG with **resolved** defaults
+(`layout.facet.max_columns`, colormap name, extent, input path).
+
+1. `plot -i data.zarr -o out.png` writes `out.png` + `out.plot.json`.
+2. Read `out.plot.json`. Change facet/colormap/annotations, or add a
+   `plotly` patch (`layout`, `annotations`, `shapes`).
+3. `plot --spec out.plot.json -o out2.png` re-renders. CLI flags overlay
+   the spec (`--title`, `--colormap`, `--index`). Spec input Zarrs are
+   opened as Datasets so provenance chains from the Zarr, not the previous PNG.
+
+`--dump-spec -` prints the spec on stdout. `--dump-spec none` skips the sidecar.
+`--plotly-patch '{"layout": {"title": {"text": "Edited"}}}'` is the escape hatch
+for anything Plotly supports without enumerating it in the spec schema.

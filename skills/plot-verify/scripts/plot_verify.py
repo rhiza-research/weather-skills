@@ -1,13 +1,13 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cartopy",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@plot-refactor",
 #   "cf-xarray",
 #   "cftime",
-#   # matplotlib<3.10: cartopy gridliner crash
+#   "kaleido>=1",
 #   "matplotlib>=3.8,<3.10",
 #   "numpy",
+#   "plotly>=6,<7",
 #   "shapely>=2.1",
 #   "xarray",
 #   "zarr",
@@ -29,11 +29,8 @@ from weather_skills_core.display_labels import (
 )
 from weather_skills_core.figure import (
     DEFAULT_FONTSIZE,
-    apply_style,
     format_plot_date_range,
     parse_figsize,
-    resolve_figsize,
-    save_figure,
 )
 from weather_skills_core.standard_utils import (
     ensure_normalized_longitude,
@@ -441,9 +438,7 @@ def _add_horizontal_colorbar(fig, mappable, cax, label="", **kwargs):
                 labels.append(str(t))
                 continue
             labels.append(
-                str(int(round(number)))
-                if abs(number - round(number)) < 1e-9
-                else f"{number:g}"
+                str(int(round(number))) if abs(number - round(number)) < 1e-9 else f"{number:g}"
             )
         cbar.set_ticks(tick_list)
         cbar.set_ticklabels(labels)
@@ -769,14 +764,7 @@ def plot_verify(
     metric = metrics[0]
     row_labels = _row_labels(obs, forecasts, metric, labels=labels)
 
-    import matplotlib
-
-    matplotlib.use("Agg")
-    apply_style(fontsize)
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
     import cf_xarray  # noqa: F401 — registers the .cf accessor
-    import matplotlib.pyplot as plt
     import numpy as np
 
     obs_name = _pick_variable(obs, variable, "--obs")
@@ -830,20 +818,20 @@ def plot_verify(
             print(f"{label}  {summary.strip()}")
         columns.append((label, fc_da, verify_da, lat_dim, lon_dim))
 
-    wrap_lon = not (bbox is not None and bbox[1] > bbox[3])
     extent = _extent_from_da(obs_da, obs_lat, obs_lon, bbox)
-    cmap, norm = _heatmap_scale(obs_da, colormap)
-    verify_cmap = verify_norm = verify_vmin = verify_vmax = verify_labels = None
-    if metric == "hits":
-        verify_cmap, verify_norm, verify_labels = _hits_scale()
-    else:
-        all_verify = [col[2] for col in columns]
-        import xarray as xr
+    from weather_skills_core.plot_export import write_plot_outputs
+    from weather_skills_core.plot_recipes import (
+        blank_cell,
+        compile_heatmap_grid,
+        error_scale,
+        heatmap_cell,
+        hits_scale,
+        scale_from_da,
+    )
+    from weather_skills_core.plot_spec import spec_inputs_from_datasets
 
-        stacked = xr.concat(all_verify, dim="panel")
-        verify_cmap, verify_norm, verify_vmin, verify_vmax = _error_scale(stacked, metric)
-    vmin = vmax = None
-    if norm is None:
+    field_scale = scale_from_da(obs_da, colormap, stretch=False, label=_variable_label(obs_da))
+    if field_scale.get("bounds") is None:
         present = [float(obs_da.min(skipna=True).values), float(obs_da.max(skipna=True).values)]
         for _label, fc_da, *_rest in columns:
             present.append(float(fc_da.min(skipna=True).values))
@@ -855,137 +843,72 @@ def plot_verify(
             vmin, vmax = -m, m
         if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
             vmin, vmax = 0.0, 1.0
-
-    n_leads = len(columns)
-    n_cols = 1 + n_leads
-    fig_title = title
-    if week_dates and not (title and week_dates in title):
-        fig_title = f"{title} · {week_dates}" if title else week_dates
-    map_w, map_h = _map_panel_inches(extent)
-    fig_w, fig_h = resolve_figsize(figsize, (max(map_w * n_cols, 8.0), max(2 * map_h + 0.5, 6.0)))
-    fig = plt.figure(figsize=(fig_w, fig_h))
-    map_gs, field_cax, verify_cax = _verify_figure_layout(fig, n_cols)
-    obs_ax = fig.add_subplot(map_gs[0, 0], projection=ccrs.PlateCarree())
-    fc_axes = [
-        fig.add_subplot(map_gs[0, i + 1], projection=ccrs.PlateCarree()) for i in range(n_leads)
-    ]
-    blank = fig.add_subplot(map_gs[1, 0], projection=ccrs.PlateCarree())
-    blank.set_visible(False)
-    verify_axes = [
-        fig.add_subplot(map_gs[1, i + 1], projection=ccrs.PlateCarree()) for i in range(n_leads)
-    ]
-
-    if fig_title:
-        fig.suptitle(fig_title)
-
-    def _draw(
-        ax,
-        da,
-        lat_dim,
-        lon_dim,
-        this_cmap,
-        this_norm,
-        this_vmin,
-        this_vmax,
-    ):
-        if wrap_lon:
-            ax.set_extent(extent, crs=ccrs.PlateCarree())
-        else:
-            ax.set_xlim(extent[0], extent[1])
-            ax.set_ylim(extent[2], extent[3])
-        ax.add_feature(cfeature.COASTLINE, edgecolor="black")
-        ax.add_feature(cfeature.BORDERS, linestyle=":", alpha=0.7)
-        ax.add_feature(
-            cfeature.LAKES.with_scale("50m"),
-            facecolor=_LAKE_FACECOLOR,
-            edgecolor=_LAKE_FACECOLOR,
-            linewidth=0.4,
-            zorder=3,
+        field_scale = scale_from_da(
+            obs_da, colormap, stretch=True, label=_variable_label(obs_da), vmin=vmin, vmax=vmax
         )
-        ax.gridlines(draw_labels=False, alpha=0)
-        slab = da.transpose(lat_dim, lon_dim)
-        return ax.pcolormesh(
-            slab[lon_dim],
-            slab[lat_dim],
-            slab.values,
-            cmap=this_cmap,
-            norm=this_norm,
-            vmin=this_vmin,
-            vmax=this_vmax,
-            transform=ccrs.PlateCarree(),
-        )
-
-    field_mesh = _draw(
-        obs_ax,
-        obs_da,
-        obs_lat,
-        obs_lon,
-        cmap,
-        norm,
-        vmin,
-        vmax,
-    )
-    obs_ax.set_title(row_labels[0])
-    obs_ax.set_ylabel(row_labels[0])
-
-    verify_mesh = None
-    for col, (col_label, fc_da, verify_da, lat_dim, lon_dim) in enumerate(columns):
-        fc_axes[col].set_title(col_label)
-        _draw(
-            fc_axes[col],
-            fc_da,
-            lat_dim,
-            lon_dim,
-            cmap,
-            norm,
-            vmin,
-            vmax,
-        )
-        if metric == "hits":
-            mesh = _draw(
-                verify_axes[col],
-                verify_da,
-                lat_dim,
-                lon_dim,
-                verify_cmap,
-                verify_norm,
-                None,
-                None,
-            )
-        else:
-            mesh = _draw(
-                verify_axes[col],
-                verify_da,
-                lat_dim,
-                lon_dim,
-                verify_cmap,
-                verify_norm,
-                verify_vmin,
-                verify_vmax,
-            )
-        if verify_mesh is None:
-            verify_mesh = mesh
-
-    verify_axes[0].set_ylabel(row_labels[2])
-
-    _add_horizontal_colorbar(
-        fig,
-        field_mesh,
-        field_cax,
-        _variable_label(obs_da),
-        **_cbar_boundary_kwargs(norm, cmap),
-    )
+    field_scale["colorbar"] = {
+        "orientation": "h",
+        "y": -0.08,
+        "x": 0.5,
+        "len": 0.7,
+        "yanchor": "top",
+    }
     if metric == "hits":
-        cbar = _add_horizontal_colorbar(fig, verify_mesh, verify_cax, "event", ticks=[-1, 0, 1])
-        if cbar is not None:
-            cbar.set_ticklabels(verify_labels)
+        verify_scale = hits_scale()
     else:
+        import xarray as xr
+
+        stacked = xr.concat([col[2] for col in columns], dim="panel")
         units = format_units_for_display(u_obs)
         metric_label = _METRIC_ROW_LABELS[metric]
         caption = f"{metric_label} [{units}]" if units else metric_label
-        _add_horizontal_colorbar(fig, verify_mesh, verify_cax, caption)
+        verify_scale = error_scale(stacked, metric, label=caption)
+    verify_scale["colorbar"] = {
+        "orientation": "h",
+        "y": -0.22,
+        "x": 0.5,
+        "len": 0.7,
+        "yanchor": "top",
+    }
 
-    return save_figure(fig, output, tight=figsize is None)
+    fig_title = title
+    if week_dates and not (title and week_dates in title):
+        fig_title = f"{title} · {week_dates}" if title else week_dates
+
+    n_leads = len(columns)
+    top_row = [heatmap_cell(obs_da, obs_lat, obs_lon, coloraxis="coloraxis")]
+    bottom_row = [blank_cell("")]
+    col_titles = [row_labels[0]]
+    for col_label, fc_da, verify_da, lat_dim, lon_dim in columns:
+        top_row.append(heatmap_cell(fc_da, lat_dim, lon_dim, coloraxis="coloraxis"))
+        bottom_row.append(heatmap_cell(verify_da, lat_dim, lon_dim, coloraxis="coloraxis2"))
+        col_titles.append(col_label)
+
+    fig = compile_heatmap_grid(
+        [top_row, bottom_row],
+        extent=extent,
+        title=fig_title,
+        col_titles=col_titles,
+        row_titles=[row_labels[0], row_labels[2]],
+        fontsize=fontsize,
+        figsize=figsize,
+        coloraxes={"coloraxis": field_scale, "coloraxis2": verify_scale},
+    )
+    named = {"obs": obs, **{f"forecast{i}": fc for i, fc in enumerate(forecasts, start=1)}}
+    resolved = {
+        "version": 1,
+        "skill": "plot-verify",
+        "inputs": spec_inputs_from_datasets(named),
+        "layout": {"rows": 2, "columns": 1 + n_leads, "metric": metric},
+        "traces": [{"type": "heatmap_grid"}],
+        "style": {
+            "template": "weather_skills",
+            "fontsize": fontsize,
+            "colormap": colormap or field_scale.get("name"),
+        },
+        "title": fig_title,
+    }
+    return write_plot_outputs(fig, resolved, output, datasets=named)
 
 
 if __name__ == "__main__":

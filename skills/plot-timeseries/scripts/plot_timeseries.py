@@ -1,13 +1,13 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@plot-refactor",
 #   "cf-xarray",
 #   "cftime",
-#   # matplotlib<3.10: keep the plot skills on one tested matplotlib
+#   "kaleido>=1",
 #   "matplotlib>=3.8,<3.10",
-#   "nc-time-axis",
 #   "numpy",
+#   "plotly>=6,<7",
 #   "xarray",
 #   "zarr",
 #   "pint-xarray>=0.6",
@@ -23,6 +23,12 @@ from pathlib import Path
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable
 from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
+from weather_skills_core.figure import (
+    DEFAULT_FONTSIZE,
+    apply_date_ticks,
+    format_plot_date,
+    parse_figsize,
+)
 from weather_skills_core.standard_dataset import ALIASES, names_for
 from weather_skills_core.standard_utils import pick_time_dim
 from weather_skills_core.units import (
@@ -31,16 +37,6 @@ from weather_skills_core.units import (
     units_equal,
     variable_label_for_display,
     variable_units,
-)
-
-from weather_skills_core.figure import (
-    DEFAULT_FONTSIZE,
-    apply_date_ticks,
-    apply_style,
-    format_plot_date,
-    parse_figsize,
-    resolve_figsize,
-    save_figure,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
@@ -277,12 +273,26 @@ def resolve_trace_styles(labels: list[str], specs: list[TraceSpec] | None) -> li
     return styles
 
 
-def _validate_trace_colors(styles: list[dict]) -> None:
-    import matplotlib.colors as mcolors
+def _is_color_like(color) -> bool:
+    if isinstance(color, (int, float)):
+        return 0.0 <= float(color) <= 1.0
+    raw = str(color).strip()
+    if not raw:
+        return False
+    if raw.startswith("#"):
+        h = raw[1:]
+        return len(h) in (3, 4, 6, 8) and all(c in "0123456789abcdefABCDEF" for c in h)
+    try:
+        v = float(raw)
+    except ValueError:
+        return raw.replace(" ", "").replace("-", "").isalpha()
+    return 0.0 <= v <= 1.0
 
+
+def _validate_trace_colors(styles: list[dict]) -> None:
     for style in styles:
         color = style.get("color")
-        if color is not None and not mcolors.is_color_like(color):
+        if color is not None and not _is_color_like(color):
             raise UsageError(
                 f"--trace color={color!r} is not a matplotlib color (name, hex, or grayscale 0-1)."
             )
@@ -639,13 +649,7 @@ def plot_timeseries(
         raise UsageError(f"--input must be passed at most 26 times; got {len(datasets)}.")
     label_slots = resolve_input_labels(label, len(datasets))
 
-    import matplotlib
-
-    matplotlib.use("Agg")
-    apply_style(fontsize)
     import cf_xarray  # noqa: F401 — registers the .cf accessor
-    import matplotlib.pyplot as plt
-    import nc_time_axis  # noqa: F401 — registers the cftime→matplotlib axis converter
     import numpy as np
 
     variable = variable or auto_variable(datasets[0])
@@ -680,24 +684,6 @@ def plot_timeseries(
         )
 
     y_labels = [_y_label(variable, ds[variable]) for ds in datasets]
-    n_in = len(datasets)
-    if subplots:
-        fig, axes = plt.subplots(
-            n_in,
-            1,
-            figsize=resolve_figsize(figsize, (10.0, max(2.8 * n_in, 4.0))),
-            sharex=True,
-            squeeze=False,
-            layout="constrained",
-        )
-        axes = list(axes.flatten())
-        ax = axes[0]
-    else:
-        fig, ax = plt.subplots(
-            figsize=resolve_figsize(figsize, (10, 6)),
-            layout="constrained",
-        )
-        axes = [ax]
     first_tdim = None
     axis_label = None
     series = []
@@ -783,40 +769,45 @@ def plot_timeseries(
     resolved_xlabel = _resolve_time_axis_label(
         xlabel, axis_label or first_tdim or "time", x_for_label
     )
+    kinds = [
+        _series_kind(series_style, style, yvals)
+        for (_, yvals, _), series_style in zip(series, styles, strict=True)
+    ]
+    for kind, series_style in zip(kinds, styles, strict=True):
+        if kind == "bar":
+            _bar_kwargs(series_style)
+    panel_ylabels = (
+        [_resolve_axis_label(ylabel, lab) for lab in y_labels]
+        if subplots
+        else [_resolve_axis_label(ylabel, y_labels[0])]
+    )
+    from weather_skills_core.plot_export import write_plot_outputs
+    from weather_skills_core.plot_recipes import compile_line_figure
+    from weather_skills_core.plot_spec import spec_inputs_from_datasets
 
-    if subplots:
-        for i, ((xvals, yvals, series_label), series_style, panel) in enumerate(
-            zip(series, styles, axes, strict=True)
-        ):
-            _draw_traces(panel, [(xvals, yvals, series_label)], [series_style], style)
-            panel.set_ylabel(_resolve_axis_label(ylabel, y_labels[i]))
-            panel.set_title(series_label)
-            panel.grid(True, linestyle="--", alpha=0.5)
-            if align_day_of_year:
-                _apply_day_of_year_ticks(panel)
-            elif _is_datetime_axis(xvals):
-                _apply_date_ticks(panel)
-            if i == len(axes) - 1:
-                panel.set_xlabel(resolved_xlabel)
-        if title:
-            fig.suptitle(title)
-        if not align_day_of_year and _is_datetime_axis(x_for_label):
-            _rotate_date_labels(axes[-1])
-    else:
-        _draw_traces(ax, series, styles, style)
-        ax.set_xlabel(resolved_xlabel)
-        ax.set_ylabel(_resolve_axis_label(ylabel, y_labels[0]))
-        if title:
-            ax.set_title(title)
-        handles, legend_labels = _legend_handles(ax, series)
-        _place_legend_below(ax, handles, legend_labels)
-        ax.grid(True, linestyle="--", alpha=0.5)
-        if align_day_of_year:
-            _apply_day_of_year_ticks(ax)
-        elif _is_datetime_axis(x_for_label):
-            _apply_date_ticks(ax)
-            _rotate_date_labels(ax)
-    return save_figure(fig, output, tight=figsize is None)
+    fig = compile_line_figure(
+        series,
+        title=title,
+        xlabel=resolved_xlabel,
+        ylabels=panel_ylabels,
+        fontsize=fontsize,
+        figsize=figsize,
+        subplots=subplots,
+        kinds=kinds,
+        styles=styles,
+    )
+    named = {chr(ord("a") + i): ds for i, ds in enumerate(datasets)}
+    resolved = {
+        "version": 1,
+        "skill": "plot-timeseries",
+        "inputs": spec_inputs_from_datasets(named),
+        "layout": {"subplots": subplots, "figsize": list(figsize) if figsize else None},
+        "traces": [{"type": "timeseries", "input": key} for key in named],
+        "style": {"template": "weather_skills", "fontsize": fontsize},
+        "title": title,
+        "xlabel": resolved_xlabel,
+    }
+    return write_plot_outputs(fig, resolved, output, datasets=named)
 
 
 if __name__ == "__main__":

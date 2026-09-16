@@ -21,7 +21,11 @@ near-black, how many distinct colors a downsample has, a 16×10 hex preview,
 and the last `weather_skills_history` step if the file was stamped.
 
 `provenance` is still the skill for the full lineage. `inspect-zarr` is still
-the skill for the Zarr that fed the plot.
+the skill for the Zarr that fed the plot. HTML figures are stamped with
+`<meta name="weather_skills_history">` when HTML is a decorator `--output`;
+this skill does not inspect HTML — use `provenance` for lineage and look at
+the file in a browser. The `*.plot.json` sidecar next to a Plotly PNG is the
+agent iteration object, not a QA substitute for this skill.
 
 ## When to use
 

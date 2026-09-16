@@ -20,7 +20,7 @@ series, so observed totals can be bars with a climatology drawn as a line.
 
 Each `--input` is one legend series. A leftover non-time dim can be fanned
 with `--along DIM` (typically `number` / `member`): every value along that dim
-becomes a line, drawn in one matplotlib call, sharing color and one legend
+becomes a line, sharing color and one legend
 entry. That is how to plot 101 ensemble-member difference traces from a
 single Zarr — do not split members into 101 `--input` files (capped at 26
 inputs). `--along` traces are always lines (thin, translucent, no markers

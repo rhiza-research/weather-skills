@@ -1,13 +1,13 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cartopy",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@plot-refactor",
 #   "cf-xarray",
 #   "cftime",
-#   # matplotlib<3.10: cartopy gridliner crash
+#   "kaleido>=1",
 #   "matplotlib>=3.8,<3.10",
 #   "numpy",
+#   "plotly>=6,<7",
 #   "shapely>=2.1",
 #   "xarray",
 #   "zarr",
@@ -20,11 +20,16 @@ from __future__ import annotations
 
 import datetime as _dt
 import sys
-from pathlib import Path
 
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
 from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
+from weather_skills_core.figure import (
+    DEFAULT_FONTSIZE,
+    format_plot_date,
+    format_plot_date_range,
+    parse_figsize,
+)
 from weather_skills_core.standard_utils import (
     ensure_normalized_longitude,
     lat_slice,
@@ -39,17 +44,6 @@ from weather_skills_core.units import (
     units_equal,
     variable_label_for_display,
     variable_units,
-)
-
-from weather_skills_core.figure import (
-    DEFAULT_FONTSIZE,
-    add_shared_colorbar,
-    apply_style,
-    format_plot_date,
-    format_plot_date_range,
-    parse_figsize,
-    resolve_figsize,
-    save_figure,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
@@ -702,16 +696,8 @@ def plot_compare_forecasts(
     if panels is not None and panels < 1:
         raise UsageError(f"--panels must be >= 1, got {panels}")
 
-    import matplotlib
-
-    matplotlib.use("Agg")
-    apply_style(fontsize)
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
     import cf_xarray  # noqa: F401 — registers the .cf accessor
-    import matplotlib.pyplot as plt
     import numpy as np
-    from matplotlib.colors import BoundaryNorm
 
     variable = variable or auto_variable(ds[0])
     if variable is None:
@@ -769,22 +755,23 @@ def plot_compare_forecasts(
         lat_dims.append(lat_dim)
         lon_dims.append(lon_dim)
 
-    wrap_lon = not (bbox is not None and bbox[1] > bbox[3])
     extent = _extent_from_da(das[0], lat_dims[0], lon_dims[0], bbox)
 
+    from weather_skills_core.plot_export import write_plot_outputs
+    from weather_skills_core.plot_recipes import (
+        blank_cell,
+        compile_heatmap_grid,
+        heatmap_cell,
+        scale_from_da,
+    )
+    from weather_skills_core.plot_spec import spec_inputs_from_datasets
+
     user_vlim = vmin is not None or vmax is not None
-    cmap, norm = _heatmap_scale(das[0], colormap, stretch=user_vlim)
-    if (
-        colormap is None
-        and not user_vlim
-        and getattr(cmap, "name", None) in ("chirps_total", "chirps_short")
-        and any(_is_precip_anomaly(da) for da in das)
-    ):
-        cmap, norm = _precip_anomaly_scale()
-    if user_vlim:
-        norm = None
-    data_min = data_max = None
-    if norm is None:
+    cmap_name = colormap
+    if colormap is None and not user_vlim and any(_is_precip_anomaly(da) for da in das):
+        cmap_name = "chirps_anom"
+    scale = scale_from_da(das[0], cmap_name, stretch=user_vlim, label=_variable_label(das[0]))
+    if user_vlim or scale.get("bounds") is None:
         present_min = []
         present_max = []
         for row, da in enumerate(das):
@@ -800,96 +787,61 @@ def plot_compare_forecasts(
             data_max = float(np.nanmax(present_max))
         else:
             data_min, data_max = 0.0, 1.0
-        vmin, vmax = _resolve_color_limits(vmin, vmax, data_min=data_min, data_max=data_max)
-    fig_w, fig_h = resolve_figsize(figsize, (max(3.2 * ncols, 6.0), max(2.8 * nrows, 4.0)))
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(fig_w, fig_h),
-        sharex=True,
-        sharey=True,
-        subplot_kw={"projection": ccrs.PlateCarree()},
-        squeeze=False,
-        layout="compressed",
-    )
-    if title:
-        fig.suptitle(title)
+        lo, hi = _resolve_color_limits(vmin, vmax, data_min=data_min, data_max=data_max)
+        scale = scale_from_da(
+            das[0], cmap_name, stretch=True, label=_variable_label(das[0]), vmin=lo, vmax=hi
+        )
 
-    contour = None
+    col_titles = [_format_column_title(t, bin_width_ns) for t in column_times]
+    cells = []
+    cell_notes = []
     for row, da in enumerate(das):
         pdim = panel_dims[row]
         lat_dim = lat_dims[row]
         lon_dim = lon_dims[row]
-        for col, t in enumerate(column_times):
-            ax = axes[row][col]
-            col_title = _format_column_title(t, bin_width_ns)
+        row_cells = []
+        row_notes = []
+        for col, _t in enumerate(column_times):
             idx = matches[row][col]
             lead = None
             if idx is not None and steps_per_row[row] is not None:
                 lead = _format_lead(steps_per_row[row][idx])
-            if row == 0:
-                ax.set_title(col_title)
-            if wrap_lon:
-                ax.set_extent(extent, crs=ccrs.PlateCarree())
-            else:
-                ax.set_xlim(extent[0], extent[1])
-                ax.set_ylim(extent[2], extent[3])
-            ax.add_feature(cfeature.COASTLINE, edgecolor="black")
-            ax.add_feature(cfeature.BORDERS, linestyle=":", alpha=0.7)
-            ax.add_feature(
-                cfeature.LAKES.with_scale("50m"),
-                facecolor=_LAKE_FACECOLOR,
-                edgecolor=_LAKE_FACECOLOR,
-                linewidth=0.4,
-                zorder=3,
-            )
-            ax.gridlines(draw_labels=False, alpha=0)
             if idx is None:
-                ax.text(
-                    0.5,
-                    0.5,
-                    "n/a",
-                    transform=ax.transAxes,
-                    ha="center",
-                    va="center",
-                    color="0.4",
-                )
+                row_cells.append(blank_cell("n/a"))
+                row_notes.append(None)
             else:
-                slab = da.isel({pdim: idx}).transpose(lat_dim, lon_dim)
-                mesh = ax.pcolormesh(
-                    slab[lon_dim],
-                    slab[lat_dim],
-                    slab.values,
-                    cmap=cmap,
-                    norm=norm,
-                    vmin=vmin,
-                    vmax=vmax,
-                    transform=ccrs.PlateCarree(),
-                )
-                if contour is None:
-                    contour = mesh
-                if lead:
-                    ax.text(
-                        0.03,
-                        0.97,
-                        lead,
-                        transform=ax.transAxes,
-                        ha="left",
-                        va="top",
-                        color="0.2",
-                    )
-            ax.set_ylabel(_axis_label(labels[row]))
+                slab = da.isel({pdim: idx})
+                row_cells.append(heatmap_cell(slab, lat_dim, lon_dim))
+                row_notes.append(lead)
+        cells.append(row_cells)
+        cell_notes.append(row_notes)
 
-    if contour is not None:
-        add_shared_colorbar(
-            fig,
-            contour,
-            axes,
-            _variable_label(das[0]),
-            **_cbar_boundary_kwargs(norm, cmap),
-        )
-
-    return save_figure(fig, output, tight=figsize is None)
+    fig = compile_heatmap_grid(
+        cells,
+        extent=extent,
+        title=title,
+        col_titles=col_titles,
+        row_titles=[_axis_label(lab) for lab in labels],
+        fontsize=fontsize,
+        figsize=figsize,
+        coloraxes={"coloraxis": scale},
+        cell_notes=cell_notes,
+    )
+    named = {chr(ord("a") + i): datasets[i] for i in range(len(datasets))}
+    resolved = {
+        "version": 1,
+        "skill": "plot-compare-forecasts",
+        "inputs": spec_inputs_from_datasets(named),
+        "layout": {"rows": nrows, "columns": ncols, "shared_colorscale": True},
+        "traces": [{"type": "heatmap_grid"}],
+        "style": {
+            "template": "weather_skills",
+            "fontsize": fontsize,
+            "colormap": colormap or scale.get("name"),
+        },
+        "title": title,
+    }
+    return write_plot_outputs(fig, resolved, output, datasets=named)
 
 
 if __name__ == "__main__":

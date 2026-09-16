@@ -46,22 +46,18 @@ on one figure.
 
 The color scale adapts to what is being compared. When both rows resolve
 to the same variable and matching units, one shared scale is used (for
-precipitation, the CHIRPS-GEFS total or anomaly classes with `BoundaryNorm`,
+precipitation, the CHIRPS-GEFS total or anomaly classes,
 so values are visually comparable across rows). When the rows are different
 variables or have differing units, each row gets its own independent
 scale, colormap, and labeled colorbar — rainfall still uses those CHIRPS
 classes. `--shared-scale` and
-`--independent-scale` force either mode. An admin-1 country boundary
-overlay (Natural Earth, fetched and cached via `cartopy`) is drawn on
-every panel. The polygon overlay is spatially
-*clipped* to the gridded input's bbox (`gdf.clip(box(*bbox))`), so
-polygons that straddle the bbox edge are truncated at the edge rather
-than rendered whole and neighboring regions never extend beyond the
-base.
+`--independent-scale` force either mode. Country outlines come from the
+bundled Natural Earth GeoJSON (same store as `resolve-region`), compiled
+through Plotly. A default run writes `<stem>.plot.json` next to the PNG.
 
 Both rows always share the gridded input's spatial extent so the figure
 is centered on the gridded base; station points outside that extent are
-clipped by matplotlib.
+clipped by the shared lon/lat range.
 
 Panel titles render the time-bin range as `30 Apr–9 May '26`
 with the bin coord interpreted as the inclusive **left** edge: end =

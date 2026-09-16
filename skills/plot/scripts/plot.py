@@ -10,6 +10,7 @@
 #   "matplotlib>=3.8,<3.10",
 #   "nc-time-axis",
 #   "numpy",
+#   "pandas",
 #   "plotly>=6,<7",
 #   "shapely>=2.1",
 #   "xarray",
@@ -3156,7 +3157,7 @@ def _heatmap(
     return fig
 
 
-_PLOTLY_STYLES = frozenset({"heatmap", "timeseries"})
+_PLOTLY_STYLES = frozenset({"heatmap", "timeseries", "contour"})
 
 
 def _input_path_of(ds):
@@ -3196,8 +3197,11 @@ def _render_plotly_plot(
     plotly_patch,
     dump_spec_path,
     output,
+    html_path=None,
+    plotly_json_path=None,
+    include_plotly_data=False,
 ):
-    """Compile heatmap/timeseries through Plotly and write PNG + spec sidecar."""
+    """Compile heatmap/timeseries/contour through Plotly and write PNG + spec sidecar."""
     from weather_skills_core.plot_compile import compile_figure
     from weather_skills_core.plot_export import write_plot_outputs
     from weather_skills_core.plot_style import deep_merge
@@ -3308,6 +3312,9 @@ def _render_plotly_plot(
         output,
         datasets=datasets,
         dump_spec_path=spec_dest,
+        html_path=html_path,
+        plotly_json_path=plotly_json_path,
+        include_plotly_data=include_plotly_data,
     )
 
 
@@ -3563,6 +3570,21 @@ def _render_plotly_plot(
     default=None,
     help="Where to write the resolved plot spec. Default: <output-stem>.plot.json. Use '-' for stdout, 'none' to skip.",
 )
+@weather_skill.argument(
+    "--html",
+    default=None,
+    help="Also write interactive HTML (unstamped sidecar). Pass --output *.html to stamp HTML as the canonical artifact.",
+)
+@weather_skill.argument(
+    "--export-plotly-json",
+    default=None,
+    help="Write Plotly figure JSON (layout + trace types; no heatmap z unless --export-plotly-json-data).",
+)
+@weather_skill.argument(
+    "--export-plotly-json-data",
+    action="store_true",
+    help="Include trace data arrays in --export-plotly-json (large).",
+)
 def plot(
     ds,
     bbox,
@@ -3604,6 +3626,9 @@ def plot(
     style_file=None,
     plotly_patch=None,
     dump_spec=None,
+    html=None,
+    export_plotly_json=None,
+    export_plotly_json_data=False,
     **kwargs,
 ):
     """Render a heatmap, contour, timeseries, xy scatter, wind-rose, quiver, or layered map PNG from weather-skills Zarrs."""
@@ -3714,6 +3739,9 @@ def plot(
             plotly_patch=plotly_patch,
             dump_spec_path=dump_spec,
             output=output,
+            html_path=html,
+            plotly_json_path=export_plotly_json,
+            include_plotly_data=export_plotly_json_data,
         )
 
     import matplotlib

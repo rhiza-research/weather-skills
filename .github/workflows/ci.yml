@@ -37,6 +37,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --group dev
+      - uses: browser-actions/setup-chrome@v2
       - run: uv run pytest
 
   discover:
