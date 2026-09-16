@@ -32,15 +32,11 @@ from weather_skills_core.figure import (
     format_plot_date_range,
     parse_figsize,
 )
-from weather_skills_core.standard_utils import (
-    ensure_normalized_longitude,
-    lat_slice,
-    polygon_from_geojson,
-)
+from weather_skills_core.plot_compile import extent_from_da, slice_bbox_mask
+from weather_skills_core.plot_style import aggregation_days
+from weather_skills_core.standard_utils import polygon_from_geojson
 from weather_skills_core.units import (
-    classify_variable,
     format_units_for_display,
-    parse_aggregation_period,
     precip_for_display,
     to_standard_units,
     units_equal,
@@ -50,60 +46,17 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.3"
 
+_aggregation_days = aggregation_days
+_extent_from_da = extent_from_da
+_slice_bbox_mask = slice_bbox_mask
+
 _VERIFY_VARS = {
     "hits": "event_hit",
     "bias": "bias",
     "mae": "mae",
 }
-
-# CHIRPS-GEFS / Early Warning eXplorer rainfall-total classes (mm).
-# Under (<2) is white; over (>2500) is pale pink.
-PRECIP_COLORS = [
-    "#ffffff",
-    "#c7ffbb",
-    "#75f676",
-    "#1bb61d",
-    "#b8edfb",
-    "#50a5f8",
-    "#1e6eec",
-    "#dcdcff",
-    "#a08bff",
-    "#7060de",
-    "#fff8ad",
-    "#ff9d00",
-    "#ff1400",
-    "#a30005",
-    "#e58d8b",
-    "#ffe5e4",
-]
-PRECIP_BOUNDS = [2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]
-# Sub-pentad / daily totals (< 5 day aggregation): same colors, lower breaks.
-PRECIP_SHORT_BOUNDS = [0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30, 50, 75, 100, 150, 200]
-PRECIP_LONG_MIN_DAYS = 5
-# KMD-style water fill (Lake Victoria, Turkana, …) drawn on top of the heatmap.
-_LAKE_FACECOLOR = "#4da6ff"
 _ROW_FALLBACKS = ("Observation", "Forecast", "Verification")
 _METRIC_ROW_LABELS = {"hits": "Hits", "bias": "Bias", "mae": "MAE"}
-
-# CHIRPS-GEFS / Early Warning eXplorer rainfall-anomaly classes (mm).
-PRECIP_ANOMALY_COLORS = [
-    "#c00006",
-    "#ff3300",
-    "#ff9d00",
-    "#ffe772",
-    "#7a5044",
-    "#b68c80",
-    "#f2dcd1",
-    "#ffffff",
-    "#c7ffbb",
-    "#75f676",
-    "#1bb61c",
-    "#9bd1f5",
-    "#2583f5",
-    "#dcdcff",
-    "#8070ee",
-]
-PRECIP_ANOMALY_BOUNDS = [-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]
 
 
 def _metric_from_verify(ds, role: str) -> str:
@@ -186,26 +139,6 @@ def _require_same_grid(left, right, left_role, right_role) -> None:
             "with --reference-grid <forecast.zarr> (match obs to the forecast "
             "resolution, not the reverse)."
         )
-
-
-def _parse_colormap(spec):
-    if spec is None or "," not in spec:
-        return spec
-    from matplotlib.colors import LinearSegmentedColormap
-
-    parts = [p.strip() for p in spec.split(",") if p.strip()]
-    return LinearSegmentedColormap.from_list("custom", parts)
-
-
-def _aggregation_days(da):
-    """Return stamped ``aggregation_period`` in days, or None."""
-    period = da.attrs.get("aggregation_period")
-    if not (isinstance(period, str) and period.strip()):
-        return None
-    try:
-        return float(parse_aggregation_period(period).to("day").magnitude)
-    except UsageError:
-        return None
 
 
 def _coord_as_date(val, *, units=None, calendar=None):
@@ -294,75 +227,6 @@ def _verifying_week_title(da, ds=None):
     return format_plot_date_range(start, end)
 
 
-def _precip_scale(da=None):
-    """Discrete CHIRPS-GEFS rainfall-total classes with under/over colors.
-
-    Periods shorter than ``PRECIP_LONG_MIN_DAYS`` use ``PRECIP_SHORT_BOUNDS``;
-    longer (or unknown) periods use the dekadal-style ``PRECIP_BOUNDS``.
-    """
-    from matplotlib.colors import BoundaryNorm, ListedColormap
-
-    days = _aggregation_days(da) if da is not None else None
-    short = days is not None and days < PRECIP_LONG_MIN_DAYS
-    colors = PRECIP_COLORS
-    bounds = PRECIP_SHORT_BOUNDS if short else PRECIP_BOUNDS
-    name = "chirps_short" if short else "chirps_total"
-    cmap = ListedColormap(colors[1:-1], name=name)
-    cmap.set_under(colors[0])
-    cmap.set_over(colors[-1])
-    return cmap, BoundaryNorm(bounds, ncolors=cmap.N, clip=False)
-
-
-def _is_precip_anomaly(da):
-    """True when precip looks like an anomaly (negatives or 'anomal' in name)."""
-    import numpy as np
-
-    name = f"{da.name or ''} {da.attrs.get('long_name', '')}".lower()
-    if "anomal" in name:
-        return True
-    try:
-        vmin = float(np.nanmin(np.asarray(da.values, dtype=float)))
-    except (TypeError, ValueError):
-        return False
-    return np.isfinite(vmin) and vmin < 0
-
-
-def _precip_anomaly_scale():
-    from matplotlib.colors import BoundaryNorm, ListedColormap
-
-    colors = PRECIP_ANOMALY_COLORS
-    cmap = ListedColormap(colors[1:-1], name="chirps_anom")
-    cmap.set_under(colors[0])
-    cmap.set_over(colors[-1])
-    return cmap, BoundaryNorm(PRECIP_ANOMALY_BOUNDS, ncolors=cmap.N, clip=False)
-
-
-def _heatmap_scale(da, colormap):
-    if colormap:
-        return _parse_colormap(colormap), None
-    kind = classify_variable(
-        da.name or "",
-        units=variable_units(da),
-        standard_name=da.attrs.get("standard_name"),
-    )
-    if kind in ("precip", "precip_amount"):
-        if _is_precip_anomaly(da):
-            return _precip_anomaly_scale()
-        return _precip_scale(da)
-    return "viridis", None
-
-
-def _cbar_boundary_kwargs(norm, cmap=None):
-    from matplotlib.colors import BoundaryNorm
-
-    if not isinstance(norm, BoundaryNorm):
-        return {}
-    kw = {"spacing": "uniform", "ticks": list(norm.boundaries)}
-    if getattr(cmap, "name", None) in ("chirps_anom", "chirps_total", "chirps_short"):
-        kw["extend"] = "both"
-    return kw
-
-
 def _lead_week_number(label):
     """Week index from a lead title, or None if the label has no week number."""
     import re
@@ -395,163 +259,12 @@ def _order_week1_first(leads, forecasts, verify_sets, labels=None):
     return leads, forecasts, verify_sets, labels
 
 
-def _verify_figure_layout(fig, n_cols):
-    """Two tight map rows plus a long value colorbar and a shorter verify bar."""
-    outer = fig.add_gridspec(
-        2,
-        1,
-        height_ratios=[1.0, 0.07],
-        hspace=0.08,
-        left=0.05,
-        right=0.99,
-        top=0.90,
-        bottom=0.10,
-    )
-    map_gs = outer[0].subgridspec(2, n_cols, hspace=0.05, wspace=0.04)
-    # Value bar is long enough for every discrete class tick; verify bar is shorter.
-    cbar_gs = outer[1].subgridspec(
-        1,
-        5,
-        width_ratios=[0.04, 2.6, 0.14, 1.0, 0.04],
-        wspace=0.10,
-    )
-    field_cax = fig.add_subplot(cbar_gs[0, 1])
-    verify_cax = fig.add_subplot(cbar_gs[0, 3])
-    return map_gs, field_cax, verify_cax
-
-
-def _add_horizontal_colorbar(fig, mappable, cax, label="", **kwargs):
-    if mappable is None:
-        cax.set_visible(False)
-        return None
-    ticks = kwargs.get("ticks")
-    cbar = fig.colorbar(mappable, cax=cax, orientation="horizontal", **kwargs)
-    if label:
-        cbar.set_label(label)
-    if ticks is not None:
-        tick_list = list(ticks)
-        labels = []
-        for t in tick_list:
-            try:
-                number = float(t)
-            except (TypeError, ValueError):
-                labels.append(str(t))
-                continue
-            labels.append(
-                str(int(round(number))) if abs(number - round(number)) < 1e-9 else f"{number:g}"
-            )
-        cbar.set_ticks(tick_list)
-        cbar.set_ticklabels(labels)
-    return cbar
-
-
-def _map_panel_inches(extent, *, base_height=3.8):
-    lon_min, lon_max, lat_min, lat_max = (float(v) for v in extent)
-    lat_range = abs(lat_max - lat_min)
-    lon_range = abs(lon_max - lon_min)
-    if lat_range < 1e-6 or lon_range < 1e-6:
-        return base_height, base_height
-    height = base_height
-    width = height * lon_range / lat_range
-    return max(width, 2.0), height
-
-
 def _variable_label(da):
     name = da.attrs.get("long_name") or da.attrs.get("GRIB_name") or da.name or "value"
     units = format_units_for_display(variable_units(da) or da.attrs.get("units"))
     if units:
         return f"{name} [{units}]"
     return str(name)
-
-
-def _hits_scale():
-    import numpy as np
-    from matplotlib.colors import BoundaryNorm, ListedColormap
-
-    values = np.array([-1.0, 0.0, 1.0])
-    colors = ["#d73027", "#f0f0f0", "#1a9850"]
-    mids = (values[:-1] + values[1:]) / 2.0
-    bounds = np.concatenate(([values[0] - 0.5], mids, [values[-1] + 0.5]))
-    cmap = ListedColormap(colors)
-    return cmap, BoundaryNorm(bounds, cmap.N), ["disagree", "below", "hit"]
-
-
-# ColorBrewer RdBu-style stops with a true white center (bias) / white→warm (MAE).
-_ERROR_DIVERGING_COLORS = [
-    "#053061",
-    "#2166ac",
-    "#4393c3",
-    "#92c5de",
-    "#d1e5f0",
-    "#ffffff",
-    "#fddbc7",
-    "#f4a582",
-    "#d6604d",
-    "#b2182b",
-    "#67001f",
-]
-_MAE_FROM_WHITE_COLORS = [
-    "#ffffff",
-    "#fddbc7",
-    "#f4a582",
-    "#d6604d",
-    "#b2182b",
-    "#67001f",
-]
-
-
-def _bias_diverging_cmap():
-    from matplotlib.colors import LinearSegmentedColormap
-
-    return LinearSegmentedColormap.from_list("verify_bias", _ERROR_DIVERGING_COLORS)
-
-
-def _mae_from_white_cmap():
-    """Non-negative MAE: white at zero, warm colors for larger error."""
-    from matplotlib.colors import LinearSegmentedColormap
-
-    return LinearSegmentedColormap.from_list("verify_mae", _MAE_FROM_WHITE_COLORS)
-
-
-def _error_scale(da, metric):
-    """Colormap / norm for bias (diverging, white at 0) or MAE (white→warm)."""
-    import numpy as np
-    from matplotlib.colors import TwoSlopeNorm
-
-    vals = np.asarray(da.values, dtype=float)
-    finite = vals[np.isfinite(vals)]
-    if finite.size == 0:
-        if metric == "bias":
-            return (
-                _bias_diverging_cmap(),
-                TwoSlopeNorm(vcenter=0.0, vmin=-1.0, vmax=1.0),
-                None,
-                None,
-            )
-        return _mae_from_white_cmap(), None, 0.0, 1.0
-
-    if metric == "bias":
-        cmap = _bias_diverging_cmap()
-        vmin = float(np.min(finite))
-        vmax = float(np.max(finite))
-        if vmin == vmax:
-            pad = abs(vmin) * 0.05 if vmin != 0 else 1.0
-            vmin, vmax = vmin - pad, vmax + pad
-        # Keep 0 in range so white lands on zero even for one-sided fields.
-        if vmin > 0:
-            vmin = 0.0
-        if vmax < 0:
-            vmax = 0.0
-        if vmin >= 0 or vmax <= 0:
-            m = max(abs(vmin), abs(vmax), 1e-6)
-            vmin, vmax = -m, m
-        return cmap, TwoSlopeNorm(vcenter=0.0, vmin=vmin, vmax=vmax), None, None
-
-    cmap = _mae_from_white_cmap()
-    vmax = float(np.max(finite))
-    if not np.isfinite(vmax) or vmax <= 0:
-        vmax = 1.0
-    return cmap, None, 0.0, vmax
 
 
 def _lat_lon(da, role):
@@ -581,67 +294,6 @@ def _squeeze_map(da, role):
             )
         da = da.squeeze(dim, drop=True)
     return da
-
-
-def _slice_bbox_mask(da, lat_dim, lon_dim, bbox, polygon, label):
-    import numpy as np
-    import xarray as xr
-
-    if bbox is None and polygon is None:
-        return da
-    da = ensure_normalized_longitude(da, lon_dim)
-    if bbox is not None:
-        r_n, r_w, r_s, r_e = bbox
-        da = da.sel({lat_dim: lat_slice(da[lat_dim].values, r_n, r_s)})
-        if r_w > r_e:
-            da = da.where((da[lon_dim] >= r_w) | (da[lon_dim] <= r_e), drop=True)
-        else:
-            da = da.sel({lon_dim: slice(r_w, r_e)})
-    if polygon is not None:
-        import shapely
-
-        lon_grid, lat_grid = np.meshgrid(da[lon_dim].values, da[lat_dim].values)
-        mask = shapely.contains_xy(polygon, lon_grid, lat_grid)
-        if not bool(mask.any()):
-            print(
-                f"Warning: --mask-geojson polygon does not intersect {label}; "
-                "its panels will be entirely empty.",
-                file=sys.stderr,
-            )
-        da = da.where(xr.DataArray(mask, dims=(lat_dim, lon_dim)))
-    if bbox is not None:
-        r_n, r_w, r_s, r_e = bbox
-        if r_w > r_e:
-            da = da.assign_coords({lon_dim: ((da[lon_dim] - r_w) % 360.0) + r_w}).sortby(lon_dim)
-    if da.sizes.get(lat_dim, 0) == 0 or da.sizes.get(lon_dim, 0) == 0:
-        raise UsageError(
-            f"selection produced an empty grid on {label} "
-            "(no cells remain after --bbox/--mask-geojson); nothing to plot."
-        )
-    return da
-
-
-def _extent_from_da(da, lat_dim, lon_dim, bbox):
-    import numpy as np
-
-    if bbox is not None:
-        r_n, r_w, r_s, r_e = bbox
-        if r_w > r_e:
-            return [float(r_w), float(r_e) + 360.0, float(r_s), float(r_n)]
-        return [float(r_w), float(r_e), float(r_s), float(r_n)]
-    lat_vals = np.asarray(da[lat_dim].values)
-    lon_vals = np.asarray(da[lon_dim].values)
-    dlat = float(np.abs(np.diff(np.sort(lat_vals))).mean()) if lat_vals.size > 1 else 0.0
-    dlon = float(np.abs(np.diff(np.sort(lon_vals))).mean()) if lon_vals.size > 1 else 0.0
-    lon_min = float(lon_vals.min()) - dlon / 2
-    lon_max = float(lon_vals.max()) + dlon / 2
-    lat_min = float(lat_vals.min()) - dlat / 2
-    lat_max = float(lat_vals.max()) + dlat / 2
-    # Half-cell padding on a wrapped global lon axis is a 360° span whose
-    # endpoints are the same meridian; Cartopy then collapses to a sliver.
-    if lon_max - lon_min >= 360.0 - 1e-6:
-        lon_min, lon_max = -180.0, 180.0
-    return [lon_min, lon_max, max(lat_min, -90.0), min(lat_max, 90.0)]
 
 
 def _pick_variable(ds, variable, role):

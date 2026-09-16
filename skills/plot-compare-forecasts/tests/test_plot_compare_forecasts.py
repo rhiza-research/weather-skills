@@ -190,54 +190,49 @@ def test_forecast_and_obs_share_valid_times(tmp_path, plot_fn, plot_mod):
     assert out.stat().st_size > 0
 
 
-def test_precip_default_colormap_is_discrete_chirps_total_palette(plot_mod):
-    from matplotlib.colors import BoundaryNorm, ListedColormap
+def test_precip_default_colormap_is_discrete_chirps_total_palette():
+    from weather_skills_core.plot_style import (
+        PRECIP_BOUNDS,
+        PRECIP_SHORT_BOUNDS,
+        resolve_colorscale,
+    )
 
     da = make_forecast()["tp"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
-    cmap, norm = plot_mod._heatmap_scale(da, None)
-    assert isinstance(cmap, ListedColormap)
-    assert cmap.name == "chirps_total"
-    assert cmap.N == 14
-    assert isinstance(norm, BoundaryNorm)
-    assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_BOUNDS)
+    scale = resolve_colorscale(da, None)
+    assert scale["name"] == "chirps_total"
+    assert scale["bounds"] == pytest.approx(PRECIP_BOUNDS)
 
     da.attrs["aggregation_period"] = "1 day"
-    cmap_short, norm_short = plot_mod._heatmap_scale(da, None)
-    assert cmap_short.name == "chirps_short"
-    assert list(norm_short.boundaries) == pytest.approx(plot_mod.PRECIP_SHORT_BOUNDS)
+    scale_short = resolve_colorscale(da, None)
+    assert scale_short["name"] == "chirps_short"
+    assert scale_short["bounds"] == pytest.approx(PRECIP_SHORT_BOUNDS)
 
     t2m = make_gridded(name="t2m")["t2m"]
     t2m.attrs.update(units="degree_Celsius", standard_name="air_temperature")
-    cmap_t, norm_t = plot_mod._heatmap_scale(t2m, None)
-    assert cmap_t == "viridis"
-    assert norm_t is None
+    scale_t = resolve_colorscale(t2m, None)
+    assert scale_t["name"] == "viridis"
+    assert scale_t.get("bounds") is None
 
 
-def test_precip_anomaly_colormap_is_chirps_palette(plot_mod):
-    from matplotlib.colors import BoundaryNorm, ListedColormap
+def test_precip_anomaly_colormap_is_chirps_palette():
+    from weather_skills_core.plot_style import PRECIP_ANOMALY_BOUNDS, resolve_colorscale
 
     da = make_gridded(fill=-25.0)["precip"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
-    cmap, norm = plot_mod._heatmap_scale(da, None)
-    assert isinstance(cmap, ListedColormap)
-    assert cmap.name == "chirps_anom"
-    assert isinstance(norm, BoundaryNorm)
-    assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_ANOMALY_BOUNDS)
+    scale = resolve_colorscale(da, None)
+    assert scale["name"] == "chirps_anom"
+    assert scale["bounds"] == pytest.approx(PRECIP_ANOMALY_BOUNDS)
 
 
-def test_lakes_are_filled_blue(plot_mod):
-    assert plot_mod._LAKE_FACECOLOR == "#4da6ff"
-
-
-def test_heatmap_scale_stretch_drops_precip_boundary_norm(plot_mod):
-    from matplotlib.colors import LinearSegmentedColormap
+def test_heatmap_scale_stretch_drops_precip_boundary_norm():
+    from weather_skills_core.plot_style import resolve_colorscale
 
     da = make_forecast()["tp"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
-    cmap, norm = plot_mod._heatmap_scale(da, None, stretch=True)
-    assert isinstance(cmap, LinearSegmentedColormap)
-    assert norm is None
+    scale = resolve_colorscale(da, None, stretch=True)
+    assert scale.get("bounds") is None
+    assert scale["name"] == "chirps_total"
 
 
 def test_vmin_vmax_writes_png_and_stamps_history(tmp_path, plot_fn):

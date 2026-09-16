@@ -25,9 +25,11 @@ from weather_skills_core.cf import auto_variable
 from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
 from weather_skills_core.figure import (
     DEFAULT_FONTSIZE,
-    apply_date_ticks,
     format_plot_date,
+    is_datetime_axis,
     parse_figsize,
+    resolve_axis_label,
+    resolve_time_axis_label,
 )
 from weather_skills_core.standard_dataset import ALIASES, names_for
 from weather_skills_core.standard_utils import pick_time_dim
@@ -42,65 +44,9 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-
-def _axis_label(text):
-    """Sentence-case an axis label; map lon/lat shorthand to Longitude/Latitude."""
-    if text is None:
-        return text
-    s = str(text).strip()
-    if not s:
-        return s
-    known = {
-        "lon": "Longitude",
-        "lat": "Latitude",
-        "longitude": "Longitude",
-        "latitude": "Latitude",
-        "valid time": "Valid time",
-        "calendar day": "Calendar day",
-        "time": "Time",
-        "step": "Step",
-        "forecast step": "Forecast step",
-    }
-    key = s.lower()
-    if key in known:
-        return known[key]
-    if s[:1].islower():
-        return s[:1].upper() + s[1:]
-    return s
-
-
-def _resolve_axis_label(override, default):
-    """Use ``override`` verbatim when set; otherwise sentence-case ``default``."""
-    if override is not None and str(override).strip() != "":
-        return str(override)
-    return _axis_label(default)
-
-
-def _is_datetime_axis(values):
-    """True when ``values`` are matplotlib-date ticks (datetime64 or cftime)."""
-    import numpy as np
-
-    arr = np.asarray(values)
-    if arr.dtype.kind == "M":
-        return True
-    if arr.size == 0:
-        return False
-    first = arr.reshape(-1)[0]
-    return hasattr(first, "year") and hasattr(first, "month")
-
-
-def _resolve_time_axis_label(override, default, values):
-    """Axis label for a 1D time axis. Datetime ticks already name the axis."""
-    if override is not None and str(override).strip() != "":
-        return str(override)
-    if _is_datetime_axis(values):
-        return ""
-    return _axis_label(default)
-
-
-def _apply_date_ticks(ax) -> None:
-    """Show datetime x ticks as ``14 Sept '26``, never midnight timestamps."""
-    apply_date_ticks(ax)
+_is_datetime_axis = is_datetime_axis
+_resolve_axis_label = resolve_axis_label
+_resolve_time_axis_label = resolve_time_axis_label
 
 
 def _size1_str(ds, *names) -> str | None:
@@ -313,20 +259,6 @@ def _series_kind(style: dict, default: str, yvals=None) -> str:
     return kind
 
 
-def _line_kwargs(style: dict, *, ensemble: bool = False) -> dict:
-    defaults = (
-        {"marker": "None", "linewidth": 0.8, "alpha": 0.4}
-        if ensemble
-        else {"marker": "o", "markersize": 5}
-    )
-    kw = {**defaults, **{k: v for k, v in style.items() if k != "style"}}
-    marker = kw.get("marker")
-    if isinstance(marker, str) and marker.casefold() in {"none", "null"}:
-        kw["marker"] = "None"
-        kw.pop("markersize", None)
-    return kw
-
-
 def _along_dim(da, along: str | None) -> str | None:
     """Resolve ``--along`` to a dim on ``da``, including ontology aliases (member/number)."""
     if not along:
@@ -337,25 +269,6 @@ def _along_dim(da, along: str | None) -> str | None:
     return next((name for name in names_for(preferred) if name in da.dims), None)
 
 
-def _plot_line(ax, xvals, yvals, label, style):
-    """Draw one series. 2D ``yvals`` (time × along) is one matplotlib call, one legend entry."""
-    import numpy as np
-
-    y = np.asarray(yvals)
-    if y.ndim > 2:
-        raise UsageError("timeseries y-values have more than 2 dims after reduce/--along")
-    ensemble = y.ndim == 2
-    kw = _line_kwargs(style, ensemble=ensemble)
-    if not ensemble:
-        ax.plot(xvals, y, label=label, **kw)
-        return
-    if "color" not in kw:
-        kw["color"] = ax._get_lines.get_next_color()
-    lines = ax.plot(xvals, y, **kw)
-    if lines:
-        lines[0].set_label(label)
-
-
 def _bar_kwargs(style: dict) -> dict:
     extra = [k for k in style if k in _LINE_ONLY_KEYS]
     if extra:
@@ -364,11 +277,6 @@ def _bar_kwargs(style: dict) -> dict:
             "Use color, alpha, or zorder, or set style=line on this series."
         )
     return {k: v for k, v in style.items() if k in _BAR_KEYS}
-
-
-def _draw_lines(ax, series, styles):
-    for (xvals, yvals, label), style in zip(series, styles, strict=True):
-        _plot_line(ax, xvals, yvals, label, style)
 
 
 def _trace_label(ds, idx: int, override: str | None = None) -> str:
@@ -402,134 +310,6 @@ def _day_of_year_tick_label(doy: float) -> str:
         return format_plot_date(dt.date(2023, 12, 31), year=False)
     date = dt.date(2023, 1, 1) + dt.timedelta(days=day - 1)
     return format_plot_date(date, year=False)
-
-
-def _apply_day_of_year_ticks(ax) -> None:
-    """Label day-of-year x ticks with calendar dates (e.g. 1 Oct, not 274)."""
-    from matplotlib.ticker import FuncFormatter, MaxNLocator
-
-    ax.xaxis.set_major_locator(MaxNLocator(nbins=8, integer=True, min_n_ticks=3))
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _pos: _day_of_year_tick_label(x)))
-
-
-def _numeric_x(xvals):
-    """Map plot x values to a numeric axis; True when they were calendar dates."""
-    import matplotlib.dates as mdates
-    import numpy as np
-
-    x = np.asarray(xvals)
-    if x.dtype.kind == "M":
-        return mdates.date2num(x), True
-    if x.dtype == object:
-        first = next((v for v in x.flat if v is not None), None)
-        if first is not None and hasattr(first, "timetuple"):
-            return np.asarray(mdates.date2num(x), dtype=float), True
-    return np.asarray(x, dtype=float), False
-
-
-def _median_spacing(xnum):
-    import numpy as np
-
-    x = np.sort(np.unique(xnum))
-    if x.size < 2:
-        return 1.0
-    return float(np.median(np.diff(x)))
-
-
-def _draw_bars(ax, series, styles):
-    """Grouped bars on a shared numeric x (dates are converted and restored)."""
-    converted = []
-    any_dates = False
-    for xvals, yvals, label in series:
-        xnum, is_dates = _numeric_x(xvals)
-        any_dates = any_dates or is_dates
-        converted.append((xnum, yvals, label))
-    n = len(converted)
-    group_span = 0.8 * min(_median_spacing(x) for x, _, _ in converted)
-    bar_w = group_span / n
-    for i, (xnum, yvals, label) in enumerate(converted):
-        offset = (i - (n - 1) / 2) * bar_w
-        ax.bar(
-            xnum + offset,
-            yvals,
-            width=bar_w * 0.9,
-            label=label,
-            align="center",
-            **_bar_kwargs(styles[i]),
-        )
-    if any_dates:
-        ax.xaxis_date()
-
-
-def _draw_mixed(ax, series, styles, kinds):
-    """Bars grouped among bar traces only; lines at the un-offset x."""
-    converted = []
-    any_dates = False
-    for (xvals, yvals, label), style, kind in zip(series, styles, kinds, strict=True):
-        xnum, is_dates = _numeric_x(xvals)
-        any_dates = any_dates or is_dates
-        converted.append((kind, xnum, yvals, label, style))
-    n_bars = sum(1 for kind, *_ in converted if kind == "bar")
-    bar_xs = [xnum for kind, xnum, *_ in converted if kind == "bar"]
-    group_span = 0.8 * min(_median_spacing(x) for x in bar_xs)
-    bar_w = group_span / n_bars
-    bar_i = 0
-    for kind, xnum, yvals, label, style in converted:
-        if kind == "bar":
-            offset = (bar_i - (n_bars - 1) / 2) * bar_w
-            ax.bar(
-                xnum + offset,
-                yvals,
-                width=bar_w * 0.9,
-                label=label,
-                align="center",
-                **_bar_kwargs(style),
-            )
-            bar_i += 1
-        else:
-            _plot_line(ax, xnum, yvals, label, style)
-    if any_dates:
-        ax.xaxis_date()
-
-
-def _draw_traces(ax, series, styles, default_style):
-    kinds = [
-        _series_kind(style, default_style, yvals)
-        for (_, yvals, _), style in zip(series, styles, strict=True)
-    ]
-    if all(kind == "bar" for kind in kinds):
-        _draw_bars(ax, series, styles)
-    elif all(kind == "line" for kind in kinds):
-        _draw_lines(ax, series, styles)
-    else:
-        _draw_mixed(ax, series, styles, kinds)
-
-
-def _legend_handles(ax, series):
-    """Legend entries in ``--input`` order (mixed bar/line artists are not)."""
-    handles, labels = ax.get_legend_handles_labels()
-    by_label = dict(zip(labels, handles, strict=True))
-    ordered_labels = [label for _, _, label in series]
-    return [by_label[label] for label in ordered_labels], ordered_labels
-
-
-def _place_legend_below(ax, handles, labels):
-    """Place a figure legend below the axes; constrained layout keeps it on-canvas."""
-    ncols = max(1, min(len(labels), 4))
-    return ax.figure.legend(
-        handles,
-        labels,
-        loc="outside lower center",
-        ncol=ncols,
-        frameon=False,
-    )
-
-
-def _rotate_date_labels(ax) -> None:
-    """Rotate date tick labels without ``subplots_adjust`` (constrained-layout safe)."""
-    for label in ax.get_xticklabels():
-        label.set_ha("right")
-        label.set_rotation(30)
 
 
 @weather_skill(

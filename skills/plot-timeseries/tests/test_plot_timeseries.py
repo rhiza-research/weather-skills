@@ -241,12 +241,12 @@ def test_date_ticks_are_calendar_dates_not_timestamps():
     import matplotlib.dates as mdates
     import matplotlib.pyplot as plt
     import numpy as np
+    from weather_skills_core.figure import apply_date_ticks
 
-    mod = load_skill("plot-timeseries", "plot_timeseries")
     fig, ax = plt.subplots()
     days = mdates.date2num(np.arange("2026-08-05", "2026-09-10", dtype="datetime64[D]"))
     ax.plot(days, np.arange(len(days)))
-    mod._apply_date_ticks(ax)
+    apply_date_ticks(ax)
     fig.canvas.draw()
     labels = [tick.get_text() for tick in ax.get_xticklabels() if tick.get_text()]
     assert labels
@@ -300,22 +300,9 @@ def test_day_of_year_tick_label():
 
 
 def test_apply_day_of_year_ticks(tmp_path, plot_timeseries):
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
     mod = load_skill("plot-timeseries", "plot_timeseries")
-    fig, ax = plt.subplots()
-    ax.plot([1, 180, 274, 365], [1, 2, 3, 4])
-    ax.set_xlim(1, 366)
-    mod._apply_day_of_year_ticks(ax)
-    fig.canvas.draw()
-    labels = [tick.get_text() for tick in ax.get_xticklabels() if tick.get_text()]
-    assert labels
-    assert "274" not in labels
-    assert any(any(ch.isalpha() for ch in label) for label in labels)
-    plt.close(fig)
+    assert mod._day_of_year_tick_label(1) == "1 Jan"
+    assert "Oct" in mod._day_of_year_tick_label(274)
 
     src = write_zarr(make_gridded(n_time=12, start="2023-01-01"), tmp_path / "in.zarr")
     out = tmp_path / "doy.png"
@@ -484,24 +471,17 @@ def test_along_dim_resolves_member_alias():
 
 
 def test_draw_lines_along_is_one_call_one_legend_entry():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
     import numpy as np
+    from weather_skills_core.plot_recipes import compile_line_figure
 
-    mod = load_skill("plot-timeseries", "plot_timeseries")
-    fig, ax = plt.subplots()
     y = np.column_stack([np.arange(4.0), np.arange(4.0) + 1.0, np.arange(4.0) + 2.0])
     series = [([1, 2, 3, 4], y, "ens")]
-    mod._draw_lines(ax, series, [{}])
-    assert len(ax.get_lines()) == 3
-    colors = {line.get_color() for line in ax.get_lines()}
-    assert len(colors) == 1
-    handles, labels = mod._legend_handles(ax, series)
-    assert labels == ["ens"]
-    assert len(handles) == 1
-    plt.close(fig)
+    fig = compile_line_figure(series, styles=[{}])
+    scatters = [t for t in fig.data if t.type == "scatter"]
+    assert len(scatters) == 3
+    assert scatters[0].name == "ens"
+    assert scatters[0].showlegend
+    assert all(not t.showlegend for t in scatters[1:])
 
 
 def test_along_number_writes_png(tmp_path, plot_timeseries):
@@ -650,14 +630,9 @@ def test_along_bar_overlay_writes_png(tmp_path, plot_timeseries):
 
 
 def test_draw_lines_applies_color_and_width():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.colors as mcolors
-    import matplotlib.pyplot as plt
+    from weather_skills_core.plot_recipes import compile_line_figure, plotly_color
 
     mod = load_skill("plot-timeseries", "plot_timeseries")
-    fig, ax = plt.subplots()
     series = [([1, 2], [0.0, 1.0], "chirps_2006"), ([1, 2], [1.0, 2.0], "chirps_2026")]
     styles = mod.resolve_trace_styles(
         ["chirps_2006", "chirps_2026"],
@@ -666,12 +641,11 @@ def test_draw_lines_applies_color_and_width():
             mod.parse_trace("2026:color=black,linewidth=3"),
         ],
     )
-    mod._draw_lines(ax, series, styles)
-    lines = ax.get_lines()
-    assert mcolors.to_hex(lines[0].get_color()) == mcolors.to_hex("0.65")
-    assert mcolors.to_hex(lines[1].get_color()) == "#000000"
-    assert lines[1].get_linewidth() == 3
-    plt.close(fig)
+    fig = compile_line_figure(series, styles=styles)
+    traces = [t for t in fig.data if t.type == "scatter"]
+    assert traces[0].line.color == plotly_color("0.65")
+    assert traces[1].line.color == "black"
+    assert traces[1].line.width == 3
 
 
 def test_trace_writes_png_and_stamps_args(tmp_path, plot_timeseries):
@@ -725,13 +699,9 @@ def test_trace_bar_rejects_linewidth(tmp_path, plot_timeseries):
 
 
 def test_draw_mixed_bars_and_line():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    from weather_skills_core.plot_recipes import compile_line_figure
 
     mod = load_skill("plot-timeseries", "plot_timeseries")
-    fig, ax = plt.subplots()
     series = [
         ([1.0, 2.0, 3.0], [1.0, 2.0, 1.5], "obs"),
         ([1.0, 2.0, 3.0], [0.8, 1.1, 0.9], "clim"),
@@ -740,25 +710,17 @@ def test_draw_mixed_bars_and_line():
         ["obs", "clim"],
         [mod.parse_trace("clim:style=line,linestyle=--,linewidth=2.5,marker=none")],
     )
-    mod._draw_traces(ax, series, styles, "bar")
-    assert len(ax.patches) == 3
-    assert len(ax.get_lines()) == 1
-    line = ax.get_lines()[0]
-    assert line.get_linestyle() == "--"
-    assert line.get_linewidth() == 2.5
-    handles, labels = mod._legend_handles(ax, series)
-    assert labels == ["obs", "clim"]
-    assert handles[1] is line
-    plt.close(fig)
+    fig = compile_line_figure(series, kinds=["bar", "line"], styles=styles)
+    types = [t.type for t in fig.data]
+    assert types == ["bar", "scatter"]
+    assert fig.data[0].name == "obs"
+    assert fig.data[1].name == "clim"
+    assert fig.data[1].line.width == 2.5
 
 
 def test_place_legend_below_axis():
-    import matplotlib
+    from weather_skills_core.plot_recipes import compile_line_figure
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    mod = load_skill("plot-timeseries", "plot_timeseries")
     labels = [
         "2006 (analog)",
         "2015 (analog)",
@@ -768,22 +730,10 @@ def test_place_legend_below_axis():
         "2026 ECMWF S2S members",
         "ECMWF S2S ensemble mean",
     ]
-    fig, ax = plt.subplots(figsize=(16, 9), layout="constrained")
-    series = []
-    for i, label in enumerate(labels):
-        y = [1.0 + 0.1 * i, 2.0 + 0.1 * i]
-        ax.plot([1, 2], y, label=label)
-        series.append(([1, 2], y, label))
-    handles, legend_labels = mod._legend_handles(ax, series)
-    legend = mod._place_legend_below(ax, handles, legend_labels)
-    fig.canvas.draw()
-    renderer = fig.canvas.get_renderer()
-    legend_bbox = legend.get_window_extent(renderer)
-    fig_bbox = fig.bbox
-    assert legend_bbox.y0 >= fig_bbox.y0 - 1
-    assert legend_bbox.y1 <= fig_bbox.y1 + 1
-    assert legend_bbox.y1 < ax.get_window_extent(renderer).y0
-    plt.close(fig)
+    series = [([1, 2], [1.0 + 0.1 * i, 2.0 + 0.1 * i], label) for i, label in enumerate(labels)]
+    fig = compile_line_figure(series, figsize=(16, 9))
+    assert fig.layout.legend.orientation == "h"
+    assert fig.layout.legend.y < 0
 
 
 def test_trace_per_series_style_bar_plus_line(tmp_path, plot_timeseries):

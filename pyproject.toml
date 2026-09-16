@@ -30,7 +30,6 @@ dev = [
     "xarray-regrid",
     "matplotlib>=3.8,<3.10",
     "plotly>=6",
-    "kaleido>=1",
     "cartopy",
     "nc-time-axis",
     "pillow",

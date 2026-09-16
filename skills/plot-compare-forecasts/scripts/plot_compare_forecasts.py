@@ -24,21 +24,21 @@ import sys
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
 from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
-from weather_skills_core.figure import (
-    DEFAULT_FONTSIZE,
-    format_plot_date,
-    format_plot_date_range,
-    parse_figsize,
+from weather_skills_core.figure import DEFAULT_FONTSIZE, axis_label, parse_figsize
+from weather_skills_core.plot_compile import (
+    axis_kind,
+    extent_from_da,
+    format_calendar_panel,
+    format_step,
+    is_cftime_axis,
+    slice_bbox_mask,
 )
+from weather_skills_core.plot_style import is_precip_anomaly
 from weather_skills_core.standard_utils import (
-    ensure_normalized_longitude,
-    lat_slice,
     pick_time_dim,
     polygon_from_geojson,
 )
 from weather_skills_core.units import (
-    classify_variable,
-    parse_aggregation_period,
     precip_for_display,
     to_standard_units,
     units_equal,
@@ -49,166 +49,15 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-
-# CHIRPS-GEFS / Early Warning eXplorer rainfall-total classes (mm).
-# Under (<2) is white; over (>2500) is pale pink.
-PRECIP_COLORS = [
-    "#ffffff",
-    "#c7ffbb",
-    "#75f676",
-    "#1bb61d",
-    "#b8edfb",
-    "#50a5f8",
-    "#1e6eec",
-    "#dcdcff",
-    "#a08bff",
-    "#7060de",
-    "#fff8ad",
-    "#ff9d00",
-    "#ff1400",
-    "#a30005",
-    "#e58d8b",
-    "#ffe5e4",
-]
-PRECIP_BOUNDS = [2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]
-# Sub-pentad / daily totals (< 5 day aggregation): same colors, lower breaks.
-PRECIP_SHORT_BOUNDS = [0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30, 50, 75, 100, 150, 200]
-PRECIP_LONG_MIN_DAYS = 5
-# KMD-style water fill (Lake Victoria, Turkana, …) drawn on top of the heatmap.
-_LAKE_FACECOLOR = "#4da6ff"
-
-# CHIRPS-GEFS / Early Warning eXplorer rainfall-anomaly classes (mm).
-PRECIP_ANOMALY_COLORS = [
-    "#c00006",
-    "#ff3300",
-    "#ff9d00",
-    "#ffe772",
-    "#7a5044",
-    "#b68c80",
-    "#f2dcd1",
-    "#ffffff",
-    "#c7ffbb",
-    "#75f676",
-    "#1bb61c",
-    "#9bd1f5",
-    "#2583f5",
-    "#dcdcff",
-    "#8070ee",
-]
-PRECIP_ANOMALY_BOUNDS = [-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]
-
-
-def _axis_label(text):
-    """Sentence-case an axis label; map lon/lat shorthand to Longitude/Latitude."""
-    if text is None:
-        return text
-    s = str(text).strip()
-    if not s:
-        return s
-    known = {
-        "lon": "Longitude",
-        "lat": "Latitude",
-        "longitude": "Longitude",
-        "latitude": "Latitude",
-        "valid time": "Valid time",
-        "calendar day": "Calendar day",
-        "time": "Time",
-        "step": "Step",
-        "forecast step": "Forecast step",
-    }
-    key = s.lower()
-    if key in known:
-        return known[key]
-    if s[:1].islower():
-        return s[:1].upper() + s[1:]
-    return s
-
+_axis_kind = axis_kind
+_axis_label = axis_label
+_extent_from_da = extent_from_da
+_is_cftime_axis = is_cftime_axis
+_is_precip_anomaly = is_precip_anomaly
+_slice_bbox_mask = slice_bbox_mask
 
 _NS_PER_DAY = 86_400_000_000_000
 _TOL_NS = 1_000_000_000  # 1 s, matching plot-compare
-
-
-def _parse_colormap(spec):
-    if spec is None or "," not in spec:
-        return spec
-    from matplotlib.colors import LinearSegmentedColormap
-
-    parts = [p.strip() for p in spec.split(",") if p.strip()]
-    return LinearSegmentedColormap.from_list("custom", parts)
-
-
-def _aggregation_days(da):
-    """Return stamped ``aggregation_period`` in days, or None."""
-    period = da.attrs.get("aggregation_period")
-    if not (isinstance(period, str) and period.strip()):
-        return None
-    try:
-        return float(parse_aggregation_period(period).to("day").magnitude)
-    except UsageError:
-        return None
-
-
-def _precip_scale(da=None):
-    """Discrete CHIRPS-GEFS rainfall-total classes with under/over colors.
-
-    Periods shorter than ``PRECIP_LONG_MIN_DAYS`` use ``PRECIP_SHORT_BOUNDS``;
-    longer (or unknown) periods use the dekadal-style ``PRECIP_BOUNDS``.
-    """
-    from matplotlib.colors import BoundaryNorm, ListedColormap
-
-    days = _aggregation_days(da) if da is not None else None
-    short = days is not None and days < PRECIP_LONG_MIN_DAYS
-    colors = PRECIP_COLORS
-    bounds = PRECIP_SHORT_BOUNDS if short else PRECIP_BOUNDS
-    name = "chirps_short" if short else "chirps_total"
-    cmap = ListedColormap(colors[1:-1], name=name)
-    cmap.set_under(colors[0])
-    cmap.set_over(colors[-1])
-    return cmap, BoundaryNorm(bounds, ncolors=cmap.N, clip=False)
-
-
-def _is_precip_anomaly(da):
-    """True when precip looks like an anomaly (negatives or 'anomal' in name)."""
-    import numpy as np
-
-    name = f"{da.name or ''} {da.attrs.get('long_name', '')}".lower()
-    if "anomal" in name:
-        return True
-    try:
-        vmin = float(np.nanmin(np.asarray(da.values, dtype=float)))
-    except (TypeError, ValueError):
-        return False
-    return np.isfinite(vmin) and vmin < 0
-
-
-def _precip_anomaly_scale():
-    """Discrete CHIRPS-GEFS rainfall-anomaly classes with under/over colors."""
-    from matplotlib.colors import BoundaryNorm, ListedColormap
-
-    colors = PRECIP_ANOMALY_COLORS
-    cmap = ListedColormap(colors[1:-1], name="chirps_anom")
-    cmap.set_under(colors[0])
-    cmap.set_over(colors[-1])
-    return cmap, BoundaryNorm(PRECIP_ANOMALY_BOUNDS, ncolors=cmap.N, clip=False)
-
-
-def _heatmap_scale(da, colormap, *, stretch=False):
-    """Return ``(cmap, norm)``. ``norm`` is set for the default precip scale."""
-    if colormap:
-        return _parse_colormap(colormap), None
-    kind = classify_variable(
-        da.name or "",
-        units=variable_units(da),
-        standard_name=da.attrs.get("standard_name"),
-    )
-    if kind in ("precip", "precip_amount"):
-        if stretch:
-            colors = PRECIP_ANOMALY_COLORS if _is_precip_anomaly(da) else PRECIP_COLORS
-            return _parse_colormap(",".join(colors)), None
-        if _is_precip_anomaly(da):
-            return _precip_anomaly_scale()
-        return _precip_scale(da)
-    return "viridis", None
 
 
 def _resolve_color_limits(vmin=None, vmax=None, *, data_min=None, data_max=None):
@@ -233,80 +82,21 @@ def _resolve_color_limits(vmin=None, vmax=None, *, data_min=None, data_max=None)
     return lo, hi
 
 
-def _cbar_boundary_kwargs(norm, cmap=None):
-    from matplotlib.colors import BoundaryNorm
-
-    if not isinstance(norm, BoundaryNorm):
-        return {}
-    kw = {"spacing": "uniform", "ticks": list(norm.boundaries)}
-    if getattr(cmap, "name", None) in ("chirps_anom", "chirps_total", "chirps_short"):
-        kw["extend"] = "both"
-    return kw
-
-
-def _variable_label(da):
-    return variable_label_for_display(da)
-
-
-def _is_cftime_axis(values):
-    import numpy as np
-
-    arr = np.asarray(values)
-    return (
-        getattr(arr.dtype, "kind", None) == "O"
-        and arr.size > 0
-        and hasattr(arr.flat[0], "calendar")
-    )
-
-
-def _axis_kind(values):
-    kind = getattr(values.dtype, "kind", None)
-    if kind == "M":
-        return "datetime"
-    if kind == "m":
-        return "timedelta"
-    if _is_cftime_axis(values):
-        return "datetime"
-    return None
-
-
 def _format_lead(step_value):
     import numpy as np
 
     arr = np.asarray(step_value)
     if arr.dtype.kind != "m":
         return None
-    days = int(arr.astype("timedelta64[D]").astype(int))
-    return f"+{days}d"
+    return format_step(step_value)
 
 
 def _format_column_title(t, bin_width_ns):
     """``14 Sept '26``, or a left-edge range when median spacing is ≥ 2 days."""
-    import numpy as np
-
-    use_range = bin_width_ns is not None and bin_width_ns >= 2 * _NS_PER_DAY
     width = None
-    if use_range:
-        width = _dt.timedelta(microseconds=int(bin_width_ns // 1000))
-
-    if hasattr(t, "calendar"):
-        if width is None:
-            return format_plot_date(t)
-        try:
-            end = t + width - _dt.timedelta(days=1)
-        except (TypeError, ValueError):
-            return format_plot_date(t)
-        return format_plot_date_range(t, end)
-
-    start = np.asarray(t).astype("datetime64[D]")
-    if width is None:
-        return format_plot_date(start)
-    end = (
-        start.astype("datetime64[ns]")
-        + np.timedelta64(int(bin_width_ns), "ns")
-        - np.timedelta64(1, "D")
-    ).astype("datetime64[D]")
-    return format_plot_date_range(start, end)
+    if bin_width_ns is not None and bin_width_ns >= 2 * _NS_PER_DAY:
+        width = bin_width_ns / _NS_PER_DAY
+    return format_calendar_panel(t, width)
 
 
 def realize_valid_times(ds):
@@ -556,67 +346,6 @@ def _flatten_da(da, panel_dim, lat_dim, lon_dim):
     return da
 
 
-def _slice_bbox_mask(da, lat_dim, lon_dim, bbox, polygon, label):
-    import numpy as np
-    import xarray as xr
-
-    if bbox is None and polygon is None:
-        return da
-    da = ensure_normalized_longitude(da, lon_dim)
-    if bbox is not None:
-        r_n, r_w, r_s, r_e = bbox
-        da = da.sel({lat_dim: lat_slice(da[lat_dim].values, r_n, r_s)})
-        if r_w > r_e:
-            da = da.where((da[lon_dim] >= r_w) | (da[lon_dim] <= r_e), drop=True)
-        else:
-            da = da.sel({lon_dim: slice(r_w, r_e)})
-    if polygon is not None:
-        import shapely
-
-        lon_grid, lat_grid = np.meshgrid(da[lon_dim].values, da[lat_dim].values)
-        mask = shapely.contains_xy(polygon, lon_grid, lat_grid)
-        if not bool(mask.any()):
-            print(
-                f"Warning: --mask-geojson polygon does not intersect input '{label}'; "
-                "its panels will be entirely empty.",
-                file=sys.stderr,
-            )
-        da = da.where(xr.DataArray(mask, dims=(lat_dim, lon_dim)))
-    if bbox is not None:
-        r_n, r_w, r_s, r_e = bbox
-        if r_w > r_e:
-            da = da.assign_coords({lon_dim: ((da[lon_dim] - r_w) % 360.0) + r_w}).sortby(lon_dim)
-    if da.sizes.get(lat_dim, 0) == 0 or da.sizes.get(lon_dim, 0) == 0:
-        raise UsageError(
-            f"selection produced an empty grid on input '{label}' "
-            "(no cells remain after --bbox/--mask-geojson); nothing to plot."
-        )
-    return da
-
-
-def _extent_from_da(da, lat_dim, lon_dim, bbox):
-    import numpy as np
-
-    if bbox is not None:
-        r_n, r_w, r_s, r_e = bbox
-        if r_w > r_e:
-            return [float(r_w), float(r_e) + 360.0, float(r_s), float(r_n)]
-        return [float(r_w), float(r_e), float(r_s), float(r_n)]
-    lat_vals = np.asarray(da[lat_dim].values)
-    lon_vals = np.asarray(da[lon_dim].values)
-    dlat = float(np.abs(np.diff(np.sort(lat_vals))).mean()) if lat_vals.size > 1 else 0.0
-    dlon = float(np.abs(np.diff(np.sort(lon_vals))).mean()) if lon_vals.size > 1 else 0.0
-    lon_min = float(lon_vals.min()) - dlon / 2
-    lon_max = float(lon_vals.max()) + dlon / 2
-    lat_min = float(lat_vals.min()) - dlat / 2
-    lat_max = float(lat_vals.max()) + dlat / 2
-    # Half-cell padding on a wrapped global lon axis is a 360° span whose
-    # endpoints are the same meridian; Cartopy then collapses to a sliver.
-    if lon_max - lon_min >= 360.0 - 1e-6:
-        lon_min, lon_max = -180.0, 180.0
-    return [lon_min, lon_max, max(lat_min, -90.0), min(lat_max, 90.0)]
-
-
 @weather_skill(
     name="plot-compare-forecasts",
     version=_SKILL_VERSION,
@@ -770,7 +499,9 @@ def plot_compare_forecasts(
     cmap_name = colormap
     if colormap is None and not user_vlim and any(_is_precip_anomaly(da) for da in das):
         cmap_name = "chirps_anom"
-    scale = scale_from_da(das[0], cmap_name, stretch=user_vlim, label=_variable_label(das[0]))
+    scale = scale_from_da(
+        das[0], cmap_name, stretch=user_vlim, label=variable_label_for_display(das[0])
+    )
     if user_vlim or scale.get("bounds") is None:
         present_min = []
         present_max = []
@@ -789,7 +520,12 @@ def plot_compare_forecasts(
             data_min, data_max = 0.0, 1.0
         lo, hi = _resolve_color_limits(vmin, vmax, data_min=data_min, data_max=data_max)
         scale = scale_from_da(
-            das[0], cmap_name, stretch=True, label=_variable_label(das[0]), vmin=lo, vmax=hi
+            das[0],
+            cmap_name,
+            stretch=True,
+            label=variable_label_for_display(das[0]),
+            vmin=lo,
+            vmax=hi,
         )
 
     col_titles = [_format_column_title(t, bin_width_ns) for t in column_times]

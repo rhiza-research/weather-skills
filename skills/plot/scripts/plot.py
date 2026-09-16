@@ -10,7 +10,6 @@
 #   "matplotlib>=3.8,<3.10",
 #   "nc-time-axis",
 #   "numpy",
-#   "pandas",
 #   "plotly>=6,<7",
 #   "shapely>=2.1",
 #   "xarray",
@@ -22,7 +21,6 @@
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -34,24 +32,55 @@ from weather_skills_core.figure import (
     add_shared_colorbar,
     apply_date_ticks,
     apply_style,
+    axis_label,
     format_plot_date,
-    format_plot_date_range,
+    is_datetime_axis,
     parse_figsize,
+    resolve_axis_label,
     resolve_figsize,
+    resolve_time_axis_label,
     save_figure,
 )
-from weather_skills_core.plot_spec import PlotSpec, load_spec, overlay_spec, spec_from_flags
-from weather_skills_core.plot_style import load_user_style
+from weather_skills_core.plot_compile import (
+    axis_kind,
+    figsize_from_extent,
+    format_step,
+    pad_cell_extent,
+    panel_title,
+    parse_cities,
+    parse_draw_boxes,
+    parse_extent,
+    plain,
+    step_dim,
+    subset_spatial,
+    timeseries_axis,
+)
+from weather_skills_core.plot_spec import (
+    PlotSpec,
+    apply_index,
+    load_spec,
+    overlay_spec,
+    panel_shape,
+    parse_index,
+    spec_from_flags,
+)
+from weather_skills_core.plot_style import (
+    PRECIP_ANOMALY_BOUNDS,
+    PRECIP_ANOMALY_COLORS,
+    PRECIP_BOUNDS,
+    PRECIP_COLORS,
+    PRECIP_LONG_MIN_DAYS,
+    PRECIP_SHORT_BOUNDS,
+    aggregation_days,
+    is_precip,
+    is_precip_anomaly,
+    load_user_style,
+)
 from weather_skills_core.standard_utils import (
     ensure_normalized_longitude,
-    lat_slice,
-    parse_bbox,
     polygon_from_geojson,
 )
 from weather_skills_core.units import (
-    DATA_INTERVAL_ATTR,
-    classify_variable,
-    parse_aggregation_period,
     precip_for_display,
     to_standard_units,
     units_equal,
@@ -62,54 +91,30 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-_INDEX_INT_RE = re.compile(r"[+-]?[0-9]+")
-
-# CHIRPS-GEFS / Early Warning eXplorer rainfall-total classes (mm).
-# Under (<2) is white; over (>2500) is pale pink.
-PRECIP_COLORS = [
-    "#ffffff",
-    "#c7ffbb",
-    "#75f676",
-    "#1bb61d",
-    "#b8edfb",
-    "#50a5f8",
-    "#1e6eec",
-    "#dcdcff",
-    "#a08bff",
-    "#7060de",
-    "#fff8ad",
-    "#ff9d00",
-    "#ff1400",
-    "#a30005",
-    "#e58d8b",
-    "#ffe5e4",
-]
-PRECIP_BOUNDS = [2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]
-# Sub-pentad / daily totals (< 5 day aggregation): same colors, lower breaks.
-PRECIP_SHORT_BOUNDS = [0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30, 50, 75, 100, 150, 200]
-# Use PRECIP_BOUNDS when aggregation_period is missing or ≥ this many days.
-PRECIP_LONG_MIN_DAYS = 5
-
-# CHIRPS-GEFS / Early Warning eXplorer rainfall-anomaly classes (mm).
-# Under/over colors sit outside the labeled tick bounds.
-PRECIP_ANOMALY_COLORS = [
-    "#c00006",
-    "#ff3300",
-    "#ff9d00",
-    "#ffe772",
-    "#7a5044",
-    "#b68c80",
-    "#f2dcd1",
-    "#ffffff",
-    "#c7ffbb",
-    "#75f676",
-    "#1bb61c",
-    "#9bd1f5",
-    "#2583f5",
-    "#dcdcff",
-    "#8070ee",
-]
-PRECIP_ANOMALY_BOUNDS = [-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]
+_apply_date_ticks = apply_date_ticks
+_aggregation_days = aggregation_days
+_apply_index = apply_index
+_axis_kind = axis_kind
+_axis_label = axis_label
+_figsize_from_extent = figsize_from_extent
+_format_date = format_plot_date
+_format_step = format_step
+_is_datetime_axis = is_datetime_axis
+_is_precip = is_precip
+_is_precip_anomaly = is_precip_anomaly
+_pad_cell_extent = pad_cell_extent
+_panel_shape = panel_shape
+_panel_title = panel_title
+_parse_cities = parse_cities
+_parse_draw_boxes = parse_draw_boxes
+_parse_extent = parse_extent
+_parse_index = parse_index
+_plain = plain
+_resolve_axis_label = resolve_axis_label
+_resolve_time_axis_label = resolve_time_axis_label
+_step_dim = step_dim
+_subset_spatial = subset_spatial
+_timeseries_axis = timeseries_axis
 
 # Meteorological wind rose: 16 compass sectors, speed stacked in m/s classes.
 WIND_ROSE_SECTORS = 16
@@ -367,122 +372,6 @@ def _rotate_date_labels(ax) -> None:
         label.set_rotation(30)
 
 
-def _parse_index(spec):
-    """Parse ``--index`` into ``{dim: int | list[int]}`` (e.g. ``step=0,1,2``)."""
-    if not spec or not spec.strip():
-        return {}
-    values = {}
-    current = None
-    for token in spec.split(","):
-        if "=" in token:
-            key, _, raw = token.partition("=")
-            current = key.strip()
-            if not current:
-                raise ValueError(f"--index token {token.strip()!r} has an empty dimension name")
-            if current in values:
-                raise ValueError(f"--index dimension {current!r} is given more than once")
-            values[current] = []
-            raw = raw.strip()
-            if not raw:
-                raise ValueError(f"--index value for {current!r} is empty")
-        else:
-            raw = token.strip()
-            if not raw:
-                raise ValueError("--index spec has an empty token (stray comma)")
-            if current is None:
-                raise ValueError(f"--index token {raw!r} appears before any 'dim=' assignment")
-        if not _INDEX_INT_RE.fullmatch(raw):
-            raise ValueError(f"--index value {raw!r} for {current!r} is not an integer")
-        pos = int(raw)
-        if pos in values[current]:
-            raise ValueError(f"--index position {pos} is repeated for dimension {current!r}")
-        values[current].append(pos)
-    return {k: v[0] if len(v) == 1 else v for k, v in values.items()}
-
-
-def _apply_index(da, overrides, *, list_dims=()):
-    """Select integer positions from ``overrides`` (``--index``).
-
-    A dim in ``list_dims`` may keep several positions; any other dim must be a
-    single position (the dim is then dropped). Pass ``list_dims=None`` to allow
-    a list on every dim. Duplicate / out-of-range positions (including negative
-    aliases of the same element) are errors.
-    """
-    if not overrides:
-        return da
-    allow_all_lists = list_dims is None
-    list_dims = () if list_dims is None else list_dims
-    for dim, idx in overrides.items():
-        if dim not in da.dims:
-            raise UsageError(
-                f"--index dimension {dim!r} is not in the data (dims: {list(da.dims)})"
-            )
-        if isinstance(idx, list) and not allow_all_lists and dim not in list_dims:
-            panel_desc = ", ".join(repr(d) for d in list_dims) if list_dims else "step/time"
-            raise UsageError(
-                f"--index list selection on {dim!r} is only supported "
-                f"on the panel dimension ({panel_desc}); give a single position"
-            )
-    for dim, idx in overrides.items():
-        size = da.sizes[dim]
-        positions = idx if isinstance(idx, list) else [idx]
-        seen = {}
-        for pos in positions:
-            if not -size <= pos < size:
-                raise UsageError(
-                    f"--index position {pos} is out of range for dimension {dim!r} (size {size})"
-                )
-            norm = pos % size
-            if norm in seen:
-                raise UsageError(
-                    f"--index positions {seen[norm]} and {pos} address "
-                    f"the same element of dimension {dim!r} (size {size})"
-                )
-            seen[norm] = pos
-        da = da.isel({dim: idx}, drop=True)
-    return da
-
-
-def _subset_spatial(da, lat_dim, lon_dim, bbox_nwse, region_polygon, extent_vals):
-    """Slice ``da`` to ``--bbox`` / ``--mask-geojson``. Returns ``(da, extent_vals)``."""
-    if bbox_nwse is None and region_polygon is None:
-        return da, extent_vals
-    import numpy as np
-    import xarray as xr
-
-    da = ensure_normalized_longitude(da, lon_dim)
-    if bbox_nwse is not None:
-        r_n, r_w, r_s, r_e = bbox_nwse
-        da = da.sel({lat_dim: lat_slice(da[lat_dim].values, r_n, r_s)})
-        if r_w > r_e:
-            da = da.where((da[lon_dim] >= r_w) | (da[lon_dim] <= r_e), drop=True)
-        else:
-            da = da.sel({lon_dim: slice(r_w, r_e)})
-    if region_polygon is not None:
-        import shapely
-
-        lon_grid, lat_grid = np.meshgrid(da[lon_dim].values, da[lat_dim].values)
-        mask = shapely.contains_xy(region_polygon, lon_grid, lat_grid)
-        if not bool(mask.any()):
-            print(
-                "Warning: --mask-geojson polygon does not intersect the grid; "
-                "the map will be entirely empty.",
-                file=sys.stderr,
-            )
-        da = da.where(xr.DataArray(mask, dims=(lat_dim, lon_dim)))
-    if bbox_nwse is not None:
-        r_n, r_w, r_s, r_e = bbox_nwse
-        if r_w > r_e:
-            shifted = ((da[lon_dim] - r_w) % 360.0) + r_w
-            da = da.assign_coords({lon_dim: shifted}).sortby(lon_dim)
-        if extent_vals is None:
-            if r_w > r_e:
-                extent_vals = [float(r_w), float(r_e) + 360.0, float(r_s), float(r_n)]
-            else:
-                extent_vals = [float(r_w), float(r_e), float(r_s), float(r_n)]
-    return da, extent_vals
-
-
 def _subset_points(da, bbox_nwse, region_polygon):
     """Filter station / point samples to ``--bbox`` / ``--mask-geojson``."""
     import numpy as np
@@ -569,24 +458,6 @@ def _prepare_gridded_map(
     return da, lat_dim, lon_dim, extent_vals, not wrapped_bbox, native_step_dim, native_steps
 
 
-def _plain(da):
-    """Drop a pint wrapper so matplotlib sees a numpy array."""
-    if getattr(da.pint, "units", None) is not None:
-        return da.pint.dequantify()
-    return da
-
-
-def _parse_extent(spec):
-    if not spec:
-        return None
-    parts = [float(x) for x in spec.split(",")]
-    if len(parts) != 4:
-        raise ValueError(
-            "--extent expects 4 comma-separated floats: lon_min,lon_max,lat_min,lat_max"
-        )
-    return parts
-
-
 def _parse_colormap(spec):
     if spec is None or "," not in spec:
         return spec
@@ -641,40 +512,6 @@ def _discrete_flag_scale(da, colormap):
     bounds = np.concatenate(([values[0] - 0.5], mids, [values[-1] + 0.5]))
     cmap = ListedColormap(colors)
     return cmap, BoundaryNorm(bounds, cmap.N), values, labels
-
-
-def _is_precip(da):
-    kind = classify_variable(
-        da.name or "",
-        units=variable_units(da),
-        standard_name=da.attrs.get("standard_name"),
-    )
-    return kind in ("precip", "precip_amount")
-
-
-def _is_precip_anomaly(da):
-    """True when precip looks like an anomaly (negatives or 'anomal' in name)."""
-    import numpy as np
-
-    name = f"{da.name or ''} {da.attrs.get('long_name', '')}".lower()
-    if "anomal" in name:
-        return True
-    try:
-        vmin = float(np.nanmin(np.asarray(da.values, dtype=float)))
-    except (TypeError, ValueError):
-        return False
-    return np.isfinite(vmin) and vmin < 0
-
-
-def _aggregation_days(da):
-    """Return stamped ``aggregation_period`` in days, or None."""
-    period = da.attrs.get("aggregation_period")
-    if not (isinstance(period, str) and period.strip()):
-        return None
-    try:
-        return float(parse_aggregation_period(period).to("day").magnitude)
-    except UsageError:
-        return None
 
 
 def _precip_scale(da=None):
@@ -800,36 +637,6 @@ def _cbar_boundary_kwargs(norm, cmap=None):
 def _variable_label(da):
     """Colorbar / axis label from CF ``long_name`` (then GRIB_name, then the name)."""
     return variable_label_for_display(da)
-
-
-def _parse_cities(spec):
-    if not spec:
-        return {}
-    p = Path(spec)
-    raw = p.read_text() if p.exists() else spec
-    data = json.loads(raw)
-    out = {}
-    for name, val in data.items():
-        if isinstance(val, dict):
-            out[name] = (float(val["lat"]), float(val["lon"]))
-        else:
-            out[name] = (float(val[0]), float(val[1]))
-    return out
-
-
-def _parse_draw_boxes(specs):
-    """Parse repeatable ``--draw-box N/W/S/E`` into a list of ``(N, W, S, E)``."""
-    if not specs:
-        return []
-    boxes = []
-    for spec in specs:
-        try:
-            boxes.append(parse_bbox(spec))
-        except UsageError as exc:
-            raise UsageError(
-                f"--draw-box {spec!r} must be four decimal degrees N/W/S/E (same form as --bbox)."
-            ) from exc
-    return boxes
 
 
 def _draw_boxes_on_ax(ax, boxes, transform):
@@ -998,204 +805,6 @@ def _draw_geo_overlays(ax, overlays, crs):
         ax.add_geometries(geoms, crs, **style)
 
 
-def _panel_shape(n, rows=None, columns=None):
-    """``(nrows, ncols)`` for ``n`` heatmap panels.
-
-    Default: up to 4 columns, extra rows as needed (leftover cells stay blank).
-    When ``rows`` and/or ``columns`` are set, leftover cells stay blank the
-    same way; both given must yield a grid large enough to hold ``n``.
-    """
-    if rows is not None and rows < 1:
-        raise UsageError(f"--rows must be a positive integer; got {rows}")
-    if columns is not None and columns < 1:
-        raise UsageError(f"--columns must be a positive integer; got {columns}")
-    if rows is None and columns is None:
-        ncols = min(4, max(n, 1))
-        nrows = (n + ncols - 1) // ncols if n else 1
-        return nrows, ncols
-    if rows is not None and columns is not None:
-        product = rows * columns
-        if product < n:
-            raise UsageError(
-                f"--rows {rows} × --columns {columns} = {product} panels, "
-                f"but the data has {n}; the grid must hold at least {n}"
-            )
-        return rows, columns
-    if columns is not None:
-        nrows = (n + columns - 1) // columns if n else 1
-        return nrows, columns
-    ncols = (n + rows - 1) // rows if n else 1
-    return rows, ncols
-
-
-def _figsize_from_extent(lon_min, lon_max, lat_min, lat_max, base_height=5.0):
-    lat_range = abs(lat_max - lat_min)
-    lon_range = abs(lon_max - lon_min)
-    if lat_range == 0 or lon_range == 0:
-        return base_height, base_height
-    height = base_height
-    width = height * lon_range / lat_range
-    return max(width, 2.0), height
-
-
-def _step_dim(da):
-    for cand in ("step", "time", "valid_time"):
-        if cand in da.dims:
-            return cand
-    cf = cf_dim(da, "time")
-    return cf if cf and cf in da.dims else None
-
-
-def _axis_label(text):
-    """Sentence-case an axis label; map lon/lat shorthand to Longitude/Latitude."""
-    if text is None:
-        return text
-    s = str(text).strip()
-    if not s:
-        return s
-    known = {
-        "lon": "Longitude",
-        "lat": "Latitude",
-        "longitude": "Longitude",
-        "latitude": "Latitude",
-        "valid time": "Valid time",
-        "calendar day": "Calendar day",
-        "time": "Time",
-        "step": "Step",
-        "forecast step": "Forecast step",
-    }
-    key = s.lower()
-    if key in known:
-        return known[key]
-    if s[:1].islower():
-        return s[:1].upper() + s[1:]
-    return s
-
-
-def _resolve_axis_label(override, default):
-    """Use ``override`` verbatim when set; otherwise sentence-case ``default``."""
-    if override is not None and str(override).strip() != "":
-        return str(override)
-    return _axis_label(default)
-
-
-def _is_datetime_axis(values):
-    """True when ``values`` are matplotlib-date ticks (datetime64 or cftime)."""
-    import numpy as np
-
-    arr = np.asarray(values)
-    if arr.dtype.kind == "M":
-        return True
-    if arr.size == 0:
-        return False
-    first = arr.reshape(-1)[0]
-    return hasattr(first, "year") and hasattr(first, "month")
-
-
-def _resolve_time_axis_label(override, default, values):
-    """Axis label for a 1D time axis. Datetime ticks already name the axis."""
-    if override is not None and str(override).strip() != "":
-        return str(override)
-    if _is_datetime_axis(values):
-        return ""
-    return _axis_label(default)
-
-
-def _format_date(value) -> str:
-    """Calendar date ``14 Sept '26`` from a datetime-like value (time-of-day dropped)."""
-    return format_plot_date(value)
-
-
-def _apply_date_ticks(ax) -> None:
-    """Show datetime x ticks as ``14 Sept '26``, never midnight timestamps."""
-    apply_date_ticks(ax)
-
-
-def _format_step(value):
-    import numpy as np
-
-    arr = np.asarray(value)
-    if arr.dtype.kind == "M":
-        return _format_date(value)
-    if arr.dtype.kind == "m":
-        days = arr.astype("timedelta64[D]").astype(int)
-        return f"+{days}d"
-    if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
-        return _format_date(value)
-    return str(value)
-
-
-def _calendar_bin_width(da, all_steps):
-    """Timedelta for a left-labeled multi-day calendar bin, or None for a single date."""
-    import numpy as np
-    import pandas as pd
-
-    days = _aggregation_days(da)
-    if days is not None and days >= 2:
-        return pd.Timedelta(days=float(days))
-    arr = np.asarray(all_steps)
-    if arr.size < 2 or arr.dtype.kind != "M":
-        return None
-    try:
-        diffs = np.diff(arr.astype("datetime64[ns]").astype("int64"))
-    except (TypeError, ValueError):
-        return None
-    positive = diffs[diffs > 0]
-    if positive.size == 0:
-        return None
-    median_ns = float(np.median(positive))
-    if median_ns < 2 * 86_400_000_000_000:  # < 2 days → single-date label
-        return None
-    return pd.Timedelta(median_ns, unit="ns")
-
-
-def _format_calendar_panel(value, bin_width=None):
-    """``14 Sept '26``, or ``4–10 Aug '26`` for multi-day left-edge bins."""
-    import datetime as _dt
-
-    import numpy as np
-    import pandas as pd
-
-    if hasattr(value, "calendar"):
-        if bin_width is None:
-            return format_plot_date(value)
-        try:
-            end = value + bin_width - _dt.timedelta(days=1)
-        except (TypeError, ValueError):
-            return format_plot_date(value)
-        return format_plot_date_range(value, end)
-
-    try:
-        start = pd.Timestamp(np.asarray(value).item() if hasattr(value, "dtype") else value)
-    except (TypeError, ValueError):
-        return _format_step(value)
-    if bin_width is None:
-        return format_plot_date(start)
-    try:
-        end = start + bin_width - pd.Timedelta(days=1)
-    except (TypeError, ValueError):
-        return format_plot_date(start)
-    return format_plot_date_range(start, end)
-
-
-def _timeseries_axis(da, sdim):
-    """X coord and xlabel. Forecast ``step`` (timedelta) + scalar init → valid times."""
-    import numpy as np
-
-    if sdim != "step" or "time" not in da.coords:
-        return da[sdim].values, sdim
-    time_coord = da["time"]
-    if getattr(time_coord, "ndim", 1) != 0:
-        return da[sdim].values, sdim
-    steps = np.asarray(da["step"].values)
-    if steps.dtype.kind != "m":
-        return da[sdim].values, sdim
-    init = np.asarray(time_coord.values)
-    if init.dtype.kind != "M":
-        return da[sdim].values, sdim
-    return (init + steps).astype("datetime64[ns]"), "Valid time"
-
-
 def _calendar_year(value) -> int:
     """Calendar year from a datetime-like sample (numpy, cftime, or datetime)."""
     import numpy as np
@@ -1348,41 +957,6 @@ def _plot_xy(
     ax.set_title(title or f"{y_qty} vs {x_qty}")
     ax.grid(True, alpha=0.3)
     return fig
-
-
-def _panel_title(da, sdim, step_value, all_steps):
-    """Human panel label: calendar range, forecast valid window, or ``<sdim>=…``."""
-    import numpy as np
-
-    step_arr = np.asarray(all_steps)
-    value_arr = np.asarray(step_value)
-
-    # Forecast ``step`` (timedelta) + scalar init ``time`` → valid-time window.
-    if step_arr.dtype.kind == "m" and "time" in da.coords and getattr(da["time"], "ndim", 1) == 0:
-        fallback = f"{sdim}={_format_step(step_value)}"
-        try:
-            time_val = np.asarray(da["time"].values)
-            start = time_val + np.asarray(step_value)
-            dt = None
-            interval = da.attrs.get(DATA_INTERVAL_ATTR)
-            if isinstance(interval, str) and interval.strip():
-                try:
-                    seconds = float(parse_aggregation_period(interval).to("second").magnitude)
-                    dt = np.timedelta64(int(round(seconds)), "s")
-                except (TypeError, ValueError, UsageError):
-                    dt = None
-            if dt is None:
-                dt = step_arr[1] - step_arr[0] if step_arr.size > 1 else np.timedelta64(1, "D")
-            end = start + dt
-            return f"{_format_date(start)} until {_format_date(end)}"
-        except Exception:  # noqa: BLE001
-            return fallback
-
-    # Calendar ``time`` (or similar) panels — prefer date / date-range labels.
-    if value_arr.dtype.kind == "M" or hasattr(step_value, "calendar"):
-        return _format_calendar_panel(step_value, _calendar_bin_width(da, all_steps))
-
-    return f"{sdim}={_format_step(step_value)}"
 
 
 def _resolve_subplot_titles(overrides, n_panels):
@@ -2099,27 +1673,6 @@ def _plot_quiver(
     )
 
 
-def _is_cftime_axis(values):
-    import numpy as np
-
-    return (
-        getattr(values.dtype, "kind", None) == "O"
-        and values.size > 0
-        and hasattr(np.asarray(values).flat[0], "calendar")
-    )
-
-
-def _axis_kind(values):
-    kind = getattr(values.dtype, "kind", None)
-    if kind == "M":
-        return "datetime"
-    if kind == "m":
-        return "timedelta"
-    if _is_cftime_axis(values):
-        return "datetime"
-    return None
-
-
 def _label_key(value):
     import numpy as np
 
@@ -2229,30 +1782,6 @@ def _align_panel_labels(driver_dim, driver_values, driver_kind, da, spec):
             f"panel axis {driver_dim!r}"
         )
     return other_dim, _common_labels(driver_values, other_values, spec)
-
-
-def _pad_cell_extent(lat_vals, lon_vals):
-    """Map extent from cell centers, padded by half a grid step.
-
-    A global 0–360 (or −180…180−ε) longitude axis pads to a 360° span whose
-    endpoints are the same meridian. Cartopy ``set_extent`` then collapses the
-    map to a ~9° sliver at the antimeridian instead of a basin/world view.
-    """
-    import numpy as np
-
-    lat_vals = np.asarray(lat_vals)
-    lon_vals = np.asarray(lon_vals)
-    dlat = float(np.abs(np.diff(np.sort(lat_vals))).mean()) if lat_vals.size > 1 else 0.0
-    dlon = float(np.abs(np.diff(np.sort(lon_vals))).mean()) if lon_vals.size > 1 else 0.0
-    lon_min = float(np.nanmin(lon_vals)) - dlon / 2
-    lon_max = float(np.nanmax(lon_vals)) + dlon / 2
-    lat_min = float(np.nanmin(lat_vals)) - dlat / 2
-    lat_max = float(np.nanmax(lat_vals)) + dlat / 2
-    if lon_max - lon_min >= 360.0 - 1e-6:
-        lon_min, lon_max = -180.0, 180.0
-    lat_min = max(lat_min, -90.0)
-    lat_max = min(lat_max, 90.0)
-    return [lon_min, lon_max, lat_min, lat_max]
 
 
 def _extent_from_field(da, lat_dim, lon_dim):

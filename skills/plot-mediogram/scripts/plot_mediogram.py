@@ -5,6 +5,7 @@
 #   "cf-xarray",
 #   "cftime",
 #   "kaleido>=1",
+#   "matplotlib>=3.8,<3.10",
 #   "numpy",
 #   "plotly>=6,<7",
 #   "xarray",
@@ -16,10 +17,7 @@
 
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
-from weather_skills_core.figure import (
-    DEFAULT_FONTSIZE,
-    parse_figsize,
-)
+from weather_skills_core.figure import DEFAULT_FONTSIZE, parse_figsize, resolve_axis_label
 from weather_skills_core.units import (
     precip_for_display,
     to_standard_units,
@@ -29,38 +27,7 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-
-def _axis_label(text):
-    """Sentence-case an axis label; map lon/lat shorthand to Longitude/Latitude."""
-    if text is None:
-        return text
-    s = str(text).strip()
-    if not s:
-        return s
-    known = {
-        "lon": "Longitude",
-        "lat": "Latitude",
-        "longitude": "Longitude",
-        "latitude": "Latitude",
-        "valid time": "Valid time",
-        "calendar day": "Calendar day",
-        "time": "Time",
-        "step": "Step",
-        "forecast step": "Forecast step",
-    }
-    key = s.lower()
-    if key in known:
-        return known[key]
-    if s[:1].islower():
-        return s[:1].upper() + s[1:]
-    return s
-
-
-def _resolve_axis_label(override, default):
-    """Use ``override`` verbatim when set; otherwise sentence-case ``default``."""
-    if override is not None and str(override).strip() != "":
-        return str(override)
-    return _axis_label(default)
+_resolve_axis_label = resolve_axis_label
 
 
 def _select_point(da, lat, lon):
@@ -69,37 +36,6 @@ def _select_point(da, lat, lon):
     if lat_dim is None or lon_dim is None:
         raise ValueError(f"Could not identify latitude/longitude in dims {list(da.dims)}.")
     return da.sel({lat_dim: lat, lon_dim: lon}, method="nearest")
-
-
-def _bxp_stats(values, lo, q1, q3, hi):
-    import numpy as np
-
-    return {
-        "whislo": float(np.percentile(values, lo)),
-        "q1": float(np.percentile(values, q1)),
-        "med": float(np.percentile(values, 50)),
-        "q3": float(np.percentile(values, q3)),
-        "whishi": float(np.percentile(values, hi)),
-        "fliers": [],
-    }
-
-
-def _draw_bxp(ax, stats, positions, width, facecolor, whisker_lw, cap_alpha=1):
-    ax.bxp(
-        stats,
-        positions=positions,
-        widths=width,
-        showfliers=False,
-        patch_artist=True,
-        boxprops={"facecolor": facecolor, "alpha": 1},
-        medianprops={"color": "black", "linewidth": 1.5},
-        whiskerprops={"color": "black" if whisker_lw <= 1 else "gray", "linewidth": whisker_lw},
-        capprops={
-            "color": "gray" if cap_alpha == 0 else "black",
-            "linewidth": 1,
-            "alpha": cap_alpha,
-        },
-    )
 
 
 @weather_skill(
