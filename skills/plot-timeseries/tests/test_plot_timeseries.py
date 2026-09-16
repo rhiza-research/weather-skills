@@ -759,13 +759,30 @@ def test_place_legend_below_axis():
     import matplotlib.pyplot as plt
 
     mod = load_skill("plot-timeseries", "plot_timeseries")
-    fig, ax = plt.subplots()
-    ax.plot([1, 2], [1, 2], label="a")
-    ax.plot([1, 2], [2, 3], label="b")
-    handles, labels = mod._legend_handles(ax, [([1, 2], [1, 2], "a"), ([1, 2], [2, 3], "b")])
-    legend = mod._place_legend_below(ax, handles, labels)
-    anchor = legend.get_bbox_to_anchor()._bbox
-    assert anchor.y0 < 0
+    labels = [
+        "2006 (analog)",
+        "2015 (analog)",
+        "2019 (analog)",
+        "2023 (analog)",
+        "2026 observed (CHIRPS)",
+        "2026 ECMWF S2S members",
+        "ECMWF S2S ensemble mean",
+    ]
+    fig, ax = plt.subplots(figsize=(16, 9), layout="constrained")
+    series = []
+    for i, label in enumerate(labels):
+        y = [1.0 + 0.1 * i, 2.0 + 0.1 * i]
+        ax.plot([1, 2], y, label=label)
+        series.append(([1, 2], y, label))
+    handles, legend_labels = mod._legend_handles(ax, series)
+    legend = mod._place_legend_below(ax, handles, legend_labels)
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    legend_bbox = legend.get_window_extent(renderer)
+    fig_bbox = fig.bbox
+    assert legend_bbox.y0 >= fig_bbox.y0 - 1
+    assert legend_bbox.y1 <= fig_bbox.y1 + 1
+    assert legend_bbox.y1 < ax.get_window_extent(renderer).y0
     plt.close(fig)
 
 

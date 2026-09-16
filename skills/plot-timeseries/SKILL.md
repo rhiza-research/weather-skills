@@ -96,7 +96,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
 - `--fontsize` — base font size for titles, axis labels, ticks, and legend
   (default 16). Raise on user request (e.g. `--fontsize 22`).
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `10,6`).
-  When set, the PNG is that canvas at 150 dpi. Default `10×6`, cropped tightly.
+  When set, the PNG is that canvas at 150 dpi (the overlay legend stays
+  inside it). Default `10×6`, cropped tightly.
 - `--style` — `line` (default) or `bar`. Default for every series; a per-trace
   `style=line|bar` on `--trace` overrides it. `bar` draws grouped bars (one
   group per time step; one bar per bar-styled `--input`, offset within the
@@ -145,7 +146,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
 A PNG at `--output`. Overlay mode is a single axes (default `figsize=(10, 6)`).
 `--subplots` is one stacked panel per `--input` (taller default). Override with
 `--figsize`. One series per `--input`
-(line with markers, `--along` spaghetti, or bars; mixed `--trace style=` overlays a line on bars), legend on the axes. The y-axis label is the variable `long_name` (then
+(line with markers, `--along` spaghetti, or bars; mixed `--trace style=` overlays a line on bars), legend below the traces. The y-axis label is the variable `long_name` (then
 `GRIB_name`, then the variable name) plus `[<units>]` when the variable
 carries a `units` attribute. Units are a short display form (`mm/day`,
 `°C`), not the on-disk CF string.

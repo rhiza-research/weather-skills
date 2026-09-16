@@ -504,16 +504,22 @@ def _legend_handles(ax, series):
 
 
 def _place_legend_below(ax, handles, labels):
-    """Place legend centered below the axes; tight-bbox includes it."""
+    """Place a figure legend below the axes; constrained layout keeps it on-canvas."""
     ncols = max(1, min(len(labels), 4))
-    return ax.legend(
+    return ax.figure.legend(
         handles,
         labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, -0.18),
+        loc="outside lower center",
         ncol=ncols,
         frameon=False,
     )
+
+
+def _rotate_date_labels(ax) -> None:
+    """Rotate date tick labels without ``subplots_adjust`` (constrained-layout safe)."""
+    for label in ax.get_xticklabels():
+        label.set_ha("right")
+        label.set_rotation(30)
 
 
 @weather_skill(
@@ -682,11 +688,15 @@ def plot_timeseries(
             figsize=resolve_figsize(figsize, (10.0, max(2.8 * n_in, 4.0))),
             sharex=True,
             squeeze=False,
+            layout="constrained",
         )
         axes = list(axes.flatten())
         ax = axes[0]
     else:
-        fig, ax = plt.subplots(figsize=resolve_figsize(figsize, (10, 6)))
+        fig, ax = plt.subplots(
+            figsize=resolve_figsize(figsize, (10, 6)),
+            layout="constrained",
+        )
         axes = [ax]
     first_tdim = None
     axis_label = None
@@ -791,7 +801,7 @@ def plot_timeseries(
         if title:
             fig.suptitle(title)
         if not align_day_of_year and _is_datetime_axis(x_for_label):
-            fig.autofmt_xdate()
+            _rotate_date_labels(axes[-1])
     else:
         _draw_traces(ax, series, styles, style)
         ax.set_xlabel(resolved_xlabel)
@@ -805,7 +815,7 @@ def plot_timeseries(
             _apply_day_of_year_ticks(ax)
         elif _is_datetime_axis(x_for_label):
             _apply_date_ticks(ax)
-            fig.autofmt_xdate()
+            _rotate_date_labels(ax)
     return save_figure(fig, output, tight=figsize is None)
 
 
