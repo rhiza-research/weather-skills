@@ -191,6 +191,7 @@ def plot_mediogram(
         ylabel=_resolve_axis_label(ylabel, variable_label_for_display(pt_fc, fallback=variable)),
         fontsize=fontsize,
         figsize=figsize,
+        spec=spec_data,
     )
     named = {"forecast": ds_fc, "mclimate": ds_mc}
     inputs = spec_inputs_from_datasets(named)
@@ -210,7 +211,7 @@ def plot_mediogram(
         "ylabel": ylabel,
     }
     return write_plot_outputs(
-        fig, resolved, output, datasets=named, dump_spec_path=dump_spec_dest(dump_spec)
+        fig, resolved, output, datasets=named, dump_spec_path=dump_spec_dest(dump_spec), spec=spec_data
     )
 
 

@@ -475,7 +475,7 @@ the seaborn theme, so they win. Backend / interactive keys (`backend`,
 
 | Spec key | Matplotlib surface |
 | --- | --- |
-| `axes` | `xscale`/`yscale` (including `log`), `xlim`/`ylim`, `xlabel`/`ylabel`/`title`, `aspect`, `facecolor`, `grid`, `spines`, `tick_params`, `xlocator`/`ylocator` (`auto`, `log`, `maxn`, `null`, `multiple`), `xformatter`/`yformatter` (`scalar`, `log`, `percent`, `date`, `format`+`fmt`), `legend` (bool or `{loc, ncol, …}`), `twinx`/`twiny` |
+| `axes` | Matplotlib Axes config applied after the data are drawn: scales, limits, labels, **ticks** (`xticks`/`yticks` lists or `{values, labels}`), locators, formatters, spines, grid, legend, twins. Same object on every figure skill. A dumped sidecar always includes it (null = default). |
 | `annotations` | `ax.text` or `ax.annotate` (`xy`, `xytext`, `arrowprops`, fonts, `bbox`). `xref: paper` / `transform: axes` uses axes fraction. `axes`/`panel` picks a subplot |
 | `shapes` | `rect`, `hline`, `vline`, `hspan`, `vspan`, `line`, `circle`/`ellipse` |
 | `line` / `mesh` / `contour` / `scatter` / `bar` / `quiver` / `windrose` | kwargs for the matching artist (`linewidth`, `alpha`, `marker`, `shading`, `levels`, `scale`, `nsector`, …). `contour.lines: false` skips isoline overlay |

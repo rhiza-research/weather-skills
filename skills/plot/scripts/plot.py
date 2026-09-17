@@ -2866,6 +2866,7 @@ def _render_spec_plot(
         output,
         datasets=datasets,
         dump_spec_path=spec_dest,
+        spec=merged,
     )
 
 

@@ -867,6 +867,9 @@ def test_replot_from_spec(tmp_path, plot_timeseries):
     data = json.loads(spec_path.read_text())
     assert data["traces"][0]["style"] == "bar"
     assert data["traces"][0]["reduce"] == ["latitude", "longitude"]
+    assert "xticks" in data["axes"]
+    assert "yticks" in data["axes"]
+    assert "tick_params" in data["axes"]
     data["title"] = "Edited"
     spec_path.write_text(json.dumps(data))
     second = tmp_path / "ts2.png"

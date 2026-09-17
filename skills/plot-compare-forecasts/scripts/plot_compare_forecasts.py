@@ -604,6 +604,7 @@ def plot_compare_forecasts(
         figsize=figsize,
         scales={"field": scale},
         cell_notes=cell_notes,
+        spec=spec_data,
     )
     named = {chr(ord("a") + i): datasets[i] for i in range(len(datasets))}
     inputs = spec_inputs_from_datasets(named)
@@ -641,7 +642,7 @@ def plot_compare_forecasts(
     if vmax is not None:
         resolved["vmax"] = vmax
     return write_plot_outputs(
-        fig, resolved, output, datasets=named, dump_spec_path=dump_spec_dest(dump_spec)
+        fig, resolved, output, datasets=named, dump_spec_path=dump_spec_dest(dump_spec), spec=spec_data
     )
 
 

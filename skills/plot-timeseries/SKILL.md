@@ -76,7 +76,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py --spec <out.plot.json> --o
   lists input paths.
 - `--spec` — plot spec JSON (file or inline). A default run writes
   `<output-stem>.plot.json` with resolved inputs, `--reduce`/`--along`,
-  `--style`, and labels. Edit that file and re-run with `--spec`. CLI flags
+  `--style`, labels, and the shared matplotlib `axes` object (limits, ticks,
+  locators, spines, …). Edit `axes` and re-run with `--spec`. CLI flags
   overlay the spec. Spec input paths are opened as Datasets so provenance
   still chains from the Zarr.
 - `--dump-spec` — where to write the resolved plot spec. Default:

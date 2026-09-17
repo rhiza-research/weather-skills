@@ -669,6 +669,7 @@ def plot_compare(
         figsize=figsize,
         scales={"top": top[5], "bottom": bottom[5]},
         xlabel=_resolve_axis_label(xlabel, "Longitude"),
+        spec=spec_data,
     )
     datasets = {"a": ds_a, "b": ds_b}
     inputs = spec_inputs_from_datasets(datasets)
@@ -714,7 +715,12 @@ def plot_compare(
     if vmax is not None:
         resolved["vmax"] = vmax
     return write_plot_outputs(
-        fig, resolved, output, datasets=datasets, dump_spec_path=dump_spec_dest(dump_spec)
+        fig,
+        resolved,
+        output,
+        datasets=datasets,
+        dump_spec_path=dump_spec_dest(dump_spec),
+        spec=spec_data,
     )
 
 

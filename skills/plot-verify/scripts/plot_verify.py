@@ -585,6 +585,7 @@ def plot_verify(
         fontsize=fontsize,
         figsize=figsize,
         scales={"field": field_scale, "verify": verify_scale},
+        spec=spec_data,
     )
     named = {
         "obs": obs,
@@ -633,7 +634,7 @@ def plot_verify(
         "geo": geo_out,
     }
     return write_plot_outputs(
-        fig, resolved, output, datasets=named, dump_spec_path=dump_spec_dest(dump_spec)
+        fig, resolved, output, datasets=named, dump_spec_path=dump_spec_dest(dump_spec), spec=spec_data
     )
 
 

@@ -629,10 +629,15 @@ def plot_timeseries(
         if subplots
         else [_resolve_axis_label(ylabel, y_labels[0])]
     )
-    from matplotlib.ticker import FuncFormatter
     from weather_skills_core.plot_export import write_plot_outputs
     from weather_skills_core.plot_recipes import compile_line_figure
 
+    if align_day_of_year:
+        axes_block = spec_data.get("axes")
+        if not isinstance(axes_block, dict):
+            spec_data["axes"] = {}
+            axes_block = spec_data["axes"]
+        axes_block.setdefault("xformatter", "dayofyear")
     fig = compile_line_figure(
         series,
         title=title,
@@ -644,10 +649,8 @@ def plot_timeseries(
         kinds=kinds,
         styles=styles,
         template=template,
+        spec=spec_data,
     )
-    if align_day_of_year:
-        for ax in fig.axes:
-            ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _p: _day_of_year_tick_label(x)))
     named = {chr(ord("a") + i): ds for i, ds in enumerate(datasets)}
     traces = []
     for key in named:
@@ -679,7 +682,12 @@ def plot_timeseries(
     if band_q is not None:
         resolved["band"] = list(band_q)
     return write_plot_outputs(
-        fig, resolved, output, datasets=named, dump_spec_path=dump_spec_dest(dump_spec)
+        fig,
+        resolved,
+        output,
+        datasets=named,
+        dump_spec_path=dump_spec_dest(dump_spec),
+        spec=spec_data,
     )
 
 
