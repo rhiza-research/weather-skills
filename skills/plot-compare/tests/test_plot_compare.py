@@ -133,7 +133,7 @@ def test_row_scale_vmin_vmax_drops_precip_boundary_norm():
     assert scale.get("bounds") is None
     assert scale["cmin"] == 0.0
     assert scale["cmax"] == 25.0
-    assert scale["colorscale"] is not None
+    assert scale["colors"]
 
 
 def test_vmin_vmax_writes_png_and_stamps_history(tmp_path, plot_compare):

@@ -477,11 +477,10 @@ def test_draw_lines_along_is_one_call_one_legend_entry():
     y = np.column_stack([np.arange(4.0), np.arange(4.0) + 1.0, np.arange(4.0) + 2.0])
     series = [([1, 2, 3, 4], y, "ens")]
     fig = compile_line_figure(series, styles=[{}])
-    scatters = [t for t in fig.data if t.type == "scatter"]
-    assert len(scatters) == 3
-    assert scatters[0].name == "ens"
-    assert scatters[0].showlegend
-    assert all(not t.showlegend for t in scatters[1:])
+    lines = fig.axes[0].lines
+    assert len(lines) == 3
+    assert lines[0].get_label() == "ens"
+    assert all(ln.get_label() == "_nolegend_" for ln in lines[1:])
 
 
 def test_along_number_writes_png(tmp_path, plot_timeseries):
@@ -630,7 +629,9 @@ def test_along_bar_overlay_writes_png(tmp_path, plot_timeseries):
 
 
 def test_draw_lines_applies_color_and_width():
-    from weather_skills_core.plot_recipes import compile_line_figure, plotly_color
+    from matplotlib.colors import to_rgb
+    from weather_skills_core.plot_recipes import compile_line_figure
+    from weather_skills_core.plot_style import mpl_color
 
     mod = load_skill("plot-timeseries", "plot_timeseries")
     series = [([1, 2], [0.0, 1.0], "chirps_2006"), ([1, 2], [1.0, 2.0], "chirps_2026")]
@@ -642,10 +643,10 @@ def test_draw_lines_applies_color_and_width():
         ],
     )
     fig = compile_line_figure(series, styles=styles)
-    traces = [t for t in fig.data if t.type == "scatter"]
-    assert traces[0].line.color == plotly_color("0.65")
-    assert traces[1].line.color == "black"
-    assert traces[1].line.width == 3
+    lines = fig.axes[0].lines
+    assert to_rgb(lines[0].get_color()) == to_rgb(mpl_color("0.65"))
+    assert to_rgb(lines[1].get_color()) == to_rgb("black")
+    assert lines[1].get_linewidth() == 3
 
 
 def test_trace_writes_png_and_stamps_args(tmp_path, plot_timeseries):
@@ -711,11 +712,13 @@ def test_draw_mixed_bars_and_line():
         [mod.parse_trace("clim:style=line,linestyle=--,linewidth=2.5,marker=none")],
     )
     fig = compile_line_figure(series, kinds=["bar", "line"], styles=styles)
-    types = [t.type for t in fig.data]
-    assert types == ["bar", "scatter"]
-    assert fig.data[0].name == "obs"
-    assert fig.data[1].name == "clim"
-    assert fig.data[1].line.width == 2.5
+    ax = fig.axes[0]
+    handles, labels = ax.get_legend_handles_labels()
+    assert "obs" in labels
+    assert "clim" in labels
+    assert len(ax.patches) == 3
+    assert ax.lines[0].get_label() == "clim"
+    assert ax.lines[0].get_linewidth() == 2.5
 
 
 def test_place_legend_below_axis():
@@ -732,8 +735,11 @@ def test_place_legend_below_axis():
     ]
     series = [([1, 2], [1.0 + 0.1 * i, 2.0 + 0.1 * i], label) for i, label in enumerate(labels)]
     fig = compile_line_figure(series, figsize=(16, 9))
-    assert fig.layout.legend.orientation == "h"
-    assert fig.layout.legend.y < 0
+    fig.canvas.draw()
+    ax = fig.axes[0]
+    legend = ax.get_legend()
+    assert legend is not None
+    assert legend.get_window_extent().y1 < ax.get_window_extent().y0
 
 
 def test_trace_per_series_style_bar_plus_line(tmp_path, plot_timeseries):

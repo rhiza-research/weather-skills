@@ -11,7 +11,7 @@ metadata:
 
 # plot-compare-forecasts
 
-N-dataset comparison grid (Plotly heatmap grid with GeoJSON country
+N-dataset comparison grid (matplotlib heatmap grid with GeoJSON country
 outlines). Each `--input` is one row; columns are the
 **union** of times across those inputs, sorted earliest-first. A cell whose
 dataset has no field at that time stays on the grid as a blank `n/a` panel

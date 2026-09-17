@@ -5,12 +5,10 @@
 #   "cartopy",
 #   "cf-xarray",
 #   "cftime",
-#   "kaleido>=1",
 #   # matplotlib<3.10: cartopy gridliner crash
 #   "matplotlib>=3.8,<3.10",
 #   "nc-time-axis",
 #   "numpy",
-#   "plotly>=6,<7",
 #   "shapely>=2.1",
 #   "xarray",
 #   "zarr",
@@ -2686,7 +2684,7 @@ def _heatmap(
     return fig
 
 
-_PLOTLY_STYLES = frozenset({"heatmap", "timeseries", "contour"})
+_SPEC_STYLES = frozenset({"heatmap", "timeseries", "contour"})
 
 
 def _input_path_of(ds):
@@ -2697,7 +2695,7 @@ def _input_path_of(ds):
     return ds.attrs.get(INPUT_PATH_ATTR)
 
 
-def _render_plotly_plot(
+def _render_spec_plot(
     ds,
     spec,
     *,
@@ -2723,14 +2721,11 @@ def _render_plotly_plot(
     vmin,
     vmax,
     style_file,
-    plotly_patch,
+    patch,
     dump_spec_path,
     output,
-    html_path=None,
-    plotly_json_path=None,
-    include_plotly_data=False,
 ):
-    """Compile heatmap/timeseries/contour through Plotly and write PNG + spec sidecar."""
+    """Compile heatmap/timeseries/contour and write PNG + spec sidecar."""
     from weather_skills_core.plot_compile import compile_figure
     from weather_skills_core.plot_export import write_plot_outputs
     from weather_skills_core.plot_style import deep_merge
@@ -2787,8 +2782,8 @@ def _render_plotly_plot(
             merged.setdefault("layout", {}).setdefault("facet", {})["rows"] = rows
         if columns is not None:
             merged.setdefault("layout", {}).setdefault("facet", {})["columns"] = columns
-        if plotly_patch:
-            merged["plotly"] = deep_merge(merged.get("plotly") or {}, plotly_patch)
+        if patch:
+            merged["patch"] = deep_merge(merged.get("patch") or {}, patch)
         if not merged.get("traces"):
             merged["traces"] = [{"type": style, "input": "a"}]
     else:
@@ -2815,7 +2810,7 @@ def _render_plotly_plot(
             columns=columns,
             vmin=vmin,
             vmax=vmax,
-            plotly_patch=plotly_patch,
+            patch=patch,
         )
     if user_style.get("max_columns") and not (rows or columns):
         merged.setdefault("layout", {}).setdefault("facet", {}).setdefault(
@@ -2841,9 +2836,6 @@ def _render_plotly_plot(
         output,
         datasets=datasets,
         dump_spec_path=spec_dest,
-        html_path=html_path,
-        plotly_json_path=plotly_json_path,
-        include_plotly_data=include_plotly_data,
     )
 
 
@@ -2985,7 +2977,7 @@ def _render_plotly_plot(
 @weather_skill.argument(
     "--ylabel",
     default=None,
-    help="Override the y-axis label (default: Latitude / variable label / Frequency (%)).",
+    help="Override the y-axis label (default: Latitude / variable label / Frequency (%%)).",
 )
 @weather_skill.argument(
     "--cbar-label",
@@ -3089,30 +3081,18 @@ def _render_plotly_plot(
     help="User plot style TOML/JSON (colormap, fontsize, template). Overrides ~/.config/weather-skills/plot.toml.",
 )
 @weather_skill.argument(
-    "--plotly-patch",
+    "--patch",
     default=None,
     type=parse_json_object,
-    help="Partial Plotly figure update (layout/annotations/shapes) merged after compile.",
+    help=(
+        "Partial figure update (title/annotations/shapes/colorbar) merged after compile. "
+        "Colorbar size: {\"layout\": {\"colorbar\": {\"len\": 0.45, \"thickness\": 12}}}."
+    ),
 )
 @weather_skill.argument(
     "--dump-spec",
     default=None,
     help="Where to write the resolved plot spec. Default: <output-stem>.plot.json. Use '-' for stdout, 'none' to skip.",
-)
-@weather_skill.argument(
-    "--html",
-    default=None,
-    help="Also write interactive HTML (unstamped sidecar). Pass --output *.html to stamp HTML as the canonical artifact.",
-)
-@weather_skill.argument(
-    "--export-plotly-json",
-    default=None,
-    help="Write Plotly figure JSON (layout + trace types; no heatmap z unless --export-plotly-json-data).",
-)
-@weather_skill.argument(
-    "--export-plotly-json-data",
-    action="store_true",
-    help="Include trace data arrays in --export-plotly-json (large).",
 )
 def plot(
     ds,
@@ -3153,11 +3133,8 @@ def plot(
     vmax=None,
     spec=None,
     style_file=None,
-    plotly_patch=None,
+    patch=None,
     dump_spec=None,
-    html=None,
-    export_plotly_json=None,
-    export_plotly_json_data=False,
     **kwargs,
 ):
     """Render a heatmap, contour, timeseries, xy scatter, wind-rose, quiver, or layered map PNG from weather-skills Zarrs."""
@@ -3211,7 +3188,7 @@ def plot(
             "Warning: --legend is ignored for layered maps (they use colorbars).",
             file=sys.stderr,
         )
-    if not layers and style in _PLOTLY_STYLES:
+    if not layers and style in _SPEC_STYLES:
         if style == "timeseries":
             for flag, set_ in {
                 "--extent": bool(extent),
@@ -3240,7 +3217,7 @@ def plot(
                 "--style quiver; ignored for --style heatmap.",
                 file=sys.stderr,
             )
-        return _render_plotly_plot(
+        return _render_spec_plot(
             ds,
             spec,
             variable=variable,
@@ -3265,12 +3242,9 @@ def plot(
             vmin=vmin,
             vmax=vmax,
             style_file=style_file,
-            plotly_patch=plotly_patch,
+            patch=patch,
             dump_spec_path=dump_spec,
             output=output,
-            html_path=html,
-            plotly_json_path=export_plotly_json,
-            include_plotly_data=export_plotly_json_data,
         )
 
     import matplotlib

@@ -53,7 +53,7 @@ scale, colormap, and labeled colorbar — rainfall still uses those CHIRPS
 classes. `--shared-scale` and
 `--independent-scale` force either mode. Country outlines come from the
 bundled Natural Earth GeoJSON (same store as `resolve-region`), compiled
-through Plotly. A default run writes `<stem>.plot.json` next to the PNG.
+through matplotlib. A default run writes `<stem>.plot.json` next to the PNG.
 
 Both rows always share the gridded input's spatial extent so the figure
 is centered on the gridded base; station points outside that extent are

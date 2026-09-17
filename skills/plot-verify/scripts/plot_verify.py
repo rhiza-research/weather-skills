@@ -4,10 +4,8 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@plot-refactor",
 #   "cf-xarray",
 #   "cftime",
-#   "kaleido>=1",
-#   "matplotlib>=3.8,<3.10",
+#   "matplotlib>=3.8",
 #   "numpy",
-#   "plotly>=6,<7",
 #   "shapely>=2.1",
 #   "xarray",
 #   "zarr",
@@ -498,13 +496,6 @@ def plot_verify(
         field_scale = scale_from_da(
             obs_da, colormap, stretch=True, label=_variable_label(obs_da), vmin=vmin, vmax=vmax
         )
-    field_scale["colorbar"] = {
-        "orientation": "h",
-        "y": -0.08,
-        "x": 0.5,
-        "len": 0.7,
-        "yanchor": "top",
-    }
     if metric == "hits":
         verify_scale = hits_scale()
     else:
@@ -515,25 +506,18 @@ def plot_verify(
         metric_label = _METRIC_ROW_LABELS[metric]
         caption = f"{metric_label} [{units}]" if units else metric_label
         verify_scale = error_scale(stacked, metric, label=caption)
-    verify_scale["colorbar"] = {
-        "orientation": "h",
-        "y": -0.22,
-        "x": 0.5,
-        "len": 0.7,
-        "yanchor": "top",
-    }
 
     fig_title = title
     if week_dates and not (title and week_dates in title):
         fig_title = f"{title} · {week_dates}" if title else week_dates
 
     n_leads = len(columns)
-    top_row = [heatmap_cell(obs_da, obs_lat, obs_lon, coloraxis="coloraxis")]
+    top_row = [heatmap_cell(obs_da, obs_lat, obs_lon, scale="field")]
     bottom_row = [blank_cell("")]
     col_titles = [row_labels[0]]
     for col_label, fc_da, verify_da, lat_dim, lon_dim in columns:
-        top_row.append(heatmap_cell(fc_da, lat_dim, lon_dim, coloraxis="coloraxis"))
-        bottom_row.append(heatmap_cell(verify_da, lat_dim, lon_dim, coloraxis="coloraxis2"))
+        top_row.append(heatmap_cell(fc_da, lat_dim, lon_dim, scale="field"))
+        bottom_row.append(heatmap_cell(verify_da, lat_dim, lon_dim, scale="verify"))
         col_titles.append(col_label)
 
     fig = compile_heatmap_grid(
@@ -544,7 +528,7 @@ def plot_verify(
         row_titles=[row_labels[0], row_labels[2]],
         fontsize=fontsize,
         figsize=figsize,
-        coloraxes={"coloraxis": field_scale, "coloraxis2": verify_scale},
+        scales={"field": field_scale, "verify": verify_scale},
     )
     named = {"obs": obs, **{f"forecast{i}": fc for i, fc in enumerate(forecasts, start=1)}}
     resolved = {

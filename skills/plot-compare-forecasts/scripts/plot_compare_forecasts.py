@@ -4,10 +4,8 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@plot-refactor",
 #   "cf-xarray",
 #   "cftime",
-#   "kaleido>=1",
-#   "matplotlib>=3.8,<3.10",
+#   "matplotlib>=3.8",
 #   "numpy",
-#   "plotly>=6,<7",
 #   "shapely>=2.1",
 #   "xarray",
 #   "zarr",
@@ -560,7 +558,7 @@ def plot_compare_forecasts(
         row_titles=[_axis_label(lab) for lab in labels],
         fontsize=fontsize,
         figsize=figsize,
-        coloraxes={"coloraxis": scale},
+        scales={"field": scale},
         cell_notes=cell_notes,
     )
     named = {chr(ord("a") + i): datasets[i] for i in range(len(datasets))}

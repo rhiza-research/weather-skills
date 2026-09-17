@@ -50,6 +50,13 @@ def test_parse_figsize_and_legend():
         plot_mod.parse_legend("northwest")
 
 
+def test_help_formats(capsys, plot_fn):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(plot_fn, "--help")
+    assert exc.value.code == 0
+    assert "Frequency (%)" in capsys.readouterr().out
+
+
 def test_figsize_writes_png(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "map.png"
@@ -1591,7 +1598,7 @@ def test_replot_from_spec(tmp_path, plot_fn):
     spec_path = tmp_path / "map.plot.json"
     data = json.loads(spec_path.read_text())
     data["title"] = "Edited"
-    data["plotly"] = {"layout": {"title": {"text": "Edited"}}}
+    data["patch"] = {"layout": {"title": {"text": "Edited"}}}
     spec_path.write_text(json.dumps(data))
     second = tmp_path / "map2.png"
     run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))

@@ -4,10 +4,8 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@plot-refactor",
 #   "cf-xarray",
 #   "cftime",
-#   "kaleido>=1",
-#   "matplotlib>=3.8,<3.10",
+#   "matplotlib>=3.8",
 #   "numpy",
-#   "plotly>=6,<7",
 #   "shapely>=2.1",
 #   "xarray",
 #   "zarr",
@@ -581,7 +579,7 @@ def plot_compare(
         g_xmin, g_ymin, g_ymax = r_w, r_s, r_n
         g_xmax = r_e + 360.0 if wrapped_bbox else r_e
 
-    def _row_cells(row, coloraxis):
+    def _row_cells(row, scale_id):
         ds, da, td, _label, _var, _scale = row
         row_sel = da.sel({td: common_labels}, method="nearest", tolerance=common_tol)
         bin_width = calendar_bin_width(da, da[td].values)
@@ -596,17 +594,17 @@ def plot_compare(
                         ds["longitude"].values,
                         ds["latitude"].values,
                         sel.values,
-                        coloraxis=coloraxis,
+                        scale=scale_id,
                     )
                 )
             else:
                 lat_dim = cf_dim(sel, "latitude")
                 lon_dim = cf_dim(sel, "longitude")
-                cells.append(heatmap_cell(sel, lat_dim, lon_dim, coloraxis=coloraxis))
+                cells.append(heatmap_cell(sel, lat_dim, lon_dim, scale=scale_id))
         return cells, titles
 
-    top_cells, col_titles = _row_cells(top, "coloraxis")
-    bottom_cells, _ = _row_cells(bottom, "coloraxis2")
+    top_cells, col_titles = _row_cells(top, "top")
+    bottom_cells, _ = _row_cells(bottom, "bottom")
     fig = compile_heatmap_grid(
         [top_cells, bottom_cells],
         extent=[g_xmin, g_xmax, g_ymin, g_ymax],
@@ -615,7 +613,7 @@ def plot_compare(
         row_titles=[_axis_label(top[3]), _axis_label(bottom[3])],
         fontsize=fontsize,
         figsize=figsize,
-        coloraxes={"coloraxis": top[5], "coloraxis2": bottom[5]},
+        scales={"top": top[5], "bottom": bottom[5]},
         xlabel=_resolve_axis_label(xlabel, "Longitude"),
     )
     datasets = {"a": ds_a, "b": ds_b}

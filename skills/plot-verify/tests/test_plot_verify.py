@@ -99,8 +99,8 @@ def test_error_scale_bias_white_at_zero():
     assert scale["name"] == "verify_bias"
     assert scale["cmin"] == -scale["cmax"]
     assert scale["cmax"] == 3.0
-    colorscale = scale["colorscale"]
-    mid = colorscale[len(colorscale) // 2][1]
+    colors = scale["colors"]
+    mid = colors[len(colors) // 2]
     assert mid.lower() in {"#ffffff", "rgb(255,255,255)", "white"}
 
 
@@ -114,7 +114,7 @@ def test_error_scale_mae_white_at_zero():
     assert scale["name"] == "verify_mae"
     assert scale["cmin"] == 0.0
     assert scale["cmax"] == 4.0
-    assert scale["colorscale"][0][1].lower() in {"#ffffff", "white"}
+    assert scale["colors"][0].lower() in {"#ffffff", "white"}
 
 
 def test_verify_count_mismatch_is_refused(tmp_path, plot_fn):

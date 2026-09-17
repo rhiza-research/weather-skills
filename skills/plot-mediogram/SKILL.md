@@ -1,6 +1,6 @@
 ---
 name: plot-mediogram
-description: Render an ECMWF-style mediogram PNG comparing a forecast ensemble against an m-climate (historical) ensemble at a single lat/lon. Grouped Plotly box traces per step (forecast cyan, m-climate red) plus the forecast mean line. For precipitation, run convert-to-totals after aggregate-temporal before plotting. Use --fontsize to enlarge titles, axis labels, ticks, and legend (default 16).
+description: Render an ECMWF-style mediogram PNG comparing a forecast ensemble against an m-climate (historical) ensemble at a single lat/lon. Grouped box plots per step (forecast cyan, m-climate red) plus the forecast mean line. For precipitation, run convert-to-totals after aggregate-temporal before plotting. Use --fontsize to enlarge titles, axis labels, ticks, and legend (default 16).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py *)
@@ -11,7 +11,7 @@ metadata:
 
 # plot-mediogram
 
-Single-point mediogram plotting an ECMWF ensemble forecast distribution against an m-climate (historical) ensemble distribution. For each forecast step, two side-by-side Plotly box traces are drawn (forecast left/cyan, m-climate right/red) with the forecast ensemble mean as a black line. A default run writes `<stem>.plot.json` next to the PNG.
+Single-point mediogram plotting an ECMWF ensemble forecast distribution against an m-climate (historical) ensemble distribution. For each forecast step, two side-by-side box plots are drawn (forecast left/cyan, m-climate right/red) with the forecast ensemble mean as a black line. A default run writes `<stem>.plot.json` next to the PNG.
 
 ## Input schema
 

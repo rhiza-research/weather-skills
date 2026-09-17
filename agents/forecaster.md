@@ -71,11 +71,11 @@ Prefer small steps over stuffing every filter into one call:
   have amount units.
 - **Plotters:** `plot` is the default figure skill, including overlays
   (`--layer heatmap:… --layer scatter:…`). Heatmap, contour, and timeseries
-  compile through Plotly: a default run writes `<stem>.plot.json` next to the
-  PNG. Read that spec, edit facet/colormap/annotations or add a `plotly`
-  patch, then `plot --spec out.plot.json -o out2.png` (CLI flags overlay the
-  spec). PNG remains the canonical stamped artifact; `inspect-figure` is PNG
-  QA; `provenance` reads lineage from the PNG/HTML. Use `plot-onset` for rainy-season
+  compile through matplotlib: a default run writes `<stem>.plot.json` next to the
+  PNG. Read that spec, edit facet/colormap/annotations or add a `patch`
+  (`layout`, `annotations`, `shapes`), then `plot --spec out.plot.json -o out2.png`
+  (CLI flags overlay the spec). PNG remains the canonical stamped artifact;
+  `inspect-figure` is PNG QA; `provenance` reads lineage from the PNG. Use `plot-onset` for rainy-season
   onset dates (`indicator --detect first`; do not average `number` first).
   Use `plot-compare` for a two-row side-by-side, `plot-compare-forecasts` for
   an N×time grid, `plot-verify` for the obs/forecast/verification grid (run

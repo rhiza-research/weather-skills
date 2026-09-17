@@ -29,7 +29,6 @@ dev = [
     "gcsfs",
     "xarray-regrid",
     "matplotlib>=3.8,<3.10",
-    "plotly>=6",
     "cartopy",
     "nc-time-axis",
     "pillow",

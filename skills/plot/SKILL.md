@@ -13,8 +13,8 @@ metadata:
 
 Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
 (`--layer`, repeatable):
-- `heatmap` — lon/lat heatmap (Plotly) with country outlines from bundled
-  Natural Earth, geographic aspect (`scaleanchor`), and a shared coloraxis.
+- `heatmap` — lon/lat heatmap (matplotlib `pcolormesh`) with country outlines from bundled
+  Natural Earth, equal geographic aspect, and a shared colorbar.
   If the input has a `step` (or `time`) dimension, panels are laid out one per
   step with a shared color scale and a colorbar (right if one panel, bottom if
   several). Panel titles show calendar dates (`14 Sept '26`) or,
@@ -28,10 +28,9 @@ Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
 - `contour` — the same map layout as `heatmap` (panels, shared color scale,
   colorbar, geo overlays, `--bbox` / `--mask-geojson` / `--extent` /
   `--cities` / `--index` / `--draw-box` / `--rows` / `--columns`), compiled
-  as Plotly filled contours (`go.Contour`) with thin black isolines.
+  as filled contours (`contourf`) with thin black isolines.
   Values are interpolated between grid points rather than drawn as cell
-  rectangles. Cannot mix with `--layer`. Matplotlib contour helpers remain
-  in the skill for tests; the PNG path is Plotly.
+  rectangles. Cannot mix with `--layer`.
 - `timeseries` — 1D profile. Averages across all non-time dims. Line plus a
   marker at each time point. A forecast cube (`step` lead times + scalar init
   `time`) is plotted against **valid time** (`init + step`) with calendar dates
@@ -121,8 +120,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --input <in.zarr> --output <out.png> 
     [--bbox N/W/S/E] \
     [--mask-geojson PATH] [--draw-box N/W/S/E ...] \
     [--rows N] [--columns N] \
-    [--spec PATH_OR_JSON] [--plotly-patch PATH_OR_JSON] [--dump-spec PATH|-|none] \
-    [--html PATH] [--export-plotly-json PATH] [--export-plotly-json-data] \
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec PATH|-|none] \
     [--style-file PATH]
 
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --output <out.png> \
@@ -140,9 +138,15 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   and with `--x` / `--y`. Optional when `--spec` already lists input paths.
 - `--spec` — plot spec JSON (file or inline). A default heatmap/timeseries run
   writes `<output-stem>.plot.json` with resolved defaults (facet columns, colormap,
-  extent, input path). Edit that file (or add a `plotly` layout/annotations patch)
-  and re-run with `--spec`. CLI flags overlay the spec. Spec input paths are opened
+  extent, input path). Edit that file (or add a `patch` for title, annotations,
+  shapes, or colorbar size) and re-run with `--spec`. CLI flags overlay the spec. Spec input paths are opened
   as Datasets so provenance still chains from the Zarr.
+- `--patch` — optional JSON (file or inline) merged as spec `patch` after compile
+  (`layout.title`, `annotations`, `shapes`, font size, `layout.colorbar`).
+  Colorbar size: `{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}`
+  (`len`/`shrink` is the long-side fraction; `thickness` is pixels).
+- `--dump-spec` — where to write the resolved plot spec. Default:
+  `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
 - `--x` / `--y` — X- and Y-axis Zarrs for `--style xy`. Mutually exclusive
   with `-i` and `--layer`.
 - `--x-variable` / `--y-variable` — variables for `--style xy`. Default: first
@@ -308,10 +312,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
 ### Output
 
 A PNG at `--output`. Heatmap, contour, and timeseries also write a resolved
-`<stem>.plot.json` sidecar (override with `--dump-spec`). Pass `--html` for an
-unstamped interactive sidecar, or `--output out.html` to stamp HTML as the
-canonical artifact. `--export-plotly-json` writes Plotly layout JSON (no
-heatmap `z` unless `--export-plotly-json-data`). The colorbar (and timeseries y-axis) label resolves
+`<stem>.plot.json` sidecar (override with `--dump-spec`). The colorbar (and timeseries y-axis) label resolves
 from variable attrs: `long_name` → `GRIB_name` → bare variable name →
 `"value"`, suffixed with `[units]` when the `units` attr is present. Units
 on the figure are a short display form (`mm/day`, `°C`, `mm`, `m/s`), not the
@@ -436,23 +437,25 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/s2s_10wind.zarr -o /tmp/10m-w
     --style quiver --bbox 5/34/-5/42 --title "10 m wind"
 ```
 
-`--style quiver`, `--style windrose`, `--style xy`, and `--layer` still use matplotlib
-(Cartopy for layered maps). Do not dump a Plotly spec for those styles.
+`--style quiver`, `--style windrose`, `--style xy`, and `--layer` still draw with
+matplotlib (Cartopy for layered maps) and do not write a `*.plot.json` spec.
 
 ## Iterate on a plot (dump → edit → replot)
 
 Heatmap, contour, and timeseries compile a small weather-skills JSON spec
-(not a full Plotly `fig.to_json()` with `z` arrays). A default run writes
+(Zarr paths and layout, not the raster `z` grid). A default run writes
 `<output-stem>.plot.json` next to the PNG with **resolved** defaults
 (`layout.facet.max_columns`, colormap name, extent, input path).
 
 1. `plot -i data.zarr -o out.png` writes `out.png` + `out.plot.json`.
 2. Read `out.plot.json`. Change facet/colormap/annotations, or add a
-   `plotly` patch (`layout`, `annotations`, `shapes`).
+   `patch` (`layout`, `annotations`, `shapes`).
 3. `plot --spec out.plot.json -o out2.png` re-renders. CLI flags overlay
    the spec (`--title`, `--colormap`, `--index`). Spec input Zarrs are
    opened as Datasets so provenance chains from the Zarr, not the previous PNG.
 
 `--dump-spec -` prints the spec on stdout. `--dump-spec none` skips the sidecar.
-`--plotly-patch '{"layout": {"title": {"text": "Edited"}}}'` is the escape hatch
-for anything Plotly supports without enumerating it in the spec schema.
+`--patch '{"layout": {"title": {"text": "Edited"}}}'` is the escape hatch
+for title, annotations, shapes, and colorbar size without enumerating them in
+the spec schema. Shorten a colorbar with
+`--patch '{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}'`.
