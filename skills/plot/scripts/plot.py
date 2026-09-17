@@ -2420,9 +2420,7 @@ def _plot_layers(
                 last_by_group["shared" if share else id(p)] = (artist, p)
             elif slab["kind"] == "quiver":
                 _, scale, step = quiver_meta
-                mesh, quiv = _draw_quiver_on_ax(
-                    ax, slab, transform, scale, step, mpl_spec=mpl_spec
-                )
+                mesh, quiv = _draw_quiver_on_ax(ax, slab, transform, scale, step, mpl_spec=mpl_spec)
                 last_quiv = quiv
                 if mesh is not None:
                     last_by_group[id(p)] = (mesh, p)
@@ -2593,11 +2591,7 @@ def _heatmap(
     boxes = draw_boxes or []
     overlays = _load_geo_overlays(extent)
     levels = _contour_levels(vmin, vmax, norm=norm) if kind == "contour" else None
-    contour_extend = (
-        "both"
-        if getattr(cmap, "name", None) in DISCRETE_PRECIP_NAMES
-        else "neither"
-    )
+    contour_extend = "both" if getattr(cmap, "name", None) in DISCRETE_PRECIP_NAMES else "neither"
     for i, s in enumerate(steps):
         ax = axes[i]
         slab = da if sdim is None else da.isel({sdim: i})
@@ -2891,9 +2885,7 @@ def _layer_spec_entries(layers, named):
             "options": dict(layer.options),
         }
         if layer.kind in _ZARR_LAYER_KINDS:
-            item["input"] = path_to_id.get(str(layer.path)) or path_to_id.get(
-                str(Path(layer.path))
-            )
+            item["input"] = path_to_id.get(str(layer.path)) or path_to_id.get(str(Path(layer.path)))
         entries.append(item)
     return entries
 
@@ -3411,7 +3403,7 @@ def _render_spec_plot(
     type=parse_json_object,
     help=(
         "Partial figure update (title/annotations/shapes/colorbar) merged after compile. "
-        "Colorbar size: {\"layout\": {\"colorbar\": {\"len\": 0.45, \"thickness\": 12}}}."
+        'Colorbar size: {"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}.'
     ),
 )
 @weather_skill.argument(

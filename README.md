@@ -67,6 +67,23 @@ credentialed or source-specific fetcher only when it does not.
 | `plot-mediogram` | ECMWF-style mediogram PNG comparing a forecast ensemble against an m-climate ensemble at a single lat/lon |
 | `kenya-forecast-png` | Pre-rendered KMSA / Sheerwater Kenya forecast product PNGs from the public kenya-forecasts archive (credential-free) |
 
+### Figure skills
+
+`plot`, `plot-timeseries`, `plot-compare`, `plot-compare-forecasts`,
+`plot-verify`, and `plot-mediogram` all write a PNG plus a
+`<stem>.plot.json` sidecar. Edit `axes` (or annotations / artist kwargs) and
+replot with `--spec`. See [docs/plotting.md](docs/plotting.md) for the catalog,
+the shared JSON spec, and remaining limits.
+
+| Skill | Use when |
+|---|---|
+| [`plot`](skills/plot/SKILL.md) | One product, or overlays on the same axes (`--layer`) |
+| [`plot-timeseries`](skills/plot-timeseries/SKILL.md) | Many 1D traces (`--along` spaghetti, `--band`) |
+| [`plot-compare`](skills/plot-compare/SKILL.md) | Exactly two datasets, two rows |
+| [`plot-compare-forecasts`](skills/plot-compare-forecasts/SKILL.md) | N grids vs shared valid times |
+| [`plot-verify`](skills/plot-verify/SKILL.md) | Lead-week obs / forecast / metric maps |
+| [`plot-mediogram`](skills/plot-mediogram/SKILL.md) | Ensemble vs m-climate at one lat/lon |
+
 ### Agent capabilities
 Capabilities the agent uses alongside pipelines; none of them produces a
 dataset output.
