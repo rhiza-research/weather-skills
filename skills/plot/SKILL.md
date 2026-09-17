@@ -463,3 +463,27 @@ Heatmap, contour, and timeseries compile a small weather-skills JSON spec
 for title, annotations, shapes, and colorbar size without enumerating them in
 the spec schema. Shorten a colorbar with
 `--patch '{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}'`.
+
+## Matplotlib options in the spec
+
+Values must be JSON (strings, numbers, bools, lists, objects). Unknown keys
+on artist/axes objects are errors. There is no `eval` and no Python callables.
+
+Put matplotlib `rcParams` in `style.rc` (or top-level `rc`). They apply after
+the seaborn theme, so they win. Backend / interactive keys (`backend`,
+`interactive`, `tk.*`, …) are rejected.
+
+| Spec key | Matplotlib surface |
+| --- | --- |
+| `axes` | `xscale`/`yscale` (including `log`), `xlim`/`ylim`, `xlabel`/`ylabel`/`title`, `aspect`, `facecolor`, `grid`, `spines`, `tick_params`, `xlocator`/`ylocator` (`auto`, `log`, `maxn`, `null`, `multiple`), `xformatter`/`yformatter` (`scalar`, `log`, `percent`, `date`, `format`+`fmt`), `legend` (bool or `{loc, ncol, …}`), `twinx`/`twiny` |
+| `annotations` | `ax.text` or `ax.annotate` (`xy`, `xytext`, `arrowprops`, fonts, `bbox`). `xref: paper` / `transform: axes` uses axes fraction. `axes`/`panel` picks a subplot |
+| `shapes` | `rect`, `hline`, `vline`, `hspan`, `vspan`, `line`, `circle`/`ellipse` |
+| `line` / `mesh` / `contour` / `scatter` / `bar` / `quiver` / `windrose` | kwargs for the matching artist (`linewidth`, `alpha`, `marker`, `shading`, `levels`, `scale`, `nsector`, …). `contour.lines: false` skips isoline overlay |
+| `fill` | `fill_between` for `--band` |
+| `mediogram` | `{width, forecast, mclimate, mean, legend}` for box colors / mean line |
+| `layout.colorbar` | `extend`, `pad`, `orientation`, `location`, plus `len`/`thickness` |
+| `layout.facecolor`, `layout.dpi` | figure patch and DPI |
+
+A timeseries series can plot on a twin y-axis with style `"twin": "y"`.
+Quiver, windrose, xy, and `--layer` maps honor the same `axes` / `annotations`
+/ `shapes` / `rc` / `quiver` / `windrose` objects when `--spec` is passed.

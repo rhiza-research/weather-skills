@@ -54,13 +54,23 @@ from weather_skills_core.plot_compile import (
     subset_spatial,
     timeseries_axis,
 )
+from weather_skills_core.plot_mpl import (
+    apply_rc,
+    finish_figure,
+    mesh_kwargs,
+    quiver_kwargs,
+    windrose_kwargs,
+)
 from weather_skills_core.plot_spec import (
+    DUMP_SPEC_ARGUMENT_HELP,
+    SPEC_ARGUMENT_HELP,
     PlotSpec,
     apply_index,
-    load_spec,
+    dump_spec_dest,
     overlay_spec,
     panel_shape,
     parse_index,
+    parse_plot_spec,
     spec_from_flags,
 )
 from weather_skills_core.plot_style import (
@@ -270,14 +280,6 @@ def parse_layer(value):
     except ValueError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from None
     return LayerSpec(kind, path, options, raw)
-
-
-def parse_plot_spec(value):
-    """Argparse converter for a plot spec path or inline JSON object."""
-    try:
-        return load_spec(value)
-    except UsageError as exc:
-        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def parse_json_object(value):
@@ -1173,14 +1175,22 @@ def _windrose(
     figsize=None,
     legend=None,
     ylabel=None,
+    mpl_spec=None,
 ):
     """Polar stacked-bar wind rose; radial axis is frequency percent."""
     import matplotlib.pyplot as plt
     import numpy as np
     from matplotlib.patches import Patch
 
+    wr = windrose_kwargs(mpl_spec or {})
+    nsector = int(wr.pop("nsector", WIND_ROSE_SECTORS))
+    theta_zero = wr.pop("theta_zero_location", "N")
+    theta_dir = wr.pop("theta_direction", -1)
+    edgecolor = wr.pop("edgecolor", "white")
+    linewidth = wr.pop("linewidth", 0.4)
+    zorder = wr.pop("zorder", 2)
     speed_edges = _speed_edges(speed, units)
-    hist = _wind_rose_hist(speed, direction, speed_edges)
+    hist = _wind_rose_hist(speed, direction, speed_edges, nsector=nsector)
     while hist.shape[1] > 1 and float(hist[:, -1].sum()) == 0:
         hist = hist[:, :-1]
         speed_edges = speed_edges[:-1]
@@ -1192,14 +1202,12 @@ def _windrose(
     colors = _speed_colors(n_speed, colormap)
     unit_suffix = f" {units_disp}" if units_disp else ""
     legend_labels = [f"{lab}{unit_suffix}" for lab in _speed_bin_labels(speed_edges)]
-
-    nsector = WIND_ROSE_SECTORS
     width = 2.0 * np.pi / nsector
     theta = np.arange(nsector) * width
     fig = plt.figure(figsize=resolve_figsize(figsize, (8.5, 7.0)), layout="constrained")
     ax = fig.add_subplot(111, projection="polar")
-    ax.set_theta_zero_location("N")
-    ax.set_theta_direction(-1)
+    ax.set_theta_zero_location(str(theta_zero))
+    ax.set_theta_direction(theta_dir)
     bottom = np.zeros(nsector)
     for i in range(n_speed):
         ax.bar(
@@ -1208,10 +1216,10 @@ def _windrose(
             width=width,
             bottom=bottom,
             color=colors[i],
-            edgecolor="white",
-            linewidth=0.4,
+            edgecolor=edgecolor,
+            linewidth=linewidth,
             align="center",
-            zorder=2,
+            zorder=zorder,
         )
         bottom += freq[:, i]
     ax.set_thetagrids(
@@ -1244,6 +1252,7 @@ def _plot_windrose(
     figsize=None,
     legend=None,
     ylabel=None,
+    mpl_spec=None,
 ):
     """Flatten u/v samples into one meteorological-from wind rose."""
     import numpy as np
@@ -1304,6 +1313,7 @@ def _plot_windrose(
         figsize=figsize,
         legend=legend,
         ylabel=ylabel,
+        mpl_spec=mpl_spec,
     )
 
 
@@ -1443,6 +1453,7 @@ def _quiver_map(
     vmin=None,
     vmax=None,
     subplot_titles=None,
+    mpl_spec=None,
 ):
     """Speed pcolormesh with native-grid u/v arrows (plot_wind_and_sst_anomaly)."""
     import cartopy.crs as ccrs
@@ -1526,6 +1537,7 @@ def _quiver_map(
             vmin=vmin,
             vmax=vmax,
             transform=ccrs.PlateCarree(),
+            **mesh_kwargs(mpl_spec or {}),
         )
         lon_q, lat_q, u_q, v_q = _subsample_quiver(
             u_slab[lon_dim].values,
@@ -1534,15 +1546,19 @@ def _quiver_map(
             v_slab.values,
             step,
         )
+        q_kw = {
+            "transform": ccrs.PlateCarree(),
+            "scale": scale,
+            "color": "k",
+            "zorder": 5,
+            **quiver_kwargs(mpl_spec or {}),
+        }
         quiv = ax.quiver(
             lon_q,
             lat_q,
             u_q,
             v_q,
-            transform=ccrs.PlateCarree(),
-            scale=scale,
-            color="k",
-            zorder=5,
+            **q_kw,
         )
         _draw_geo_overlays(ax, overlays, ccrs.PlateCarree())
         ax.gridlines(draw_labels=False, alpha=0)
@@ -1620,6 +1636,7 @@ def _plot_quiver(
     vmax=None,
     subplot_titles=None,
     cbar_label=None,
+    mpl_spec=None,
 ):
     """Map panels of wind speed with S2S-style u/v quiver overlay."""
     if variable:
@@ -1670,6 +1687,7 @@ def _plot_quiver(
         vmin=vmin,
         vmax=vmax,
         subplot_titles=subplot_titles,
+        mpl_spec=mpl_spec,
     )
 
 
@@ -2096,7 +2114,7 @@ def _draw_scatter_on_ax(ax, prepared, transform):
     )
 
 
-def _draw_quiver_on_ax(ax, prepared, transform, scale, step):
+def _draw_quiver_on_ax(ax, prepared, transform, scale, step, mpl_spec=None):
     u_da = _plain(prepared["u_da"])
     v_da = _plain(prepared["v_da"])
     lat_dim, lon_dim = prepared["lat_dim"], prepared["lon_dim"]
@@ -2114,6 +2132,7 @@ def _draw_quiver_on_ax(ax, prepared, transform, scale, step):
             vmax=prepared["vmax"],
             transform=transform,
             zorder=1.0,
+            **mesh_kwargs(mpl_spec or {}),
         )
     lon_q, lat_q, u_q, v_q = _subsample_quiver(
         u_slab[lon_dim].values,
@@ -2127,10 +2146,13 @@ def _draw_quiver_on_ax(ax, prepared, transform, scale, step):
         lat_q,
         u_q,
         v_q,
-        transform=transform,
-        scale=scale,
-        color="k",
-        zorder=prepared["zorder"],
+        **{
+            "transform": transform,
+            "scale": scale,
+            "color": "k",
+            "zorder": prepared["zorder"],
+            **quiver_kwargs(mpl_spec or {}),
+        },
     )
     return mesh, quiv
 
@@ -2221,6 +2243,7 @@ def _plot_layers(
     vmax=None,
     subplot_titles=None,
     cbar_label=None,
+    mpl_spec=None,
 ):
     """Stack ``--layer`` entries on shared Cartopy panels."""
     import cartopy.crs as ccrs
@@ -2428,7 +2451,9 @@ def _plot_layers(
                 last_by_group["shared" if share else id(p)] = (artist, p)
             elif slab["kind"] == "quiver":
                 _, scale, step = quiver_meta
-                mesh, quiv = _draw_quiver_on_ax(ax, slab, transform, scale, step)
+                mesh, quiv = _draw_quiver_on_ax(
+                    ax, slab, transform, scale, step, mpl_spec=mpl_spec
+                )
                 last_quiv = quiv
                 if mesh is not None:
                     last_by_group[id(p)] = (mesh, p)
@@ -2834,9 +2859,7 @@ def _render_spec_plot(
         datasets["a"] = ds
 
     fig, resolved = compile_figure(merged, datasets)
-    spec_dest = dump_spec_path
-    if spec_dest is not None and str(spec_dest).lower() in {"none", "off", "false"}:
-        spec_dest = False
+    spec_dest = dump_spec_dest(dump_spec_path)
     return write_plot_outputs(
         fig,
         resolved,
@@ -3077,11 +3100,7 @@ def _render_spec_plot(
     "--spec",
     default=None,
     type=parse_plot_spec,
-    help=(
-        "Plot spec JSON (path or inline). Dump from a default run (sidecar *.plot.json), "
-        "edit, and pass back. CLI flags overlay the spec. Inputs listed in the spec are "
-        "opened for provenance; -i is optional when the spec has paths."
-    ),
+    help=SPEC_ARGUMENT_HELP,
 )
 @weather_skill.argument(
     "--style-file",
@@ -3106,7 +3125,7 @@ def _render_spec_plot(
 @weather_skill.argument(
     "--dump-spec",
     default=None,
-    help="Where to write the resolved plot spec. Default: <output-stem>.plot.json. Use '-' for stdout, 'none' to skip.",
+    help=DUMP_SPEC_ARGUMENT_HELP,
 )
 def plot(
     ds,
@@ -3271,6 +3290,8 @@ def plot(
     import nc_time_axis  # noqa: F401 — registers the cftime→matplotlib axis converter
 
     apply_style(fontsize, template=theme or "weather_skills")
+    spec_data = spec.to_dict() if spec is not None and hasattr(spec, "to_dict") else (spec or {})
+    apply_rc((spec_data.get("style") or {}).get("rc") or spec_data.get("rc"))
 
     if layers:
         fig = _plot_layers(
@@ -3301,7 +3322,9 @@ def plot(
             vmax=vmax,
             subplot_titles=subplot_title,
             cbar_label=cbar_label,
+            mpl_spec=spec_data,
         )
+        finish_figure(fig, spec_data)
         return save_figure(fig, output, tight=figsize is None)
     map_only = {
         "--extent": bool(extent),
@@ -3437,6 +3460,7 @@ def plot(
             figsize=figsize,
             legend=legend,
             ylabel=ylabel,
+            mpl_spec=spec_data,
         )
     elif style == "quiver":
         fig = _plot_quiver(
@@ -3464,6 +3488,7 @@ def plot(
             vmax=vmax,
             subplot_titles=subplot_title,
             cbar_label=cbar_label,
+            mpl_spec=spec_data,
         )
     else:
         variable = variable or auto_variable(ds)
@@ -3542,6 +3567,7 @@ def plot(
             _apply_date_ticks(ax)
             _rotate_date_labels(ax)
 
+    finish_figure(fig, spec_data)
     return save_figure(fig, output, tight=figsize is None)
 
 
