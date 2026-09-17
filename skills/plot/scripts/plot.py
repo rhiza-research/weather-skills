@@ -38,7 +38,6 @@ from weather_skills_core.figure import (
     resolve_axis_label,
     resolve_figsize,
     resolve_time_axis_label,
-    save_figure,
 )
 from weather_skills_core.plot_compile import (
     axis_kind,
@@ -67,23 +66,20 @@ from weather_skills_core.plot_spec import (
     PlotSpec,
     apply_index,
     dump_spec_dest,
+    named_datasets_from_spec,
+    opened_datasets_from_spec,
     overlay_spec,
     panel_shape,
     parse_index,
     parse_plot_spec,
     spec_from_flags,
+    spec_inputs_from_datasets,
 )
 from weather_skills_core.plot_style import (
     DISCRETE_PRECIP_NAMES,
     PRECIP_ANOMALY_BOUNDS,
-    PRECIP_ANOMALY_COLORS,
     PRECIP_BOUNDS,
-    PRECIP_COLORS,
-    PRECIP_LONG_MIN_DAYS,
     PRECIP_SHORT_BOUNDS,
-    aggregation_days,
-    is_precip,
-    is_precip_anomaly,
     load_user_style,
 )
 from weather_skills_core.standard_utils import (
@@ -101,8 +97,10 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
+# Tests assert against these palettes via `plot_mod.PRECIP_*`.
+_PRECIP_PALETTE_BOUNDS = (PRECIP_BOUNDS, PRECIP_SHORT_BOUNDS, PRECIP_ANOMALY_BOUNDS)
+
 _apply_date_ticks = apply_date_ticks
-_aggregation_days = aggregation_days
 _apply_index = apply_index
 _axis_kind = axis_kind
 _axis_label = axis_label
@@ -110,8 +108,6 @@ _figsize_from_extent = figsize_from_extent
 _format_date = format_plot_date
 _format_step = format_step
 _is_datetime_axis = is_datetime_axis
-_is_precip = is_precip
-_is_precip_anomaly = is_precip_anomaly
 _pad_cell_extent = pad_cell_extent
 _panel_shape = panel_shape
 _panel_title = panel_title
@@ -516,52 +512,25 @@ def _discrete_flag_scale(da, colormap):
     return cmap, BoundaryNorm(bounds, cmap.N), values, labels
 
 
-def _precip_scale(da=None):
-    """Discrete CHC rainfall-total classes with under/over colors.
-
-    Periods shorter than ``PRECIP_LONG_MIN_DAYS`` use ``PRECIP_SHORT_BOUNDS``;
-    longer (or unknown) periods use the dekadal-style ``PRECIP_BOUNDS``.
-    """
-    from matplotlib.colors import BoundaryNorm, ListedColormap
-
-    days = _aggregation_days(da) if da is not None else None
-    short = days is not None and days < PRECIP_LONG_MIN_DAYS
-    colors = PRECIP_COLORS
-    bounds = PRECIP_SHORT_BOUNDS if short else PRECIP_BOUNDS
-    name = "chirps_short" if short else "chirps_total"
-    cmap = ListedColormap(colors[1:-1], name=name)
-    cmap.set_under(colors[0])
-    cmap.set_over(colors[-1])
-    return cmap, BoundaryNorm(bounds, ncolors=cmap.N, clip=False)
-
-
-def _precip_anomaly_scale():
-    """Discrete CHC rainfall-anomaly classes with under/over colors."""
-    from matplotlib.colors import BoundaryNorm, ListedColormap
-
-    colors = PRECIP_ANOMALY_COLORS
-    cmap = ListedColormap(colors[1:-1], name="chirps_anom")
-    cmap.set_under(colors[0])
-    cmap.set_over(colors[-1])
-    return cmap, BoundaryNorm(PRECIP_ANOMALY_BOUNDS, ncolors=cmap.N, clip=False)
-
-
 def _heatmap_scale(da, colormap, *, stretch=False):
     """Return ``(cmap, norm)``. ``norm`` is set for the default precip scale.
 
-    ``stretch=True`` (user ``--vmin`` / ``--vmax``) keeps the CHIRPS colors
+    ``stretch=True`` (user ``--vmin`` / ``--vmax``) keeps the CHC colors
     but drops ``BoundaryNorm`` so the colorbar can use arbitrary limits.
     """
+    from weather_skills_core.plot_style import mpl_cmap_norm, resolve_colorscale
+
     if colormap:
         return _parse_colormap(colormap), None
-    if _is_precip(da):
-        if stretch:
-            colors = PRECIP_ANOMALY_COLORS if _is_precip_anomaly(da) else PRECIP_COLORS
+    scale = resolve_colorscale(da, None, stretch=stretch)
+    if stretch:
+        colors = scale.get("colors")
+        if colors:
             return _parse_colormap(",".join(colors)), None
-        if _is_precip_anomaly(da):
-            return _precip_anomaly_scale()
-        return _precip_scale(da)
-    return "viridis", None
+        return scale.get("cmap") or scale.get("name"), None
+    if scale.get("bounds"):
+        return mpl_cmap_norm(scale)
+    return scale.get("cmap") or scale.get("name") or "rocket", None
 
 
 def _layer_optional_float(spec, key):
@@ -2722,6 +2691,328 @@ def _input_path_of(ds):
     return ds.attrs.get(INPUT_PATH_ATTR)
 
 
+def _spec_data(spec):
+    if spec is None:
+        return {}
+    if hasattr(spec, "to_dict"):
+        return spec.to_dict()
+    return dict(spec) if isinstance(spec, dict) else {}
+
+
+def _first_spec_input(spec_data):
+    for item in spec_data.get("inputs") or []:
+        if isinstance(item, dict):
+            return item
+    return {}
+
+
+def _overlay_cli_from_spec(spec_data, **cli):
+    """Fill omitted CLI flags from a dumped spec. CLI values win when set."""
+    geo = spec_data.get("geo") or {}
+    traces = spec_data.get("traces") or []
+    traces0 = traces[0] if traces and isinstance(traces[0], dict) else {}
+    inp0 = _first_spec_input(spec_data)
+    out = dict(cli)
+    if out.get("title") is None:
+        layout_title = (spec_data.get("layout") or {}).get("title")
+        if isinstance(layout_title, dict):
+            out["title"] = layout_title.get("text") or spec_data.get("title")
+        elif isinstance(layout_title, str):
+            out["title"] = layout_title
+        else:
+            out["title"] = spec_data.get("title")
+    for key in ("xlabel", "ylabel", "cbar_label", "colormap", "legend", "index"):
+        if out.get(key) is None and spec_data.get(key) is not None:
+            out[key] = spec_data[key]
+    if out.get("index") is None and inp0.get("index") is not None:
+        out["index"] = inp0["index"]
+    if out.get("u_variable") is None:
+        out["u_variable"] = (
+            spec_data.get("u_variable")
+            or traces0.get("u_variable")
+            or traces0.get("u-variable")
+            or inp0.get("u_variable")
+            or inp0.get("u-variable")
+        )
+    if out.get("v_variable") is None:
+        out["v_variable"] = (
+            spec_data.get("v_variable")
+            or traces0.get("v_variable")
+            or traces0.get("v-variable")
+            or inp0.get("v_variable")
+            or inp0.get("v-variable")
+        )
+    if out.get("variable") is None:
+        out["variable"] = traces0.get("variable") or inp0.get("variable")
+    if out.get("bbox") is None and geo.get("bbox") is not None:
+        out["bbox"] = tuple(geo["bbox"])
+    if not out.get("mask_geojson") and geo.get("mask_geojson"):
+        out["mask_geojson"] = geo["mask_geojson"]
+    if out.get("extent") is None and geo.get("extent") is not None:
+        out["extent"] = geo["extent"]
+    if not out.get("cities") and geo.get("cities"):
+        out["cities"] = geo["cities"]
+    if not out.get("draw_box") and geo.get("draw_boxes"):
+        out["draw_box"] = geo["draw_boxes"]
+    if out.get("figsize") is None and (spec_data.get("layout") or {}).get("figsize"):
+        fig = (spec_data.get("layout") or {}).get("figsize")
+        out["figsize"] = tuple(fig) if isinstance(fig, (list, tuple)) else fig
+    if out.get("vmin") is None and spec_data.get("vmin") is not None:
+        out["vmin"] = spec_data["vmin"]
+    if out.get("vmax") is None and spec_data.get("vmax") is not None:
+        out["vmax"] = spec_data["vmax"]
+    return out
+
+
+def _style_from_spec(spec_data):
+    if spec_data.get("layers") or spec_data.get("layered"):
+        return None
+    traces = spec_data.get("traces") or []
+    if traces and isinstance(traces[0], dict):
+        kind = traces[0].get("type")
+        if kind and kind not in {"layer", "layers"}:
+            return kind
+    return None
+
+
+def _datasets_by_path(spec):
+    from weather_skills_core.decorator import INPUT_PATH_ATTR
+
+    mapping = {}
+    for ds in opened_datasets_from_spec(spec):
+        raw = getattr(ds, "attrs", {}).get(INPUT_PATH_ATTR)
+        if not raw:
+            continue
+        mapping[str(Path(raw))] = ds
+        try:
+            mapping[str(Path(raw).resolve())] = ds
+        except OSError:
+            pass
+    return mapping
+
+
+def _layers_from_spec(spec_data, spec):
+    raw_layers = spec_data.get("layers") or []
+    if not raw_layers:
+        return []
+    by_path = _datasets_by_path(spec)
+    named = named_datasets_from_spec(spec)
+    layers = []
+    for item in raw_layers:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip().lower()
+        path = item.get("path")
+        if not kind or not path:
+            raise UsageError("spec layers[] entries need kind and path")
+        options = dict(item.get("options") or {})
+        raw = item.get("raw") or f"{kind}:{path}"
+        layer = LayerSpec(kind, path, options, raw)
+        if kind in _ZARR_LAYER_KINDS:
+            ds = None
+            input_id = item.get("input")
+            if input_id:
+                ds = named.get(str(input_id))
+            if ds is None:
+                key = str(Path(path))
+                ds = by_path.get(key)
+                if ds is None:
+                    try:
+                        ds = by_path.get(str(Path(path).resolve()))
+                    except OSError:
+                        ds = None
+            layer.ds = ds
+        layers.append(layer)
+    return layers
+
+
+def _xy_from_spec(spec_data, spec, x_ds, y_ds, x_variable, y_variable, pair_on):
+    named = named_datasets_from_spec(spec)
+    opened = opened_datasets_from_spec(spec)
+    traces = spec_data.get("traces") or []
+    trace = traces[0] if traces and isinstance(traces[0], dict) else {}
+    pair_on = pair_on or trace.get("pair_on") or spec_data.get("pair_on") or "time"
+    inputs = [i for i in (spec_data.get("inputs") or []) if isinstance(i, dict)]
+    x_variable = (
+        x_variable
+        or trace.get("x_variable")
+        or spec_data.get("x_variable")
+        or (inputs[0].get("x_variable") if inputs else None)
+        or (inputs[0].get("variable") if inputs else None)
+    )
+    y_variable = (
+        y_variable
+        or trace.get("y_variable")
+        or spec_data.get("y_variable")
+        or (inputs[0].get("y_variable") if inputs else None)
+        or (inputs[1].get("variable") if len(inputs) > 1 else None)
+    )
+    if x_ds is None:
+        x_id = trace.get("x") or trace.get("input") or "x"
+        x_ds = named.get(str(x_id)) or named.get("a")
+        if x_ds is None and opened:
+            x_ds = opened[0]
+    if y_ds is None:
+        if trace.get("y"):
+            y_ds = named.get(str(trace.get("y")))
+        elif named.get("y") is not None:
+            y_ds = named.get("y")
+        elif len(opened) > 1:
+            y_ds = opened[1]
+        elif trace.get("input") or (x_variable and y_variable and len(opened) <= 1 and named):
+            y_ds = named.get(str(trace.get("input") or "a")) or x_ds
+    return x_ds, y_ds, x_variable, y_variable, pair_on
+
+
+def _layer_datasets(layers):
+    named = {}
+    for layer in layers:
+        if layer.kind not in _ZARR_LAYER_KINDS:
+            continue
+        ds = layer.ds
+        if ds is None:
+            continue
+        key = chr(ord("a") + len(named))
+        named[key] = ds
+    return named
+
+
+def _layer_spec_entries(layers, named):
+    path_to_id = {}
+    for key, ds in named.items():
+        raw = _input_path_of(ds)
+        if raw:
+            path_to_id[str(Path(raw))] = key
+    entries = []
+    for layer in layers:
+        item = {
+            "kind": layer.kind,
+            "path": str(layer.path),
+            "options": dict(layer.options),
+        }
+        if layer.kind in _ZARR_LAYER_KINDS:
+            item["input"] = path_to_id.get(str(layer.path)) or path_to_id.get(
+                str(Path(layer.path))
+            )
+        entries.append(item)
+    return entries
+
+
+def _resolved_drawn_spec(
+    *,
+    style,
+    datasets,
+    spec_data,
+    title,
+    xlabel,
+    ylabel,
+    cbar_label,
+    figsize,
+    colormap,
+    fontsize,
+    theme,
+    layers=None,
+    pair_on=None,
+    x_variable=None,
+    y_variable=None,
+    u_variable=None,
+    v_variable=None,
+    legend=None,
+    vmin=None,
+    vmax=None,
+    bbox_nwse=None,
+    extent=None,
+    cities=None,
+    mask_geojson=None,
+    draw_boxes=None,
+):
+    resolved = overlay_spec(
+        {"version": 1, "layout": {}, "style": {}, "geo": {}, "annotations": [], "shapes": []},
+        spec_data or {},
+    )
+    if datasets:
+        resolved["inputs"] = spec_inputs_from_datasets(datasets)
+        if style == "xy" and resolved["inputs"]:
+            if x_variable:
+                resolved["inputs"][0]["variable"] = x_variable
+                resolved["inputs"][0]["x_variable"] = x_variable
+            if y_variable and len(resolved["inputs"]) > 1:
+                resolved["inputs"][1]["variable"] = y_variable
+            elif y_variable:
+                resolved["inputs"][0]["y_variable"] = y_variable
+    if layers:
+        resolved["traces"] = [{"type": "layer"}]
+        resolved["layers"] = _layer_spec_entries(layers, datasets or {})
+        resolved["layered"] = True
+    elif style == "xy":
+        ids = list(datasets.keys()) if isinstance(datasets, dict) else []
+        trace = {"type": "xy", "pair_on": pair_on or "time"}
+        if x_variable:
+            trace["x_variable"] = x_variable
+        if y_variable:
+            trace["y_variable"] = y_variable
+        if len(ids) >= 2:
+            trace["x"] = ids[0]
+            trace["y"] = ids[1]
+        elif ids:
+            trace["input"] = ids[0]
+        resolved["traces"] = [trace]
+    else:
+        resolved["traces"] = [{"type": style, "input": "a"}]
+        if u_variable:
+            resolved["u_variable"] = u_variable
+        if v_variable:
+            resolved["v_variable"] = v_variable
+    if title is not None:
+        resolved["title"] = title
+    if xlabel is not None:
+        resolved["xlabel"] = xlabel
+    if ylabel is not None:
+        resolved["ylabel"] = ylabel
+    if cbar_label is not None:
+        resolved["cbar_label"] = cbar_label
+    if legend is not None:
+        resolved["legend"] = legend
+    if vmin is not None:
+        resolved["vmin"] = vmin
+    if vmax is not None:
+        resolved["vmax"] = vmax
+    if colormap:
+        resolved.setdefault("style", {})["colormap"] = colormap
+    if fontsize is not None:
+        resolved.setdefault("style", {})["fontsize"] = fontsize
+    if theme:
+        resolved.setdefault("style", {})["template"] = theme
+    if figsize is not None:
+        resolved.setdefault("layout", {})["figsize"] = list(figsize)
+        resolved["layout"]["autosize"] = False
+    if extent is not None:
+        resolved.setdefault("geo", {})["extent"] = extent
+    if cities:
+        resolved.setdefault("geo", {})["cities"] = cities
+    if bbox_nwse is not None:
+        resolved.setdefault("geo", {})["bbox"] = list(bbox_nwse)
+    if mask_geojson:
+        resolved.setdefault("geo", {})["mask_geojson"] = str(mask_geojson)
+    if draw_boxes:
+        resolved.setdefault("geo", {})["draw_boxes"] = list(draw_boxes)
+    return resolved
+
+
+def _export_drawn_figure(fig, resolved, output, *, datasets, dump_spec, spec_data):
+    from weather_skills_core.plot_export import write_plot_outputs
+
+    finish_figure(fig, spec_data or resolved)
+    return write_plot_outputs(
+        fig,
+        resolved,
+        output,
+        datasets=datasets,
+        dump_spec_path=dump_spec_dest(dump_spec),
+        spec=spec_data,
+    )
+
+
 def _render_spec_plot(
     ds,
     spec,
@@ -2918,7 +3209,7 @@ def _render_spec_plot(
 @weather_skill.argument(
     "--pair-on",
     choices=["time", "year", "index"],
-    default="time",
+    default=None,
     help=(
         "How --style xy matches --x to --y samples: shared time (default), "
         "calendar year (e.g. September IOD vs October rain), or position."
@@ -2927,7 +3218,7 @@ def _render_spec_plot(
 @weather_skill.argument(
     "--style",
     choices=["heatmap", "contour", "timeseries", "xy", "windrose", "quiver"],
-    default="heatmap",
+    default=None,
 )
 @weather_skill.argument(
     "--u-variable",
@@ -2945,7 +3236,7 @@ def _render_spec_plot(
     help=(
         "matplotlib colormap name, or comma-separated colors. "
         "Heatmap default: CHC ppt_total / ppt_anomaly classes for precip "
-        "(aliases chirps_total, chirps_anom), else viridis. Also: ppt_poa, "
+        "(aliases chirps_total, chirps_anom), else rocket. Also: ppt_poa, "
         "ppt_spp, spi. Windrose default: blue-to-orange speed classes. "
         "Quiver default: YlGn (ECMWF S2S 10 m / 700 hPa wind vectors)."
     ),
@@ -3162,7 +3453,7 @@ def plot(
     y_ds=None,
     x_variable=None,
     y_variable=None,
-    pair_on="time",
+    pair_on=None,
     vmin=None,
     vmax=None,
     spec=None,
@@ -3173,8 +3464,54 @@ def plot(
     **kwargs,
 ):
     """Render a heatmap, contour, timeseries, xy scatter, wind-rose, quiver, or layered map PNG from weather-skills Zarrs."""
-    layers = layer or []
-    if spec is not None and ds is None:
+    spec_data = _spec_data(spec)
+    if patch:
+        spec_data = overlay_spec(spec_data, patch)
+    filled = _overlay_cli_from_spec(
+        spec_data,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        cbar_label=cbar_label,
+        colormap=colormap,
+        legend=legend,
+        index=index,
+        u_variable=u_variable,
+        v_variable=v_variable,
+        variable=variable,
+        bbox=bbox,
+        mask_geojson=mask_geojson,
+        extent=extent,
+        cities=cities,
+        draw_box=draw_box,
+        figsize=figsize,
+        vmin=vmin,
+        vmax=vmax,
+    )
+    title = filled["title"]
+    xlabel = filled["xlabel"]
+    ylabel = filled["ylabel"]
+    cbar_label = filled["cbar_label"]
+    colormap = filled["colormap"]
+    legend = filled["legend"]
+    index = filled["index"]
+    u_variable = filled["u_variable"]
+    v_variable = filled["v_variable"]
+    variable = filled["variable"]
+    bbox = filled["bbox"]
+    mask_geojson = filled["mask_geojson"]
+    extent = filled["extent"]
+    cities = filled["cities"]
+    draw_box = filled["draw_box"]
+    figsize = filled["figsize"]
+    vmin = filled["vmin"]
+    vmax = filled["vmax"]
+    layers = list(layer or [])
+    if not layers:
+        layers = _layers_from_spec(spec_data, spec)
+    if style is None and not layers:
+        style = _style_from_spec(spec_data) or "heatmap"
+    if spec is not None and ds is None and not layers and style != "xy":
         ds = spec.ds if spec.ds is not None else None
         if ds is None and spec.datasets:
             ds = spec.datasets[0]
@@ -3185,6 +3522,9 @@ def plot(
     if ds is not None and (x_ds is not None or y_ds is not None):
         raise UsageError("pass either -i/--input or --x/--y, not both")
     if style == "xy":
+        x_ds, y_ds, x_variable, y_variable, pair_on = _xy_from_spec(
+            spec_data, spec, x_ds, y_ds, x_variable, y_variable, pair_on
+        )
         if layers:
             raise UsageError("--layer cannot be used with --style xy")
         if x_ds is None and y_ds is None:
@@ -3287,11 +3627,9 @@ def plot(
 
     matplotlib.use("Agg")
     import cf_xarray  # noqa: F401 — registers the .cf accessor
-    import matplotlib.pyplot as plt
     import nc_time_axis  # noqa: F401 — registers the cftime→matplotlib axis converter
 
     apply_style(fontsize, template=theme or "weather_skills")
-    spec_data = spec.to_dict() if spec is not None and hasattr(spec, "to_dict") else (spec or {})
     apply_rc((spec_data.get("style") or {}).get("rc") or spec_data.get("rc"))
 
     if layers:
@@ -3325,8 +3663,36 @@ def plot(
             cbar_label=cbar_label,
             mpl_spec=spec_data,
         )
-        finish_figure(fig, spec_data)
-        return save_figure(fig, output, tight=figsize is None)
+        named = _layer_datasets(layers)
+        resolved = _resolved_drawn_spec(
+            style="layer",
+            datasets=named,
+            spec_data=spec_data,
+            title=title,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            cbar_label=cbar_label,
+            figsize=figsize,
+            colormap=colormap,
+            fontsize=fontsize,
+            theme=theme,
+            layers=layers,
+            vmin=vmin,
+            vmax=vmax,
+            bbox_nwse=bbox_nwse,
+            extent=extent,
+            cities=cities,
+            mask_geojson=mask_geojson,
+            draw_boxes=draw_boxes,
+        )
+        return _export_drawn_figure(
+            fig,
+            resolved,
+            output,
+            datasets=named,
+            dump_spec=dump_spec,
+            spec_data=spec_data,
+        )
     map_only = {
         "--extent": bool(extent),
         "--cities": bool(cities),
@@ -3334,11 +3700,6 @@ def plot(
         "--rows": rows is not None,
         "--columns": columns is not None,
         "--subplot-title": bool(subplot_title),
-    }
-    spatial = {
-        "--bbox": bbox_nwse is not None,
-        "--mask-geojson": bool(mask_geojson),
-        "--index": bool(overrides),
     }
     uv_flags = {
         "--u-variable": bool(u_variable),
@@ -3365,21 +3726,7 @@ def plot(
             return f" {draw_box!r}"
         return ""
 
-    if style == "timeseries":
-        for flag, set_ in {**map_only, **spatial}.items():
-            if set_:
-                print(
-                    f"Warning: {flag}{_flag_detail(flag)} is a map-only option; "
-                    f"ignored for --style {style}.",
-                    file=sys.stderr,
-                )
-        for flag, set_ in {**uv_flags, **quiver_only, **vlim_flags}.items():
-            if set_:
-                print(
-                    f"Warning: {flag} is ignored for --style {style}.",
-                    file=sys.stderr,
-                )
-    elif style == "xy":
+    if style == "xy":
         for flag, set_ in map_only.items():
             if set_:
                 print(
@@ -3403,19 +3750,6 @@ def plot(
                 "Warning: --legend is ignored for --style xy.",
                 file=sys.stderr,
             )
-    elif style in ("heatmap", "contour"):
-        for flag, set_ in {**uv_flags, **quiver_only}.items():
-            if set_:
-                print(
-                    f"Warning: {flag} is only used with --style windrose or "
-                    f"--style quiver; ignored for --style {style}.",
-                    file=sys.stderr,
-                )
-        if legend_used:
-            print(
-                f"Warning: --legend is ignored for --style {style} (maps use a colorbar).",
-                file=sys.stderr,
-            )
     elif style == "quiver":
         if legend_used:
             print(
@@ -3430,6 +3764,25 @@ def plot(
                     file=sys.stderr,
                 )
 
+    common = dict(
+        spec_data=spec_data,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        cbar_label=cbar_label,
+        figsize=figsize,
+        colormap=colormap,
+        fontsize=fontsize,
+        theme=theme,
+        legend=legend,
+        vmin=vmin,
+        vmax=vmax,
+        bbox_nwse=bbox_nwse,
+        extent=extent,
+        cities=cities,
+        mask_geojson=mask_geojson,
+        draw_boxes=draw_boxes,
+    )
     if style == "xy":
         fig = _plot_xy(
             x_ds,
@@ -3445,6 +3798,15 @@ def plot(
             ylabel,
             fontsize,
             figsize=figsize,
+        )
+        named = {"a": x_ds} if x_ds is y_ds else {"x": x_ds, "y": y_ds}
+        resolved = _resolved_drawn_spec(
+            style="xy",
+            datasets=named,
+            pair_on=pair_on,
+            x_variable=x_variable,
+            y_variable=y_variable,
+            **common,
         )
     elif style == "windrose":
         fig = _plot_windrose(
@@ -3462,6 +3824,14 @@ def plot(
             legend=legend,
             ylabel=ylabel,
             mpl_spec=spec_data,
+        )
+        named = {"a": ds}
+        resolved = _resolved_drawn_spec(
+            style="windrose",
+            datasets=named,
+            u_variable=u_variable,
+            v_variable=v_variable,
+            **common,
         )
     elif style == "quiver":
         fig = _plot_quiver(
@@ -3491,85 +3861,25 @@ def plot(
             cbar_label=cbar_label,
             mpl_spec=spec_data,
         )
+        named = {"a": ds}
+        resolved = _resolved_drawn_spec(
+            style="quiver",
+            datasets=named,
+            u_variable=u_variable,
+            v_variable=v_variable,
+            **common,
+        )
     else:
-        variable = variable or auto_variable(ds)
-        if not variable or variable not in ds:
-            raise UsageError(f"no usable variable. Available: {list(ds.data_vars)}")
-        ds = to_standard_units(ds, variables=[variable])
-        ds = precip_for_display(ds, variable)
-        da = ds[variable]
+        raise UsageError(f"unsupported plot style {style!r}")
 
-    if style in ("heatmap", "contour"):
-        (
-            da,
-            lat_dim,
-            lon_dim,
-            extent_vals,
-            wrap_lon,
-            native_step_dim,
-            native_steps,
-        ) = _prepare_gridded_map(da, overrides, bbox_nwse, mask_geojson, extent, style=style)
-        cities_map = _parse_cities(cities)
-        user_vlim = vmin is not None or vmax is not None
-        flag_scale = _discrete_flag_scale(da, colormap)
-        if flag_scale is not None:
-            if user_vlim:
-                raise UsageError("--vmin/--vmax cannot be used with CF flag_values fields")
-            cmap, norm, flag_ticks, flag_labels = flag_scale
-        else:
-            cmap, norm = _heatmap_scale(da, colormap, stretch=user_vlim)
-            flag_ticks, flag_labels = None, None
-        fig = _heatmap(
-            da,
-            lat_dim,
-            lon_dim,
-            cmap,
-            extent_vals,
-            cities_map,
-            title,
-            fontsize,
-            wrap_lon=wrap_lon,
-            native_step_dim=native_step_dim,
-            native_steps=native_steps,
-            draw_boxes=draw_boxes,
-            norm=norm,
-            flag_ticks=flag_ticks,
-            flag_labels=flag_labels,
-            rows=rows,
-            columns=columns,
-            kind=style,
-            xlabel=xlabel,
-            ylabel=ylabel,
-            figsize=figsize,
-            vmin=vmin,
-            vmax=vmax,
-            subplot_titles=subplot_title,
-            cbar_label=cbar_label,
-        )
-    elif style == "timeseries":
-        fig, ax = plt.subplots(
-            figsize=resolve_figsize(figsize, (10, 6)),
-            layout="constrained",
-        )
-        sdim = "step" if "step" in da.dims else cf_dim(da, "time")
-        if sdim is None:
-            raise UsageError(f"timeseries needs 'step' or 'time'; got {list(da.dims)}.")
-        reduce_dims = [d for d in da.dims if d != sdim]
-        reduced = da.mean(reduce_dims, keep_attrs=True)
-        xvals, default_xlabel = _timeseries_axis(reduced, sdim)
-        qty = variable_label_for_display(reduced, include_units=False)
-        ax.plot(xvals, reduced.values, marker="o", markersize=5, label=qty)
-        resolved_xlabel = _resolve_time_axis_label(xlabel, default_xlabel, xvals)
-        ax.set_xlabel(resolved_xlabel)
-        ax.set_ylabel(_resolve_axis_label(ylabel, _variable_label(reduced)))
-        ax.set_title(title or f"{qty} ({style})")
-        _place_legend(ax, legend, default="none")
-        if _is_datetime_axis(xvals):
-            _apply_date_ticks(ax)
-            _rotate_date_labels(ax)
-
-    finish_figure(fig, spec_data)
-    return save_figure(fig, output, tight=figsize is None)
+    return _export_drawn_figure(
+        fig,
+        resolved,
+        output,
+        datasets=named,
+        dump_spec=dump_spec,
+        spec_data=spec_data,
+    )
 
 
 if __name__ == "__main__":

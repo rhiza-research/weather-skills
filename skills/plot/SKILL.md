@@ -24,7 +24,8 @@ Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
   blank. Ensemble members (`number` dim) are averaged. Use `--index` to
   override the default reduction for any other extra dim. Precipitation totals
   default to the CHIRPS-GEFS classes. A default run writes `*.plot.json` next
-  to the PNG so you can edit layout/annotations and replot with `--spec`.
+  to the PNG so you can edit layout/annotations (including axis-label
+  position) and replot with `--spec`.
 - `contour` — the same map layout as `heatmap` (panels, shared color scale,
   colorbar, geo overlays, `--bbox` / `--mask-geojson` / `--extent` /
   `--cities` / `--index` / `--draw-box` / `--rows` / `--columns`), compiled
@@ -56,6 +57,7 @@ Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
   members). `--bbox` / `--mask-geojson` / `--index` subset samples first.
   16 compass sectors; speed classes 0–2, 2–4, …, ≥12 m/s (empty high-speed
   bins dropped). `--colormap` colors the speed stacks (default blue→orange).
+  A default run writes `*.plot.json` next to the PNG.
 - `quiver` — wind-vector map: speed as `pcolormesh` (`YlGn` by default,
   matching `plot_s2s` 10 m / 700 hPa `10m-wind_vectors.png`) with native-grid
   `u`/`v` arrows like `plot_wind_and_sst_anomaly` (optional `--quiver-step`
@@ -104,7 +106,7 @@ To overlay stations on a heatmap, use `--layer` here instead. For N gridded
 datasets as a valid-time grid with blank cells where a dataset has no time,
 use `plot-compare-forecasts`. For one obs week versus week-4 through week-1 forecasts
 with a hits row, use `plot-verify`. For rainy-season onset dates from
-`indicator --detect first`, use `plot-onset`.
+`indicator --detect first`, use `plot` (do not average `number` first).
 
 ## Usage
 
@@ -136,15 +138,19 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
 ### Arguments
 - `--input`, `-i` — Zarr input (single-dataset mode). Mutually exclusive with `--layer`
   and with `--x` / `--y`. Optional when `--spec` already lists input paths.
-- `--spec` — plot spec JSON (file or inline). A default heatmap/timeseries run
-  writes `<output-stem>.plot.json` with resolved defaults (facet columns, colormap,
-  extent, input path). Edit that file (or add a `patch` for title, annotations,
-  shapes, or colorbar size) and re-run with `--spec`. CLI flags overlay the spec. Spec input paths are opened
-  as Datasets so provenance still chains from the Zarr.
-- `--patch` — optional JSON (file or inline) merged as spec `patch` after compile
-  (`layout.title`, `annotations`, `shapes`, font size, `layout.colorbar`).
+- `--spec` — plot spec JSON (file or inline). A default run of any style
+  (including `--style xy` / `windrose` / `quiver` and `--layer`) writes
+  `<output-stem>.plot.json` with resolved defaults (`axes`, traces, input
+  paths, layer KIND+path). Edit that file (or add a `patch` for title,
+  annotations, shapes, or colorbar size) and re-run with `--spec`. CLI flags
+  overlay the spec. Spec input paths are opened as Datasets so provenance
+  still chains from the Zarr.
+- `--patch` — optional JSON (file or inline) merged onto the spec before draw
+  (`layout.title`, `annotations`, `shapes`, `axes`, font size, `layout.colorbar`).
   Colorbar size: `{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}`
   (`len`/`shrink` is the long-side fraction; `thickness` is pixels).
+  Reposition a polar windrose frequency label with
+  `{"axes": {"ylabel": {"coords": [1.15, 0.5], "rotation": 0}}}`.
 - `--dump-spec` — where to write the resolved plot spec. Default:
   `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
 - `--theme` — `weather_skills` (seaborn `deep` colorway, default) or
@@ -186,8 +192,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   unambiguously selects the custom-list form. When omitted, precipitation
   totals (rate or amount) use the CHC `ppt_total_cmap` classes
   (`BoundaryNorm` over
-  `[2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]`
-  mm with white under `<2` and pale-pink over `>2500`) when
+  `[0, 2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]`
+  mm: white for null/negative and 0–2 mm, pale-pink over `>2500`) when
   `aggregation_period` is missing or ≥ 5 days. Sub-pentad totals
   (`aggregation_period` < 5 days) keep the same colors with lower breaks
   (`[0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30, 50, 75, 100, 150, 200]` mm).
@@ -196,7 +202,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   (`[-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]`
   mm with under/over colors). Percent-of-normal (`poa` / `%`) uses `ppt_poa`;
   SPI uses `spi`. Named aliases: `ppt_total`/`chirps_total`, `ppt_anomaly`/`chirps_anom`,
-  `ppt_poa`, `ppt_spp`, `spi`. Every other variable uses `viridis`. Windrose uses a blue→orange
+  `ppt_poa`, `ppt_spp`, `spi`. Every other variable uses `rocket`. Windrose uses a blue→orange
   speed palette; `--colormap` recolors the speed stacks. Quiver defaults to
   `YlGn` (S2S 10 m / 700 hPa wind-vector maps); `--colormap PiYG` matches their
   anomaly quivers. A variable with CF `flag_values` (e.g. `verify --metric hits`) uses a
@@ -315,7 +321,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
 
 ### Output
 
-A PNG at `--output`. Heatmap, contour, and timeseries also write a resolved
+A PNG at `--output`. Every style also writes a resolved
 `<stem>.plot.json` sidecar (override with `--dump-spec`). The colorbar (and timeseries y-axis) label resolves
 from variable attrs: `long_name` → `GRIB_name` → bare variable name →
 `"value"`, suffixed with `[units]` when the `units` attr is present. Units
@@ -441,28 +447,27 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/s2s_10wind.zarr -o /tmp/10m-w
     --style quiver --bbox 5/34/-5/42 --title "10 m wind"
 ```
 
-`--style quiver`, `--style windrose`, `--style xy`, and `--layer` still draw with
-matplotlib (Cartopy for layered maps) and do not write a `*.plot.json` spec.
-
 ## Iterate on a plot (dump → edit → replot)
 
-Heatmap, contour, and timeseries compile a small weather-skills JSON spec
-(Zarr paths and layout, not the raster `z` grid). A default run writes
-`<output-stem>.plot.json` next to the PNG with **resolved** defaults
-(`layout.facet.max_columns`, colormap name, extent, input path).
+Every style compiles a small weather-skills JSON spec (Zarr paths and layout,
+not the raster `z` grid). A default run writes `<output-stem>.plot.json` next
+to the PNG with **resolved** defaults (`axes`, traces, input paths, and for
+maps `layout.facet` / colormap / extent).
 
 1. `plot -i data.zarr -o out.png` writes `out.png` + `out.plot.json`.
 2. Read `out.plot.json`. Change facet/colormap/annotations, or add a
-   `patch` (`layout`, `annotations`, `shapes`).
+   `patch` (`layout`, `annotations`, `shapes`, `axes`).
 3. `plot --spec out.plot.json -o out2.png` re-renders. CLI flags overlay
    the spec (`--title`, `--colormap`, `--index`). Spec input Zarrs are
    opened as Datasets so provenance chains from the Zarr, not the previous PNG.
 
 `--dump-spec -` prints the spec on stdout. `--dump-spec none` skips the sidecar.
 `--patch '{"layout": {"title": {"text": "Edited"}}}'` is the escape hatch
-for title, annotations, shapes, and colorbar size without enumerating them in
+for title, annotations, shapes, axis-label position, and colorbar size without enumerating them in
 the spec schema. Shorten a colorbar with
 `--patch '{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}'`.
+Move a windrose radial label with
+`--patch '{"axes": {"ylabel": {"coords": [1.15, 0.5], "rotation": 0}}}'`.
 
 ## Matplotlib options in the spec
 
@@ -475,7 +480,7 @@ the seaborn theme, so they win. Backend / interactive keys (`backend`,
 
 | Spec key | Matplotlib surface |
 | --- | --- |
-| `axes` | Matplotlib Axes config applied after the data are drawn: scales, limits, labels, **ticks** (`xticks`/`yticks` lists or `{values, labels}`), locators, formatters, spines, grid, legend, twins. Same object on every figure skill. A dumped sidecar always includes it (null = default). |
+| `axes` | Matplotlib Axes config applied after the data are drawn: scales, limits, labels, **ticks** (`xticks`/`yticks` lists or `{values, labels}`), locators, formatters, spines, grid, legend, twins. `xlabel` / `ylabel` may be a string or `{text, loc, pad, coords, rotation, ha, va, …}` (`coords` is `[x, y]` in axes fraction; omit `text` to keep the already-drawn label). Same object on every figure skill. A dumped sidecar always includes it (null = default). |
 | `annotations` | `ax.text` or `ax.annotate` (`xy`, `xytext`, `arrowprops`, fonts, `bbox`). `xref: paper` / `transform: axes` uses axes fraction. `axes`/`panel` picks a subplot |
 | `shapes` | `rect`, `hline`, `vline`, `hspan`, `vspan`, `line`, `circle`/`ellipse` |
 | `line` / `mesh` / `contour` / `scatter` / `bar` / `quiver` / `windrose` | kwargs for the matching artist (`linewidth`, `alpha`, `marker`, `shading`, `levels`, `scale`, `nsector`, …). `contour.lines: false` skips isoline overlay |
@@ -485,5 +490,7 @@ the seaborn theme, so they win. Backend / interactive keys (`backend`,
 | `layout.facecolor`, `layout.dpi` | figure patch and DPI |
 
 A timeseries series can plot on a twin y-axis with style `"twin": "y"`.
-Quiver, windrose, xy, and `--layer` maps honor the same `axes` / `annotations`
-/ `shapes` / `rc` / `quiver` / `windrose` objects when `--spec` is passed.
+Every style (heatmap, contour, timeseries, xy, windrose, quiver, `--layer`)
+dumps the same `axes` / `annotations` / `shapes` / `rc` objects and applies
+them after the data are drawn. Reposition a polar windrose frequency label with
+`--patch '{"axes": {"ylabel": {"coords": [1.15, 0.5], "rotation": 0}}}'`.

@@ -1606,3 +1606,97 @@ def test_replot_from_spec(tmp_path, plot_fn):
     history = load_figure_history(second)
     assert history[-1]["skill"] == "plot"
     assert history[-1]["input"]["basename"] == "in.zarr"
+
+
+def _assert_sidecar(out, *, trace_type, title=None):
+    sidecar = Path(out).with_name(Path(out).stem + ".plot.json")
+    assert sidecar.is_file()
+    spec = json.loads(sidecar.read_text())
+    assert spec["traces"][0]["type"] == trace_type
+    assert "axes" in spec
+    if title is not None:
+        assert spec["title"] == title
+    return spec, sidecar
+
+
+def test_windrose_writes_plot_spec_sidecar(tmp_path, plot_fn):
+    src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
+    out = tmp_path / "rose.png"
+    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--style", "windrose", "--title", "Rose")
+    spec, sidecar = _assert_sidecar(out, trace_type="windrose", title="Rose")
+    assert spec["inputs"][0]["path"].endswith("wind.zarr")
+    second = tmp_path / "rose2.png"
+    run_skill(plot_fn, "--spec", str(sidecar), "-o", str(second))
+    assert second.is_file() and second.stat().st_size > 0
+    history = load_figure_history(second)
+    assert history[-1]["skill"] == "plot"
+    assert history[-1]["input"]["basename"] == "wind.zarr"
+
+
+def test_quiver_writes_plot_spec_sidecar(tmp_path, plot_fn):
+    src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
+    out = tmp_path / "quiver.png"
+    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--style", "quiver", "--title", "Wind")
+    spec, sidecar = _assert_sidecar(out, trace_type="quiver", title="Wind")
+    second = tmp_path / "quiver2.png"
+    run_skill(plot_fn, "--spec", str(sidecar), "-o", str(second))
+    assert second.is_file() and second.stat().st_size > 0
+    history = load_figure_history(second)
+    assert history[-1]["skill"] == "plot"
+
+
+def test_xy_writes_plot_spec_sidecar(tmp_path, plot_fn):
+    iod = make_gridded(n_time=2, start="2024-09-01", name="iod_mode_index", fill=0.4)
+    iod = iod.assign_coords(time=np.array(["2024-09-01", "2025-09-01"], dtype="datetime64[ns]"))
+    iod["iod_mode_index"].attrs.update(
+        units="degree_Celsius",
+        long_name="IOD",
+        standard_name="sea_surface_temperature_anomaly",
+    )
+    rain = make_gridded(n_time=2, start="2024-10-01", name="precip", fill=12.0)
+    rain = rain.assign_coords(time=np.array(["2024-10-01", "2025-10-01"], dtype="datetime64[ns]"))
+    rain["precip"].attrs.update(
+        units="mm",
+        long_name="October rainfall",
+        standard_name="lwe_thickness_of_precipitation_amount",
+    )
+    x_src = write_zarr(iod, tmp_path / "iod.zarr")
+    y_src = write_zarr(rain, tmp_path / "rain.zarr")
+    out = tmp_path / "xy.png"
+    run_skill(
+        plot_fn,
+        "--style",
+        "xy",
+        "--x",
+        str(x_src),
+        "--y",
+        str(y_src),
+        "--pair-on",
+        "year",
+        "-o",
+        str(out),
+        "--title",
+        "IOD vs rain",
+    )
+    spec, sidecar = _assert_sidecar(out, trace_type="xy", title="IOD vs rain")
+    assert spec["traces"][0]["pair_on"] == "year"
+    second = tmp_path / "xy2.png"
+    run_skill(plot_fn, "--spec", str(sidecar), "-o", str(second))
+    assert second.is_file() and second.stat().st_size > 0
+    history = load_figure_history(second)
+    assert history[-1]["skill"] == "plot"
+
+
+def test_layer_writes_plot_spec_sidecar(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "layer.png"
+    run_skill(plot_fn, "--layer", f"heatmap:{src}", "-o", str(out), "--title", "Layered")
+    spec, sidecar = _assert_sidecar(out, trace_type="layer", title="Layered")
+    assert spec["layers"][0]["kind"] == "heatmap"
+    assert spec["layers"][0]["path"].endswith("in.zarr")
+    second = tmp_path / "layer2.png"
+    run_skill(plot_fn, "--spec", str(sidecar), "-o", str(second))
+    assert second.is_file() and second.stat().st_size > 0
+    history = load_figure_history(second)
+    assert history[-1]["skill"] == "plot"
+    assert history[-1]["input"]["basename"] == "in.zarr"
