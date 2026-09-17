@@ -3,7 +3,7 @@
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 #   "cftime",
-#   "dynamical-catalog==0.5.0",
+#   "dynamical-catalog==1.0.1",
 #   "xarray",
 #   "zarr",
 #   "numpy",

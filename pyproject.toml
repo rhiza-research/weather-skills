@@ -25,7 +25,7 @@ dev = [
     # Skill-script imports exercised by per-skill tests (mocked network).
     "requests",
     "earthaccess",
-    "dynamical-catalog==0.5.0",
+    "dynamical-catalog==1.0.1",
     "gcsfs",
     "xarray-regrid",
     "matplotlib>=3.8,<3.10",
