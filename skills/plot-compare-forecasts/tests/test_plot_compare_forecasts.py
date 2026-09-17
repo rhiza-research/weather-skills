@@ -211,7 +211,7 @@ def test_precip_default_colormap_is_discrete_chirps_total_palette():
     t2m = make_gridded(name="t2m")["t2m"]
     t2m.attrs.update(units="degree_Celsius", standard_name="air_temperature")
     scale_t = resolve_colorscale(t2m, None)
-    assert scale_t["name"] == "viridis"
+    assert scale_t["name"] == "rocket"
     assert scale_t.get("bounds") is None
 
 
