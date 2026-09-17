@@ -494,7 +494,7 @@ def test_precip_default_colormap_is_chirps_total_palette():
     cmap, norm = plot_mod._heatmap_scale(da, None)
     assert isinstance(cmap, ListedColormap)
     assert cmap.name == "chirps_total"
-    assert cmap.N == 14
+    assert cmap.N == 15
     assert isinstance(norm, BoundaryNorm)
     assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_BOUNDS)
 
@@ -547,12 +547,12 @@ def test_precip_anomaly_colormap_is_chirps_palette():
     assert isinstance(norm_named, BoundaryNorm)
 
 
-def test_non_precip_default_colormap_is_viridis():
+def test_non_precip_default_colormap_is_rocket():
     plot_mod = load_skill("plot", "plot")
     da = make_gridded(name="t2m")["t2m"]
     da.attrs.update(units="degree_Celsius", standard_name="air_temperature")
     cmap, norm = plot_mod._heatmap_scale(da, None)
-    assert cmap == "viridis"
+    assert cmap == "rocket"
     assert norm is None
 
 
