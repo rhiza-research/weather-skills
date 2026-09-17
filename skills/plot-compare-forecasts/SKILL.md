@@ -51,13 +51,23 @@ forecasts with a hits row, use `plot-verify`.
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.zarr> [-i <c.zarr> ...] \
     --output <out.png> [--variable NAME] [--title TEXT] [--fontsize N] [--figsize W,H] [--colormap NAME] [--vmin N] [--vmax N] \
-    [--bbox N/W/S/E] [--mask-geojson PATH] [--panels N]
+    [--bbox N/W/S/E] [--mask-geojson PATH] [--panels N] \
+    [--spec PATH_OR_JSON] [--dump-spec PATH|-|none]
+
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py --spec <out.plot.json> --output <out2.png>
 ```
 
 ### Arguments
 - `--input`, `-i` — input Zarr; repeat once per dataset (at least twice).
   Order is the row order. Each panel's y-axis is that row's name
   (`weather_skills_source` when stamped, else `input 1`, `input 2`, …).
+  Optional when `--spec` already lists input paths.
+- `--spec` — plot spec JSON (file or inline). A default run writes
+  `<output-stem>.plot.json`. Edit and re-run with `--spec`. CLI flags overlay
+  the spec. Spec input paths are opened as Datasets so provenance chains from
+  the Zarr.
+- `--dump-spec` — where to write the resolved plot spec. Default:
+  `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
 - `--label` — row label for each `--input`, in order. Overrides the default
   y-axis names when passed.
 - `--output`, `-o` — PNG output path.

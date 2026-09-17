@@ -16,6 +16,14 @@
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
 from weather_skills_core.figure import DEFAULT_FONTSIZE, parse_figsize, resolve_axis_label
+from weather_skills_core.plot_spec import (
+    DUMP_SPEC_ARGUMENT_HELP,
+    SPEC_ARGUMENT_HELP,
+    datasets_from_cli_or_spec,
+    dump_spec_dest,
+    parse_plot_spec,
+    spec_inputs_from_datasets,
+)
 from weather_skills_core.units import (
     precip_for_display,
     to_standard_units,
@@ -40,10 +48,10 @@ def _select_point(da, lat, lon):
     name="plot-mediogram",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=True)
+@weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=False)
 @weather_skill.argument("--variable", "-v")
-@weather_skill.argument("--lat", type=float, required=True, help="Point latitude.")
-@weather_skill.argument("--lon", type=float, required=True, help="Point longitude.")
+@weather_skill.argument("--lat", type=float, default=None, help="Point latitude.")
+@weather_skill.argument("--lon", type=float, default=None, help="Point longitude.")
 @weather_skill.argument("--title", default=None, help="Optional plot title.")
 @weather_skill.argument(
     "--xlabel",
@@ -67,13 +75,54 @@ def _select_point(da, lat, lon):
     type=parse_figsize,
     help="Figure size W,H inches (e.g. 10,6 or 10x6). Default 10,5.",
 )
+@weather_skill.argument(
+    "--spec",
+    default=None,
+    type=parse_plot_spec,
+    help=SPEC_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--dump-spec",
+    default=None,
+    help=DUMP_SPEC_ARGUMENT_HELP,
+)
 def plot_mediogram(
-    ds, variable, lat, lon, title, xlabel, ylabel, fontsize, figsize, output, **kwargs
+    ds,
+    variable,
+    lat,
+    lon,
+    title,
+    xlabel,
+    ylabel,
+    fontsize,
+    figsize,
+    output,
+    spec=None,
+    dump_spec=None,
+    **kwargs,
 ):
     """ECMWF-style mediogram: forecast vs m-climate ensemble distributions at a point."""
-    if len(ds) != 2:
-        raise UsageError(f"expected exactly two --input paths, got {len(ds)}")
-    ds_fc, ds_mc = ds
+    ds_fc, ds_mc = datasets_from_cli_or_spec(ds, spec, exactly=2)
+    spec_data = spec.to_dict() if spec is not None else {}
+    layout = spec_data.get("layout") or {}
+    geo = spec_data.get("geo") or {}
+    first_input = (spec_data.get("inputs") or [{}])[0]
+    if not isinstance(first_input, dict):
+        first_input = {}
+    title = title if title is not None else spec_data.get("title")
+    xlabel = xlabel if xlabel is not None else spec_data.get("xlabel")
+    ylabel = ylabel if ylabel is not None else spec_data.get("ylabel")
+    if figsize is None and layout.get("figsize"):
+        figsize = tuple(layout["figsize"])
+    if lat is None:
+        lat = geo.get("lat")
+    if lon is None:
+        lon = geo.get("lon")
+    variable = variable or first_input.get("variable")
+    if lat is None or lon is None:
+        raise UsageError("pass --lat and --lon, or --spec with geo.lat/geo.lon")
+    lat = float(lat)
+    lon = float(lon)
     import cf_xarray  # noqa: F401 — registers the .cf accessor
     import numpy as np
 
@@ -132,7 +181,6 @@ def plot_mediogram(
     qty = variable_label_for_display(pt_fc, fallback=variable, include_units=False)
     from weather_skills_core.plot_export import write_plot_outputs
     from weather_skills_core.plot_recipes import compile_mediogram
-    from weather_skills_core.plot_spec import spec_inputs_from_datasets
 
     fig = compile_mediogram(
         fc,
@@ -145,16 +193,25 @@ def plot_mediogram(
         figsize=figsize,
     )
     named = {"forecast": ds_fc, "mclimate": ds_mc}
+    inputs = spec_inputs_from_datasets(named)
+    if variable:
+        for item in inputs:
+            item["variable"] = variable
     resolved = {
         "version": 1,
         "skill": "plot-mediogram",
-        "inputs": spec_inputs_from_datasets(named),
+        "inputs": inputs,
         "traces": [{"type": "mediogram"}],
         "style": {"template": "weather_skills", "fontsize": fontsize},
+        "layout": {"figsize": list(figsize) if figsize else None},
         "geo": {"lat": snapped_lat, "lon": snapped_lon},
         "title": title,
+        "xlabel": xlabel,
+        "ylabel": ylabel,
     }
-    return write_plot_outputs(fig, resolved, output, datasets=named)
+    return write_plot_outputs(
+        fig, resolved, output, datasets=named, dump_spec_path=dump_spec_dest(dump_spec)
+    )
 
 
 if __name__ == "__main__":

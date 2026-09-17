@@ -64,12 +64,23 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
     [--variable NAME] [--time-dim DIM] [--reduce DIM ...] [--along DIM] [--title TEXT] \
     [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H] \
     [--style line|bar] [--subplots] [--align-day-of-year] [--band LOW,HIGH] \
-    [--theme weather_skills|colorblind] [--trace SELECTOR:k=v ...]
+    [--theme weather_skills|colorblind] [--trace SELECTOR:k=v ...] \
+    [--spec PATH_OR_JSON] [--dump-spec PATH|-|none]
+
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py --spec <out.plot.json> --output <out2.png>
 ```
 
 ### Arguments
 - `--input`, `-i` — input Zarr; repeat the flag for each input. Order is
-  preserved and controls the legend order.
+  preserved and controls the legend order. Optional when `--spec` already
+  lists input paths.
+- `--spec` — plot spec JSON (file or inline). A default run writes
+  `<output-stem>.plot.json` with resolved inputs, `--reduce`/`--along`,
+  `--style`, and labels. Edit that file and re-run with `--spec`. CLI flags
+  overlay the spec. Spec input paths are opened as Datasets so provenance
+  still chains from the Zarr.
+- `--dump-spec` — where to write the resolved plot spec. Default:
+  `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
 - `--label` — legend label (overlay) or subplot title (`--subplots`) for each
   `--input`, in order. When omitted, labels are inferred from station
   metadata, filename, or provenance.
@@ -253,4 +264,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
     --trace 'clim:style=line,linestyle=--,linewidth=2.5,marker=none' \
     --output /tmp/obs_vs_clim.png \
     --title "30-day precip vs climatology"
+```
+
+Replot from the sidecar after editing title/style/reduce:
+
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
+    --spec /tmp/precip_ts.plot.json \
+    --output /tmp/precip_ts.png
 ```

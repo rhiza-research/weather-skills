@@ -31,6 +31,15 @@ from weather_skills_core.plot_compile import (
     is_cftime_axis,
     slice_bbox_mask,
 )
+from weather_skills_core.plot_spec import (
+    DUMP_SPEC_ARGUMENT_HELP,
+    SPEC_ARGUMENT_HELP,
+    datasets_from_cli_or_spec,
+    dump_spec_dest,
+    parse_plot_spec,
+    spec_input_labels,
+    spec_inputs_from_datasets,
+)
 from weather_skills_core.plot_style import is_precip_anomaly
 from weather_skills_core.standard_utils import (
     pick_time_dim,
@@ -348,7 +357,7 @@ def _flatten_da(da, panel_dim, lat_dim, lon_dim):
     name="plot-compare-forecasts",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("spatial"), action="append", required=True)
+@weather_skill.argument("-i", "--input", type=Dataset("spatial"), action="append", required=False)
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument(
@@ -401,6 +410,17 @@ def _flatten_da(da, panel_dim, lat_dim, lon_dim):
     default=None,
     help="Colorbar upper limit. Unset = data max (or discrete precip classes).",
 )
+@weather_skill.argument(
+    "--spec",
+    default=None,
+    type=parse_plot_spec,
+    help=SPEC_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--dump-spec",
+    default=None,
+    help=DUMP_SPEC_ARGUMENT_HELP,
+)
 def plot_compare_forecasts(
     ds,
     bbox,
@@ -415,11 +435,36 @@ def plot_compare_forecasts(
     output,
     vmin=None,
     vmax=None,
+    spec=None,
+    dump_spec=None,
     **kwargs,
 ):
     """Compare two or more gridded datasets as a heatmap grid PNG."""
-    if len(ds) < 2:
-        raise UsageError(f"expected at least two --input paths, got {len(ds)}")
+    ds = datasets_from_cli_or_spec(ds, spec, min_count=2)
+    spec_data = spec.to_dict() if spec is not None else {}
+    layout = spec_data.get("layout") or {}
+    style_block = spec_data.get("style") or {}
+    geo = spec_data.get("geo") or {}
+    first_input = (spec_data.get("inputs") or [{}])[0]
+    if not isinstance(first_input, dict):
+        first_input = {}
+    title = title if title is not None else spec_data.get("title")
+    colormap = colormap or style_block.get("colormap")
+    if figsize is None and layout.get("figsize"):
+        figsize = tuple(layout["figsize"])
+    if panels is None:
+        panels = layout.get("columns")
+    if bbox is None:
+        bbox = geo.get("bbox")
+    if mask_geojson is None:
+        mask_geojson = geo.get("mask_geojson")
+    if vmin is None:
+        vmin = spec_data.get("vmin")
+    if vmax is None:
+        vmax = spec_data.get("vmax")
+    variable = variable or first_input.get("variable")
+    if not label:
+        label = spec_input_labels(spec_data)
     if panels is not None and panels < 1:
         raise UsageError(f"--panels must be >= 1, got {panels}")
 
@@ -491,7 +536,6 @@ def plot_compare_forecasts(
         heatmap_cell,
         scale_from_da,
     )
-    from weather_skills_core.plot_spec import spec_inputs_from_datasets
 
     user_vlim = vmin is not None or vmax is not None
     cmap_name = colormap
@@ -562,11 +606,27 @@ def plot_compare_forecasts(
         cell_notes=cell_notes,
     )
     named = {chr(ord("a") + i): datasets[i] for i in range(len(datasets))}
+    inputs = spec_inputs_from_datasets(named)
+    for i, item in enumerate(inputs):
+        if variable:
+            item["variable"] = variable
+        if i < len(label_slots) and label_slots[i]:
+            item["label"] = label_slots[i]
+    geo_out = {}
+    if bbox is not None:
+        geo_out["bbox"] = list(bbox) if not isinstance(bbox, str) else bbox
+    if mask_geojson:
+        geo_out["mask_geojson"] = str(mask_geojson)
     resolved = {
         "version": 1,
         "skill": "plot-compare-forecasts",
-        "inputs": spec_inputs_from_datasets(named),
-        "layout": {"rows": nrows, "columns": ncols, "shared_colorscale": True},
+        "inputs": inputs,
+        "layout": {
+            "rows": nrows,
+            "columns": ncols,
+            "shared_colorscale": True,
+            "figsize": list(figsize) if figsize else None,
+        },
         "traces": [{"type": "heatmap_grid"}],
         "style": {
             "template": "weather_skills",
@@ -574,8 +634,15 @@ def plot_compare_forecasts(
             "colormap": colormap or scale.get("name"),
         },
         "title": title,
+        "geo": geo_out,
     }
-    return write_plot_outputs(fig, resolved, output, datasets=named)
+    if vmin is not None:
+        resolved["vmin"] = vmin
+    if vmax is not None:
+        resolved["vmax"] = vmax
+    return write_plot_outputs(
+        fig, resolved, output, datasets=named, dump_spec_path=dump_spec_dest(dump_spec)
+    )
 
 
 if __name__ == "__main__":

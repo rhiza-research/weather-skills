@@ -31,6 +31,15 @@ from weather_skills_core.figure import (
     parse_figsize,
 )
 from weather_skills_core.plot_compile import extent_from_da, slice_bbox_mask
+from weather_skills_core.plot_spec import (
+    DUMP_SPEC_ARGUMENT_HELP,
+    SPEC_ARGUMENT_HELP,
+    dump_spec_dest,
+    named_datasets_from_spec,
+    parse_plot_spec,
+    spec_inputs_from_datasets,
+    spec_role_datasets,
+)
 from weather_skills_core.plot_style import aggregation_days
 from weather_skills_core.standard_utils import polygon_from_geojson
 from weather_skills_core.units import (
@@ -309,18 +318,18 @@ def _prepare(ds, variable):
     name="plot-verify",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("--obs", type=Dataset("spatial"), required=True)
+@weather_skill.argument("--obs", type=Dataset("spatial"), required=False)
 @weather_skill.argument(
     "--forecast",
     type=Dataset("spatial"),
     action="append",
-    required=True,
+    required=False,
 )
 @weather_skill.argument(
     "--verify",
     type=Dataset("any"),
     action="append",
-    required=True,
+    required=False,
     help="Verify Zarr from the verify skill, once per --forecast (same order).",
 )
 @weather_skill.argument("--bbox")
@@ -369,6 +378,17 @@ def _prepare(ds, variable):
     default=None,
     help="GeoJSON polygon; gridded cells outside become NaN.",
 )
+@weather_skill.argument(
+    "--spec",
+    default=None,
+    type=parse_plot_spec,
+    help=SPEC_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--dump-spec",
+    default=None,
+    help=DUMP_SPEC_ARGUMENT_HELP,
+)
 def plot_verify(
     obs,
     forecast,
@@ -383,13 +403,50 @@ def plot_verify(
     figsize,
     mask_geojson,
     output,
+    spec=None,
+    dump_spec=None,
     **kwargs,
 ):
     """Lead-week verification grid from obs, forecast, and pre-computed verify Zarrs."""
+    spec_data = spec.to_dict() if spec is not None else {}
+    named_spec = named_datasets_from_spec(spec) if spec is not None else {}
+    layout = spec_data.get("layout") or {}
+    style_block = spec_data.get("style") or {}
+    geo = spec_data.get("geo") or {}
+    first_input = (spec_data.get("inputs") or [{}])[0]
+    if not isinstance(first_input, dict):
+        first_input = {}
+    if obs is None:
+        obs = named_spec.get("obs")
     forecasts = _as_list(forecast)
-    verify_sets = _as_list(verify)
     if not forecasts:
-        raise UsageError("expected at least one --forecast.")
+        forecasts = spec_role_datasets(named_spec, "forecast")
+    verify_sets = _as_list(verify)
+    if not verify_sets:
+        verify_sets = spec_role_datasets(named_spec, "verify")
+    title = title if title is not None else spec_data.get("title")
+    colormap = colormap or style_block.get("colormap")
+    if figsize is None and layout.get("figsize"):
+        figsize = tuple(layout["figsize"])
+    if bbox is None:
+        bbox = geo.get("bbox")
+    if mask_geojson is None:
+        mask_geojson = geo.get("mask_geojson")
+    variable = variable or first_input.get("variable")
+    if not lead:
+        lead = layout.get("leads")
+    if not label:
+        label = [
+            item.get("label")
+            for item in spec_data.get("inputs") or []
+            if isinstance(item, dict) and not str(item.get("id", "")).startswith("verify")
+        ]
+        if not any(label):
+            label = None
+    if obs is None:
+        raise UsageError("pass --obs, or --spec with an obs input.")
+    if not forecasts:
+        raise UsageError("expected at least one --forecast, or --spec with forecast inputs.")
     if len(verify_sets) != len(forecasts):
         raise UsageError(
             f"--verify was passed {len(verify_sets)} time(s) but --forecast was passed "
@@ -478,7 +535,6 @@ def plot_verify(
         hits_scale,
         scale_from_da,
     )
-    from weather_skills_core.plot_spec import spec_inputs_from_datasets
 
     field_scale = scale_from_da(obs_da, colormap, stretch=False, label=_variable_label(obs_da))
     if field_scale.get("bounds") is None:
@@ -530,12 +586,43 @@ def plot_verify(
         figsize=figsize,
         scales={"field": field_scale, "verify": verify_scale},
     )
-    named = {"obs": obs, **{f"forecast{i}": fc for i, fc in enumerate(forecasts, start=1)}}
+    named = {
+        "obs": obs,
+        **{f"forecast{i}": fc for i, fc in enumerate(forecasts, start=1)},
+        **{f"verify{i}": ds for i, ds in enumerate(verify_sets, start=1)},
+    }
+    inputs = spec_inputs_from_datasets(named)
+    for item in inputs:
+        key = str(item["id"])
+        if key.startswith("forecast"):
+            item["role"] = "forecast"
+        elif key.startswith("verify"):
+            item["role"] = "verify"
+        else:
+            item["role"] = "obs"
+        if variable or obs_name:
+            item["variable"] = variable or obs_name
+    if labels:
+        obs_and_fc = [item for item in inputs if item["role"] != "verify"]
+        for i, item in enumerate(obs_and_fc):
+            if i < len(labels) and labels[i]:
+                item["label"] = labels[i]
+    geo_out = {}
+    if bbox is not None:
+        geo_out["bbox"] = list(bbox) if not isinstance(bbox, str) else bbox
+    if mask_geojson:
+        geo_out["mask_geojson"] = str(mask_geojson)
     resolved = {
         "version": 1,
         "skill": "plot-verify",
-        "inputs": spec_inputs_from_datasets(named),
-        "layout": {"rows": 2, "columns": 1 + n_leads, "metric": metric},
+        "inputs": inputs,
+        "layout": {
+            "rows": 2,
+            "columns": 1 + n_leads,
+            "metric": metric,
+            "leads": list(leads),
+            "figsize": list(figsize) if figsize else None,
+        },
         "traces": [{"type": "heatmap_grid"}],
         "style": {
             "template": "weather_skills",
@@ -543,8 +630,11 @@ def plot_verify(
             "colormap": colormap or field_scale.get("name"),
         },
         "title": fig_title,
+        "geo": geo_out,
     }
-    return write_plot_outputs(fig, resolved, output, datasets=named)
+    return write_plot_outputs(
+        fig, resolved, output, datasets=named, dump_spec_path=dump_spec_dest(dump_spec)
+    )
 
 
 if __name__ == "__main__":

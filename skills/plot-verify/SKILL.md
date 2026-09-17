@@ -54,18 +54,29 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
     ... \
     -o <out.png> [--variable NAME] \
     [--lead "1-week lead" ...] [--title TEXT] [--fontsize N] [--figsize W,H] [--colormap NAME] \
-    [--bbox N/W/S/E] [--mask-geojson PATH]
+    [--bbox N/W/S/E] [--mask-geojson PATH] \
+    [--spec PATH_OR_JSON] [--dump-spec PATH|-|none]
+
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py --spec <out.plot.json> -o <out2.png>
 ```
 
 ### Arguments
 
-- `--obs` — observation Zarr for the verifying week (required). Must
-  already be one time.
+- `--obs` — observation Zarr for the verifying week. Must already be one
+  time. Optional when `--spec` already lists an obs input.
 - `--forecast` — forecast Zarr for that same week at one lead. Pass
   **week-1 first**, then week-2, week-3, week-4. Repeat with matching
-  `--verify`. Must already be one time.
+  `--verify`. Must already be one time. Optional when `--spec` lists forecast
+  inputs.
 - `--verify` — verify Zarr from the `verify` skill for that lead.
-  **Required once per `--forecast`**, same order.
+  **Once per `--forecast`**, same order. Optional when `--spec` lists verify
+  inputs.
+- `--spec` — plot spec JSON (file or inline). A default run writes
+  `<output-stem>.plot.json` with obs, forecast, and verify paths. Edit and
+  re-run with `--spec`. CLI flags overlay the spec. Spec input paths are
+  opened as Datasets so provenance chains from the Zarr.
+- `--dump-spec` — where to write the resolved plot spec. Default:
+  `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
 - `--variable`, `-v` — obs/forecast data variable (verify Zarrs carry
   their own verification variable).
 - `--lead` — column title, once per `--forecast`. Default: `1-week lead`

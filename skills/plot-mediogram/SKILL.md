@@ -28,12 +28,21 @@ Lat/lon selection is nearest-neighbor.
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py -i <forecast.zarr> -i <mclimate.zarr> \
     --lat <lat> --lon <lon> --output <out.png> \
-    [--variable NAME] [--title TEXT] [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H]
+    [--variable NAME] [--title TEXT] [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H] \
+    [--spec PATH_OR_JSON] [--dump-spec PATH|-|none]
+
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py --spec <out.plot.json> --output <out2.png>
 ```
 
 ### Arguments
-- `--input`, `-i` — pass exactly twice: forecast Zarr first, m-climate Zarr second.
-- `--lat`, `--lon` — point location (nearest-neighbor selection).
+- `--input`, `-i` — pass exactly twice: forecast Zarr first, m-climate Zarr second. Optional when `--spec` already lists both paths.
+- `--lat`, `--lon` — point location (nearest-neighbor selection). Optional when `--spec` has `geo.lat` / `geo.lon`.
+- `--spec` — plot spec JSON (file or inline). A default run writes
+  `<output-stem>.plot.json` with the snapped lat/lon. Edit and re-run with
+  `--spec`. CLI flags overlay the spec. Spec input paths are opened as Datasets
+  so provenance chains from the Zarr.
+- `--dump-spec` — where to write the resolved plot spec. Default:
+  `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
 - `--output`, `-o` — PNG output path.
 - `--variable`, `-v` — variable name. Defaults to the first data variable in the forecast input.
 - `--title` — optional plot title. Long titles wrap onto a second line.

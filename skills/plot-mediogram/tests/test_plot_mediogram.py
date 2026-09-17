@@ -1,5 +1,6 @@
 """Correctness tests for plot-mediogram."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -84,3 +85,36 @@ def test_figsize_writes_png(tmp_path, plot_mediogram):
     assert img.shape[0] == 4 * 150
     history = load_figure_history(out)
     assert history[-1]["args"]["figsize"] == [8.0, 4.0]
+
+
+def test_replot_from_spec(tmp_path, plot_mediogram):
+    fc = write_zarr(_ensemble_rate_forecast(members=5, n_step=4), tmp_path / "fc.zarr")
+    mc = write_zarr(_ensemble_rate_forecast(members=5, n_step=4, fill=0.5), tmp_path / "mc.zarr")
+    first = tmp_path / "medio.png"
+    run_skill(
+        plot_mediogram,
+        "-i",
+        str(fc),
+        "-i",
+        str(mc),
+        "-o",
+        str(first),
+        "--lat",
+        "1.0",
+        "--lon",
+        "10.0",
+        "--title",
+        "Original",
+    )
+    spec_path = tmp_path / "medio.plot.json"
+    data = json.loads(spec_path.read_text())
+    assert data["geo"]["lat"] == pytest.approx(1.0)
+    data["title"] = "Edited"
+    spec_path.write_text(json.dumps(data))
+    second = tmp_path / "medio2.png"
+    run_skill(plot_mediogram, "--spec", str(spec_path), "-o", str(second))
+    assert second.is_file() and second.stat().st_size > 0
+    history = load_figure_history(second)
+    assert history[-1]["skill"] == "plot-mediogram"
+    basenames = [item["basename"] for item in history[-1]["input"]]
+    assert "fc.zarr" in basenames and "mc.zarr" in basenames

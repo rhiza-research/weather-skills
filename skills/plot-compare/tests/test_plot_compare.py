@@ -1,5 +1,6 @@
 """Correctness tests for plot-compare."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -161,3 +162,33 @@ def test_vmin_vmax_writes_png_and_stamps_history(tmp_path, plot_compare):
     history = load_figure_history(out)
     assert history[-1]["args"]["vmin"] == 0.0
     assert history[-1]["args"]["vmax"] == 10.0
+
+
+def test_replot_from_spec(tmp_path, plot_compare):
+    a = write_zarr(make_gridded(fill=1.0), tmp_path / "a.zarr")
+    b = write_zarr(make_gridded(fill=2.0), tmp_path / "b.zarr")
+    first = tmp_path / "cmp.png"
+    run_skill(
+        plot_compare,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(first),
+        "--panels",
+        "2",
+        "--title",
+        "Original",
+    )
+    spec_path = tmp_path / "cmp.plot.json"
+    data = json.loads(spec_path.read_text())
+    data["title"] = "Edited"
+    spec_path.write_text(json.dumps(data))
+    second = tmp_path / "cmp2.png"
+    run_skill(plot_compare, "--spec", str(spec_path), "-o", str(second))
+    assert second.is_file() and second.stat().st_size > 0
+    history = load_figure_history(second)
+    assert history[-1]["skill"] == "plot-compare"
+    basenames = [item["basename"] for item in history[-1]["input"]]
+    assert "a.zarr" in basenames and "b.zarr" in basenames

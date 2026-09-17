@@ -1,5 +1,6 @@
 """Correctness tests for plot-timeseries."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -842,3 +843,35 @@ def test_trace_unmatched_selector_exits(tmp_path, plot_timeseries):
             "2026:color=black",
         )
     assert exc.value.code == 2
+
+
+def test_replot_from_spec(tmp_path, plot_timeseries):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    first = tmp_path / "ts.png"
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(src),
+        "-o",
+        str(first),
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+        "--style",
+        "bar",
+        "--title",
+        "Original",
+    )
+    spec_path = tmp_path / "ts.plot.json"
+    data = json.loads(spec_path.read_text())
+    assert data["traces"][0]["style"] == "bar"
+    assert data["traces"][0]["reduce"] == ["latitude", "longitude"]
+    data["title"] = "Edited"
+    spec_path.write_text(json.dumps(data))
+    second = tmp_path / "ts2.png"
+    run_skill(plot_timeseries, "--spec", str(spec_path), "-o", str(second))
+    assert second.is_file() and second.stat().st_size > 0
+    history = load_figure_history(second)
+    assert history[-1]["skill"] == "plot-timeseries"
+    assert history[-1]["input"]["basename"] == "in.zarr"

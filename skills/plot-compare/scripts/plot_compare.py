@@ -31,6 +31,15 @@ from weather_skills_core.plot_compile import (
     format_calendar_panel,
     is_cftime_axis,
 )
+from weather_skills_core.plot_spec import (
+    DUMP_SPEC_ARGUMENT_HELP,
+    SPEC_ARGUMENT_HELP,
+    datasets_from_cli_or_spec,
+    dump_spec_dest,
+    parse_plot_spec,
+    spec_input_labels,
+    spec_inputs_from_datasets,
+)
 from weather_skills_core.plot_style import (
     PRECIP_LONG_MIN_DAYS,
     aggregation_days,
@@ -89,7 +98,7 @@ def _ax_bounds(ds, variable):
     name="plot-compare",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=True)
+@weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=False)
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument(
@@ -130,7 +139,7 @@ def _ax_bounds(ds, variable):
     action="store_true",
     help="Force per-row color scales.",
 )
-@weather_skill.argument("--panels", type=int, default=3)
+@weather_skill.argument("--panels", type=int, default=None)
 @weather_skill.argument(
     "--time-dim", default=None, help="Override the time axis. Defaults to time, else step."
 )
@@ -175,6 +184,17 @@ def _ax_bounds(ds, variable):
     default=None,
     help="Colorbar upper limit. Unset = data max (or discrete precip classes).",
 )
+@weather_skill.argument(
+    "--spec",
+    default=None,
+    type=parse_plot_spec,
+    help=SPEC_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--dump-spec",
+    default=None,
+    help=DUMP_SPEC_ARGUMENT_HELP,
+)
 def plot_compare(
     ds,
     bbox,
@@ -197,12 +217,47 @@ def plot_compare(
     output,
     vmin=None,
     vmax=None,
+    spec=None,
+    dump_spec=None,
     **kwargs,
 ):
     """Side-by-side multi-panel PNG comparing two weather-skills standard dataset Zarrs."""
-    if len(ds) != 2:
-        raise UsageError(f"expected exactly two --input paths, got {len(ds)}")
-    ds_a, ds_b = ds
+    ds_a, ds_b = datasets_from_cli_or_spec(ds, spec, exactly=2)
+    spec_data = spec.to_dict() if spec is not None else {}
+    layout = spec_data.get("layout") or {}
+    style_block = spec_data.get("style") or {}
+    geo = spec_data.get("geo") or {}
+    inputs = spec_data.get("inputs") or []
+    in_a = inputs[0] if inputs and isinstance(inputs[0], dict) else {}
+    in_b = inputs[1] if len(inputs) > 1 and isinstance(inputs[1], dict) else {}
+    title = title if title is not None else spec_data.get("title")
+    xlabel = xlabel if xlabel is not None else spec_data.get("xlabel")
+    colormap = colormap or style_block.get("colormap")
+    colormap_a = colormap_a or style_block.get("colormap_a")
+    colormap_b = colormap_b or style_block.get("colormap_b")
+    if figsize is None and layout.get("figsize"):
+        figsize = tuple(layout["figsize"])
+    if panels is None:
+        panels = layout.get("columns") or 3
+    if bbox is None:
+        bbox = geo.get("bbox")
+    if mask_geojson is None:
+        mask_geojson = geo.get("mask_geojson")
+    if vmin is None:
+        vmin = spec_data.get("vmin")
+    if vmax is None:
+        vmax = spec_data.get("vmax")
+    if not shared_scale and not independent_scale:
+        shared = layout.get("shared_colorscale")
+        if shared is True:
+            shared_scale = True
+        elif shared is False:
+            independent_scale = True
+    variable = variable or in_a.get("variable")
+    variable_a = variable_a or in_a.get("variable")
+    variable_b = variable_b or in_b.get("variable")
+    if not label:
+        label = spec_input_labels(spec_data)
     if shared_scale and independent_scale:
         raise UsageError("--shared-scale and --independent-scale are mutually exclusive.")
 
@@ -498,7 +553,6 @@ def plot_compare(
         scale_from_da,
         scatter_cell,
     )
-    from weather_skills_core.plot_spec import spec_inputs_from_datasets
 
     user_vlim = vmin is not None or vmax is not None
 
@@ -617,10 +671,24 @@ def plot_compare(
         xlabel=_resolve_axis_label(xlabel, "Longitude"),
     )
     datasets = {"a": ds_a, "b": ds_b}
+    inputs = spec_inputs_from_datasets(datasets)
+    if var_a:
+        inputs[0]["variable"] = var_a
+    if var_b:
+        inputs[1]["variable"] = var_b
+    if label_slots[0]:
+        inputs[0]["label"] = label_slots[0]
+    if label_slots[1]:
+        inputs[1]["label"] = label_slots[1]
+    geo_out = {}
+    if bbox is not None:
+        geo_out["bbox"] = list(bbox) if not isinstance(bbox, str) else bbox
+    if mask_geojson:
+        geo_out["mask_geojson"] = str(mask_geojson)
     resolved = {
         "version": 1,
         "skill": "plot-compare",
-        "inputs": spec_inputs_from_datasets(datasets),
+        "inputs": inputs,
         "layout": {
             "rows": 2,
             "columns": n,
@@ -634,8 +702,20 @@ def plot_compare(
             "colormap": colormap or top[5].get("name"),
         },
         "title": title,
+        "xlabel": xlabel,
+        "geo": geo_out,
     }
-    return write_plot_outputs(fig, resolved, output, datasets=datasets)
+    if colormap_a:
+        resolved["style"]["colormap_a"] = colormap_a
+    if colormap_b:
+        resolved["style"]["colormap_b"] = colormap_b
+    if vmin is not None:
+        resolved["vmin"] = vmin
+    if vmax is not None:
+        resolved["vmax"] = vmax
+    return write_plot_outputs(
+        fig, resolved, output, datasets=datasets, dump_spec_path=dump_spec_dest(dump_spec)
+    )
 
 
 if __name__ == "__main__":

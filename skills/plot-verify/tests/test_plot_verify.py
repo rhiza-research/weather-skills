@@ -1,5 +1,6 @@
 """Correctness tests for plot-verify."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -87,6 +88,39 @@ def test_metric_bias_writes_png(tmp_path, plot_fn, verify_fn, capsys):
     )
     assert Path(out).exists()
     assert "bias" in capsys.readouterr().out
+
+
+def test_replot_from_spec(tmp_path, plot_fn, verify_fn):
+    obs = write_zarr(_week(event_at=[(0, 0)], fill=1.0), tmp_path / "obs.zarr")
+    fc = write_zarr(_week(event_at=[(0, 0)], fill=3.0), tmp_path / "fc.zarr")
+    vpath = tmp_path / "bias.zarr"
+    _run_verify(verify_fn, fc, obs, vpath, metric="bias")
+    first = tmp_path / "verify_bias.png"
+    run_skill(
+        plot_fn,
+        "--obs",
+        str(obs),
+        "--forecast",
+        str(fc),
+        "--verify",
+        str(vpath),
+        "-o",
+        str(first),
+        "--title",
+        "Original",
+    )
+    spec_path = tmp_path / "verify_bias.plot.json"
+    data = json.loads(spec_path.read_text())
+    assert any(item.get("id") == "verify1" for item in data["inputs"])
+    data["title"] = "Edited"
+    spec_path.write_text(json.dumps(data))
+    second = tmp_path / "verify_bias2.png"
+    run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
+    assert second.is_file() and second.stat().st_size > 0
+    history = load_figure_history(second)
+    assert history[-1]["skill"] == "plot-verify"
+    basenames = [item["basename"] for item in history[-1]["input"]]
+    assert "obs.zarr" in basenames and "fc.zarr" in basenames and "bias.zarr" in basenames
 
 
 def test_error_scale_bias_white_at_zero():

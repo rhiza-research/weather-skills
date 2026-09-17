@@ -81,11 +81,20 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
     [--colormap NAME] [--colormap-a NAME] [--colormap-b NAME] [--vmin N] [--vmax N] \
     [--shared-scale | --independent-scale] [--title TEXT] [--xlabel TEXT] [--fontsize N] [--figsize W,H] \
     [--panels N] [--time-dim DIM] \
-    [--bbox N/W/S/E] [--mask-geojson PATH]
+    [--bbox N/W/S/E] [--mask-geojson PATH] \
+    [--spec PATH_OR_JSON] [--dump-spec PATH|-|none]
+
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py --spec <out.plot.json> --output <out2.png>
 ```
 
 ### Arguments
-- `--input`, `-i` — pass exactly twice. The first input is row A, the second is row B. Station-schema is allowed on either.
+- `--input`, `-i` — pass exactly twice. The first input is row A, the second is row B. Station-schema is allowed on either. Optional when `--spec` already lists both paths.
+- `--spec` — plot spec JSON (file or inline). A default run writes
+  `<output-stem>.plot.json`. Edit and re-run with `--spec`. CLI flags overlay
+  the spec. Spec input paths are opened as Datasets so provenance chains from
+  the Zarr.
+- `--dump-spec` — where to write the resolved plot spec. Default:
+  `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
 - `--label` — row label for each `--input`, in order. When omitted, labels are
   inferred from provenance (`weather_skills_source`, fetch skill history).
 - `--output`, `-o` — PNG path.
