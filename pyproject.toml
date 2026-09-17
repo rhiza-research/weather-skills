@@ -29,6 +29,7 @@ dev = [
     "gcsfs",
     "xarray-regrid",
     "matplotlib>=3.8,<3.10",
+    "seaborn>=0.13",
     "cartopy",
     "nc-time-axis",
     "pillow",

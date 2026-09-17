@@ -63,7 +63,8 @@ For maps of N forecasts (or forecasts vs gridded obs) over time, use
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> ...] --output <out.png> \
     [--variable NAME] [--time-dim DIM] [--reduce DIM ...] [--along DIM] [--title TEXT] \
     [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H] \
-    [--style line|bar] [--subplots] [--align-day-of-year] [--trace SELECTOR:k=v ...]
+    [--style line|bar] [--subplots] [--align-day-of-year] [--band LOW,HIGH] \
+    [--theme weather_skills|colorblind] [--trace SELECTOR:k=v ...]
 ```
 
 ### Arguments
@@ -113,6 +114,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
   years overlay on a shared x-axis. Tick labels show calendar dates (e.g.
   `1 Oct`); the x-axis
   label is `calendar day`.
+- `--band LOW,HIGH` — with `--along`, draw a filled percentile envelope (e.g.
+  `--band 10,90`) plus the mean line instead of spaghetti members. Requires
+  `--along`. Not valid on bar traces.
+- `--theme` — `weather_skills` (seaborn `deep` colorway, default) or
+  `colorblind`. Line colors follow seaborn unless `--trace` sets `color=`.
   Caveats:
   - Requires a calendar-date time axis. It errors (exit 2) on a non-date axis,
     such as a forecast `step` timedelta; drop the flag or select a date dim

@@ -507,6 +507,55 @@ def test_along_number_writes_png(tmp_path, plot_timeseries):
     assert history[-1]["args"]["along"] == "number"
 
 
+def test_band_with_along_writes_png(tmp_path, plot_timeseries):
+    ds = make_forecast(members=8)
+    ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
+    src = write_zarr(ds, tmp_path / "ens.zarr")
+    out = tmp_path / "band.png"
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+        "--along",
+        "number",
+        "--band",
+        "10,90",
+        "--theme",
+        "colorblind",
+    )
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+    history = load_figure_history(out)
+    assert history[-1]["args"]["along"] == "number"
+    assert history[-1]["args"]["band"] == "10,90"
+
+
+def test_band_without_along_exits(tmp_path, plot_timeseries):
+    ds = make_forecast(members=3)
+    ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
+    src = write_zarr(ds, tmp_path / "ens.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            plot_timeseries,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "no.png"),
+            "--reduce",
+            "latitude",
+            "--reduce",
+            "longitude",
+            "--band",
+            "10,90",
+        )
+
+
 def test_along_member_alias_and_1d_overlay(tmp_path, plot_timeseries):
     ens = make_forecast(members=4, fill=1.0)
     ens["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")

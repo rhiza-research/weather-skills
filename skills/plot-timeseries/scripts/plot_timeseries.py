@@ -5,6 +5,7 @@
 #   "cf-xarray",
 #   "cftime",
 #   "matplotlib>=3.8",
+#   "seaborn>=0.13",
 #   "numpy",
 #   "xarray",
 #   "zarr",
@@ -29,7 +30,7 @@ from weather_skills_core.figure import (
     resolve_axis_label,
     resolve_time_axis_label,
 )
-from weather_skills_core.standard_dataset import ALIASES, names_for
+from weather_skills_core.plot_style import along_dim, normalize_template, parse_band
 from weather_skills_core.standard_utils import pick_time_dim
 from weather_skills_core.units import (
     precip_for_display,
@@ -259,12 +260,7 @@ def _series_kind(style: dict, default: str, yvals=None) -> str:
 
 def _along_dim(da, along: str | None) -> str | None:
     """Resolve ``--along`` to a dim on ``da``, including ontology aliases (member/number)."""
-    if not along:
-        return None
-    if along in da.dims:
-        return along
-    preferred = ALIASES.get(along, along)
-    return next((name for name in names_for(preferred) if name in da.dims), None)
+    return along_dim(da, along)
 
 
 def _bar_kwargs(style: dict) -> dict:
@@ -370,6 +366,21 @@ def _day_of_year_tick_label(doy: float) -> str:
     help="Plot against day-of-year (1-366) instead of absolute date.",
 )
 @weather_skill.argument(
+    "--band",
+    default=None,
+    help=(
+        "Ensemble envelope along --along: two percentiles, e.g. 10,90 (default when "
+        "the flag is passed as --band with no value: 10,90). Draws a filled range plus "
+        "the mean instead of spaghetti members."
+    ),
+)
+@weather_skill.argument(
+    "--theme",
+    default="weather_skills",
+    choices=["weather_skills", "colorblind"],
+    help="Seaborn colorway: weather_skills (deep) or colorblind.",
+)
+@weather_skill.argument(
     "--label",
     action="append",
     default=None,
@@ -416,6 +427,8 @@ def plot_timeseries(
     trace,
     output,
     subplots=False,
+    band=None,
+    theme="weather_skills",
     **kwargs,
 ):
     """Render a multi-input timeseries PNG from weather-skills standard dataset Zarrs."""
@@ -465,6 +478,10 @@ def plot_timeseries(
     first_tdim = None
     axis_label = None
     series = []
+    band_q = parse_band(band)
+    if band_q is not None and not along:
+        raise UsageError("--band requires --along (percentiles are taken over that dim).")
+    template = normalize_template(theme)
 
     for idx, ds in enumerate(datasets):
         da = ds[variable]
@@ -543,6 +560,12 @@ def plot_timeseries(
 
     styles = resolve_trace_styles([lab for _, _, lab in series], trace)
     _validate_trace_colors(styles)
+    if band_q is not None:
+        for series_style, (_, yvals, _) in zip(styles, series, strict=True):
+            if np.asarray(yvals).ndim == 2:
+                if series_style.get("style") == "bar":
+                    raise UsageError("--band is not supported on bar traces; use style=line.")
+                series_style["band"] = band_q
     x_for_label = series[0][0] if series else None
     resolved_xlabel = _resolve_time_axis_label(
         xlabel, axis_label or first_tdim or "time", x_for_label
@@ -559,6 +582,8 @@ def plot_timeseries(
         if subplots
         else [_resolve_axis_label(ylabel, y_labels[0])]
     )
+    from matplotlib.ticker import FuncFormatter
+
     from weather_skills_core.plot_export import write_plot_outputs
     from weather_skills_core.plot_recipes import compile_line_figure
     from weather_skills_core.plot_spec import spec_inputs_from_datasets
@@ -573,18 +598,34 @@ def plot_timeseries(
         subplots=subplots,
         kinds=kinds,
         styles=styles,
+        template=template,
     )
+    if align_day_of_year:
+        for ax in fig.axes:
+            ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _p: _day_of_year_tick_label(x)))
     named = {chr(ord("a") + i): ds for i, ds in enumerate(datasets)}
+    traces = []
+    for key in named:
+        item = {"type": "timeseries", "input": key}
+        if along:
+            item["along"] = along
+        if reduce:
+            item["reduce"] = list(reduce)
+        traces.append(item)
     resolved = {
         "version": 1,
         "skill": "plot-timeseries",
         "inputs": spec_inputs_from_datasets(named),
         "layout": {"subplots": subplots, "figsize": list(figsize) if figsize else None},
-        "traces": [{"type": "timeseries", "input": key} for key in named],
-        "style": {"template": "weather_skills", "fontsize": fontsize},
+        "traces": traces,
+        "style": {"template": template, "fontsize": fontsize},
         "title": title,
         "xlabel": resolved_xlabel,
     }
+    if align_day_of_year:
+        resolved["align"] = "dayofyear"
+    if band_q is not None:
+        resolved["band"] = list(band_q)
     return write_plot_outputs(fig, resolved, output, datasets=named)
 
 

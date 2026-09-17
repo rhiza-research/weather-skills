@@ -121,7 +121,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --input <in.zarr> --output <out.png> 
     [--mask-geojson PATH] [--draw-box N/W/S/E ...] \
     [--rows N] [--columns N] \
     [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec PATH|-|none] \
-    [--style-file PATH]
+    [--style-file PATH] [--theme weather_skills|colorblind]
 
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --output <out.png> \
     --layer heatmap:<a.zarr>[::variable=NAME] \
@@ -147,6 +147,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   (`len`/`shrink` is the long-side fraction; `thickness` is pixels).
 - `--dump-spec` — where to write the resolved plot spec. Default:
   `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
+- `--theme` — `weather_skills` (seaborn `deep` colorway, default) or
+  `colorblind`. Heatmap classified precip palettes are unchanged.
 - `--x` / `--y` — X- and Y-axis Zarrs for `--style xy`. Mutually exclusive
   with `-i` and `--layer`.
 - `--x-variable` / `--y-variable` — variables for `--style xy`. Default: first
@@ -182,7 +184,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   list of colors to interpolate between (e.g. `white,wheat,green`). Named
   matplotlib colormaps cannot contain commas, so the presence of a comma
   unambiguously selects the custom-list form. When omitted, precipitation
-  totals (rate or amount) use the CHIRPS-GEFS total-rainfall classes
+  totals (rate or amount) use the CHC `ppt_total_cmap` classes
   (`BoundaryNorm` over
   `[2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]`
   mm with white under `<2` and pale-pink over `>2500`) when
@@ -190,9 +192,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   (`aggregation_period` < 5 days) keep the same colors with lower breaks
   (`[0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30, 50, 75, 100, 150, 200]` mm).
   Precipitation anomalies (negatives, or `anomal` in the name — e.g. after
-  `difference`) use the CHIRPS-GEFS diverging classes
+  `difference`) use CHC `ppt_anomaly_cmap`
   (`[-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]`
-  mm with under/over colors). Every other variable uses `viridis`. Windrose uses a blue→orange
+  mm with under/over colors). Percent-of-normal (`poa` / `%`) uses `ppt_poa`;
+  SPI uses `spi`. Named aliases: `ppt_total`/`chirps_total`, `ppt_anomaly`/`chirps_anom`,
+  `ppt_poa`, `ppt_spp`, `spi`. Every other variable uses `viridis`. Windrose uses a blue→orange
   speed palette; `--colormap` recolors the speed stacks. Quiver defaults to
   `YlGn` (S2S 10 m / 700 hPa wind-vector maps); `--colormap PiYG` matches their
   anomaly quivers. A variable with CF `flag_values` (e.g. `verify --metric hits`) uses a

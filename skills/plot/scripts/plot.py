@@ -7,6 +7,7 @@
 #   "cftime",
 #   # matplotlib<3.10: cartopy gridliner crash
 #   "matplotlib>=3.8,<3.10",
+#   "seaborn>=0.13",
 #   "nc-time-axis",
 #   "numpy",
 #   "shapely>=2.1",
@@ -63,6 +64,7 @@ from weather_skills_core.plot_spec import (
     spec_from_flags,
 )
 from weather_skills_core.plot_style import (
+    DISCRETE_PRECIP_NAMES,
     PRECIP_ANOMALY_BOUNDS,
     PRECIP_ANOMALY_COLORS,
     PRECIP_BOUNDS,
@@ -513,7 +515,7 @@ def _discrete_flag_scale(da, colormap):
 
 
 def _precip_scale(da=None):
-    """Discrete CHIRPS-GEFS rainfall-total classes with under/over colors.
+    """Discrete CHC rainfall-total classes with under/over colors.
 
     Periods shorter than ``PRECIP_LONG_MIN_DAYS`` use ``PRECIP_SHORT_BOUNDS``;
     longer (or unknown) periods use the dekadal-style ``PRECIP_BOUNDS``.
@@ -532,7 +534,7 @@ def _precip_scale(da=None):
 
 
 def _precip_anomaly_scale():
-    """Discrete CHIRPS-GEFS rainfall-anomaly classes with under/over colors."""
+    """Discrete CHC rainfall-anomaly classes with under/over colors."""
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
     colors = PRECIP_ANOMALY_COLORS
@@ -627,7 +629,7 @@ def _cbar_boundary_kwargs(norm, cmap=None):
     if not isinstance(norm, BoundaryNorm):
         return {}
     kw = {"spacing": "uniform", "ticks": list(norm.boundaries)}
-    if getattr(cmap, "name", None) in ("chirps_anom", "chirps_total", "chirps_short"):
+    if getattr(cmap, "name", None) in DISCRETE_PRECIP_NAMES:
         kw["extend"] = "both"
     return kw
 
@@ -2599,7 +2601,7 @@ def _heatmap(
     levels = _contour_levels(vmin, vmax, norm=norm) if kind == "contour" else None
     contour_extend = (
         "both"
-        if getattr(cmap, "name", None) in ("chirps_anom", "chirps_total", "chirps_short")
+        if getattr(cmap, "name", None) in DISCRETE_PRECIP_NAMES
         else "neither"
     )
     for i, s in enumerate(steps):
@@ -2724,6 +2726,7 @@ def _render_spec_plot(
     patch,
     dump_spec_path,
     output,
+    theme=None,
 ):
     """Compile heatmap/timeseries/contour and write PNG + spec sidecar."""
     from weather_skills_core.plot_compile import compile_figure
@@ -2731,6 +2734,7 @@ def _render_spec_plot(
     from weather_skills_core.plot_style import deep_merge
 
     user_style = load_user_style(style_file)
+    template = theme or user_style.get("template")
     input_path = _input_path_of(ds)
     if spec is not None:
         merged = overlay_spec(spec.to_dict() if isinstance(spec, PlotSpec) else spec, {})
@@ -2751,6 +2755,8 @@ def _render_spec_plot(
             merged.setdefault("style", {})["colormap"] = colormap
         if fontsize is not None:
             merged.setdefault("style", {})["fontsize"] = fontsize
+        if template:
+            merged.setdefault("style", {})["template"] = template
         if subplot_title:
             merged["subplot_titles"] = list(subplot_title)
         if xlabel is not None:
@@ -2811,6 +2817,7 @@ def _render_spec_plot(
             vmin=vmin,
             vmax=vmax,
             patch=patch,
+            template=template,
         )
     if user_style.get("max_columns") and not (rows or columns):
         merged.setdefault("layout", {}).setdefault("facet", {}).setdefault(
@@ -2913,8 +2920,9 @@ def _render_spec_plot(
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors. "
-        "Heatmap default: discrete CHIRPS-GEFS precip classes for precip "
-        "variables, else viridis. Windrose default: blue-to-orange speed classes. "
+        "Heatmap default: CHC ppt_total / ppt_anomaly classes for precip "
+        "(aliases chirps_total, chirps_anom), else viridis. Also: ppt_poa, "
+        "ppt_spp, spi. Windrose default: blue-to-orange speed classes. "
         "Quiver default: YlGn (ECMWF S2S 10 m / 700 hPa wind vectors)."
     ),
 )
@@ -3081,6 +3089,12 @@ def _render_spec_plot(
     help="User plot style TOML/JSON (colormap, fontsize, template). Overrides ~/.config/weather-skills/plot.toml.",
 )
 @weather_skill.argument(
+    "--theme",
+    default=None,
+    choices=["weather_skills", "colorblind"],
+    help="Seaborn colorway: weather_skills (deep) or colorblind. Default weather_skills.",
+)
+@weather_skill.argument(
     "--patch",
     default=None,
     type=parse_json_object,
@@ -3133,6 +3147,7 @@ def plot(
     vmax=None,
     spec=None,
     style_file=None,
+    theme=None,
     patch=None,
     dump_spec=None,
     **kwargs,
@@ -3242,6 +3257,7 @@ def plot(
             vmin=vmin,
             vmax=vmax,
             style_file=style_file,
+            theme=theme,
             patch=patch,
             dump_spec_path=dump_spec,
             output=output,
@@ -3254,7 +3270,7 @@ def plot(
     import matplotlib.pyplot as plt
     import nc_time_axis  # noqa: F401 — registers the cftime→matplotlib axis converter
 
-    apply_style(fontsize)
+    apply_style(fontsize, template=theme or "weather_skills")
 
     if layers:
         fig = _plot_layers(
