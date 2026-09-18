@@ -330,6 +330,22 @@ def test_draw_lines_along_is_one_call_one_legend_entry():
     assert all(ln.get_label() == "_nolegend_" for ln in lines[1:])
 
 
+def test_draw_lines_along_cycle_uses_distinct_colors():
+    import numpy as np
+    from matplotlib.colors import to_hex
+    from weather_skills_core.plot.recipes import compile_line_figure
+
+    y = np.column_stack([np.arange(4.0), np.arange(4.0) + 1.0, np.arange(4.0) + 2.0])
+    series = [([1, 2, 3, 4], y, "ens")]
+    fig = compile_line_figure(
+        series,
+        styles=[{"along_color": "cycle", "along_labels": ["0", "1", "2"]}],
+    )
+    lines = fig.axes[0].lines
+    assert len({to_hex(ln.get_color()) for ln in lines}) == 3
+    assert [ln.get_label() for ln in lines] == ["0", "1", "2"]
+
+
 def test_along_number_writes_png(tmp_path, plot_timeseries):
     ds = make_forecast(members=5)
     ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
@@ -340,6 +356,30 @@ def test_along_number_writes_png(tmp_path, plot_timeseries):
     assert out.stat().st_size > 0
     history = load_figure_history(out)
     assert history[-1]["args"]["along"] == "number"
+
+
+def test_along_color_cycle_writes_png(tmp_path, plot_timeseries):
+    ds = make_forecast(members=3)
+    ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
+    src = write_zarr(ds, tmp_path / "ens.zarr")
+    out = tmp_path / "cycle.png"
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--along-color",
+        "cycle",
+        "--spec",
+        '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]},{"along":"number"}]}',
+    )
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+    sidecar = json.loads((tmp_path / "cycle.plot.json").read_text())
+    assert sidecar["traces"][0]["along_color"] == "cycle"
+    history = load_figure_history(out)
+    assert history[-1]["args"]["along_color"] == "cycle"
 
 
 def test_band_with_along_writes_png(tmp_path, plot_timeseries):

@@ -40,7 +40,13 @@ from weather_skills_core.plot.spec import (
     spec_input_labels,
     spec_inputs_from_datasets,
 )
-from weather_skills_core.plot.style import along_dim, normalize_template, parse_band
+from weather_skills_core.plot.style import (
+    along_dim,
+    along_member_label,
+    normalize_template,
+    parse_along_color,
+    parse_band,
+)
 from weather_skills_core.standard_utils import pick_time_dim
 from weather_skills_core.units import (
     precip_for_display,
@@ -338,7 +344,17 @@ def _day_of_year_tick_label(doy: float) -> str:
     default=None,
     help=(
         "Non-time dim to fan into traces (e.g. number/member). One input, "
-        "one legend entry; not one --input per member."
+        "many lines. Default: shared color and one legend entry. "
+        "Pass --along-color cycle for a distinct color per value."
+    ),
+)
+@weather_skill.argument(
+    "--along-color",
+    default=None,
+    choices=["same", "cycle"],
+    help=(
+        "When --along fans a dim: same (default) paints every member one color "
+        "with one legend entry; cycle gives each value its own color and legend entry."
     ),
 )
 @weather_skill.argument("--title", default=None, help="Optional figure title.")
@@ -437,6 +453,7 @@ def plot_timeseries(
     time_dim,
     reduce,
     along,
+    along_color,
     title,
     xlabel,
     ylabel,
@@ -466,6 +483,7 @@ def plot_timeseries(
         variable=variable,
         reduce=reduce,
         along=along,
+        along_color=along_color,
         trace_style=style,
         subplots=subplots,
         align=align_day_of_year,
@@ -474,6 +492,7 @@ def plot_timeseries(
     )
     title, xlabel, ylabel = flags["title"], flags["xlabel"], flags["ylabel"]
     variable, reduce, along = flags["variable"], flags["reduce"] or [], flags["along"]
+    along_color = parse_along_color(flags["along_color"])
     figsize = tuple(flags["figsize"]) if flags["figsize"] else None
     style = flags["trace_style"] or "line"
     subplots = bool(flags["subplots"])
@@ -524,9 +543,14 @@ def plot_timeseries(
     first_tdim = None
     axis_label = None
     series = []
+    along_labels_by_series = []
     band_q = parse_band(band)
     if band_q is not None and not along:
         raise UsageError("--band requires --along (percentiles are taken over that dim).")
+    if flags["along_color"] and not along:
+        raise UsageError("--along-color requires --along.")
+    if along_color == "cycle" and band_q is not None:
+        raise UsageError("--along-color cycle cannot be combined with --band.")
     template = normalize_template(theme)
 
     for idx, ds in enumerate(datasets):
@@ -597,6 +621,9 @@ def plot_timeseries(
                 series_xlabel = "valid time"
         if along_dim:
             da = da.transpose(tdim, along_dim)
+            along_labels_by_series.append([along_member_label(v) for v in da[along_dim].values])
+        else:
+            along_labels_by_series.append(None)
         series.append((xvals, np.asarray(da.values), label))
 
         if first_tdim is None:
@@ -606,6 +633,13 @@ def plot_timeseries(
 
     styles = resolve_trace_styles([lab for _, _, lab in series], trace)
     _validate_trace_colors(styles)
+    for series_style, (_, yvals, _), member_labels in zip(
+        styles, series, along_labels_by_series, strict=True
+    ):
+        if member_labels:
+            series_style["along_labels"] = member_labels
+        if along and np.asarray(yvals).ndim == 2:
+            series_style["along_color"] = along_color
     if band_q is not None:
         for series_style, (_, yvals, _) in zip(styles, series, strict=True):
             if np.asarray(yvals).ndim == 2:
@@ -654,6 +688,7 @@ def plot_timeseries(
         item = {"type": "timeseries", "input": key, "style": style}
         if along:
             item["along"] = along
+            item["along_color"] = along_color
         if reduce:
             item["reduce"] = list(reduce)
         if align_day_of_year:

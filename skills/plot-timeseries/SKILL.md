@@ -20,11 +20,14 @@ series, so observed totals can be bars with a climatology drawn as a line.
 
 Each `--input` is one legend series. A leftover non-time dim can be fanned
 with `--along DIM` (typically `number` / `member`): every value along that dim
-becomes a line, sharing color and one legend
-entry. That is how to plot 101 ensemble-member difference traces from a
+becomes a line. Default `--along-color same` shares one color and one legend
+entry (ensemble spaghetti). `--along-color cycle` paints each value a distinct
+color with its own legend entry (analog years concatenated on one dim). That is
+how to plot 101 ensemble-member difference traces from a
 single Zarr — do not split members into 101 `--input` files (capped at 26
 inputs). `--along` traces are always lines (thin, translucent, no markers
-unless `--trace` says otherwise) and may overlay bar-styled inputs.
+unless `--trace` or `--along-color cycle` says otherwise) and may overlay
+bar-styled inputs.
 
 1D inputs (only a time-like dim left after `--variable`) plot as-is. Any other
 non-time dim must be named in `--reduce` (mean) or `--along` (one line per
@@ -61,7 +64,8 @@ For maps of N forecasts (or forecasts vs gridded obs) over time, use
 
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> ...] --output <out.png> \
-    [--variable NAME] [--time-dim DIM] [--reduce DIM ...] [--along DIM] [--title TEXT] \
+    [--variable NAME] [--time-dim DIM] [--reduce DIM ...] [--along DIM] \
+    [--along-color same|cycle] [--title TEXT] \
     [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H] \
     [--style line|bar] [--subplots] [--align-day-of-year] [--band LOW,HIGH] \
     [--theme weather_skills|colorblind] [--trace SELECTOR:k=v ...] \
@@ -95,11 +99,18 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py --spec <out.plot.json> --o
   has any non-time dims after variable selection (unless that dim is named
   in `--along`); the skill exits with an error rather than silently averaging.
 - `--along` — name of one leftover non-time dim to fan into traces (e.g.
-  `number`, `member`, `realization`). One `--input` yields many lines, one
-  legend entry, shared color. Inputs that lack the dim are unchanged (so an
-  ensemble Zarr and a 1D obs Zarr can share the same `--along number`).
-  `--along` traces are lines even when `--style bar`. `--trace` selectors
-  refer to the `--input` (1-based index / label), not to individual members.
+  `number`, `member`, `realization`). One `--input` yields many lines.
+  Default `--along-color same`: one legend entry, shared color. Inputs that
+  lack the dim are unchanged (so an ensemble Zarr and a 1D obs Zarr can share
+  the same `--along number`). `--along` traces are lines even when `--style
+  bar`. `--trace` selectors refer to the `--input` (1-based index / label),
+  not to individual members.
+- `--along-color` — `same` (default) or `cycle`. With `--along`, `same` is
+  ensemble spaghetti (one color). `cycle` gives each along-value its own
+  color and legend entry (the coord value, e.g. member `0` or year `2015`).
+  Spec key: `traces[].along_color`. Cannot combine `cycle` with `--band` or
+  with a `--trace color=` on that series. Edit the sidecar and replot with
+  `--spec` to switch without re-passing flags.
 - `--title` — optional figure title. Titles longer than about 56 characters
   wrap onto a second line at a `·` / `:` / word break.
 - `--xlabel` / `--ylabel` — optional axis-label overrides. When omitted, x is

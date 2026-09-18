@@ -88,12 +88,15 @@ key that used to be readable somewhere else.
 | `layout.colorbar` | `len`/`shrink`, `thickness`, `extend`, `pad`, `location`, `ticks`, `labels`, plus matplotlib extras |
 | `geo` | `extent`, `bbox`, `cities`, `mask_geojson`, `draw_boxes`, `overlays`, `lat`, `lon` |
 | `inputs[]` | `id`, `path`, `variable`, `index`, `label`, `colormap`, `role` |
-| `traces[]` | `type`, `input`, `style`, `x`, `y`, `path`, `along`, `reduce`, `align`, `band`, `pair_on`, `u_variable`, `v_variable`, `x_variable`, `y_variable`, `metric`, `leads`, plus the artist blocks |
+| `traces[]` | `type`, `input`, `style`, `x`, `y`, `path`, `along`, `along_color`, `reduce`, `align`, `band`, `pair_on`, `u_variable`, `v_variable`, `x_variable`, `y_variable`, `metric`, `leads`, plus the artist blocks |
 | `traces[]` artist blocks | `line`, `mesh`, `contour`, `scatter`, `bar`, `quiver`, `windrose`, `fill`, `box`, `mediogram` |
 | `layers[]` | `kind`, `path`, `options`, `input`, `raw` |
 
 Key details:
 
+- **`traces[].along_color`**: with `along`, `same` (default) paints every
+  member one color; `cycle` gives each along-value its own color and legend
+  entry. CLI: `--along-color`. `cycle` cannot combine with `band`.
 - **`axes`** applies **after** the data are drawn: `xscale`/`yscale`,
   `xlim`/`ylim`, labels, `xticks`/`yticks` (list or `{values, labels}`),
   `tick_params`, locators (`auto`/`log`/`maxn`/`null`/`multiple`), formatters
