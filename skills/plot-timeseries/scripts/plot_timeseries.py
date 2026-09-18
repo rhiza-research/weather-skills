@@ -36,6 +36,7 @@ from weather_skills_core.plot_spec import (
     datasets_from_cli_or_spec,
     dump_spec_dest,
     parse_plot_spec,
+    resolve_flags,
     spec_input_labels,
     spec_inputs_from_datasets,
 )
@@ -456,31 +457,29 @@ def plot_timeseries(
     """Render a multi-input timeseries PNG from weather-skills standard dataset Zarrs."""
     datasets = datasets_from_cli_or_spec(ds, spec)
     spec_data = spec.to_dict() if spec is not None else {}
-    traces_spec = spec_data.get("traces") or []
-    first_trace = traces_spec[0] if traces_spec else {}
-    first_input = (spec_data.get("inputs") or [{}])[0]
-    if isinstance(first_input, dict):
-        variable = variable or first_input.get("variable")
-    else:
-        first_input = {}
-    if not reduce:
-        reduce = first_trace.get("reduce") or []
-    along = along or first_trace.get("along")
-    title = title if title is not None else spec_data.get("title")
-    xlabel = xlabel if xlabel is not None else spec_data.get("xlabel")
-    ylabel = ylabel if ylabel is not None else spec_data.get("ylabel")
-    layout = spec_data.get("layout") or {}
-    style_block = spec_data.get("style") or {}
-    if figsize is None and layout.get("figsize"):
-        figsize = tuple(layout["figsize"])
-    style = style or first_trace.get("style") or "line"
-    if not subplots:
-        subplots = bool(layout.get("subplots"))
-    if not align_day_of_year and spec_data.get("align") in ("dayofyear", "day-of-year"):
-        align_day_of_year = True
-    if band is None:
-        band = spec_data.get("band")
-    theme = theme or style_block.get("template") or "weather_skills"
+    flags = resolve_flags(
+        spec_data,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        figsize=figsize,
+        variable=variable,
+        reduce=reduce,
+        along=along,
+        trace_style=style,
+        subplots=subplots,
+        align=align_day_of_year,
+        band=band,
+        template=theme,
+    )
+    title, xlabel, ylabel = flags["title"], flags["xlabel"], flags["ylabel"]
+    variable, reduce, along = flags["variable"], flags["reduce"] or [], flags["along"]
+    figsize = tuple(flags["figsize"]) if flags["figsize"] else None
+    style = flags["trace_style"] or "line"
+    subplots = bool(flags["subplots"])
+    align_day_of_year = flags["align"] in (True, "dayofyear", "day-of-year")
+    band = flags["band"]
+    theme = flags["template"] or "weather_skills"
     if not label:
         label = spec_input_labels(spec_data)
     if len(datasets) > 26:
@@ -633,11 +632,9 @@ def plot_timeseries(
     from weather_skills_core.plot_recipes import compile_line_figure
 
     if align_day_of_year:
-        axes_block = spec_data.get("axes")
-        if not isinstance(axes_block, dict):
+        if not isinstance(spec_data.get("axes"), dict):
             spec_data["axes"] = {}
-            axes_block = spec_data["axes"]
-        axes_block.setdefault("xformatter", "dayofyear")
+        spec_data["axes"].setdefault("xformatter", "dayofyear")
     fig = compile_line_figure(
         series,
         title=title,
@@ -659,6 +656,10 @@ def plot_timeseries(
             item["along"] = along
         if reduce:
             item["reduce"] = list(reduce)
+        if align_day_of_year:
+            item["align"] = "dayofyear"
+        if band_q is not None:
+            item["band"] = list(band_q)
         traces.append(item)
     inputs = spec_inputs_from_datasets(named)
     for i, item in enumerate(inputs):
@@ -677,10 +678,6 @@ def plot_timeseries(
         "xlabel": resolved_xlabel,
         "ylabel": ylabel,
     }
-    if align_day_of_year:
-        resolved["align"] = "dayofyear"
-    if band_q is not None:
-        resolved["band"] = list(band_q)
     return write_plot_outputs(
         fig,
         resolved,

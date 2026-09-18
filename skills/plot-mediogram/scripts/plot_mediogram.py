@@ -22,6 +22,7 @@ from weather_skills_core.plot_spec import (
     datasets_from_cli_or_spec,
     dump_spec_dest,
     parse_plot_spec,
+    resolve_flags,
     spec_inputs_from_datasets,
 )
 from weather_skills_core.units import (
@@ -104,21 +105,19 @@ def plot_mediogram(
     """ECMWF-style mediogram: forecast vs m-climate ensemble distributions at a point."""
     ds_fc, ds_mc = datasets_from_cli_or_spec(ds, spec, exactly=2)
     spec_data = spec.to_dict() if spec is not None else {}
-    layout = spec_data.get("layout") or {}
-    geo = spec_data.get("geo") or {}
-    first_input = (spec_data.get("inputs") or [{}])[0]
-    if not isinstance(first_input, dict):
-        first_input = {}
-    title = title if title is not None else spec_data.get("title")
-    xlabel = xlabel if xlabel is not None else spec_data.get("xlabel")
-    ylabel = ylabel if ylabel is not None else spec_data.get("ylabel")
-    if figsize is None and layout.get("figsize"):
-        figsize = tuple(layout["figsize"])
-    if lat is None:
-        lat = geo.get("lat")
-    if lon is None:
-        lon = geo.get("lon")
-    variable = variable or first_input.get("variable")
+    flags = resolve_flags(
+        spec_data,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        figsize=figsize,
+        lat=lat,
+        lon=lon,
+        variable=variable,
+    )
+    title, xlabel, ylabel = flags["title"], flags["xlabel"], flags["ylabel"]
+    lat, lon, variable = flags["lat"], flags["lon"], flags["variable"]
+    figsize = tuple(flags["figsize"]) if flags["figsize"] else None
     if lat is None or lon is None:
         raise UsageError("pass --lat and --lon, or --spec with geo.lat/geo.lon")
     lat = float(lat)

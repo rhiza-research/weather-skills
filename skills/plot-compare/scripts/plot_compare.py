@@ -37,6 +37,8 @@ from weather_skills_core.plot_spec import (
     datasets_from_cli_or_spec,
     dump_spec_dest,
     parse_plot_spec,
+    resolve_flags,
+    spec_get,
     spec_input_labels,
     spec_inputs_from_datasets,
 )
@@ -224,38 +226,44 @@ def plot_compare(
     """Side-by-side multi-panel PNG comparing two weather-skills standard dataset Zarrs."""
     ds_a, ds_b = datasets_from_cli_or_spec(ds, spec, exactly=2)
     spec_data = spec.to_dict() if spec is not None else {}
-    layout = spec_data.get("layout") or {}
-    style_block = spec_data.get("style") or {}
-    geo = spec_data.get("geo") or {}
-    inputs = spec_data.get("inputs") or []
-    in_a = inputs[0] if inputs and isinstance(inputs[0], dict) else {}
-    in_b = inputs[1] if len(inputs) > 1 and isinstance(inputs[1], dict) else {}
-    title = title if title is not None else spec_data.get("title")
-    xlabel = xlabel if xlabel is not None else spec_data.get("xlabel")
-    colormap = colormap or style_block.get("colormap")
-    colormap_a = colormap_a or style_block.get("colormap_a")
-    colormap_b = colormap_b or style_block.get("colormap_b")
-    if figsize is None and layout.get("figsize"):
-        figsize = tuple(layout["figsize"])
-    if panels is None:
-        panels = layout.get("columns") or 3
-    if bbox is None:
-        bbox = geo.get("bbox")
-    if mask_geojson is None:
-        mask_geojson = geo.get("mask_geojson")
-    if vmin is None:
-        vmin = spec_data.get("vmin")
-    if vmax is None:
-        vmax = spec_data.get("vmax")
+    flags = resolve_flags(
+        spec_data,
+        title=title,
+        xlabel=xlabel,
+        colormap=colormap,
+        colormap_a=colormap_a,
+        colormap_b=colormap_b,
+        figsize=figsize,
+        panels=panels,
+        bbox=bbox,
+        mask_geojson=mask_geojson,
+        vmin=vmin,
+        vmax=vmax,
+        variable=variable,
+        variable_a=variable_a,
+        variable_b=variable_b,
+    )
+    title, xlabel = flags["title"], flags["xlabel"]
+    colormap, colormap_a, colormap_b = (
+        flags["colormap"],
+        flags["colormap_a"],
+        flags["colormap_b"],
+    )
+    bbox, mask_geojson = flags["bbox"], flags["mask_geojson"]
+    vmin, vmax = flags["vmin"], flags["vmax"]
+    variable, variable_a, variable_b = (
+        flags["variable"],
+        flags["variable_a"],
+        flags["variable_b"],
+    )
+    figsize = tuple(flags["figsize"]) if flags["figsize"] else None
+    panels = flags["panels"] or 3
     if not shared_scale and not independent_scale:
-        shared = layout.get("shared_colorscale")
+        shared = spec_get(spec_data, "shared_colorscale")
         if shared is True:
             shared_scale = True
         elif shared is False:
             independent_scale = True
-    variable = variable or in_a.get("variable")
-    variable_a = variable_a or in_a.get("variable")
-    variable_b = variable_b or in_b.get("variable")
     if not label:
         label = spec_input_labels(spec_data)
     if shared_scale and independent_scale:
@@ -691,8 +699,7 @@ def plot_compare(
         "skill": "plot-compare",
         "inputs": inputs,
         "layout": {
-            "rows": 2,
-            "columns": n,
+            "facet": {"rows": 2, "columns": n},
             "shared_colorscale": use_shared_scale,
             "figsize": list(figsize) if figsize else None,
         },
@@ -706,10 +713,9 @@ def plot_compare(
         "xlabel": xlabel,
         "geo": geo_out,
     }
-    if colormap_a:
-        resolved["style"]["colormap_a"] = colormap_a
-    if colormap_b:
-        resolved["style"]["colormap_b"] = colormap_b
+    for side, cmap in ((0, colormap_a), (1, colormap_b)):
+        if cmap and side < len(resolved["inputs"]):
+            resolved["inputs"][side]["colormap"] = cmap
     if vmin is not None:
         resolved["vmin"] = vmin
     if vmax is not None:

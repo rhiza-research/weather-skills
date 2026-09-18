@@ -13,8 +13,11 @@ metadata:
 
 Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
 (`--layer`, repeatable):
-- `heatmap` — lon/lat heatmap (matplotlib `pcolormesh`) with country outlines from bundled
-  Natural Earth, equal geographic aspect, and a shared colorbar.
+- `heatmap` — lon/lat heatmap (matplotlib `pcolormesh`) with scale-appropriate
+  Natural Earth coastlines, country borders, filled lakes and (on country-scale
+  views) admin-1 boundaries, equal geographic aspect, and a shared colorbar.
+  Single-input map styles are compiled as one-layer figures, so this and
+  `--layer heatmap:<path>` produce the same picture.
   If the input has a `step` (or `time`) dimension, panels are laid out one per
   step with a shared color scale and a colorbar (right if one panel, bottom if
   several). Panel titles show calendar dates (`14 Sept '26`) or,
@@ -32,12 +35,14 @@ Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
   as filled contours (`contourf`) with thin black isolines.
   Values are interpolated between grid points rather than drawn as cell
   rectangles. Cannot mix with `--layer`.
-- `timeseries` — 1D profile. Averages across all non-time dims. Line plus a
-  marker at each time point. A forecast cube (`step` lead times + scalar init
-  `time`) is plotted against **valid time** (`init + step`) with calendar dates
-  on the x-axis, not raw lead-time nanoseconds. An analysis / obs cube with a
-  `time` dim is plotted against that axis as-is. For several series as stacked
-  panels, use `plot-timeseries --subplots`.
+- `timeseries` — 1D profile. Line plus a marker at each time point. Leftover
+  non-time dims are **not** averaged for you: pass `--reduce` once per dim
+  (`--reduce latitude --reduce longitude`) or `--along` to draw one line per
+  value of that dim (`--along number`). A forecast cube (`step` lead times +
+  scalar init `time`) is plotted against **valid time** (`init + step`) with
+  calendar dates on the x-axis, not raw lead-time nanoseconds. An analysis /
+  obs cube with a `time` dim is plotted against that axis as-is. For several
+  series as stacked panels, use `plot-timeseries --subplots`.
 - `xy` — scatter one 1D series against another. Pass `--x` and `--y` Zarrs
   (or one `-i` with `--x-variable` and `--y-variable`). Each input is reduced
   the same way as `timeseries` (mean over non-time dims; `--bbox` /
@@ -116,7 +121,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --input <in.zarr> --output <out.png> 
     [--u-variable NAME] [--v-variable NAME] [--quiver-scale N] [--quiver-step N] \
     [--colormap NAME] [--vmin N] [--vmax N] [--title TEXT] [--subplot-title TEXT ...] \
     [--xlabel TEXT] [--ylabel TEXT] [--cbar-label TEXT] \
-    [--index DIM=POS,...] \
+    [--index DIM=POS,...] [--reduce DIM ...] [--along DIM] \
     [--extent LON_MIN,LON_MAX,LAT_MIN,LAT_MAX] \
     [--cities JSON_OR_PATH] [--fontsize N] [--figsize W,H] [--legend LOC] \
     [--bbox N/W/S/E] \
@@ -140,13 +145,15 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   and with `--x` / `--y`. Optional when `--spec` already lists input paths.
 - `--spec` — plot spec JSON (file or inline). A default run of any style
   (including `--style xy` / `windrose` / `quiver` and `--layer`) writes
-  `<output-stem>.plot.json` with resolved defaults (`axes`, traces, input
-  paths, layer KIND+path). Edit that file (or add a `patch` for title,
-  annotations, shapes, or colorbar size) and re-run with `--spec`. CLI flags
-  overlay the spec. Spec input paths are opened as Datasets so provenance
-  still chains from the Zarr.
-- `--patch` — optional JSON (file or inline) merged onto the spec before draw
-  (`layout.title`, `annotations`, `shapes`, `axes`, font size, `layout.colorbar`).
+  `<output-stem>.plot.json` holding the values it actually resolved (traces,
+  input paths, layer KIND+path, and any `axes` knobs you set). Edit that file
+  and re-run with `--spec`, or pass `--patch` to change a value without
+  editing. CLI flags overlay the spec. Spec input paths are opened as Datasets
+  so provenance still chains from the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto the spec before
+  draw (`title`, `annotations`, `shapes`, `axes`, `style.fontsize`,
+  `layout.colorbar`). Values go at their canonical spec paths; a `patch` key
+  *inside* a spec file is rejected, naming the path to use instead.
   Colorbar size: `{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}`
   (`len`/`shrink` is the long-side fraction; `thickness` is pixels).
   Reposition a polar windrose frequency label with
@@ -252,6 +259,14 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   a stderr warning. Windrose flattens remaining positions into samples (a list
   like `step=0,1,2` keeps those steps in one rose, rather than panelling).
   `xy` reduces leftover dims after `--index` the same way as timeseries.
+- `--reduce` — average over this dim for `--style timeseries`. Repeatable, once
+  per leftover non-time dim (`--reduce latitude --reduce longitude`). No dim is
+  averaged unless you ask: a gridded input with no `--reduce`/`--along` is an
+  error naming the dims that remain, so the figure never hides a data decision.
+  Ignored by the map styles (use `--index` to select there).
+- `--along` — draw one `--style timeseries` line per value of this dim instead
+  of reducing it (`--along number` for ensemble members). Must not be the time
+  axis. For band percentiles and per-trace styling, use `plot-timeseries`.
 - `--extent` — heatmap/quiver map extent as `lon_min,lon_max,lat_min,lat_max`.
   Defaults to the data's cell-center min/max expanded by half the mean
   grid spacing on each side, so the view matches what `pcolormesh`
@@ -420,10 +435,17 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -o /tmp/imerg_vs_tahmo.png \
     --title "IMERG vs TAHMO"
 ```
 
-Time series:
+Time series (say which dims to collapse — nothing is averaged silently):
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/ecmwf_namibia.zarr -o /tmp/ts.png \
-    --variable tp --style timeseries
+    --variable tp --style timeseries --reduce latitude --reduce longitude
+```
+
+One line per ensemble member instead of collapsing them:
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/ecmwf_namibia.zarr -o /tmp/ts_members.png \
+    --variable tp --style timeseries \
+    --reduce latitude --reduce longitude --along number
 ```
 
 XY scatter (September IOD vs October rainfall, one point per year):
@@ -451,8 +473,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/s2s_10wind.zarr -o /tmp/10m-w
 
 Every style compiles a small weather-skills JSON spec (Zarr paths and layout,
 not the raster `z` grid). A default run writes `<output-stem>.plot.json` next
-to the PNG with **resolved** defaults (`axes`, traces, input paths, and for
-maps `layout.facet` / colormap / extent).
+to the PNG holding the values it **resolved** (traces, input paths, and for
+maps `layout.facet` / colormap / extent). Unset knobs are omitted, so every
+line in the sidecar is something the figure actually used.
 
 1. `plot -i data.zarr -o out.png` writes `out.png` + `out.plot.json`.
 2. Read `out.plot.json`. Change facet/colormap/annotations, or add a
@@ -462,9 +485,9 @@ maps `layout.facet` / colormap / extent).
    opened as Datasets so provenance chains from the Zarr, not the previous PNG.
 
 `--dump-spec -` prints the spec on stdout. `--dump-spec none` skips the sidecar.
-`--patch '{"layout": {"title": {"text": "Edited"}}}'` is the escape hatch
-for title, annotations, shapes, axis-label position, and colorbar size without enumerating them in
-the spec schema. Shorten a colorbar with
+`--patch '{"title": "Edited"}'` sets spec values without editing the file —
+handy for title, annotations, shapes, axis-label position, and colorbar size.
+Shorten a colorbar with
 `--patch '{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}'`.
 Move a windrose radial label with
 `--patch '{"axes": {"ylabel": {"coords": [1.15, 0.5], "rotation": 0}}}'`.
@@ -480,17 +503,23 @@ the seaborn theme, so they win. Backend / interactive keys (`backend`,
 
 | Spec key | Matplotlib surface |
 | --- | --- |
-| `axes` | Matplotlib Axes config applied after the data are drawn: scales, limits, labels, **ticks** (`xticks`/`yticks` lists or `{values, labels}`), locators, formatters, spines, grid, legend, twins. `xlabel` / `ylabel` may be a string or `{text, loc, pad, coords, rotation, ha, va, …}` (`coords` is `[x, y]` in axes fraction; omit `text` to keep the already-drawn label). Same object on every figure skill. A dumped sidecar always includes it (null = default). |
+| `axes` | Matplotlib Axes config applied after the data are drawn: scales, limits, labels, **ticks** (`xticks`/`yticks` lists or `{values, labels}`), locators, formatters, spines, grid, legend, twins. `xlabel` / `ylabel` may be a string or `{text, loc, pad, coords, rotation, ha, va, …}` (`coords` is `[x, y]` in axes fraction; omit `text` to keep the already-drawn label). Same object on every figure skill. A sidecar dumps only the keys you set. |
 | `annotations` | `ax.text` or `ax.annotate` (`xy`, `xytext`, `arrowprops`, fonts, `bbox`). `xref: paper` / `transform: axes` uses axes fraction. `axes`/`panel` picks a subplot |
 | `shapes` | `rect`, `hline`, `vline`, `hspan`, `vspan`, `line`, `circle`/`ellipse` |
-| `line` / `mesh` / `contour` / `scatter` / `bar` / `quiver` / `windrose` | kwargs for the matching artist (`linewidth`, `alpha`, `marker`, `shading`, `levels`, `scale`, `nsector`, …). `contour.lines: false` skips isoline overlay |
-| `fill` | `fill_between` for `--band` |
-| `mediogram` | `{width, forecast, mclimate, mean, legend}` for box colors / mean line |
+| `traces[].line` / `.mesh` / `.contour` / `.scatter` / `.bar` / `.quiver` / `.windrose` | kwargs for the matching artist (`linewidth`, `alpha`, `marker`, `shading`, `levels`, `scale`, `nsector`, …). `contour.lines: false` skips isoline overlay |
+| `traces[].fill` | `fill_between` for `--band` |
+| `traces[].mediogram` | `{width, forecast, mclimate, mean, legend}` for box colors / mean line |
 | `layout.colorbar` | `extend`, `pad`, `orientation`, `location`, plus `len`/`thickness` |
 | `layout.facecolor`, `layout.dpi` | figure patch and DPI |
+| `style.rc` | matplotlib rcParams, applied after the seaborn theme |
+
+Every knob has exactly one home, and an unknown key is an error naming the
+canonical path, so an edit never silently does nothing. Artist kwargs live on
+the trace that draws them rather than at the top level.
 
 A timeseries series can plot on a twin y-axis with style `"twin": "y"`.
 Every style (heatmap, contour, timeseries, xy, windrose, quiver, `--layer`)
-dumps the same `axes` / `annotations` / `shapes` / `rc` objects and applies
-them after the data are drawn. Reposition a polar windrose frequency label with
-`--patch '{"axes": {"ylabel": {"coords": [1.15, 0.5], "rotation": 0}}}'`.
+dumps the same `axes` / `annotations` / `shapes` / `style.rc` objects and
+applies them after the data are drawn. Reposition a polar windrose frequency
+label with `--patch '{"axes": {"ylabel": {"coords": [1.15, 0.5], "rotation": 0}}}'`.
+The full key table is in [`docs/plotting.md`](../../docs/plotting.md).

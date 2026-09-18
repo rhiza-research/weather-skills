@@ -37,6 +37,7 @@ from weather_skills_core.plot_spec import (
     dump_spec_dest,
     named_datasets_from_spec,
     parse_plot_spec,
+    resolve_flags,
     spec_inputs_from_datasets,
     spec_role_datasets,
 )
@@ -410,12 +411,6 @@ def plot_verify(
     """Lead-week verification grid from obs, forecast, and pre-computed verify Zarrs."""
     spec_data = spec.to_dict() if spec is not None else {}
     named_spec = named_datasets_from_spec(spec) if spec is not None else {}
-    layout = spec_data.get("layout") or {}
-    style_block = spec_data.get("style") or {}
-    geo = spec_data.get("geo") or {}
-    first_input = (spec_data.get("inputs") or [{}])[0]
-    if not isinstance(first_input, dict):
-        first_input = {}
     if obs is None:
         obs = named_spec.get("obs")
     forecasts = _as_list(forecast)
@@ -424,17 +419,19 @@ def plot_verify(
     verify_sets = _as_list(verify)
     if not verify_sets:
         verify_sets = spec_role_datasets(named_spec, "verify")
-    title = title if title is not None else spec_data.get("title")
-    colormap = colormap or style_block.get("colormap")
-    if figsize is None and layout.get("figsize"):
-        figsize = tuple(layout["figsize"])
-    if bbox is None:
-        bbox = geo.get("bbox")
-    if mask_geojson is None:
-        mask_geojson = geo.get("mask_geojson")
-    variable = variable or first_input.get("variable")
-    if not lead:
-        lead = layout.get("leads")
+    flags = resolve_flags(
+        spec_data,
+        title=title,
+        colormap=colormap,
+        figsize=figsize,
+        bbox=bbox,
+        mask_geojson=mask_geojson,
+        variable=variable,
+        leads=lead,
+    )
+    title, colormap, variable = flags["title"], flags["colormap"], flags["variable"]
+    bbox, mask_geojson, lead = flags["bbox"], flags["mask_geojson"], flags["leads"]
+    figsize = tuple(flags["figsize"]) if flags["figsize"] else None
     if not label:
         label = [
             item.get("label")
@@ -618,13 +615,10 @@ def plot_verify(
         "skill": "plot-verify",
         "inputs": inputs,
         "layout": {
-            "rows": 2,
-            "columns": 1 + n_leads,
-            "metric": metric,
-            "leads": list(leads),
+            "facet": {"rows": 2, "columns": 1 + n_leads},
             "figsize": list(figsize) if figsize else None,
         },
-        "traces": [{"type": "heatmap_grid"}],
+        "traces": [{"type": "heatmap_grid", "metric": metric, "leads": list(leads)}],
         "style": {
             "template": "weather_skills",
             "fontsize": fontsize,

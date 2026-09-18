@@ -37,6 +37,7 @@ from weather_skills_core.plot_spec import (
     datasets_from_cli_or_spec,
     dump_spec_dest,
     parse_plot_spec,
+    resolve_flags,
     spec_input_labels,
     spec_inputs_from_datasets,
 )
@@ -442,27 +443,22 @@ def plot_compare_forecasts(
     """Compare two or more gridded datasets as a heatmap grid PNG."""
     ds = datasets_from_cli_or_spec(ds, spec, min_count=2)
     spec_data = spec.to_dict() if spec is not None else {}
-    layout = spec_data.get("layout") or {}
-    style_block = spec_data.get("style") or {}
-    geo = spec_data.get("geo") or {}
-    first_input = (spec_data.get("inputs") or [{}])[0]
-    if not isinstance(first_input, dict):
-        first_input = {}
-    title = title if title is not None else spec_data.get("title")
-    colormap = colormap or style_block.get("colormap")
-    if figsize is None and layout.get("figsize"):
-        figsize = tuple(layout["figsize"])
-    if panels is None:
-        panels = layout.get("columns")
-    if bbox is None:
-        bbox = geo.get("bbox")
-    if mask_geojson is None:
-        mask_geojson = geo.get("mask_geojson")
-    if vmin is None:
-        vmin = spec_data.get("vmin")
-    if vmax is None:
-        vmax = spec_data.get("vmax")
-    variable = variable or first_input.get("variable")
+    flags = resolve_flags(
+        spec_data,
+        title=title,
+        colormap=colormap,
+        figsize=figsize,
+        panels=panels,
+        bbox=bbox,
+        mask_geojson=mask_geojson,
+        vmin=vmin,
+        vmax=vmax,
+        variable=variable,
+    )
+    title, colormap, variable = flags["title"], flags["colormap"], flags["variable"]
+    bbox, mask_geojson = flags["bbox"], flags["mask_geojson"]
+    vmin, vmax, panels = flags["vmin"], flags["vmax"], flags["panels"]
+    figsize = tuple(flags["figsize"]) if flags["figsize"] else None
     if not label:
         label = spec_input_labels(spec_data)
     if panels is not None and panels < 1:
@@ -623,8 +619,7 @@ def plot_compare_forecasts(
         "skill": "plot-compare-forecasts",
         "inputs": inputs,
         "layout": {
-            "rows": nrows,
-            "columns": ncols,
+            "facet": {"rows": nrows, "columns": ncols},
             "shared_colorscale": True,
             "figsize": list(figsize) if figsize else None,
         },

@@ -867,14 +867,17 @@ def test_replot_from_spec(tmp_path, plot_timeseries):
     data = json.loads(spec_path.read_text())
     assert data["traces"][0]["style"] == "bar"
     assert data["traces"][0]["reduce"] == ["latitude", "longitude"]
-    assert "xticks" in data["axes"]
-    assert "yticks" in data["axes"]
-    assert "tick_params" in data["axes"]
+    # Unset axes knobs stay out of the sidecar; an edited one round-trips.
+    assert data["axes"] == {}
     data["title"] = "Edited"
+    data["axes"] = {"yticks": [0.0, 0.5, 1.0]}
     spec_path.write_text(json.dumps(data))
     second = tmp_path / "ts2.png"
     run_skill(plot_timeseries, "--spec", str(spec_path), "-o", str(second))
     assert second.is_file() and second.stat().st_size > 0
+    replotted = json.loads((tmp_path / "ts2.plot.json").read_text())
+    assert replotted["axes"]["yticks"] == [0.0, 0.5, 1.0]
+    assert replotted["title"] == "Edited"
     history = load_figure_history(second)
     assert history[-1]["skill"] == "plot-timeseries"
     assert history[-1]["input"]["basename"] == "in.zarr"

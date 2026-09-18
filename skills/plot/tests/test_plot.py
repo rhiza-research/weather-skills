@@ -6,12 +6,18 @@ from pathlib import Path
 import numpy as np
 import pytest
 from conftest import load_skill, make_forecast, make_gridded, make_point_obs, run_skill, write_zarr
+from weather_skills_core import figure as ws_figure
+from weather_skills_core import plot_compile as ws_compile
+from weather_skills_core import plot_geo, plot_layers
+from weather_skills_core import plot_spec as ws_spec
 from weather_skills_core.provenance import load_figure_history
+
+plot_mod = load_skill("plot", "plot")
 
 
 @pytest.fixture(scope="module")
 def plot_fn():
-    return load_skill("plot", "plot").plot
+    return plot_mod.plot
 
 
 def test_heatmap_writes_png(tmp_path, plot_fn):
@@ -37,7 +43,6 @@ def test_fontsize_writes_png(tmp_path, plot_fn):
 def test_parse_figsize_and_legend():
     import argparse
 
-    plot_mod = load_skill("plot", "plot")
     assert plot_mod.parse_figsize("10,6") == (10.0, 6.0)
     assert plot_mod.parse_figsize("8x5") == (8.0, 5.0)
     assert plot_mod.parse_legend("upper right") == "upper right"
@@ -86,6 +91,10 @@ def test_timeseries_legend_writes_png(tmp_path, plot_fn):
         str(out),
         "--style",
         "timeseries",
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
         "--legend",
         "upper right",
         "--figsize",
@@ -102,7 +111,6 @@ def test_place_legend_below_stays_on_canvas():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    plot_mod = load_skill("plot", "plot")
     fig, ax = plt.subplots(figsize=(9, 4), layout="constrained")
     ax.plot([1, 2], [1, 2], label="series")
     legend = plot_mod._place_legend(ax, "below")
@@ -127,12 +135,11 @@ def test_heatmap_ignores_legend(tmp_path, plot_fn, capsys):
 
 
 def test_contour_levels_span_and_pad_constant():
-    plot_mod = load_skill("plot", "plot")
-    levels = plot_mod._contour_levels(0.0, 10.0, n=10)
+    levels = plot_layers._contour_levels(0.0, 10.0, n=10)
     assert levels[0] == 0.0
     assert levels[-1] == 10.0
     assert len(levels) == 11
-    constant = plot_mod._contour_levels(5.0, 5.0, n=10)
+    constant = plot_layers._contour_levels(5.0, 5.0, n=10)
     assert constant[0] < 5.0 < constant[-1]
     assert len(constant) == 11
 
@@ -176,42 +183,46 @@ def test_heatmap_stamps_history(tmp_path, plot_fn):
 
 
 def test_timeseries_forecast_axis_is_valid_time(plot_fn):
-    plot_mod = load_skill("plot", "plot")
     da = make_forecast(init="2026-01-01")["tp"]
-    xvals, xlabel = plot_mod._timeseries_axis(da, "step")
+    xvals, xlabel = ws_compile.timeseries_axis(da, "step")
     assert xlabel == "Valid time"
     assert np.datetime_as_string(xvals[0], unit="D") == "2026-01-01"
     assert np.datetime_as_string(xvals[-1], unit="D") == "2026-01-03"
 
 
 def test_axis_label_capitalizes():
-    plot_mod = load_skill("plot", "plot")
-    assert plot_mod._axis_label("lon") == "Longitude"
-    assert plot_mod._axis_label("valid time") == "Valid time"
-    assert plot_mod._axis_label("total precipitation [mm]") == "Total precipitation [mm]"
-    assert plot_mod._axis_label("Latitude") == "Latitude"
+    assert ws_figure.axis_label("lon") == "Longitude"
+    assert ws_figure.axis_label("valid time") == "Valid time"
+    assert ws_figure.axis_label("total precipitation [mm]") == "Total precipitation [mm]"
+    assert ws_figure.axis_label("Latitude") == "Latitude"
 
 
-def test_heatmap_colorbar_sits_below_maps():
+def _map_figure(ds, *, fontsize=16, **spec_extra):
+    """Compile a map the way the CLI does — one spec through the one renderer."""
     import matplotlib
 
     matplotlib.use("Agg")
+    spec = {
+        "version": 1,
+        "inputs": [{"id": "a", "variable": next(iter(ds.data_vars))}],
+        "traces": [{"type": "heatmap", "input": "a"}],
+        "layout": {"facet": {}},
+        "style": {"colormap": "viridis"},
+        "geo": {},
+    }
+    for key, value in spec_extra.items():
+        if key in ("extent", "cities"):
+            spec["geo"][key] = value
+        else:
+            spec[key] = value
+    return plot_layers.compile_map_figure(spec, {"a": ds}, fontsize=fontsize)
+
+
+def test_heatmap_colorbar_sits_below_maps():
     import matplotlib.pyplot as plt
 
-    plot_mod = load_skill("plot", "plot")
-    plot_mod.apply_style(16)
-    da = make_gridded(n_time=1, lats=(-4.0, 0.0, 4.0), lons=(35.0, 37.0, 39.0))["precip"]
-    fig = plot_mod._heatmap(
-        da,
-        "latitude",
-        "longitude",
-        "viridis",
-        extent=(34.0, 42.0, -5.0, 5.0),
-        cities={},
-        title="S2S precip",
-        fontsize=16,
-        wrap_lon=True,
-    )
+    ds = make_gridded(n_time=1, lats=(-4.0, 0.0, 4.0), lons=(35.0, 37.0, 39.0))
+    fig = _map_figure(ds, extent=[34.0, 42.0, -5.0, 5.0], title="S2S precip")
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
     maps = [ax for ax in fig.axes if ax.get_visible() and getattr(ax, "projection", None)]
@@ -233,24 +244,12 @@ def test_heatmap_colorbar_sits_below_maps():
 
 
 def test_long_title_still_renders():
-    import matplotlib
-
-    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    plot_mod = load_skill("plot", "plot")
-    plot_mod.apply_style(16)
-    da = make_gridded(n_time=1)["precip"]
-    fig = plot_mod._heatmap(
-        da,
-        "latitude",
-        "longitude",
-        "viridis",
-        extent=(10.0, 11.0, 1.0, 2.0),
-        cities={},
+    fig = _map_figure(
+        make_gridded(n_time=1),
+        extent=[10.0, 11.0, 1.0, 2.0],
         title="Kenya GEFS vs CHIRPS 5 mm event verification · 2026-08-04 to 2026-08-10",
-        fontsize=16,
-        wrap_lon=True,
     )
     fig.canvas.draw()
     assert fig._suptitle is not None
@@ -259,38 +258,25 @@ def test_long_title_still_renders():
 
 
 def test_resolve_axis_label_override_is_verbatim():
-    plot_mod = load_skill("plot", "plot")
-    assert plot_mod._resolve_axis_label("lon (E)", "Longitude") == "lon (E)"
-    assert plot_mod._resolve_axis_label(None, "lon") == "Longitude"
-    assert plot_mod._resolve_axis_label("", "Latitude") == "Latitude"
+    assert ws_figure.resolve_axis_label("lon (E)", "Longitude") == "lon (E)"
+    assert ws_figure.resolve_axis_label(None, "lon") == "Longitude"
+    assert ws_figure.resolve_axis_label("", "Latitude") == "Latitude"
 
 
 def test_datetime_axis_omits_default_time_label():
-    plot_mod = load_skill("plot", "plot")
     times = np.array(["2026-01-01", "2026-01-02"], dtype="datetime64[ns]")
-    assert plot_mod._is_datetime_axis(times)
-    assert plot_mod._resolve_time_axis_label(None, "Valid time", times) == ""
-    assert plot_mod._resolve_time_axis_label("Lead time", "Valid time", times) == "Lead time"
-    assert not plot_mod._is_datetime_axis(np.array([1.0, 2.0, 3.0]))
-    assert plot_mod._resolve_time_axis_label(None, "step", np.array([1, 2, 3])) == "Step"
+    assert ws_figure.is_datetime_axis(times)
+    assert ws_figure.resolve_time_axis_label(None, "Valid time", times) == ""
+    assert ws_figure.resolve_time_axis_label("Lead time", "Valid time", times) == "Lead time"
+    assert not ws_figure.is_datetime_axis(np.array([1.0, 2.0, 3.0]))
+    assert ws_figure.resolve_time_axis_label(None, "step", np.array([1, 2, 3])) == "Step"
 
 
 def test_heatmap_axis_label_overrides(tmp_path, plot_fn):
-    import matplotlib
-
-    matplotlib.use("Agg")
-    plot_mod = load_skill("plot", "plot")
-    da = make_gridded(n_time=1)["precip"]
-    fig = plot_mod._heatmap(
-        da,
-        "latitude",
-        "longitude",
-        "viridis",
-        extent=(10.0, 11.0, 1.0, 2.0),
-        cities={},
-        title=None,
+    fig = _map_figure(
+        make_gridded(n_time=1),
         fontsize=14,
-        wrap_lon=True,
+        extent=[10.0, 11.0, 1.0, 2.0],
         xlabel="Eastings",
         ylabel="Northings",
     )
@@ -305,7 +291,6 @@ def test_heatmap_axis_label_overrides(tmp_path, plot_fn):
 def test_resolve_subplot_titles_count():
     from weather_skills_core import UsageError
 
-    plot_mod = load_skill("plot", "plot")
     assert plot_mod._resolve_subplot_titles(None, 3) == []
     assert plot_mod._resolve_subplot_titles(["Week 1"], 3) == ["Week 1"]
     with pytest.raises(UsageError, match="3 panel"):
@@ -313,21 +298,11 @@ def test_resolve_subplot_titles_count():
 
 
 def test_subplot_title_overrides_heatmap_panels():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    plot_mod = load_skill("plot", "plot")
-    da = make_gridded(n_time=2)["precip"]
-    fig = plot_mod._heatmap(
-        da,
-        "latitude",
-        "longitude",
-        "viridis",
-        extent=(10.0, 11.0, 1.0, 2.0),
-        cities={},
-        title="Season",
+    fig = _map_figure(
+        make_gridded(n_time=2),
         fontsize=14,
-        wrap_lon=True,
+        extent=[10.0, 11.0, 1.0, 2.0],
+        title="Season",
         subplot_titles=["Week 1", "Week 2"],
         cbar_label="Rain (mm)",
     )
@@ -388,10 +363,9 @@ def test_cbar_label_writes_png(tmp_path, plot_fn):
 
 
 def test_panel_title_lead_zero_is_first_24h(plot_fn):
-    plot_mod = load_skill("plot", "plot")
     da = make_forecast(init="2025-01-01", n_step=3)["tp"]
     da.attrs["data_interval"] = "1 day"
-    title = plot_mod._panel_title(da, "step", da["step"].values[0], da["step"].values)
+    title = ws_compile.panel_title(da, "step", da["step"].values[0], da["step"].values)
     assert title.startswith("1 Jan '25")
     assert "until 2 Jan '25" in title
 
@@ -400,7 +374,6 @@ def test_panel_title_calendar_weekly_range(plot_fn):
     import numpy as np
     import xarray as xr
 
-    plot_mod = load_skill("plot", "plot")
     times = np.arange("2026-08-04", "2026-09-01", dtype="datetime64[D]")[::7]
     da = xr.DataArray(
         np.zeros((len(times), 2, 2)),
@@ -413,7 +386,7 @@ def test_panel_title_calendar_weekly_range(plot_fn):
         name="precip",
     )
     da.attrs["aggregation_period"] = "7 day"
-    title = plot_mod._panel_title(da, "time", times[0], times)
+    title = ws_compile.panel_title(da, "time", times[0], times)
     assert title == "4–10 Aug '26"
 
 
@@ -421,7 +394,6 @@ def test_panel_title_calendar_daily_is_single_date(plot_fn):
     import numpy as np
     import xarray as xr
 
-    plot_mod = load_skill("plot", "plot")
     times = np.arange("2026-08-04", "2026-08-08", dtype="datetime64[D]")
     da = xr.DataArray(
         np.zeros((len(times), 2, 2)),
@@ -434,7 +406,7 @@ def test_panel_title_calendar_daily_is_single_date(plot_fn):
         name="precip",
     )
     da.attrs["aggregation_period"] = "1 day"
-    title = plot_mod._panel_title(da, "time", times[0], times)
+    title = ws_compile.panel_title(da, "time", times[0], times)
     assert title == "4 Aug '26"
     assert "time=" not in title
 
@@ -444,10 +416,9 @@ def test_format_date_drops_midnight_time():
 
     import numpy as np
 
-    plot_mod = load_skill("plot", "plot")
-    assert plot_mod._format_date(np.datetime64("2026-01-01T00:00:00")) == "1 Jan '26"
-    assert plot_mod._format_date(dt.datetime(2026, 1, 1, 0, 0, 0)) == "1 Jan '26"
-    assert plot_mod._format_step(np.datetime64("2026-01-01T00:00:00")) == "1 Jan '26"
+    assert ws_figure.format_plot_date(np.datetime64("2026-01-01T00:00:00")) == "1 Jan '26"
+    assert ws_figure.format_plot_date(dt.datetime(2026, 1, 1, 0, 0, 0)) == "1 Jan '26"
+    assert ws_compile.format_step(np.datetime64("2026-01-01T00:00:00")) == "1 Jan '26"
 
 
 def test_date_ticks_are_calendar_dates_not_timestamps():
@@ -458,11 +429,10 @@ def test_date_ticks_are_calendar_dates_not_timestamps():
     import matplotlib.pyplot as plt
     import numpy as np
 
-    plot_mod = load_skill("plot", "plot")
     fig, ax = plt.subplots()
     days = mdates.date2num(np.arange("2026-08-05", "2026-09-10", dtype="datetime64[D]"))
     ax.plot(days, np.arange(len(days)))
-    plot_mod._apply_date_ticks(ax)
+    ws_figure.apply_date_ticks(ax)
     fig.canvas.draw()
     labels = [tick.get_text() for tick in ax.get_xticklabels() if tick.get_text()]
     assert labels
@@ -476,22 +446,63 @@ def test_timeseries_forecast_writes_png(tmp_path, plot_fn):
     ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
     src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "ts.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--style", "timeseries")
+    run_skill(
+        plot_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--style",
+        "timeseries",
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+    )
     assert Path(out).exists()
     assert out.stat().st_size > 0
+
+
+def test_timeseries_refuses_to_average_leftover_dims(tmp_path, plot_fn, capsys):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(plot_fn, "-i", str(src), "-o", str(tmp_path / "ts.png"), "--style", "timeseries")
+    err = capsys.readouterr().err
+    assert "--reduce" in err and "--along" in err
+
+
+def test_timeseries_along_draws_one_line_per_member(tmp_path, plot_fn):
+    ds = make_forecast(members=4)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "ts.png"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--style",
+        "timeseries",
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+        "--along",
+        "number",
+    )
+    assert Path(out).exists() and out.stat().st_size > 0
 
 
 def test_precip_default_colormap_is_chirps_total_palette():
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
-    plot_mod = load_skill("plot", "plot")
     da = make_forecast()["tp"]
     da.attrs.update(
         units="mm",
         standard_name="lwe_thickness_of_precipitation_amount",
         aggregation_period="10 day",
     )
-    cmap, norm = plot_mod._heatmap_scale(da, None)
+    cmap, norm = plot_layers._heatmap_scale(da, None)
     assert isinstance(cmap, ListedColormap)
     assert cmap.name == "chirps_total"
     assert cmap.N == 15
@@ -500,7 +511,7 @@ def test_precip_default_colormap_is_chirps_total_palette():
 
     rate = make_gridded()["precip"]
     rate.attrs["aggregation_period"] = "7 day"
-    cmap_rate, norm_rate = plot_mod._heatmap_scale(rate, None)
+    cmap_rate, norm_rate = plot_layers._heatmap_scale(rate, None)
     assert isinstance(cmap_rate, ListedColormap)
     assert cmap_rate.name == "chirps_total"
     assert isinstance(norm_rate, BoundaryNorm)
@@ -509,14 +520,13 @@ def test_precip_default_colormap_is_chirps_total_palette():
 def test_precip_short_period_colormap_uses_subpentad_bounds():
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
-    plot_mod = load_skill("plot", "plot")
     da = make_gridded(fill=3.0)["precip"]
     da.attrs.update(
         units="mm",
         standard_name="lwe_thickness_of_precipitation_amount",
         aggregation_period="1 day",
     )
-    cmap, norm = plot_mod._heatmap_scale(da, None)
+    cmap, norm = plot_layers._heatmap_scale(da, None)
     assert isinstance(cmap, ListedColormap)
     assert cmap.name == "chirps_short"
     assert isinstance(norm, BoundaryNorm)
@@ -526,10 +536,9 @@ def test_precip_short_period_colormap_uses_subpentad_bounds():
 def test_precip_anomaly_colormap_is_chirps_palette():
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
-    plot_mod = load_skill("plot", "plot")
     da = make_gridded(fill=-25.0)["precip"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
-    cmap, norm = plot_mod._heatmap_scale(da, None)
+    cmap, norm = plot_layers._heatmap_scale(da, None)
     assert isinstance(cmap, ListedColormap)
     assert cmap.name == "chirps_anom"
     assert cmap.N == 13
@@ -542,25 +551,23 @@ def test_precip_anomaly_colormap_is_chirps_palette():
         standard_name="lwe_thickness_of_precipitation_amount",
         long_name="rainfall anomaly",
     )
-    cmap_named, norm_named = plot_mod._heatmap_scale(named, None)
+    cmap_named, norm_named = plot_layers._heatmap_scale(named, None)
     assert cmap_named.name == "chirps_anom"
     assert isinstance(norm_named, BoundaryNorm)
 
 
 def test_non_precip_default_colormap_is_rocket():
-    plot_mod = load_skill("plot", "plot")
     da = make_gridded(name="t2m")["t2m"]
     da.attrs.update(units="degree_Celsius", standard_name="air_temperature")
-    cmap, norm = plot_mod._heatmap_scale(da, None)
+    cmap, norm = plot_layers._heatmap_scale(da, None)
     assert cmap == "rocket"
     assert norm is None
 
 
 def test_explicit_colormap_overrides_precip_default():
-    plot_mod = load_skill("plot", "plot")
     da = make_forecast()["tp"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
-    cmap, norm = plot_mod._heatmap_scale(da, "magma")
+    cmap, norm = plot_layers._heatmap_scale(da, "magma")
     assert cmap == "magma"
     assert norm is None
 
@@ -568,10 +575,9 @@ def test_explicit_colormap_overrides_precip_default():
 def test_heatmap_scale_stretch_drops_precip_boundary_norm():
     from matplotlib.colors import LinearSegmentedColormap
 
-    plot_mod = load_skill("plot", "plot")
     da = make_forecast()["tp"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
-    cmap, norm = plot_mod._heatmap_scale(da, None, stretch=True)
+    cmap, norm = plot_layers._heatmap_scale(da, None, stretch=True)
     assert isinstance(cmap, LinearSegmentedColormap)
     assert norm is None
 
@@ -579,7 +585,6 @@ def test_heatmap_scale_stretch_drops_precip_boundary_norm():
 def test_resolve_color_limits_user_and_auto():
     from weather_skills_core import UsageError
 
-    plot_mod = load_skill("plot", "plot")
     da = make_gridded(fill=12.0)["precip"]
     lo, hi, norm = plot_mod._resolve_color_limits(da, 0.0, 50.0)
     assert (lo, hi, norm) == (0.0, 50.0, None)
@@ -615,7 +620,6 @@ def test_vmin_vmax_writes_png_and_stamps_history(tmp_path, plot_fn):
 
 
 def test_layer_vmin_vmax_option(tmp_path, plot_fn):
-    plot_mod = load_skill("plot", "plot")
     spec = plot_mod.parse_layer("heatmap:/tmp/a.zarr::vmin=0,vmax=25")
     assert spec.options["vmin"] == "0"
     assert spec.options["vmax"] == "25"
@@ -633,7 +637,6 @@ def test_layer_vmin_vmax_option(tmp_path, plot_fn):
 
 
 def test_amount_colorbar_drops_leftover_rate_name():
-    plot_mod = load_skill("plot", "plot")
     da = make_forecast()["tp"]
     da.attrs.update(
         units="mm",
@@ -656,7 +659,6 @@ def test_amount_colorbar_drops_leftover_rate_name():
 
 
 def test_plot_converts_aggregated_precip_rate_to_totals():
-    plot_mod = load_skill("plot", "plot")
     ds = make_gridded()
     ds["precip"].attrs["aggregation_period"] = "1 day"
     out = plot_mod.precip_for_display(ds, "precip")
@@ -667,68 +669,60 @@ def test_plot_converts_aggregated_precip_rate_to_totals():
 def test_parse_draw_boxes():
     from weather_skills_core import UsageError
 
-    plot_mod = load_skill("plot", "plot")
-    boxes = plot_mod._parse_draw_boxes(["10/50/-10/70", "0/90/-10/110"])
+    boxes = ws_compile.parse_draw_boxes(["10/50/-10/70", "0/90/-10/110"])
     assert boxes == [(10.0, 50.0, -10.0, 70.0), (0.0, 90.0, -10.0, 110.0)]
-    assert plot_mod._parse_draw_boxes(None) == []
+    assert ws_compile.parse_draw_boxes(None) == []
     with pytest.raises(UsageError):
-        plot_mod._parse_draw_boxes(["not-a-box"])
+        ws_compile.parse_draw_boxes(["not-a-box"])
 
 
 def test_boundary_layers_country_scale_includes_admin1():
-    plot_mod = load_skill("plot", "plot")
     # Kenya-sized view (~8° × 10°)
-    spec = plot_mod._boundary_layers((33.9, 41.9, -4.7, 5.0))
+    spec = plot_geo.boundary_layers((33.9, 41.9, -4.7, 5.0))
     assert spec == {"scale": "10m", "admin1": True}
 
 
 def test_boundary_layers_regional_excludes_admin1():
-    plot_mod = load_skill("plot", "plot")
     # East Africa-sized view (~30°) is multi-country, not country-scale
-    spec = plot_mod._boundary_layers((22.0, 52.0, -12.0, 18.0))
+    spec = plot_geo.boundary_layers((22.0, 52.0, -12.0, 18.0))
     assert spec == {"scale": "10m", "admin1": False}
 
 
 def test_boundary_layers_continental_excludes_admin1():
-    plot_mod = load_skill("plot", "plot")
     # Africa-sized view
-    spec = plot_mod._boundary_layers((-17.5, 51.5, -35.0, 37.5))
+    spec = plot_geo.boundary_layers((-17.5, 51.5, -35.0, 37.5))
     assert spec == {"scale": "50m", "admin1": False}
 
 
 def test_boundary_layers_global_is_coarse():
-    plot_mod = load_skill("plot", "plot")
-    spec = plot_mod._boundary_layers((-180.0, 180.0, -90.0, 90.0))
+    spec = plot_geo.boundary_layers((-180.0, 180.0, -90.0, 90.0))
     assert spec == {"scale": "110m", "admin1": False}
 
 
 def test_extent_clip_geom_splits_unwrapped_antimeridian():
-    plot_mod = load_skill("plot", "plot")
-    clip = plot_mod._extent_clip_geom((170.0, 190.0, -10.0, 10.0))
-    assert clip.intersects(plot_mod._extent_clip_geom((175.0, 179.0, -1.0, 1.0)))
+    clip = plot_geo.extent_clip_geom((170.0, 190.0, -10.0, 10.0))
+    assert clip.intersects(plot_geo.extent_clip_geom((175.0, 179.0, -1.0, 1.0)))
     # The +190 unwrapped piece lives at lon -170 in Natural Earth coords.
-    west = plot_mod._extent_clip_geom((-172.0, -168.0, -1.0, 1.0))
+    west = plot_geo.extent_clip_geom((-172.0, -168.0, -1.0, 1.0))
     assert clip.intersects(west)
 
 
 def test_pad_cell_extent_wrapped_global_is_full_globe():
     # GFS-like 0–360 wrap → [-180, 180−Δ]. Half-cell padding is a 360° span
     # whose endpoints are the same meridian; Cartopy then draws a ~9° sliver.
-    plot_mod = load_skill("plot", "plot")
     lon = np.arange(0.0, 360.0, 10.0)
     lat = np.arange(-20.0, 21.0, 10.0)
     wrapped = np.sort((lon + 180.0) % 360.0 - 180.0)
-    ext = plot_mod._pad_cell_extent(lat, wrapped)
+    ext = ws_compile.pad_cell_extent(lat, wrapped)
     assert ext[0] == -180.0
     assert ext[1] == 180.0
     assert ext[3] - ext[2] == pytest.approx(50.0)
 
 
 def test_pad_cell_extent_indian_ocean_keeps_basin():
-    plot_mod = load_skill("plot", "plot")
     lon = np.arange(40.0, 121.0, 10.0)
     lat = np.arange(-20.0, 21.0, 10.0)
-    ext = plot_mod._pad_cell_extent(lat, lon)
+    ext = ws_compile.pad_cell_extent(lat, lon)
     assert ext[0] == pytest.approx(35.0)
     assert ext[1] == pytest.approx(125.0)
     assert ext[2] == pytest.approx(-25.0)
@@ -736,20 +730,18 @@ def test_pad_cell_extent_indian_ocean_keeps_basin():
 
 
 def test_lakes_overlay_is_filled_blue():
-    plot_mod = load_skill("plot", "plot")
-    assert plot_mod._LAKES_STYLE["facecolor"] == plot_mod._LAKE_FACECOLOR
-    assert plot_mod._LAKE_FACECOLOR == "#4da6ff"
+    assert plot_geo.LAKES_STYLE["facecolor"] == plot_geo.LAKE_FACECOLOR
+    assert plot_geo.LAKE_FACECOLOR == "#4da6ff"
 
 
 def test_load_geo_overlays_skips_on_download_failure(monkeypatch, capsys):
-    plot_mod = load_skill("plot", "plot")
     import cartopy.io.shapereader as shpreader
 
     def _boom(**_kwargs):
         raise OSError("offline")
 
     monkeypatch.setattr(shpreader, "natural_earth", _boom)
-    overlays = plot_mod._load_geo_overlays((33.9, 41.9, -4.7, 5.0))
+    overlays = plot_geo.load_geo_overlays((33.9, 41.9, -4.7, 5.0))
     assert overlays == []
     err = capsys.readouterr().err
     assert "overlay unavailable" in err
@@ -794,29 +786,27 @@ def test_flag_field_heatmap_writes_png(tmp_path, plot_fn):
 
 
 def test_panel_shape_default_caps_columns_at_four():
-    plot_mod = load_skill("plot", "plot")
-    assert plot_mod._panel_shape(1) == (1, 1)
-    assert plot_mod._panel_shape(3) == (1, 3)
-    assert plot_mod._panel_shape(4) == (1, 4)
-    assert plot_mod._panel_shape(5) == (2, 4)
-    assert plot_mod._panel_shape(8) == (2, 4)
+    assert ws_spec.panel_shape(1) == (1, 1)
+    assert ws_spec.panel_shape(3) == (1, 3)
+    assert ws_spec.panel_shape(4) == (1, 4)
+    assert ws_spec.panel_shape(5) == (2, 4)
+    assert ws_spec.panel_shape(8) == (2, 4)
 
 
 def test_panel_shape_rows_and_columns_allow_blank_cells():
     from weather_skills_core import UsageError
 
-    plot_mod = load_skill("plot", "plot")
-    assert plot_mod._panel_shape(6, rows=2, columns=3) == (2, 3)
-    assert plot_mod._panel_shape(6, columns=3) == (2, 3)
-    assert plot_mod._panel_shape(6, rows=2) == (2, 3)
-    assert plot_mod._panel_shape(5, rows=2, columns=3) == (2, 3)
-    assert plot_mod._panel_shape(5, columns=3) == (2, 3)
-    assert plot_mod._panel_shape(5, rows=2) == (2, 3)
-    assert plot_mod._panel_shape(6, rows=2, columns=4) == (2, 4)
+    assert ws_spec.panel_shape(6, rows=2, columns=3) == (2, 3)
+    assert ws_spec.panel_shape(6, columns=3) == (2, 3)
+    assert ws_spec.panel_shape(6, rows=2) == (2, 3)
+    assert ws_spec.panel_shape(5, rows=2, columns=3) == (2, 3)
+    assert ws_spec.panel_shape(5, columns=3) == (2, 3)
+    assert ws_spec.panel_shape(5, rows=2) == (2, 3)
+    assert ws_spec.panel_shape(6, rows=2, columns=4) == (2, 4)
     with pytest.raises(UsageError, match="must hold at least"):
-        plot_mod._panel_shape(7, rows=2, columns=3)
+        ws_spec.panel_shape(7, rows=2, columns=3)
     with pytest.raises(UsageError, match="positive integer"):
-        plot_mod._panel_shape(3, rows=0)
+        ws_spec.panel_shape(3, rows=0)
 
 
 def test_heatmap_rows_columns_writes_png(tmp_path, plot_fn):
@@ -874,7 +864,6 @@ def _make_wind(
 
 
 def test_uv_to_speed_fromdir_cardinals():
-    plot_mod = load_skill("plot", "plot")
     speed, fromdir = plot_mod._uv_to_speed_fromdir(
         [0.0, -5.0, 0.0, 5.0],
         [-5.0, 0.0, 5.0, 0.0],
@@ -884,7 +873,6 @@ def test_uv_to_speed_fromdir_cardinals():
 
 
 def test_wind_rose_hist_north_is_sector_zero():
-    plot_mod = load_skill("plot", "plot")
     speed = np.full(20, 5.0)
     direction = np.zeros(20)
     edges = np.array([0.0, 2.0, 4.0, 6.0, np.inf])
@@ -896,7 +884,6 @@ def test_wind_rose_hist_north_is_sector_zero():
 
 
 def test_resolve_uv_from_standard_names():
-    plot_mod = load_skill("plot", "plot")
     ds = _make_wind(name_u="eastward_component", name_v="northward_component")
     assert plot_mod._resolve_uv(ds, None, None) == (
         "eastward_component",
@@ -905,7 +892,6 @@ def test_resolve_uv_from_standard_names():
 
 
 def test_resolve_uv_from_u10_v10_names():
-    plot_mod = load_skill("plot", "plot")
     ds = _make_wind()
     ds["u10"].attrs.pop("standard_name")
     ds["v10"].attrs.pop("standard_name")
@@ -913,7 +899,6 @@ def test_resolve_uv_from_u10_v10_names():
 
 
 def test_resolve_uv_explicit_infers_partner():
-    plot_mod = load_skill("plot", "plot")
     ds = _make_wind()
     assert plot_mod._resolve_uv(ds, "u10", None) == ("u10", "v10")
     assert plot_mod._resolve_uv(ds, None, "v10") == ("u10", "v10")
@@ -922,7 +907,6 @@ def test_resolve_uv_explicit_infers_partner():
 def test_resolve_uv_missing_pair_errors():
     from weather_skills_core import UsageError
 
-    plot_mod = load_skill("plot", "plot")
     ds = make_gridded()
     with pytest.raises(UsageError, match="eastward"):
         plot_mod._resolve_uv(ds, None, None)
@@ -1044,7 +1028,6 @@ def test_heatmap_ignores_uv_flags(tmp_path, plot_fn, capsys):
 
 
 def test_wind_speed_da_is_hypot():
-    plot_mod = load_skill("plot", "plot")
     ds = _make_wind(u=3.0, v=4.0)
     speed = plot_mod._wind_speed_da(ds["u10"], ds["v10"])
     assert float(speed.mean()) == pytest.approx(5.0)
@@ -1111,7 +1094,6 @@ def test_quiver_missing_uv_exits(tmp_path, plot_fn, capsys):
 
 
 def test_quiver_step_s2s_grid_is_one():
-    plot_mod = load_skill("plot", "plot")
     lat = np.arange(-20.0, 20.0, 1.5)
     lon = np.arange(45.0, 120.0, 1.5)
     assert plot_mod._quiver_step(lat, lon) == 1
@@ -1119,7 +1101,6 @@ def test_quiver_step_s2s_grid_is_one():
 
 
 def test_quiver_step_auto_thins_quarter_degree():
-    plot_mod = load_skill("plot", "plot")
     lat = np.arange(-10.0, 10.0, 0.25)
     lon = np.arange(40.0, 80.0, 0.25)
     assert plot_mod._quiver_step(lat, lon) == 6
@@ -1128,34 +1109,29 @@ def test_quiver_step_auto_thins_quarter_degree():
 def test_quiver_step_rejects_zero():
     from weather_skills_core import UsageError
 
-    plot_mod = load_skill("plot", "plot")
     with pytest.raises(UsageError, match=">= 1"):
         plot_mod._quiver_step([0.0, 1.0], [10.0, 11.0], requested=0)
 
 
 def test_auto_quiver_scale_uses_requested():
-    plot_mod = load_skill("plot", "plot")
     assert plot_mod._auto_quiver_scale([10.0], [0.0], 60.0, 1.5, requested=100) == 100.0
 
 
 def test_auto_quiver_scale_rejects_nonpositive():
     from weather_skills_core import UsageError
 
-    plot_mod = load_skill("plot", "plot")
     with pytest.raises(UsageError, match="> 0"):
         plot_mod._auto_quiver_scale([10.0], [0.0], 60.0, 1.5, requested=0)
 
 
 def test_auto_quiver_scale_fits_typical_wind_to_spacing():
-    plot_mod = load_skill("plot", "plot")
     u = np.full((8, 8), 10.0)
     v = np.zeros((8, 8))
     scale = plot_mod._auto_quiver_scale(u, v, 60.0, 1.5)
-    assert scale == pytest.approx(10.0 * 60.0 / (plot_mod.QUIVER_ARROW_LEN_SPACING * 1.5))
+    assert scale == pytest.approx(10.0 * 60.0 / (plot_layers.QUIVER_ARROW_LEN_SPACING * 1.5))
 
 
 def test_auto_quiver_scale_grows_with_map_width():
-    plot_mod = load_skill("plot", "plot")
     u = np.ones((4, 4))
     v = np.zeros((4, 4))
     narrow = plot_mod._auto_quiver_scale(u, v, 10.0, 1.5)
@@ -1165,14 +1141,12 @@ def test_auto_quiver_scale_grows_with_map_width():
 
 def test_auto_quiver_scale_full_wind_exceeds_s2s_anomaly_default():
     """10 m/s on a 60° basin needs a larger matplotlib scale than S2S's 100."""
-    plot_mod = load_skill("plot", "plot")
     u = np.full((6, 6), 10.0)
     v = np.zeros((6, 6))
-    assert plot_mod._auto_quiver_scale(u, v, 60.0, 1.5) > plot_mod.QUIVER_SCALE
+    assert plot_mod._auto_quiver_scale(u, v, 60.0, 1.5) > plot_layers.QUIVER_SCALE
 
 
 def test_subsample_quiver_stride():
-    plot_mod = load_skill("plot", "plot")
     lon = np.array([0.0, 1.0, 2.0, 3.0])
     lat = np.array([10.0, 11.0, 12.0])
     u = np.arange(12.0).reshape(3, 4)
@@ -1236,7 +1210,6 @@ def _write_box_geojson(path, lon_min=9.5, lon_max=13.5, lat_min=0.5, lat_max=3.5
 
 
 def test_parse_layer_kind_path_and_options():
-    plot_mod = load_skill("plot", "plot")
     spec = plot_mod.parse_layer("heatmap:/tmp/a.zarr")
     assert spec.kind == "heatmap"
     assert spec.path.as_posix() == "/tmp/a.zarr"
@@ -1258,7 +1231,6 @@ def test_parse_layer_kind_path_and_options():
 def test_parse_layer_rejects_unknown_kind():
     import argparse
 
-    plot_mod = load_skill("plot", "plot")
     with pytest.raises(argparse.ArgumentTypeError, match="unknown --layer kind"):
         plot_mod.parse_layer("contour:/tmp/a.zarr")
 
@@ -1432,14 +1404,12 @@ def test_layer_rejects_timeseries_style(tmp_path, plot_fn):
 
 
 def test_calendar_year_and_pair_key():
-    plot_mod = load_skill("plot", "plot")
     assert plot_mod._calendar_year(np.datetime64("2024-09-15")) == 2024
     assert plot_mod._pair_key(np.datetime64("2024-09-15"), "year") == 2024
     assert plot_mod._pair_key(np.datetime64("2024-09-15T06:00"), "time") == "2024-09-15"
 
 
 def test_pair_xy_year_joins_offset_months():
-    plot_mod = load_skill("plot", "plot")
     x_axis = np.array(["2024-09-01", "2025-09-01"], dtype="datetime64[ns]")
     y_axis = np.array(["2024-10-01", "2025-10-01"], dtype="datetime64[ns]")
     x_out, y_out, keys = plot_mod._pair_xy(x_axis, [0.2, 0.8], y_axis, [10.0, 40.0], "year")
@@ -1449,7 +1419,6 @@ def test_pair_xy_year_joins_offset_months():
 
 
 def test_pair_xy_time_requires_same_day():
-    plot_mod = load_skill("plot", "plot")
     x_axis = np.array(["2024-09-01"], dtype="datetime64[ns]")
     y_axis = np.array(["2024-10-01"], dtype="datetime64[ns]")
     with pytest.raises(Exception, match="no matching samples"):
@@ -1457,7 +1426,6 @@ def test_pair_xy_time_requires_same_day():
 
 
 def test_pair_xy_duplicate_year_errors():
-    plot_mod = load_skill("plot", "plot")
     x_axis = np.array(["2024-09-01", "2024-09-08"], dtype="datetime64[ns]")
     y_axis = np.array(["2024-10-01"], dtype="datetime64[ns]")
     with pytest.raises(Exception, match="duplicate"):
@@ -1598,7 +1566,6 @@ def test_replot_from_spec(tmp_path, plot_fn):
     spec_path = tmp_path / "map.plot.json"
     data = json.loads(spec_path.read_text())
     data["title"] = "Edited"
-    data["patch"] = {"layout": {"title": {"text": "Edited"}}}
     spec_path.write_text(json.dumps(data))
     second = tmp_path / "map2.png"
     run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
@@ -1606,6 +1573,22 @@ def test_replot_from_spec(tmp_path, plot_fn):
     history = load_figure_history(second)
     assert history[-1]["skill"] == "plot"
     assert history[-1]["input"]["basename"] == "in.zarr"
+
+
+def test_patch_flag_merges_into_spec_and_spec_patch_key_is_refused(tmp_path, plot_fn, capsys):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "map.png"
+    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--patch", '{"title": "Patched"}')
+    spec, spec_path = _assert_sidecar(out, trace_type="heatmap", title="Patched")
+    assert "patch" not in spec
+
+    # The old second home for these edits now names where they belong.
+    data = json.loads(spec_path.read_text())
+    data["patch"] = {"title": "Edited"}
+    spec_path.write_text(json.dumps(data))
+    with pytest.raises(SystemExit):
+        run_skill(plot_fn, "--spec", str(spec_path), "-o", str(tmp_path / "map2.png"))
+    assert "patch" in capsys.readouterr().err
 
 
 def _assert_sidecar(out, *, trace_type, title=None):
