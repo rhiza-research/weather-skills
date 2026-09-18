@@ -1,6 +1,6 @@
 ---
 name: deaccumulate
-description: Convert a leftover cumulative-since-init forecast variable along its `step` axis into per-step rates (precip → mm day-1). Fetchers (`ecmwf-fetch`, `dynamical-fetch`, `kenya-forecast-fetch`, `cumulus-fetch`) already write rates — do not run this after them. Use on older cumulative archives that still have amount units.
+description: Convert a leftover cumulative-since-init forecast variable along its `step` axis into per-step rates (precip → mm day-1). Fetchers (`ecmwf-fetch`, `dynamical-fetch`, `kenya-forecast-fetch`, `cumulus-fetch`, `neuralgcm-fetch`) already write rates — do not run this after them. Use on older cumulative archives that still have amount units.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/deaccumulate.py *)
@@ -28,7 +28,7 @@ per-step increments via `arr[i+1] - arr[i]`, clipped at zero.
 
 - **Current fetcher outputs** (`ecmwf-fetch` `tp`, `dynamical-fetch`
   `precipitation_surface`, `kenya-forecast-fetch` precip / precip_downscaled,
-  `cumulus-fetch` `tp`) — already rates
+  `cumulus-fetch` `tp`, `neuralgcm-fetch` `tp`) — already rates
   (`mm day-1`). The skill refuses them. For period amounts, run
   `aggregate-temporal` then `convert-to-totals`.
 - CHIRPS, IMERG, station precip, and any variable whose `units` are per-time

@@ -34,6 +34,7 @@ credentialed or source-specific fetcher only when it does not.
 | `tahmo-fetch` | TAHMO station observations (daily-aggregated) → Zarr |
 | `kenya-forecast-fetch` | Kenya forecasts archive grids (`gs://kenya-forecasting-data/<date>/data/`) — native S2S Zarr or CHIRPS-resolution weekly downscaled precip → standard dataset (compose with `plot` for figures) |
 | `cumulus-fetch` | Cumulus AI operational ensemble precip (`gs://sheerwater-datalake/cumulus-data/v0.0.1-op/pf/…`) — 1° global, 29 members, 46 daily leads → Zarr. Requires GCS credentials. |
+| `neuralgcm-fetch` | NeuralGCM S2S ensemble from `gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/<init>/` (IMERG precip `tp`, ERA5 surface `t2m`/`d2m`) — 48 members, 6-hour leads to 60 days, ~2.8° → Zarr. Requires GCS credentials. |
 | `pbc-fetch` | PBC / StillLearning AI Weather Quest precip **quintile probabilities** from private `gs://sheerwater-datalake/pbc-data` (`era5-p_pr_19` week 3, `era5-p_pr_26` week 4) → Zarr. GCS credentials. |
 
 ### Generic middle (operate on any standard dataset)
