@@ -46,11 +46,11 @@ on one figure.
 
 The color scale adapts to what is being compared. When both rows resolve
 to the same variable and matching units, one shared scale is used (for
-precipitation, the CHIRPS-GEFS total or anomaly classes,
+precipitation, the nested absolute-mm total classes or CHIRPS anomaly classes,
 so values are visually comparable across rows). When the rows are different
 variables or have differing units, each row gets its own independent
-scale, colormap, and labeled colorbar — rainfall still uses those CHIRPS
-classes. `--shared-scale` and
+scale, colormap, and labeled colorbar — rainfall still uses the nested
+absolute-mm classes. `--shared-scale` and
 `--independent-scale` force either mode. Country outlines come from the
 bundled Natural Earth GeoJSON (same store as `resolve-region`), compiled
 through matplotlib. A default run writes `<stem>.plot.json` next to the PNG.
@@ -108,16 +108,17 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py --spec <out.plot.json> --outp
 - `--variable-b` — variable for row B (same resolution as `--variable-a`).
 - `--colormap` — matplotlib colormap name, comma-separated colors, or a
   `{colors, bounds}` object (also `--colormap-bounds` / `--cbar-ticks` /
-  `--cbar-labels`). When omitted, precipitation totals use the CHIRPS-GEFS
-  classes; anomalies use the diverging CHIRPS classes. In independent-scale
+  `--cbar-labels`). When omitted, precipitation totals use the nested
+  absolute-mm classes (`ppt_daily` / `ppt_week` / `ppt_month` / `ppt_season`);
+  anomalies use the diverging CHIRPS classes. In independent-scale
   mode a non-precip row falls back to `viridis`.
 - `--colormap-a` / `--colormap-b` — per-row matplotlib colormap name or
   comma-separated colors in independent-scale mode. Precedence per row:
-  `--colormap-a`/`-b`, then `--colormap`, then the CHIRPS total / anomaly
-  precip classes or `viridis`.
+  `--colormap-a`/`-b`, then `--colormap`, then the nested precip total /
+  CHIRPS anomaly classes or `viridis`.
 - `--vmin` / `--vmax` — shared colorbar limits. Either may be omitted
   (the unset end uses the data min/max). Setting either one drops the
-  default discrete CHIRPS precip classes and stretches those colors (or
+  default discrete precip classes and stretches those colors (or
   `--colormap`) across the requested range. In independent-scale mode the
   same limits apply to both rows.
 - `--shared-scale` / `--independent-scale` — mutually exclusive; force one

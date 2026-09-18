@@ -49,7 +49,12 @@ from weather_skills_core.plot.spec import (
     spec_input_labels,
     spec_inputs_from_datasets,
 )
-from weather_skills_core.plot.style import is_precip_anomaly
+from weather_skills_core.plot.style import (
+    aggregation_days,
+    is_precip,
+    is_precip_anomaly,
+    widest_precip_window,
+)
 from weather_skills_core.standard_utils import (
     pick_time_dim,
     polygon_from_geojson,
@@ -374,7 +379,7 @@ def _flatten_da(da, panel_dim, lat_dim, lon_dim):
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors. "
-        "Default: discrete CHIRPS-GEFS precip classes for precip variables, else viridis. "
+        "Default: nested absolute-mm precip classes for precip variables, else viridis. "
         "Discrete custom classes: pass --colormap-bounds or a spec object."
     ),
 )
@@ -584,8 +589,11 @@ def plot_compare_forecasts(
 
     user_vlim = vmin is not None or vmax is not None
     cmap_name = colormap
-    if colormap is None and not user_vlim and any(_is_precip_anomaly(da) for da in das):
-        cmap_name = "chirps_anom"
+    if colormap is None and not user_vlim:
+        if any(_is_precip_anomaly(da) for da in das):
+            cmap_name = "chirps_anom"
+        elif any(is_precip(da) for da in das):
+            cmap_name = widest_precip_window(*(aggregation_days(da) for da in das))
     scale = scale_from_da(
         das[0], cmap_name, stretch=user_vlim, label=variable_label_for_display(das[0])
     )

@@ -45,7 +45,11 @@ from weather_skills_core.plot.spec import (
     spec_inputs_from_datasets,
     spec_role_datasets,
 )
-from weather_skills_core.plot.style import aggregation_days
+from weather_skills_core.plot.style import (
+    aggregation_days,
+    is_precip,
+    widest_precip_window,
+)
 from weather_skills_core.standard_utils import polygon_from_geojson
 from weather_skills_core.units import (
     format_units_for_display,
@@ -353,7 +357,7 @@ def _prepare(ds, variable):
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors, for obs/forecast rows. "
-        "Default: discrete CHIRPS-GEFS precip classes for precip, else viridis. "
+        "Default: nested absolute-mm precip classes for precip, else viridis. "
         "Discrete custom classes: pass --colormap-bounds or a spec object."
     ),
 )
@@ -578,7 +582,13 @@ def plot_verify(
         scale_from_da,
     )
 
-    field_scale = scale_from_da(obs_da, colormap, stretch=False, label=_variable_label(obs_da))
+    field_cmap = colormap
+    if colormap is None and is_precip(obs_da):
+        field_cmap = widest_precip_window(
+            _aggregation_days(obs_da),
+            *(_aggregation_days(fc_da) for _label, fc_da, *_rest in columns),
+        )
+    field_scale = scale_from_da(obs_da, field_cmap, stretch=False, label=_variable_label(obs_da))
     if field_scale.get("bounds") is None:
         present = [float(obs_da.min(skipna=True).values), float(obs_da.max(skipna=True).values)]
         for _label, fc_da, *_rest in columns:
@@ -592,7 +602,7 @@ def plot_verify(
         if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
             vmin, vmax = 0.0, 1.0
         field_scale = scale_from_da(
-            obs_da, colormap, stretch=True, label=_variable_label(obs_da), vmin=vmin, vmax=vmax
+            obs_da, field_cmap, stretch=True, label=_variable_label(obs_da), vmin=vmin, vmax=vmax
         )
     if metric == "hits":
         verify_scale = hits_scale()

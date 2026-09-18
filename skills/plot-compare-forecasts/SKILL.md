@@ -77,12 +77,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py --spec <out.plot.js
   the first input. Must exist in every input.
 - `--colormap` — matplotlib colormap name, comma-separated colors, or a
   `{colors, bounds}` object (`--colormap-bounds` / `--cbar-ticks` /
-  `--cbar-labels`). When omitted, precipitation totals use the CHIRPS-GEFS
-  classes; anomalies use the diverging classes. Every other variable uses
+  `--cbar-labels`). When omitted, precipitation totals use the nested
+  absolute-mm classes; anomalies use the diverging classes. Every other variable uses
   `viridis`. One shared scale across all present cells.
 - `--vmin` / `--vmax` — shared colorbar limits. Either may be omitted
   (the unset end uses the data min/max). Setting either one drops the
-  default discrete CHIRPS precip classes and stretches those colors (or
+  default discrete precip classes and stretches those colors (or
   `--colormap`) across the requested range.
 - `--title` — optional figure title. Long titles wrap onto a second line.
 - `--fontsize` — base font size for column titles, row labels, ticks, and

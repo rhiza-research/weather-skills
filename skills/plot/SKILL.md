@@ -26,7 +26,8 @@ Source-agnostic visualization. Single-input styles (`-i`) plus layered maps
   needed). `--rows` and/or `--columns` override that; leftover cells stay
   blank. Ensemble members (`number` dim) are averaged. Use `--index` to
   override the default reduction for any other extra dim. Precipitation totals
-  default to the CHIRPS-GEFS classes. A default run writes `*.plot.json` next
+  default to a nested absolute-mm palette (same color = same millimetres;
+  the colorbar window follows `aggregation_period`). A default run writes `*.plot.json` next
   to the PNG so you can edit layout/annotations (including axis-label
   position) and replot with `--spec`.
 - `contour` — the same map layout as `heatmap` (panels, shared color scale,
@@ -200,19 +201,23 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   interpolate (`white,wheat,green`), or a JSON object
   `{name, colors, bounds, under, over}` for a discrete class scale. Named
   matplotlib colormaps cannot contain commas, so a comma selects the custom
-  list. When omitted, precipitation totals (rate or amount) use the CHC
-  `ppt_total_cmap` classes (`BoundaryNorm` over
-  `[0, 2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]`
-  mm: white for null/negative and 0–2 mm, pale-pink over `>2500`) when
-  `aggregation_period` is missing or ≥ 5 days. Sub-pentad totals
-  (`aggregation_period` < 5 days) keep the same colors with lower breaks
-  (`[0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30, 50, 75, 100, 150, 200]` mm).
+  list. When omitted, precipitation totals (rate or amount) use a nested
+  absolute-mm palette (green→teal→blue→indigo, luminance always falling).
+  The same millimetre class is always the same color; the colorbar is cropped
+  by `aggregation_period`: 0–50 mm below 2 days (`ppt_daily`), 0–200 mm for
+  2–9 days or a missing period (`ppt_week`), 0–400 mm for 10–39 days
+  (`ppt_month`), 0–1000 mm for ≥40 days (`ppt_season`). Values above the
+  window use the next master class (dark, not pale). The historical CHC
+  rainbow (`ppt_total` / `chirps_total`, 0–2500 mm; `ppt_short` /
+  `chirps_short`) remains as a named opt-in.
   Precipitation anomalies (negatives, or `anomal` in the name — e.g. after
   `difference`) use CHC `ppt_anomaly_cmap`
   (`[-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]`
   mm with under/over colors). Percent-of-normal (`poa` / `%`) uses `ppt_poa`;
-  SPI uses `spi`. Named aliases: `ppt_total`/`chirps_total`, `ppt_anomaly`/`chirps_anom`,
-  `ppt_poa`, `ppt_spp`, `spi`. Custom names resolve against `--style-file` /
+  SPI uses `spi`. Named aliases: `ppt_daily`, `ppt_week`, `ppt_month`,
+  `ppt_season`, `ppt_total`/`chirps_total`, `ppt_short`/`chirps_short`,
+  `ppt_anomaly`/`chirps_anom`, `ppt_poa`, `ppt_spp`, `spi`. Custom names
+  resolve against `--style-file` /
   `~/.config/weather-skills/plot.toml` `colormaps` (they used to be ignored).
   Every other variable uses `rocket`. Windrose uses a blue→orange
   speed palette; `--colormap` recolors the speed stacks. Quiver defaults to
@@ -235,7 +240,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   count. Example: `--cbar-ticks 0,50,100 --cbar-labels dry,ok,wet`.
 - `--vmin` / `--vmax` — colorbar limits for heatmap, contour, quiver, and
   scatter. Either may be omitted (the unset end uses the data min/max).
-  Setting either one drops the default discrete CHIRPS precip classes and
+  Setting either one drops the default discrete precip classes and
   stretches those colors (or `--colormap`) across the requested range.
   Values outside the range saturate and the colorbar gains an extend arrow.
   Diverging auto-symmetry (centered on zero) is skipped when either flag
@@ -384,7 +389,7 @@ exiftool out.png
 
 ## Examples
 
-Multi-step forecast panel (precip uses the CHIRPS-GEFS totals palette by default):
+Multi-step forecast panel (precip uses the nested absolute-mm palette by default):
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/ecmwf_namibia.zarr -o /tmp/ecmwf.png \
     --variable tp --style heatmap --title "S2S precip"

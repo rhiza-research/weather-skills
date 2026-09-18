@@ -25,7 +25,17 @@ def test_two_forecasts_write_png_and_stamp_history(tmp_path, plot_fn):
     b = write_zarr(make_forecast(fill=2.0), tmp_path / "b.zarr")
     out = tmp_path / "grid.png"
 
-    run_skill(plot_fn, '-i', str(a), '-i', str(b), '-o', str(out), '--spec', '{"title":"Two forecasts"}')
+    run_skill(
+        plot_fn,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(out),
+        "--title",
+        "Two forecasts",
+    )
 
     assert Path(out).exists()
     assert out.stat().st_size > 0
@@ -49,7 +59,17 @@ def test_figsize_writes_png(tmp_path, plot_fn):
     b = write_zarr(make_forecast(fill=2.0), tmp_path / "b.zarr")
     out = tmp_path / "grid.png"
 
-    run_skill(plot_fn, '-i', str(a), '-i', str(b), '-o', str(out), '--spec', '{"layout":{"figsize":[11.0,7.0]}}')
+    run_skill(
+        plot_fn,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(out),
+        "--figsize",
+        "11,7",
+    )
 
     assert Path(out).exists()
     import matplotlib.image as mpimg
@@ -103,7 +123,17 @@ def test_bbox_slices_before_draw(tmp_path, plot_fn):
     a = write_zarr(make_forecast(fill=1.0), tmp_path / "a.zarr")
     b = write_zarr(make_forecast(fill=2.0), tmp_path / "b.zarr")
     out = tmp_path / "grid.png"
-    run_skill(plot_fn, '-i', str(a), '-i', str(b), '-o', str(out), '--spec', '{"geo":{"bbox":"3/9/0/12"}}')
+    run_skill(
+        plot_fn,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(out),
+        "--bbox",
+        "3/9/0/12",
+    )
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -118,7 +148,17 @@ def test_two_obs_time_cubes_write_png(tmp_path, plot_fn, plot_mod):
     assert matches[1] == [0, 1, None]
 
     out = tmp_path / "grid.png"
-    run_skill(plot_fn, '-i', str(write_zarr(a, tmp_path / 'a.zarr')), '-i', str(write_zarr(b, tmp_path / 'b.zarr')), '-o', str(out), '--spec', '{"inputs":[{"variable":"precip"}]}')
+    run_skill(
+        plot_fn,
+        "-i",
+        str(write_zarr(a, tmp_path / "a.zarr")),
+        "-i",
+        str(write_zarr(b, tmp_path / "b.zarr")),
+        "-o",
+        str(out),
+        "--variable",
+        "precip",
+    )
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -136,28 +176,36 @@ def test_forecast_and_obs_share_valid_times(tmp_path, plot_fn, plot_mod):
     assert matches[1] == [0, 1, None]
 
     out = tmp_path / "grid.png"
-    run_skill(plot_fn, '-i', str(write_zarr(fc, tmp_path / 'fc.zarr')), '-i', str(write_zarr(obs, tmp_path / 'obs.zarr')), '-o', str(out), '--spec', '{"inputs":[{"variable":"precip"}]}')
+    run_skill(
+        plot_fn,
+        "-i",
+        str(write_zarr(fc, tmp_path / "fc.zarr")),
+        "-i",
+        str(write_zarr(obs, tmp_path / "obs.zarr")),
+        "-o",
+        str(out),
+        "--variable",
+        "precip",
+    )
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
 
-def test_precip_default_colormap_is_discrete_chirps_total_palette():
-    from weather_skills_core.plot.style import (
-        PRECIP_BOUNDS,
-        PRECIP_SHORT_BOUNDS,
-        resolve_colorscale,
-    )
+def test_precip_default_colormap_is_nested_week_window():
+    from weather_skills_core.plot_style import precip_nested_palette, resolve_colorscale
 
     da = make_forecast()["tp"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
     scale = resolve_colorscale(da, None)
-    assert scale["name"] == "chirps_total"
-    assert scale["bounds"] == pytest.approx(PRECIP_BOUNDS)
+    week = precip_nested_palette("ppt_week")
+    assert scale["name"] == "ppt_week"
+    assert scale["bounds"] == pytest.approx(week["bounds"])
 
     da.attrs["aggregation_period"] = "1 day"
-    scale_short = resolve_colorscale(da, None)
-    assert scale_short["name"] == "chirps_short"
-    assert scale_short["bounds"] == pytest.approx(PRECIP_SHORT_BOUNDS)
+    scale_daily = resolve_colorscale(da, None)
+    daily = precip_nested_palette("ppt_daily")
+    assert scale_daily["name"] == "ppt_daily"
+    assert scale_daily["bounds"] == pytest.approx(daily["bounds"])
 
     t2m = make_gridded(name="t2m")["t2m"]
     t2m.attrs.update(units="degree_Celsius", standard_name="air_temperature")
@@ -167,7 +215,7 @@ def test_precip_default_colormap_is_discrete_chirps_total_palette():
 
 
 def test_precip_anomaly_colormap_is_chirps_palette():
-    from weather_skills_core.plot.style import PRECIP_ANOMALY_BOUNDS, resolve_colorscale
+    from weather_skills_core.plot_style import PRECIP_ANOMALY_BOUNDS, resolve_colorscale
 
     da = make_gridded(fill=-25.0)["precip"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
@@ -177,13 +225,13 @@ def test_precip_anomaly_colormap_is_chirps_palette():
 
 
 def test_heatmap_scale_stretch_drops_precip_boundary_norm():
-    from weather_skills_core.plot.style import resolve_colorscale
+    from weather_skills_core.plot_style import resolve_colorscale
 
     da = make_forecast()["tp"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
     scale = resolve_colorscale(da, None, stretch=True)
     assert scale.get("bounds") is None
-    assert scale["name"] == "chirps_total"
+    assert scale["name"] == "ppt_week"
 
 
 def test_vmin_vmax_writes_png_and_stamps_history(tmp_path, plot_fn):
@@ -191,7 +239,19 @@ def test_vmin_vmax_writes_png_and_stamps_history(tmp_path, plot_fn):
     b = write_zarr(make_forecast(fill=2.0), tmp_path / "b.zarr")
     out = tmp_path / "grid.png"
 
-    run_skill(plot_fn, '-i', str(a), '-i', str(b), '-o', str(out), '--spec', '{"vmin":0.0,"vmax":5.0}')
+    run_skill(
+        plot_fn,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(out),
+        "--vmin",
+        "0",
+        "--vmax",
+        "5",
+    )
 
     assert Path(out).exists()
     history = load_figure_history(out)
@@ -203,7 +263,17 @@ def test_replot_from_spec(tmp_path, plot_fn):
     a = write_zarr(make_forecast(fill=1.0), tmp_path / "a.zarr")
     b = write_zarr(make_forecast(fill=2.0), tmp_path / "b.zarr")
     first = tmp_path / "grid.png"
-    run_skill(plot_fn, '-i', str(a), '-i', str(b), '-o', str(first), '--spec', '{"title":"Original"}')
+    run_skill(
+        plot_fn,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(first),
+        "--title",
+        "Original",
+    )
     spec_path = tmp_path / "grid.plot.json"
     data = json.loads(spec_path.read_text())
     data["title"] = "Edited"

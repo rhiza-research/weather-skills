@@ -46,10 +46,10 @@ from weather_skills_core.plot.spec import (
     spec_inputs_from_datasets,
 )
 from weather_skills_core.plot.style import (
-    PRECIP_LONG_MIN_DAYS,
     aggregation_days,
     is_precip,
     is_precip_anomaly,
+    widest_precip_window,
 )
 from weather_skills_core.standard_utils import (
     ensure_normalized_longitude,
@@ -121,7 +121,7 @@ def _ax_bounds(ds, variable):
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors. "
-        "Precip default: discrete CHIRPS-GEFS classes (BoundaryNorm). "
+        "Precip default: nested absolute-mm classes (BoundaryNorm). "
         "Discrete custom classes: pass --colormap-bounds or a spec object."
     ),
 )
@@ -650,15 +650,7 @@ def plot_compare(
             if _is_precip_anomaly(da_a) or _is_precip_anomaly(da_b):
                 cmap_name = "chirps_anom"
             else:
-                days_a = _aggregation_days(da_a)
-                days_b = _aggregation_days(da_b)
-                both_short = (
-                    days_a is not None
-                    and days_a < PRECIP_LONG_MIN_DAYS
-                    and days_b is not None
-                    and days_b < PRECIP_LONG_MIN_DAYS
-                )
-                cmap_name = "chirps_short" if both_short else "chirps_total"
+                cmap_name = widest_precip_window(_aggregation_days(da_a), _aggregation_days(da_b))
             scale_shared = scale_from_da(da_a, cmap_name, stretch=False)
         else:
             dmin, dmax = _finite_limits(da_a, da_b)

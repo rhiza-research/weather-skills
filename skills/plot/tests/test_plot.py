@@ -426,8 +426,9 @@ def test_timeseries_along_draws_one_line_per_member(tmp_path, plot_fn):
     assert Path(out).exists() and out.stat().st_size > 0
 
 
-def test_precip_default_colormap_is_chirps_total_palette():
+def test_precip_default_colormap_is_nested_window():
     from matplotlib.colors import BoundaryNorm, ListedColormap
+    from weather_skills_core.plot_style import precip_nested_palette
 
     da = make_forecast()["tp"]
     da.attrs.update(
@@ -436,22 +437,26 @@ def test_precip_default_colormap_is_chirps_total_palette():
         aggregation_period="10 day",
     )
     cmap, norm = plot_layers._heatmap_scale(da, None)
+    month = precip_nested_palette("ppt_month")
     assert isinstance(cmap, ListedColormap)
-    assert cmap.name == "chirps_total"
-    assert cmap.N == 15
+    assert cmap.name == "ppt_month"
+    assert cmap.N == len(month["bounds"]) - 1
     assert isinstance(norm, BoundaryNorm)
-    assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_BOUNDS)
+    assert list(norm.boundaries) == pytest.approx(month["bounds"])
 
     rate = make_gridded()["precip"]
     rate.attrs["aggregation_period"] = "7 day"
     cmap_rate, norm_rate = plot_layers._heatmap_scale(rate, None)
+    week = precip_nested_palette("ppt_week")
     assert isinstance(cmap_rate, ListedColormap)
-    assert cmap_rate.name == "chirps_total"
+    assert cmap_rate.name == "ppt_week"
     assert isinstance(norm_rate, BoundaryNorm)
+    assert list(norm_rate.boundaries) == pytest.approx(week["bounds"])
 
 
-def test_precip_short_period_colormap_uses_subpentad_bounds():
+def test_precip_short_period_colormap_uses_daily_window():
     from matplotlib.colors import BoundaryNorm, ListedColormap
+    from weather_skills_core.plot_style import precip_nested_palette
 
     da = make_gridded(fill=3.0)["precip"]
     da.attrs.update(
@@ -460,10 +465,11 @@ def test_precip_short_period_colormap_uses_subpentad_bounds():
         aggregation_period="1 day",
     )
     cmap, norm = plot_layers._heatmap_scale(da, None)
+    daily = precip_nested_palette("ppt_daily")
     assert isinstance(cmap, ListedColormap)
-    assert cmap.name == "chirps_short"
+    assert cmap.name == "ppt_daily"
     assert isinstance(norm, BoundaryNorm)
-    assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_SHORT_BOUNDS)
+    assert list(norm.boundaries) == pytest.approx(daily["bounds"])
 
 
 def test_precip_anomaly_colormap_is_chirps_palette():
