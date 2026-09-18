@@ -1,21 +1,17 @@
 ---
 name: plot-mediogram
-description: Render an ECMWF-style mediogram PNG comparing a forecast ensemble against an m-climate (historical) ensemble at a single lat/lon. Two-layer boxplots per time step show an extremes box underneath (p0–p100 whiskers, p10–p90 box, p50 median) with a wider p25–p75 IQR box overlaid on top, whose visible black caps mark the IQR edges. For precipitation, run convert-to-totals after aggregate-temporal before plotting.
+description: Render an ECMWF-style mediogram PNG comparing a forecast ensemble against an m-climate (historical) ensemble at a single lat/lon. Grouped box plots per step (forecast cyan, m-climate red) plus the forecast mean line. For precipitation, run convert-to-totals after aggregate-temporal before plotting. Use --fontsize to enlarge titles, axis labels, ticks, and legend (default 16).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py *)
 metadata:
+  version: "0.0.2"
   catalog-group: figure
 ---
 
 # plot-mediogram
 
-Single-point mediogram plotting an ECMWF ensemble forecast distribution against an m-climate (historical) ensemble distribution. For each forecast step, two side-by-side boxplots are drawn (forecast left, m-climate right). Each side has two layers, drawn underneath-to-overlay:
-
-- **Extremes box (drawn first, underneath)** — p0–p100 whiskers, p10–p90 box, p50 median line in black. Caps invisible.
-- **IQR box (overlaid on top)** — p25–p75 box, whiskers zero-length so the visible black caps draw as horizontal lines at p25 and p75 — the defining ECMWF mediogram cue.
-
-Forecast boxes are filled cyan; m-climate boxes are filled red. The forecast ensemble mean is plotted as a black line across steps.
+Single-point mediogram plotting an ECMWF ensemble forecast distribution against an m-climate (historical) ensemble distribution. For each forecast step, two side-by-side box plots are drawn (forecast left/cyan, m-climate right/red) with the forecast ensemble mean as a black line.
 
 ## Input schema
 
@@ -32,19 +28,43 @@ Lat/lon selection is nearest-neighbor.
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py -i <forecast.zarr> -i <mclimate.zarr> \
     --lat <lat> --lon <lon> --output <out.png> \
-    [--variable NAME] [--title TEXT]
+    [--variable NAME] [--title TEXT] [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H] \
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
+
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py \
+    -i <forecast.zarr> -i <mclimate.zarr> --lat <lat> --lon <lon> \
+    -o <out.png> --patch '{"title": "Edited"}'
 ```
 
 ### Arguments
-- `--input`, `-i` — pass exactly twice: forecast Zarr first, m-climate Zarr second.
-- `--lat`, `--lon` — point location (nearest-neighbor selection).
+- `--input`, `-i` — pass exactly twice: forecast Zarr first, m-climate Zarr second. Optional when `--spec` already lists both paths.
+- `--lat`, `--lon` — point location (nearest-neighbor selection). Optional when `--spec` has `geo.lat` / `geo.lon`.
+- `--spec` — optional full plot spec JSON (file or inline). First runs are
+  CLI flags only. Prefer `--patch` for edits. Pass `--spec` only when
+  replaying a dumped object. Spec input paths are opened as Datasets so
+  provenance chains from the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
+  before CLI flags overlay. Same knobs as `--spec` (`title`, `axes`, `layout`,
+  …). A `patch` key inside a spec object is rejected.
+- `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
+  PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
+  stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
+  a key you cannot name from the CLI.
 - `--output`, `-o` — PNG output path.
 - `--variable`, `-v` — variable name. Defaults to the first data variable in the forecast input.
-- `--title` — optional plot title.
+- `--title` — optional plot title. Long titles wrap onto a second line.
+- `--xlabel` / `--ylabel` — optional axis-label overrides (defaults: `Forecast step`
+  and the variable label). Passed text is used as-is.
+- `--fontsize` — base font size for titles, axis labels, ticks, and legend
+  (default 16). Raise on user request (e.g. `--fontsize 22`).
+- `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `12,6`).
+  When set, the PNG is that canvas at 150 dpi (the legend stays inside it).
+  Default `10×5`, cropped tightly.
 
 ### Output
 
-A PNG at `--output`, single axes, figsize `(10, 5)`, up to 6 forecast steps on the x-axis labeled with actual leads (`+7d`, `+10d`, …).
+A PNG at `--output`, single axes, default figsize `(10, 5)` (override with
+`--figsize`), legend below the boxes. Up to 6 forecast steps on the x-axis labeled with actual leads (`+7d`, `+10d`, …). The y-axis (and default title) use the variable `long_name`.
 
 ### Provenance
 

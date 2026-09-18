@@ -1,10 +1,11 @@
 ---
 name: plot-compare
-description: Render a side-by-side multi-panel comparison PNG of two weather-skills standard dataset Zarr stores (gridded-vs-gridded or station-vs-gridded). Use for sat-vs-station validation, model-vs-obs comparison, or cross-source QC. For precipitation, convert-to-totals after aggregate-temporal before plotting.
+description: Render a side-by-side two-row comparison PNG of two weather-skills standard dataset Zarr stores (gridded-vs-gridded or station-vs-gridded as separate rows, not overlaid). Use for sat-vs-station validation, model-vs-obs comparison, or cross-source QC. To overlay stations on a heatmap, use plot --layer instead. For precipitation, convert-to-totals after aggregate-temporal before plotting. Use --fontsize to enlarge panel titles, row labels, ticks, and colorbars (default 16).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py *)
 metadata:
+  version: "0.0.2"
   catalog-group: figure
 ---
 
@@ -15,7 +16,9 @@ with one panel per time slice; row A is one input, row B the other.
 Handles:
 
 - Gridded vs. gridded (pcolormesh maps).
-- Station (`station_id`-indexed) vs. gridded (scatter over mesh).
+- Station (`station_id`-indexed) vs. gridded as **two rows** (scatter in one
+  row, pcolormesh in the other — not overlaid on the same axes). To draw
+  stations on top of a heatmap, use `plot --layer heatmap:… --layer scatter:…`.
 
 When exactly one input is a point_obs Zarr, that input is placed
 on the top row to match the canonical "stations vs. satellite" layout.
@@ -42,28 +45,25 @@ you compare different quantities (e.g. soil moisture vs. precipitation)
 on one figure.
 
 The color scale adapts to what is being compared. When both rows resolve
-to the same variable and matching units, one shared scale is used (a
-categorical precipitation colormap with `BoundaryNorm` by default, so
-values are visually comparable across rows). When the rows are different
+to the same variable and matching units, one shared scale is used (for
+precipitation, the nested absolute-mm total classes or CHIRPS anomaly classes,
+so values are visually comparable across rows). When the rows are different
 variables or have differing units, each row gets its own independent
-scale, colormap, and labeled colorbar. `--shared-scale` and
-`--independent-scale` force either mode. An admin-1 country boundary
-overlay (Natural Earth, fetched and cached via `cartopy`) is drawn on
-every panel. The polygon overlay is spatially
-*clipped* to the gridded input's bbox (`gdf.clip(box(*bbox))`), so
-polygons that straddle the bbox edge are truncated at the edge rather
-than rendered whole and neighboring regions never extend beyond the
-base.
+scale, colormap, and labeled colorbar — rainfall still uses the nested
+absolute-mm classes. `--shared-scale` and
+`--independent-scale` force either mode. Country outlines come from the
+bundled Natural Earth GeoJSON (same store as `resolve-region`), compiled
+through matplotlib.
 
 Both rows always share the gridded input's spatial extent so the figure
 is centered on the gridded base; station points outside that extent are
-clipped by matplotlib.
+clipped by the shared lon/lat range.
 
-Panel titles render the time-bin range as `YYYY-MM-DD to YYYY-MM-DD`
-with the bin coord interpreted as the inclusive right edge: start =
-end − bin_width + 1 day. Matches `aggregate-temporal` and
-`deaccumulate`'s right-edge convention so a 10-day dekad ending
-`2026-05-09` renders as `2026-04-30 to 2026-05-09` (10 days inclusive).
+Panel titles render the time-bin range as `30 Apr–9 May '26`
+with the bin coord interpreted as the inclusive **left** edge: end =
+start + bin_width − 1 day. Matches `aggregate-temporal` and
+`deaccumulate`'s period-start convention so a 10-day dekad starting
+`2026-04-30` renders as `30 Apr–9 May '26` (10 days inclusive).
 
 ## When to use
 
@@ -78,14 +78,32 @@ dataset has no matching time, use `plot-compare-forecasts`.
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --output <out.png> \
     [--variable NAME] [--variable-a NAME] [--variable-b NAME] \
-    [--colormap NAME] [--colormap-a NAME] [--colormap-b NAME] \
-    [--shared-scale | --independent-scale] [--title TEXT] \
+    [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
+    [--colormap-a NAME] [--colormap-b NAME] [--vmin N] [--vmax N] \
+    [--shared-scale | --independent-scale] [--title TEXT] [--xlabel TEXT] [--fontsize N] [--figsize W,H] \
     [--panels N] [--time-dim DIM] \
-    [--bbox N/W/S/E] [--mask-geojson PATH]
+    [--bbox N/W/S/E] [--mask-geojson PATH] \
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
+
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py \
+    -i <a.zarr> -i <b.zarr> -o <out.png> --patch '{"title": "Edited"}'
 ```
 
 ### Arguments
-- `--input`, `-i` — pass exactly twice. The first input is row A, the second is row B. Station-schema is allowed on either.
+- `--input`, `-i` — pass exactly twice. The first input is row A, the second is row B. Station-schema is allowed on either. Optional when `--spec` already lists both paths.
+- `--spec` — optional full plot spec JSON (file or inline). First runs are
+  CLI flags only. Prefer `--patch` for edits. Pass `--spec` only when
+  replaying a dumped object. Spec input paths are opened as Datasets so
+  provenance chains from the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
+  before CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a
+  spec object is rejected.
+- `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
+  PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
+  stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
+  a key you cannot name from the CLI.
+- `--label` — row label for each `--input`, in order. When omitted, labels are
+  inferred from provenance (`weather_skills_source`, fetch skill history).
 - `--output`, `-o` — PNG path.
 - `--variable`, `-v` — variable for both rows. Per-row `--variable-a`/`-b`
   override it. Each resolved variable must exist in its own input.
@@ -94,20 +112,33 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
   (CF grid-mapping/CRS container vars such as `latitude_longitude` are
   skipped during auto-pick).
 - `--variable-b` — variable for row B (same resolution as `--variable-a`).
-- `--colormap` — matplotlib colormap. In shared-scale mode, when omitted
-  the categorical precipitation cmap (`["#bdbdbd", "wheat", "lightgreen",
-  "green", "lightblue", "blue", "yellow", "orange", "red", "purple"]`)
-  with `BoundaryNorm` over `[0, 10, 20, 40, 60, 80, 110, 150, 200, 250,
-  350]` mm is used. In independent-scale mode it is the per-row default
-  (falling back to `viridis`).
-- `--colormap-a` / `--colormap-b` — per-row matplotlib colormap in
-  independent-scale mode. Precedence per row: `--colormap-a`/`-b`, then
-  `--colormap`, then `viridis`.
+- `--colormap` — matplotlib colormap name, comma-separated colors, or a
+  `{colors, bounds}` object (also `--colormap-bounds` / `--cbar-ticks` /
+  `--cbar-labels`). When omitted, precipitation totals use the nested
+  absolute-mm classes (`ppt_daily` / `ppt_week` / `ppt_month` / `ppt_season`);
+  anomalies use the diverging CHIRPS classes. In independent-scale
+  mode a non-precip row falls back to `viridis`.
+- `--colormap-a` / `--colormap-b` — per-row matplotlib colormap name or
+  comma-separated colors in independent-scale mode. Precedence per row:
+  `--colormap-a`/`-b`, then `--colormap`, then the nested precip total /
+  CHIRPS anomaly classes or `viridis`.
+- `--vmin` / `--vmax` — shared colorbar limits. Either may be omitted
+  (the unset end uses the data min/max). Setting either one drops the
+  default discrete precip classes and stretches those colors (or
+  `--colormap`) across the requested range. In independent-scale mode the
+  same limits apply to both rows.
 - `--shared-scale` / `--independent-scale` — mutually exclusive; force one
   shared color scale across both rows or a per-row scale + colorbar. When
   neither is given, the mode is chosen automatically: shared when both
   rows resolve to the same variable AND matching units, else independent.
-- `--title` — figure title.
+- `--title` — figure title. Long titles wrap onto a second line.
+- `--xlabel` — override the bottom longitude axis label (default `Longitude`).
+  Row titles stay `--label`.
+- `--fontsize` — base font size for panel titles, row labels, ticks, and
+  colorbars (default 16). Raise on user request (e.g. `--fontsize 18`).
+- `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `16,8`).
+  When set, the PNG is that canvas at 150 dpi. Default `22×10`, cropped tightly.
+  Equal-aspect map panels are packed with compressed layout.
 - `--panels` — number of panels per row (default 3).
 - `--time-dim` — override the time axis. Defaults to `time` if present, else `step`.
 - `--bbox` — optional `N/W/S/E` decimal degrees. Rectangular clipping:
@@ -153,11 +184,15 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
 - **Color-scale mode.** By default the scale is shared when both rows
   resolve to the same variable AND matching (stripped) `units`, and
   independent otherwise. `--shared-scale` / `--independent-scale` force
-  the mode. In shared mode both rows use one colormap, normalization,
-  vmin, and vmax. In independent mode each row computes its own vmin/vmax
+  the mode. In shared mode both rows use one colormap (a matplotlib name
+  or comma-separated colors), normalization, vmin, and vmax. In independent
+  mode each row computes its own vmin/vmax
   from its own data, uses its own colormap (precedence `--colormap-a`/`-b`,
   then `--colormap`, then `viridis`) with a continuous norm, and gets its
-  own colorbar labeled `{file} {var} [{units}]`.
+  own colorbar labeled `{file} {long_name} [{units}]` (`long_name`, then
+  `GRIB_name`, then the variable name). Shared-scale colorbars include
+  units too. Units on the figure are a short display form (`mm/day`,
+  `°C`), not the on-disk CF string.
 - **Input units.** In shared mode, when the two rows carry differing
   `units`, the figure colors values from different units on a single
   scale, so a warning naming both units is printed to stderr. This is a
@@ -168,10 +203,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
 
 ### Output
 
-A PNG with a `(2, n)` `GridSpec` (`figsize=(22, 10)`,
-`wspace=0.08`, `hspace=0.15`). Each row gets its own colorbar.
-Station scatter points use `s=30`. Y-axis labels appear only on the
-leftmost panel of each row.
+A PNG with a `(2, n)` `GridSpec` (default `figsize=(22, 10)`; override with
+`--figsize`; compressed layout packs the equal-aspect maps). Each row gets its own colorbar.
+Station scatter points use `s=30`. Each panel's y-axis is the row's
+dataset name (`weather_skills_source`, else `A` / `B`). Latitude ticks
+stay on the leftmost panel of each row.
 
 ### Provenance
 

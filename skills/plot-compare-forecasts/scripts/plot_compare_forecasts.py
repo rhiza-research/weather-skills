@@ -1,12 +1,10 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@main",
-#   "cartopy",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@plot-refactor",
 #   "cf-xarray",
 #   "cftime",
-#   # matplotlib<3.10: cartopy gridliner crash
-#   "matplotlib>=3.8,<3.10",
+#   "matplotlib>=3.8",
 #   "numpy",
 #   "shapely>=2.1",
 #   "xarray",
@@ -20,101 +18,94 @@ from __future__ import annotations
 
 import datetime as _dt
 import sys
-from pathlib import Path
 
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
+from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
+from weather_skills_core.plot import export
+from weather_skills_core.plot.maps import (
+    axis_kind,
+    extent_from_da,
+    format_calendar_panel,
+    format_step,
+    is_cftime_axis,
+    slice_bbox_mask,
+)
+from weather_skills_core.plot.figure import (
+    DEFAULT_FONTSIZE,
+    axis_label,
+    parse_figsize,
+    parse_label_list,
+    parse_number_list,
+)
+from weather_skills_core.plot.spec import (
+    DUMP_SPEC_ARGUMENT_HELP,
+    PATCH_ARGUMENT_HELP,
+    SPEC_ARGUMENT_HELP,
+    SPEC_VERSION,
+    datasets_from_cli_or_spec,
+    maybe_emit_spec,
+    overlay_flags,
+    overlay_spec,
+    parse_plot_patch,
+    parse_plot_spec,
+    resolve_flags,
+    spec_get,
+    spec_input_labels,
+    spec_inputs_from_datasets,
+)
+from weather_skills_core.plot.theme import (
+    aggregation_days,
+    is_precip,
+    is_precip_anomaly,
+    widest_precip_window,
+)
 from weather_skills_core.standard_utils import (
-    dataset_label,
-    lat_slice,
     pick_time_dim,
     polygon_from_geojson,
 )
 from weather_skills_core.units import (
-    classify_variable,
     precip_for_display,
     to_standard_units,
     units_equal,
+    variable_label_for_display,
+    variable_units,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-# ECMWF-S2S4AFRICA / Kenya product palette (same as plot).
-PRECIP_COLORS = [
-    "white",
-    "wheat",
-    "lightgreen",
-    "green",
-    "lightblue",
-    "blue",
-    "yellow",
-    "orange",
-    "red",
-    "purple",
-]
+_axis_kind = axis_kind
+_axis_label = axis_label
+_extent_from_da = extent_from_da
+_is_cftime_axis = is_cftime_axis
+_is_precip_anomaly = is_precip_anomaly
+_slice_bbox_mask = slice_bbox_mask
 
 _NS_PER_DAY = 86_400_000_000_000
 _TOL_NS = 1_000_000_000  # 1 s, matching plot-compare
 
 
-def _parse_colormap(spec):
-    if spec is None or "," not in spec:
-        return spec
-    from matplotlib.colors import LinearSegmentedColormap
-
-    parts = [p.strip() for p in spec.split(",") if p.strip()]
-    return LinearSegmentedColormap.from_list("custom", parts)
-
-
-def _precip_colormap():
-    from matplotlib.colors import LinearSegmentedColormap
-
-    return LinearSegmentedColormap.from_list("wgbrp", PRECIP_COLORS)
-
-
-def _heatmap_cmap(da, colormap):
-    """Explicit ``--colormap``, else the Kenya/S2S precip palette, else viridis."""
-    if colormap:
-        return _parse_colormap(colormap)
-    kind = classify_variable(
-        da.name or "",
-        units=da.attrs.get("units"),
-        standard_name=da.attrs.get("standard_name"),
-    )
-    if kind in ("precip", "precip_amount"):
-        return _precip_colormap()
-    return "viridis"
-
-
-def _variable_label(da):
-    label = da.attrs.get("GRIB_name") or da.attrs.get("long_name") or da.name or "value"
-    units = da.attrs.get("units") or ""
-    if units:
-        return f"{label} [{units}]"
-    return label
-
-
-def _is_cftime_axis(values):
+def _resolve_color_limits(vmin=None, vmax=None, *, data_min=None, data_max=None):
+    """Resolve colorbar limits from user values and/or data range."""
     import numpy as np
 
-    arr = np.asarray(values)
-    return (
-        getattr(arr.dtype, "kind", None) == "O"
-        and arr.size > 0
-        and hasattr(arr.flat[0], "calendar")
-    )
-
-
-def _axis_kind(values):
-    kind = getattr(values.dtype, "kind", None)
-    if kind == "M":
-        return "datetime"
-    if kind == "m":
-        return "timedelta"
-    if _is_cftime_axis(values):
-        return "datetime"
-    return None
+    user_set = vmin is not None or vmax is not None
+    if data_min is None or not np.isfinite(data_min):
+        data_min = 0.0
+    if data_max is None or not np.isfinite(data_max):
+        data_max = 1.0
+    lo = data_min if vmin is None else float(vmin)
+    hi = data_max if vmax is None else float(vmax)
+    if not user_set and hi > 0 and lo < 0:
+        m = max(abs(hi), abs(lo))
+        lo, hi = -m, m
+    if lo > hi:
+        raise UsageError(f"--vmin/--vmax: lower limit {lo} is greater than upper limit {hi}")
+    if lo == hi:
+        pad = abs(lo) * 0.05 if lo != 0 else 1.0
+        lo, hi = lo - pad, hi + pad
+    return lo, hi
 
 
 def _format_lead(step_value):
@@ -123,38 +114,15 @@ def _format_lead(step_value):
     arr = np.asarray(step_value)
     if arr.dtype.kind != "m":
         return None
-    days = int(arr.astype("timedelta64[D]").astype(int))
-    return f"+{days}d"
+    return format_step(step_value)
 
 
 def _format_column_title(t, bin_width_ns):
-    """``YYYY-MM-DD``, or a right-edge range when median spacing is ≥ 2 days."""
-    import numpy as np
-
-    use_range = bin_width_ns is not None and bin_width_ns >= 2 * _NS_PER_DAY
+    """``14 Sept '26``, or a left-edge range when median spacing is ≥ 2 days."""
     width = None
-    if use_range:
-        width = _dt.timedelta(microseconds=int(bin_width_ns // 1000))
-
-    if hasattr(t, "calendar"):
-        if width is None:
-            return t.strftime("%Y-%m-%d")
-        try:
-            start = t - width + _dt.timedelta(days=1)
-        except (TypeError, ValueError):
-            return t.strftime("%Y-%m-%d")
-        return f"{start.strftime('%Y-%m-%d')} to {t.strftime('%Y-%m-%d')}"
-
-    end = np.asarray(t).astype("datetime64[D]")
-    end_s = np.datetime_as_string(end, unit="D")
-    if width is None:
-        return end_s
-    start = (
-        end.astype("datetime64[ns]")
-        - np.timedelta64(int(bin_width_ns), "ns")
-        + np.timedelta64(1, "D")
-    ).astype("datetime64[D]")
-    return f"{np.datetime_as_string(start, unit='D')} to {end_s}"
+    if bin_width_ns is not None and bin_width_ns >= 2 * _NS_PER_DAY:
+        width = bin_width_ns / _NS_PER_DAY
+    return format_calendar_panel(t, width)
 
 
 def realize_valid_times(ds):
@@ -404,71 +372,11 @@ def _flatten_da(da, panel_dim, lat_dim, lon_dim):
     return da
 
 
-def _slice_bbox_mask(da, lat_dim, lon_dim, bbox, polygon, label):
-    import numpy as np
-    import xarray as xr
-
-    if bbox is None and polygon is None:
-        return da
-    lon_vals = np.asarray(da[lon_dim].values)
-    if lon_vals.size and float(np.nanmax(lon_vals)) > 180.0:
-        da = da.assign_coords({lon_dim: ((da[lon_dim] + 180) % 360 - 180)}).sortby(lon_dim)
-    if bbox is not None:
-        r_n, r_w, r_s, r_e = bbox
-        da = da.sel({lat_dim: lat_slice(da[lat_dim].values, r_n, r_s)})
-        if r_w > r_e:
-            da = da.where((da[lon_dim] >= r_w) | (da[lon_dim] <= r_e), drop=True)
-        else:
-            da = da.sel({lon_dim: slice(r_w, r_e)})
-    if polygon is not None:
-        import shapely
-
-        lon_grid, lat_grid = np.meshgrid(da[lon_dim].values, da[lat_dim].values)
-        mask = shapely.contains_xy(polygon, lon_grid, lat_grid)
-        if not bool(mask.any()):
-            print(
-                f"Warning: --mask-geojson polygon does not intersect input '{label}'; "
-                "its panels will be entirely empty.",
-                file=sys.stderr,
-            )
-        da = da.where(xr.DataArray(mask, dims=(lat_dim, lon_dim)))
-    if bbox is not None:
-        r_n, r_w, r_s, r_e = bbox
-        if r_w > r_e:
-            da = da.assign_coords({lon_dim: ((da[lon_dim] - r_w) % 360.0) + r_w}).sortby(lon_dim)
-    if da.sizes.get(lat_dim, 0) == 0 or da.sizes.get(lon_dim, 0) == 0:
-        raise UsageError(
-            f"selection produced an empty grid on input '{label}' "
-            "(no cells remain after --bbox/--mask-geojson); nothing to plot."
-        )
-    return da
-
-
-def _extent_from_da(da, lat_dim, lon_dim, bbox):
-    import numpy as np
-
-    if bbox is not None:
-        r_n, r_w, r_s, r_e = bbox
-        if r_w > r_e:
-            return [float(r_w), float(r_e) + 360.0, float(r_s), float(r_n)]
-        return [float(r_w), float(r_e), float(r_s), float(r_n)]
-    lat_vals = np.asarray(da[lat_dim].values)
-    lon_vals = np.asarray(da[lon_dim].values)
-    dlat = float(np.abs(np.diff(np.sort(lat_vals))).mean()) if lat_vals.size > 1 else 0.0
-    dlon = float(np.abs(np.diff(np.sort(lon_vals))).mean()) if lon_vals.size > 1 else 0.0
-    return [
-        float(lon_vals.min()) - dlon / 2,
-        float(lon_vals.max()) + dlon / 2,
-        float(lat_vals.min()) - dlat / 2,
-        float(lat_vals.max()) + dlat / 2,
-    ]
-
-
 @weather_skill(
     name="plot-compare-forecasts",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("spatial"), action="append", required=True)
+@weather_skill.argument("-i", "--input", type=Dataset("spatial"), action="append", required=False)
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument(
@@ -476,10 +384,43 @@ def _extent_from_da(da, lat_dim, lon_dim, bbox):
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors. "
-        "Default: Kenya/S2S precip palette for precip variables, else viridis."
+        "Default: nested absolute-mm precip classes for precip variables, else viridis. "
+        "Discrete custom classes: pass --colormap-bounds or a spec object."
     ),
 )
+@weather_skill.argument(
+    "--colormap-bounds",
+    default=None,
+    type=parse_number_list,
+    help="Comma-separated class stops; folds into style.colormap.bounds.",
+)
+@weather_skill.argument("--colormap-under", default=None, help="Color below the first class stop.")
+@weather_skill.argument("--colormap-over", default=None, help="Color above the last class stop.")
+@weather_skill.argument(
+    "--cbar-ticks",
+    default=None,
+    type=parse_number_list,
+    help="Comma-separated colorbar tick positions.",
+)
+@weather_skill.argument(
+    "--cbar-labels",
+    default=None,
+    type=parse_label_list,
+    help="Comma-separated colorbar tick labels. Requires --cbar-ticks.",
+)
 @weather_skill.argument("--title", default=None, help="Optional figure title.")
+@weather_skill.argument(
+    "--fontsize",
+    type=int,
+    default=DEFAULT_FONTSIZE,
+    help="Base font size for column titles, row labels, ticks, and colorbars (default 16).",
+)
+@weather_skill.argument(
+    "--figsize",
+    default=None,
+    type=parse_figsize,
+    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default from panel count.",
+)
 @weather_skill.argument(
     "--panels",
     type=int,
@@ -487,9 +428,47 @@ def _extent_from_da(da, lat_dim, lon_dim, bbox):
     help="Cap on columns (earliest N of the union). Default: all union columns.",
 )
 @weather_skill.argument(
+    "--label",
+    action="append",
+    default=None,
+    help="Row label for each --input, in order. Omit to infer from metadata.",
+)
+@weather_skill.argument(
     "--mask-geojson",
     default=None,
     help="GeoJSON polygon; gridded cells outside become NaN.",
+)
+@weather_skill.argument(
+    "--vmin",
+    type=float,
+    default=None,
+    help="Colorbar lower limit. Unset = data min (or discrete precip classes).",
+)
+@weather_skill.argument(
+    "--vmax",
+    type=float,
+    default=None,
+    help="Colorbar upper limit. Unset = data max (or discrete precip classes).",
+)
+@weather_skill.argument(
+    "--spec",
+    default=None,
+    type=parse_plot_spec,
+    help=SPEC_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--patch",
+    default=None,
+    type=parse_plot_patch,
+    help=PATCH_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--dump-spec",
+    nargs="?",
+    const="-",
+    default=None,
+    probe=True,
+    help=DUMP_SPEC_ARGUMENT_HELP,
 )
 def plot_compare_forecasts(
     ds,
@@ -497,24 +476,91 @@ def plot_compare_forecasts(
     variable,
     colormap,
     title,
+    fontsize,
+    figsize,
     panels,
+    label,
     mask_geojson,
     output,
+    vmin=None,
+    vmax=None,
+    spec=None,
+    patch=None,
+    dump_spec=None,
+    colormap_bounds=None,
+    colormap_under=None,
+    colormap_over=None,
+    cbar_ticks=None,
+    cbar_labels=None,
     **kwargs,
 ):
     """Compare two or more gridded datasets as a heatmap grid PNG."""
-    if len(ds) < 2:
-        raise UsageError(f"expected at least two --input paths, got {len(ds)}")
+    ds = datasets_from_cli_or_spec(ds, spec, min_count=2)
+    spec_data = spec.to_dict() if spec is not None else {}
+    if patch:
+        spec_data = overlay_spec(spec_data, patch)
+    flags = resolve_flags(
+        spec_data,
+        title=title,
+        colormap=colormap,
+        colormap_bounds=colormap_bounds,
+        colormap_under=colormap_under,
+        colormap_over=colormap_over,
+        cbar_ticks=cbar_ticks,
+        cbar_labels=cbar_labels,
+        figsize=figsize,
+        panels=panels,
+        bbox=bbox,
+        mask_geojson=mask_geojson,
+        vmin=vmin,
+        vmax=vmax,
+        variable=variable,
+    )
+    title, colormap, variable = flags["title"], flags["colormap"], flags["variable"]
+    spec_data = overlay_flags(
+        spec_data,
+        colormap=colormap,
+        colormap_bounds=flags.get("colormap_bounds"),
+        colormap_under=flags.get("colormap_under"),
+        colormap_over=flags.get("colormap_over"),
+        cbar_ticks=flags.get("cbar_ticks"),
+        cbar_labels=flags.get("cbar_labels"),
+    )
+    colormap = spec_get(spec_data, "colormap")
+    bbox, mask_geojson = flags["bbox"], flags["mask_geojson"]
+    vmin, vmax, panels = flags["vmin"], flags["vmax"], flags["panels"]
+    figsize = tuple(flags["figsize"]) if flags["figsize"] else None
+    if not label:
+        label = spec_input_labels(spec_data)
     if panels is not None and panels < 1:
         raise UsageError(f"--panels must be >= 1, got {panels}")
+    named = {chr(ord("a") + i): one for i, one in enumerate(ds)}
+    geo_out = {}
+    if bbox is not None:
+        geo_out["bbox"] = list(bbox) if not isinstance(bbox, str) else bbox
+    if mask_geojson:
+        geo_out["mask_geojson"] = str(mask_geojson)
+    assembled = overlay_spec(
+        spec_data,
+        {
+            "version": SPEC_VERSION,
+            "skill": "plot-compare-forecasts",
+            "layout": {
+                "facet": {"columns": panels} if panels else {},
+                "figsize": list(figsize) if figsize else None,
+            },
+            "traces": [{"kind": "grid"}],
+            "theme": {"template": "weather_skills", "fontsize": fontsize},
+            "title": title,
+            "geo": geo_out,
+        },
+    )
+    if maybe_emit_spec(assembled, dump_spec, datasets=named):
+        return None
+    if output is None:
+        raise UsageError("--output is required unless --dump-spec is set")
 
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
     import cf_xarray  # noqa: F401 — registers the .cf accessor
-    import matplotlib.pyplot as plt
     import numpy as np
 
     variable = variable or auto_variable(ds[0])
@@ -526,15 +572,19 @@ def plot_compare_forecasts(
                 f"variable '{variable}' missing from input {idx + 1}. "
                 f"Available: {list(one.data_vars)}"
             )
+    label_slots = resolve_input_labels(label, len(ds))
     datasets = [
         precip_for_display(to_standard_units(one, variables=[variable]), variable) for one in ds
     ]
-    labels = [dataset_label(ds, f"input {idx + 1}") for idx, ds in enumerate(datasets)]
+    labels = [
+        slot or dataset_display_label(one, f"input {idx + 1}")
+        for idx, (slot, one) in enumerate(zip(label_slots, datasets, strict=True))
+    ]
 
     unit_vals = []
     seen_units = {}
     for idx, ds in enumerate(datasets):
-        u = ds[variable].attrs.get("units")
+        u = variable_units(ds[variable])
         if isinstance(u, str) and u.strip():
             unit_vals.append(u)
             seen_units[labels[idx]] = u.strip()
@@ -569,120 +619,128 @@ def plot_compare_forecasts(
         lat_dims.append(lat_dim)
         lon_dims.append(lon_dim)
 
-    wrap_lon = not (bbox is not None and bbox[1] > bbox[3])
     extent = _extent_from_da(das[0], lat_dims[0], lon_dims[0], bbox)
 
-    present_min = []
-    present_max = []
-    for row, da in enumerate(das):
-        pdim = panel_dims[row]
-        for idx in matches[row]:
-            if idx is None:
-                continue
-            slab = da.isel({pdim: idx})
-            present_min.append(float(slab.min(skipna=True).values))
-            present_max.append(float(slab.max(skipna=True).values))
-    if present_max:
-        vmin = float(np.nanmin(present_min))
-        vmax = float(np.nanmax(present_max))
-        if vmax > 0 and vmin < 0:
-            m = max(abs(vmax), abs(vmin))
-            vmin, vmax = -m, m
-        if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
-            vmin, vmax = 0.0, 1.0
-    else:
-        vmin, vmax = 0.0, 1.0
-
-    cmap = _heatmap_cmap(das[0], colormap)
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(max(3.2 * ncols, 6.0), max(2.8 * nrows, 4.0) + (0.6 if title else 0.0)),
-        sharex=True,
-        sharey=True,
-        subplot_kw={"projection": ccrs.PlateCarree()},
-        squeeze=False,
+    from weather_skills_core.plot.maps import (
+        blank_cell,
+        compile_grid,
+        heatmap_cell,
+        scale_from_da,
     )
-    if title:
-        fig.suptitle(title)
 
-    contour = None
+    user_vlim = vmin is not None or vmax is not None
+    cmap_name = colormap
+    if colormap is None and not user_vlim:
+        if any(_is_precip_anomaly(da) for da in das):
+            cmap_name = "chirps_anom"
+        elif any(is_precip(da) for da in das):
+            cmap_name = widest_precip_window(*(aggregation_days(da) for da in das))
+    scale = scale_from_da(
+        das[0], cmap_name, stretch=user_vlim, label=variable_label_for_display(das[0])
+    )
+    if user_vlim or scale.get("bounds") is None:
+        present_min = []
+        present_max = []
+        for row, da in enumerate(das):
+            pdim = panel_dims[row]
+            for idx in matches[row]:
+                if idx is None:
+                    continue
+                slab = da.isel({pdim: idx})
+                present_min.append(float(slab.min(skipna=True).values))
+                present_max.append(float(slab.max(skipna=True).values))
+        if present_max:
+            data_min = float(np.nanmin(present_min))
+            data_max = float(np.nanmax(present_max))
+        else:
+            data_min, data_max = 0.0, 1.0
+        lo, hi = _resolve_color_limits(vmin, vmax, data_min=data_min, data_max=data_max)
+        scale = scale_from_da(
+            das[0],
+            cmap_name,
+            stretch=True,
+            label=variable_label_for_display(das[0]),
+            vmin=lo,
+            vmax=hi,
+        )
+
+    col_titles = [_format_column_title(t, bin_width_ns) for t in column_times]
+    cells = []
+    cell_notes = []
     for row, da in enumerate(das):
         pdim = panel_dims[row]
         lat_dim = lat_dims[row]
         lon_dim = lon_dims[row]
-        for col, t in enumerate(column_times):
-            ax = axes[row][col]
-            col_title = _format_column_title(t, bin_width_ns)
+        row_cells = []
+        row_notes = []
+        for col, _t in enumerate(column_times):
             idx = matches[row][col]
             lead = None
             if idx is not None and steps_per_row[row] is not None:
                 lead = _format_lead(steps_per_row[row][idx])
-            if row == 0:
-                ax.set_title(col_title, fontsize=9)
-            if wrap_lon:
-                ax.set_extent(extent, crs=ccrs.PlateCarree())
-            else:
-                ax.set_xlim(extent[0], extent[1])
-                ax.set_ylim(extent[2], extent[3])
-            ax.add_feature(cfeature.COASTLINE, edgecolor="black")
-            ax.add_feature(cfeature.BORDERS, linestyle=":", alpha=0.7)
-            gl = ax.gridlines(draw_labels=True, alpha=0)
-            gl.top_labels = False
-            gl.right_labels = False
-            if col != 0:
-                gl.left_labels = False
             if idx is None:
-                ax.text(
-                    0.5,
-                    0.5,
-                    "n/a",
-                    transform=ax.transAxes,
-                    ha="center",
-                    va="center",
-                    fontsize=12,
-                    color="0.4",
-                )
+                row_cells.append(blank_cell("n/a"))
+                row_notes.append(None)
             else:
-                slab = da.isel({pdim: idx}).transpose(lat_dim, lon_dim)
-                mesh = ax.pcolormesh(
-                    slab[lon_dim],
-                    slab[lat_dim],
-                    slab.values,
-                    cmap=cmap,
-                    vmin=vmin,
-                    vmax=vmax,
-                    transform=ccrs.PlateCarree(),
-                )
-                if contour is None:
-                    contour = mesh
-                if lead:
-                    ax.text(
-                        0.03,
-                        0.97,
-                        lead,
-                        transform=ax.transAxes,
-                        ha="left",
-                        va="top",
-                        fontsize=8,
-                        color="0.2",
-                    )
-            if col == 0:
-                ax.set_ylabel(labels[row])
+                slab = da.isel({pdim: idx})
+                row_cells.append(heatmap_cell(slab, lat_dim, lon_dim))
+                row_notes.append(lead)
+        cells.append(row_cells)
+        cell_notes.append(row_notes)
 
-    if contour is not None:
-        fig.tight_layout(rect=[0, 0.06, 1, 0.94 if title else 0.98])
-        cbar_ax = fig.add_axes([0.15, 0.02, 0.7, 0.02])
-        cbar = fig.colorbar(contour, cax=cbar_ax, orientation="horizontal")
-        cbar.set_label(_variable_label(das[0]))
-    else:
-        fig.tight_layout()
-
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return output
+    compiled = compile_grid(
+        cells,
+        extent=extent,
+        title=title,
+        col_titles=col_titles,
+        row_titles=[_axis_label(lab) for lab in labels],
+        fontsize=fontsize,
+        figsize=figsize,
+        scales={"field": scale},
+        cell_notes=cell_notes,
+        spec=spec_data,
+    )
+    named = {chr(ord("a") + i): datasets[i] for i in range(len(datasets))}
+    inputs = spec_inputs_from_datasets(named)
+    for i, item in enumerate(inputs):
+        if variable:
+            item["variable"] = variable
+        if i < len(label_slots) and label_slots[i]:
+            item["label"] = label_slots[i]
+    geo_out = {}
+    if bbox is not None:
+        geo_out["bbox"] = list(bbox) if not isinstance(bbox, str) else bbox
+    if mask_geojson:
+        geo_out["mask_geojson"] = str(mask_geojson)
+    resolved = {
+        "version": SPEC_VERSION,
+        "skill": "plot-compare-forecasts",
+        "inputs": inputs,
+        "layout": {
+            "facet": {"rows": nrows, "columns": ncols},
+            "shared_colorscale": True,
+            "figsize": list(figsize) if figsize else None,
+        },
+        "traces": [{"kind": "grid"}],
+        "theme": {
+            "template": "weather_skills",
+            "fontsize": fontsize,
+            "colormap": colormap or scale.get("name"),
+        },
+        "title": title,
+        "geo": geo_out,
+    }
+    if vmin is not None:
+        resolved["vmin"] = vmin
+    if vmax is not None:
+        resolved["vmax"] = vmax
+    compiled.spec = {**compiled.spec, **resolved}
+    return export(
+        compiled,
+        output,
+        datasets=named,
+        spec=spec_data,
+    )
 
 
 if __name__ == "__main__":

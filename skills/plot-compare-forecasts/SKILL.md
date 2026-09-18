@@ -1,16 +1,18 @@
 ---
 name: plot-compare-forecasts
-description: Compare two or more gridded datasets as a heatmap grid PNG. Each input is a row; columns are the union of times (forecast init+step, or a time dim on observations / analyses). A dataset that lacks a column's time is a blank n/a cell, not a dropped column. Use after aggregating to a common resolution. For precipitation, convert-to-totals after that aggregation before plotting. For a single dataset use plot; for exactly two datasets including station-vs-grid use plot-compare.
+description: Compare two or more gridded datasets as a heatmap grid PNG. Each input is a row; columns are the union of times (forecast init+step, or a time dim on observations / analyses). A dataset that lacks a column's time is a blank n/a cell, not a dropped column. Use after aggregating to a common resolution. For precipitation, convert-to-totals after that aggregation before plotting. For a single dataset use plot; for exactly two datasets including station-vs-grid use plot-compare. Use --fontsize to enlarge column titles, row labels, ticks, and colorbars (default 16).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py *)
 metadata:
+  version: "0.0.2"
   catalog-group: figure
 ---
 
 # plot-compare-forecasts
 
-N-dataset comparison grid. Each `--input` is one row; columns are the
+N-dataset comparison grid (matplotlib heatmap grid with GeoJSON country
+outlines). Each `--input` is one row; columns are the
 **union** of times across those inputs, sorted earliest-first. A cell whose
 dataset has no field at that time stays on the grid as a blank `n/a` panel
 (map frame kept, no mesh) — unlike `plot-compare`, which drops any bin the
@@ -41,28 +43,60 @@ in every input (use `rename` if datasets use different names, e.g. `tp` vs
   rather than shrinking the grid.
 
 For one dataset, use `plot`. For exactly two datasets (including
-station-vs-grid), use `plot-compare`.
+station-vs-grid), use `plot-compare`. For one obs week versus week-4 through week-1
+forecasts with a hits row, use `plot-verify`.
 
 ## Usage
 
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.zarr> [-i <c.zarr> ...] \
-    --output <out.png> [--variable NAME] [--title TEXT] [--colormap NAME] \
-    [--bbox N/W/S/E] [--mask-geojson PATH] [--panels N]
+    --output <out.png> [--variable NAME] [--title TEXT] [--fontsize N] [--figsize W,H] \
+    [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
+    [--vmin N] [--vmax N] \
+    [--bbox N/W/S/E] [--mask-geojson PATH] [--panels N] \
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
+
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py \
+    -i <a.zarr> -i <b.zarr> -o <out.png> --patch '{"title": "Edited"}'
 ```
 
 ### Arguments
 - `--input`, `-i` — input Zarr; repeat once per dataset (at least twice).
-  Order is the row order. Row labels come from `weather_skills_source` when
-  stamped, else `input 1`, `input 2`, …
+  Order is the row order. Each panel's y-axis is that row's name
+  (`weather_skills_source` when stamped, else `input 1`, `input 2`, …).
+  Optional when `--spec` already lists input paths.
+- `--spec` — optional full plot spec JSON (file or inline). First runs are
+  CLI flags only. Prefer `--patch` for edits. Pass `--spec` only when
+  replaying a dumped object. Spec input paths are opened as Datasets so
+  provenance chains from the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
+  before CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a
+  spec object is rejected.
+- `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
+  PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
+  stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
+  a key you cannot name from the CLI.
+- `--label` — row label for each `--input`, in order. Overrides the default
+  y-axis names when passed.
 - `--output`, `-o` — PNG output path.
 - `--variable`, `-v` — variable name. Defaults to the first data variable of
   the first input. Must exist in every input.
-- `--colormap` — matplotlib colormap name, or comma-separated colors to
-  interpolate. When omitted, precipitation uses the Kenya / ECMWF-S2S
-  palette; every other variable uses `viridis`. One shared scale across all
-  present cells.
-- `--title` — optional figure title.
+- `--colormap` — matplotlib colormap name, comma-separated colors, or a
+  `{colors, bounds}` object (`--colormap-bounds` / `--cbar-ticks` /
+  `--cbar-labels`). When omitted, precipitation totals use the nested
+  absolute-mm classes; anomalies use the diverging classes. Every other variable uses
+  `viridis`. One shared scale across all present cells.
+- `--vmin` / `--vmax` — shared colorbar limits. Either may be omitted
+  (the unset end uses the data min/max). Setting either one drops the
+  default discrete precip classes and stretches those colors (or
+  `--colormap`) across the requested range.
+- `--title` — optional figure title. Long titles wrap onto a second line.
+- `--fontsize` — base font size for column titles, row labels, ticks, and
+  colorbars (default 16). Raise on user request (e.g. `--fontsize 18`).
+- `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `12,8`).
+  When set, the PNG is that canvas at 150 dpi. When omitted, size follows
+  the row/column count and crops tightly. Equal-aspect map panels are packed
+  with compressed layout.
 - `--panels` — cap on columns, keeping the earliest N of the union. Default
   unset → every union column.
 - `--bbox` — optional `N/W/S/E` decimal degrees. Rectangular `sel` slice on
@@ -83,8 +117,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.z
   mismatch asks you to `aggregate-temporal` first.
 - **Blank cells.** Missing times keep the map frame (extent, coast/borders)
   and show `n/a`. The axes stay visible so the grid is rectangular.
-- **Column titles.** `YYYY-MM-DD`. When median spacing is at least 2 days,
-  a right-edge range (`YYYY-MM-DD to YYYY-MM-DD`) is used, matching
+- **Column titles.** `14 Sept '26`. When median spacing is at least 2 days,
+  a left-edge range (`4–10 Aug '26`) is used, matching
   `aggregate-temporal`. A `+7d`-style lead is appended when the source still
   has a `step` coord.
 - **Color scale.** One scale from all present (non-`n/a`) cells. Differing
@@ -93,7 +127,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.z
 ### Output
 
 A PNG at `--output`: `nrows = n inputs`, `ncols = union columns` (or
-`--panels`). One horizontal colorbar under the grid.
+`--panels`). One horizontal colorbar under the grid, labeled from the
+variable `long_name` (then `GRIB_name`, then the variable name) plus
+`[<units>]`.
 
 ### Provenance
 

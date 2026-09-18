@@ -25,18 +25,20 @@ dev = [
     # Skill-script imports exercised by per-skill tests (mocked network).
     "requests",
     "earthaccess",
-    "dynamical-catalog==0.5.0",
+    "dynamical-catalog==1.0.1",
     "gcsfs",
     "xarray-regrid",
     "matplotlib>=3.8,<3.10",
+    "seaborn>=0.13",
     "cartopy",
     "nc-time-axis",
     "pillow",
+    "scipy",
 ]
 
 [tool.uv.sources]
 skills-runner = { git = "https://github.com/tescalada/skills-runner" }
-weather-skills-core = { git = "https://github.com/rhiza-research/weather-skills-core", branch = "main" }
+weather-skills-core = { git = "https://github.com/rhiza-research/weather-skills-core", branch = "dev" }
 
 [tool.pytest.ini_options]
 testpaths = ["skills"]

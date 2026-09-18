@@ -1,15 +1,11 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@main",
-#   "cartopy",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@plot-refactor",
 #   "cf-xarray",
 #   "cftime",
-#   "geopandas>=1",
-#   # matplotlib<3.10: cartopy gridliner crash
-#   "matplotlib>=3.8,<3.10",
+#   "matplotlib>=3.8",
 #   "numpy",
-#   "pandas",
 #   "shapely>=2.1",
 #   "xarray",
 #   "zarr",
@@ -19,144 +15,76 @@
 """Side-by-side multi-panel PNG comparing two weather-skills standard dataset Zarrs."""
 
 import sys
-from pathlib import Path
 
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
+from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
+from weather_skills_core.plot import export
+from weather_skills_core.plot.maps import (
+    axis_kind,
+    calendar_bin_width,
+    format_calendar_panel,
+    is_cftime_axis,
+)
+from weather_skills_core.plot.figure import (
+    DEFAULT_FONTSIZE,
+    axis_label,
+    parse_figsize,
+    parse_label_list,
+    parse_number_list,
+    resolve_axis_label,
+)
+from weather_skills_core.plot.spec import (
+    DUMP_SPEC_ARGUMENT_HELP,
+    PATCH_ARGUMENT_HELP,
+    SPEC_ARGUMENT_HELP,
+    SPEC_VERSION,
+    datasets_from_cli_or_spec,
+    maybe_emit_spec,
+    overlay_flags,
+    overlay_spec,
+    parse_plot_patch,
+    parse_plot_spec,
+    resolve_flags,
+    spec_get,
+    spec_input_labels,
+    spec_inputs_from_datasets,
+)
+from weather_skills_core.plot.theme import (
+    aggregation_days,
+    is_precip,
+    is_precip_anomaly,
+    widest_precip_window,
+)
 from weather_skills_core.standard_utils import (
-    dataset_label,
+    ensure_normalized_longitude,
     lat_slice,
     pick_time_dim,
     polygon_from_geojson,
 )
-from weather_skills_core.units import precip_for_display, to_standard_units, units_equal
+from weather_skills_core.units import (
+    precip_for_display,
+    to_standard_units,
+    units_equal,
+    variable_label_for_display,
+    variable_units,
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-PRECIP_COLORS = [
-    "#bdbdbd",
-    "wheat",
-    "lightgreen",
-    "green",
-    "lightblue",
-    "blue",
-    "yellow",
-    "orange",
-    "red",
-    "purple",
-]
-PRECIP_BOUNDS = [0, 10, 20, 40, 60, 80, 110, 150, 200, 250, 350]
+_aggregation_days = aggregation_days
+_axis_kind = axis_kind
+_axis_label = axis_label
+_format_single = format_calendar_panel
+_is_cftime_axis = is_cftime_axis
+_is_precip = is_precip
+_is_precip_anomaly = is_precip_anomaly
+_resolve_axis_label = resolve_axis_label
 
 
 def _is_station(ds):
     return "station_id" in ds.dims
-
-
-def _format_single(t, bin_width=None):
-    """Render a time-bin label; with bin_width, ``YYYY-MM-DD to YYYY-MM-DD`` (right-edge)."""
-    import datetime as _dt
-
-    import pandas as pd
-
-    if hasattr(t, "calendar"):
-        if bin_width is None:
-            return t.strftime("%Y-%m-%d")
-        try:
-            start = t - bin_width + _dt.timedelta(days=1)
-        except (TypeError, ValueError):
-            return t.strftime("%Y-%m-%d")
-        return f"{start.strftime('%Y-%m-%d')} to {t.strftime('%Y-%m-%d')}"
-
-    try:
-        end = pd.Timestamp(t)
-    except (TypeError, ValueError):
-        return str(t)
-    if bin_width is None:
-        return end.date().isoformat()
-    try:
-        start = end - bin_width + pd.Timedelta(days=1)
-    except (TypeError, ValueError):
-        return end.date().isoformat()
-    return f"{start.date().isoformat()} to {end.date().isoformat()}"
-
-
-def _load_admin_boundaries(bbox=None):
-    """Natural Earth admin-1 via cartopy; optional shapely clip to bbox. None on failure."""
-    try:
-        import cartopy.io.shapereader as shpreader
-        import geopandas as gpd
-
-        shp_path = shpreader.natural_earth(
-            resolution="10m", category="cultural", name="admin_1_states_provinces"
-        )
-        gdf = gpd.read_file(shp_path)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Warning: admin boundaries unavailable ({exc}); skipping overlay.", file=sys.stderr)
-        return None
-    if bbox is None:
-        return gdf
-    try:
-        from shapely.geometry import box
-
-        xmin, ymin, xmax, ymax = bbox
-        clip_geom = box(xmin, ymin, xmax, ymax)
-        try:
-            gdf = gdf.clip(clip_geom)
-        except Exception:  # noqa: BLE001
-            gdf = gdf.copy()
-            gdf["geometry"] = gdf.geometry.intersection(clip_geom)
-        return gdf[~gdf.geometry.is_empty & gdf.geometry.notna()]
-    except Exception as exc:  # noqa: BLE001
-        print(
-            f"Warning: could not clip admin boundaries to bbox ({exc}); drawing unclipped overlay.",
-            file=sys.stderr,
-        )
-        return gdf
-
-
-def _median_bin_width(time_values):
-    """Median spacing of a 1-D time coord (pandas.Timedelta or datetime.timedelta)."""
-    import datetime as _dt
-
-    import numpy as np
-    import pandas as pd
-
-    arr = np.asarray(time_values)
-    if arr.size < 2:
-        return None
-    if arr.dtype.kind == "O" and hasattr(arr.flat[0], "calendar"):
-        ordered = np.sort(arr)
-        deltas = [
-            abs((ordered[i + 1] - ordered[i]).total_seconds()) for i in range(ordered.size - 1)
-        ]
-        return _dt.timedelta(seconds=float(np.median(deltas))) if deltas else None
-    try:
-        diffs = np.diff(pd.to_datetime(arr).values)
-    except (TypeError, ValueError):
-        return None
-    return pd.Timedelta(pd.Series(diffs).median()) if diffs.size else None
-
-
-def _scatter_panel(ax, ds, sel, cmap, norm, vmin, vmax):
-    return ax.scatter(
-        ds["longitude"].values,
-        ds["latitude"].values,
-        c=sel.values,
-        cmap=cmap,
-        norm=norm,
-        vmin=vmin,
-        vmax=vmax,
-        s=30,
-    )
-
-
-def _grid_panel(ax, sel, cmap, norm, vmin, vmax):
-    lat_dim = cf_dim(sel, "latitude")
-    lon_dim = cf_dim(sel, "longitude")
-    return sel.transpose(lat_dim, lon_dim).plot.pcolormesh(
-        ax=ax, x=lon_dim, y=lat_dim, cmap=cmap, norm=norm, vmin=vmin, vmax=vmax, add_colorbar=False
-    )
 
 
 def _ax_bounds(ds, variable):
@@ -176,32 +104,11 @@ def _ax_bounds(ds, variable):
     )
 
 
-def _is_cftime_axis(values):
-    import numpy as np
-
-    return (
-        getattr(values.dtype, "kind", None) == "O"
-        and values.size > 0
-        and hasattr(np.asarray(values).flat[0], "calendar")
-    )
-
-
-def _axis_kind(values):
-    kind = getattr(values.dtype, "kind", None)
-    if kind == "M":
-        return "datetime"
-    if kind == "m":
-        return "timedelta"
-    if _is_cftime_axis(values):
-        return "datetime"
-    return None
-
-
 @weather_skill(
     name="plot-compare",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=True)
+@weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=False)
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument(
@@ -217,17 +124,41 @@ def _axis_kind(values):
 @weather_skill.argument(
     "--colormap",
     default=None,
-    help="matplotlib colormap. Shared-scale default: categorical precip BoundaryNorm.",
+    help=(
+        "matplotlib colormap name, or comma-separated colors. "
+        "Precip default: nested absolute-mm classes (BoundaryNorm). "
+        "Discrete custom classes: pass --colormap-bounds or a spec object."
+    ),
+)
+@weather_skill.argument(
+    "--colormap-bounds",
+    default=None,
+    type=parse_number_list,
+    help="Comma-separated class stops; folds into style.colormap.bounds.",
+)
+@weather_skill.argument("--colormap-under", default=None, help="Color below the first class stop.")
+@weather_skill.argument("--colormap-over", default=None, help="Color above the last class stop.")
+@weather_skill.argument(
+    "--cbar-ticks",
+    default=None,
+    type=parse_number_list,
+    help="Comma-separated colorbar tick positions.",
+)
+@weather_skill.argument(
+    "--cbar-labels",
+    default=None,
+    type=parse_label_list,
+    help="Comma-separated colorbar tick labels. Requires --cbar-ticks.",
 )
 @weather_skill.argument(
     "--colormap-a",
     default=None,
-    help="Colormap for row A in independent-scale mode.",
+    help="Colormap for row A in independent-scale mode (name or comma-separated colors).",
 )
 @weather_skill.argument(
     "--colormap-b",
     default=None,
-    help="Colormap for row B in independent-scale mode.",
+    help="Colormap for row B in independent-scale mode (name or comma-separated colors).",
 )
 @weather_skill.argument(
     "--shared-scale",
@@ -239,15 +170,70 @@ def _axis_kind(values):
     action="store_true",
     help="Force per-row color scales.",
 )
-@weather_skill.argument("--panels", type=int, default=3)
+@weather_skill.argument("--panels", type=int, default=None)
 @weather_skill.argument(
     "--time-dim", default=None, help="Override the time axis. Defaults to time, else step."
 )
 @weather_skill.argument("--title", default=None, help="Optional figure title.")
 @weather_skill.argument(
+    "--xlabel",
+    default=None,
+    help="Override the bottom x-axis label (default: Longitude).",
+)
+@weather_skill.argument(
+    "--fontsize",
+    type=int,
+    default=DEFAULT_FONTSIZE,
+    help="Base font size for panel titles, row labels, ticks, and colorbars (default 16).",
+)
+@weather_skill.argument(
+    "--figsize",
+    default=None,
+    type=parse_figsize,
+    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default 22,10.",
+)
+@weather_skill.argument(
+    "--label",
+    action="append",
+    default=None,
+    help="Row label for each --input, in order. Omit to infer from metadata.",
+)
+@weather_skill.argument(
     "--mask-geojson",
     default=None,
     help="GeoJSON polygon; gridded cells outside become NaN.",
+)
+@weather_skill.argument(
+    "--vmin",
+    type=float,
+    default=None,
+    help="Colorbar lower limit. Unset = data min (or discrete precip classes).",
+)
+@weather_skill.argument(
+    "--vmax",
+    type=float,
+    default=None,
+    help="Colorbar upper limit. Unset = data max (or discrete precip classes).",
+)
+@weather_skill.argument(
+    "--spec",
+    default=None,
+    type=parse_plot_spec,
+    help=SPEC_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--patch",
+    default=None,
+    type=parse_plot_patch,
+    help=PATCH_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--dump-spec",
+    nargs="?",
+    const="-",
+    default=None,
+    probe=True,
+    help=DUMP_SPEC_ARGUMENT_HELP,
 )
 def plot_compare(
     ds,
@@ -261,30 +247,125 @@ def plot_compare(
     shared_scale,
     independent_scale,
     title,
+    xlabel,
+    fontsize,
+    figsize,
     panels,
     time_dim,
+    label,
     mask_geojson,
     output,
+    vmin=None,
+    vmax=None,
+    spec=None,
+    patch=None,
+    dump_spec=None,
+    colormap_bounds=None,
+    colormap_under=None,
+    colormap_over=None,
+    cbar_ticks=None,
+    cbar_labels=None,
     **kwargs,
 ):
     """Side-by-side multi-panel PNG comparing two weather-skills standard dataset Zarrs."""
-    if len(ds) != 2:
-        raise UsageError(f"expected exactly two --input paths, got {len(ds)}")
-    ds_a, ds_b = ds
+    ds_a, ds_b = datasets_from_cli_or_spec(ds, spec, exactly=2)
+    spec_data = spec.to_dict() if spec is not None else {}
+    if patch:
+        spec_data = overlay_spec(spec_data, patch)
+    flags = resolve_flags(
+        spec_data,
+        title=title,
+        xlabel=xlabel,
+        colormap=colormap,
+        colormap_a=colormap_a,
+        colormap_b=colormap_b,
+        colormap_bounds=colormap_bounds,
+        colormap_under=colormap_under,
+        colormap_over=colormap_over,
+        cbar_ticks=cbar_ticks,
+        cbar_labels=cbar_labels,
+        figsize=figsize,
+        panels=panels,
+        bbox=bbox,
+        mask_geojson=mask_geojson,
+        vmin=vmin,
+        vmax=vmax,
+        variable=variable,
+        variable_a=variable_a,
+        variable_b=variable_b,
+    )
+    title, xlabel = flags["title"], flags["xlabel"]
+    colormap, colormap_a, colormap_b = (
+        flags["colormap"],
+        flags["colormap_a"],
+        flags["colormap_b"],
+    )
+    spec_data = overlay_flags(
+        spec_data,
+        colormap=colormap,
+        colormap_a=colormap_a,
+        colormap_b=colormap_b,
+        colormap_bounds=flags.get("colormap_bounds"),
+        colormap_under=flags.get("colormap_under"),
+        colormap_over=flags.get("colormap_over"),
+        cbar_ticks=flags.get("cbar_ticks"),
+        cbar_labels=flags.get("cbar_labels"),
+    )
+    colormap = spec_get(spec_data, "colormap")
+    colormap_a = spec_get(spec_data, "colormap_a")
+    colormap_b = spec_get(spec_data, "colormap_b")
+    bbox, mask_geojson = flags["bbox"], flags["mask_geojson"]
+    vmin, vmax = flags["vmin"], flags["vmax"]
+    variable, variable_a, variable_b = (
+        flags["variable"],
+        flags["variable_a"],
+        flags["variable_b"],
+    )
+    figsize = tuple(flags["figsize"]) if flags["figsize"] else None
+    panels = flags["panels"] or 3
+    if not shared_scale and not independent_scale:
+        shared = spec_get(spec_data, "shared_colorscale")
+        if shared is True:
+            shared_scale = True
+        elif shared is False:
+            independent_scale = True
+    if not label:
+        label = spec_input_labels(spec_data)
     if shared_scale and independent_scale:
         raise UsageError("--shared-scale and --independent-scale are mutually exclusive.")
 
-    label_a = dataset_label(ds_a, "A")
-    label_b = dataset_label(ds_b, "B")
+    label_slots = resolve_input_labels(label, 2)
+    label_a = label_slots[0] or dataset_display_label(ds_a, "A")
+    label_b = label_slots[1] or dataset_display_label(ds_b, "B")
+    datasets = {"a": ds_a, "b": ds_b}
+    geo_out = {}
+    if bbox is not None:
+        geo_out["bbox"] = list(bbox) if not isinstance(bbox, str) else bbox
+    if mask_geojson:
+        geo_out["mask_geojson"] = str(mask_geojson)
+    assembled = overlay_spec(
+        spec_data,
+        {
+            "version": SPEC_VERSION,
+            "skill": "plot-compare",
+            "layout": {
+                "facet": {"rows": 2, "columns": panels},
+                "figsize": list(figsize) if figsize else None,
+            },
+            "traces": [{"kind": "grid"}],
+            "theme": {"template": "weather_skills", "fontsize": fontsize},
+            "title": title,
+            "xlabel": xlabel,
+            "geo": geo_out,
+        },
+    )
+    if maybe_emit_spec(assembled, dump_spec, datasets=datasets):
+        return None
+    if output is None:
+        raise UsageError("--output is required unless --dump-spec is set")
 
-    import matplotlib
-
-    matplotlib.use("Agg")
     import cf_xarray  # noqa: F401 — registers the .cf accessor
-    import matplotlib.pyplot as plt
     import numpy as np
-    from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap
-    from matplotlib.gridspec import GridSpec
 
     var_a = variable_a or variable or auto_variable(ds_a)
     var_b = variable_b or variable or auto_variable(ds_b)
@@ -436,8 +517,8 @@ def plot_compare(
 
     da_a = ds_a[var_a]
     da_b = ds_b[var_b]
-    units_a = da_a.attrs.get("units")
-    units_b = da_b.attrs.get("units")
+    units_a = variable_units(da_a)
+    units_b = variable_units(da_b)
     units_match = (
         isinstance(units_a, str) and isinstance(units_b, str) and units_equal(units_a, units_b)
     )
@@ -512,13 +593,8 @@ def plot_compare(
                 lat_dim = cf_dim(da, "latitude")
                 lon_dim = cf_dim(da, "longitude")
                 if lat_dim is not None and lon_dim is not None:
-                    lon_vals = da[lon_dim].values
-                    if lon_vals.size and float(np.nanmax(lon_vals)) > 180.0:
-                        wrap = (ds[lon_dim] + 180) % 360 - 180
-                        ds = ds.assign_coords({lon_dim: wrap}).sortby(lon_dim)
-                        da = da.assign_coords({lon_dim: ((da[lon_dim] + 180) % 360 - 180)}).sortby(
-                            lon_dim
-                        )
+                    ds = ensure_normalized_longitude(ds, lon_dim)
+                    da = ensure_normalized_longitude(da, lon_dim)
                     if region_bbox is not None:
                         lat_sl = lat_slice(da[lat_dim].values, r_n, r_s)
                         ds = ds.sel({lat_dim: lat_sl})
@@ -569,45 +645,70 @@ def plot_compare(
     a_station = _is_station(ds_a)
     b_station = _is_station(ds_b)
 
-    def _row_units(da):
-        u = da.attrs.get("units")
-        return u if isinstance(u, str) else None
+    from weather_skills_core.plot.maps import (
+        compile_grid,
+        heatmap_cell,
+        scale_from_da,
+        scatter_cell,
+    )
 
+    user_vlim = vmin is not None or vmax is not None
+
+    def _finite_limits(*das):
+        data_min = float(np.nanmin([float(d.min().values) for d in das]))
+        data_max = float(np.nanmax([float(d.max().values) for d in das]))
+        if not np.isfinite(data_min) or not np.isfinite(data_max):
+            return 0.0, 1.0
+        return data_min, data_max
+
+    def _apply_vlim(lo, hi, *, stretch_symmetric):
+        if lo > hi:
+            raise UsageError(f"--vmin/--vmax: lower limit {lo} is greater than upper limit {hi}")
+        if lo == hi:
+            pad = abs(lo) * 0.05 if lo != 0 else 1.0
+            lo, hi = lo - pad, hi + pad
+        elif stretch_symmetric and hi > 0 and lo < 0:
+            m = max(abs(hi), abs(lo))
+            lo, hi = -m, m
+        return lo, hi
+
+    def _indep_scale(da, cmap_name, label):
+        if cmap_name or not _is_precip(da) or user_vlim:
+            dmin, dmax = _finite_limits(da)
+            lo = dmin if vmin is None else float(vmin)
+            hi = dmax if vmax is None else float(vmax)
+            lo, hi = _apply_vlim(lo, hi, stretch_symmetric=not user_vlim)
+            return scale_from_da(da, cmap_name, stretch=True, label=label, vmin=lo, vmax=hi)
+        return scale_from_da(da, cmap_name, stretch=False, label=label)
+
+    def _cbar_label(da, label, var):
+        return f"{label} {variable_label_for_display(da, fallback=var)}"
+
+    label_scale_a = _cbar_label(da_a, label_a, var_a)
+    label_scale_b = _cbar_label(da_b, label_b, var_b)
     if use_shared_scale:
-        if colormap is None:
-            shared_cmap = LinearSegmentedColormap.from_list("wgbrp", PRECIP_COLORS)
-            shared_norm = BoundaryNorm(PRECIP_BOUNDS, shared_cmap.N)
-            shared_vmin = shared_vmax = None
+        cmap_name = colormap
+        if colormap is None and _is_precip(da_a) and _is_precip(da_b) and not user_vlim:
+            if _is_precip_anomaly(da_a) or _is_precip_anomaly(da_b):
+                cmap_name = "chirps_anom"
+            else:
+                cmap_name = widest_precip_window(_aggregation_days(da_a), _aggregation_days(da_b))
+            scale_shared = scale_from_da(da_a, cmap_name, stretch=False)
         else:
-            shared_cmap = colormap
-            shared_norm = None
-            shared_vmax = float(np.nanmax([da_a.max().values, da_b.max().values]))
-            shared_vmin = float(np.nanmin([da_a.min().values, da_b.min().values]))
-        scale_a = scale_b = (shared_cmap, shared_norm, shared_vmin, shared_vmax)
+            dmin, dmax = _finite_limits(da_a, da_b)
+            lo = dmin if vmin is None else float(vmin)
+            hi = dmax if vmax is None else float(vmax)
+            lo, hi = _apply_vlim(lo, hi, stretch_symmetric=not user_vlim)
+            scale_shared = scale_from_da(da_a, colormap, stretch=True, vmin=lo, vmax=hi)
+        scale_a = {**scale_shared, "label": label_scale_a}
+        scale_b = {**scale_shared, "label": label_scale_b}
     else:
-        scale_a = (
-            colormap_a or colormap or "viridis",
-            None,
-            float(da_a.min().values),
-            float(da_a.max().values),
-        )
-        scale_b = (
-            colormap_b or colormap or "viridis",
-            None,
-            float(da_b.min().values),
-            float(da_b.max().values),
-        )
+        scale_a = _indep_scale(da_a, colormap_a or colormap, label_scale_a)
+        scale_b = _indep_scale(da_b, colormap_b or colormap, label_scale_b)
 
-    side_a = (ds_a, da_a, td_a, label_a, var_a, _row_units(da_a), scale_a)
-    side_b = (ds_b, da_b, td_b, label_b, var_b, _row_units(da_b), scale_b)
+    side_a = (ds_a, da_a, td_a, label_a, var_a, scale_a)
+    side_b = (ds_b, da_b, td_b, label_b, var_b, scale_b)
     top, bottom = (side_b, side_a) if b_station and not a_station else (side_a, side_b)
-
-    fig = plt.figure(figsize=(22, 10))
-    gs = GridSpec(2, n, figure=fig, wspace=0.08, hspace=0.15)
-    top_axes = [fig.add_subplot(gs[0, i]) for i in range(n)]
-    bottom_axes = [fig.add_subplot(gs[1, i]) for i in range(n)]
-    if title:
-        fig.suptitle(title)
 
     if a_station and not b_station:
         gridded_ds, gridded_var = ds_b, var_b
@@ -621,75 +722,93 @@ def plot_compare(
         r_n, r_w, r_s, r_e = region_bbox
         g_xmin, g_ymin, g_ymax = r_w, r_s, r_n
         g_xmax = r_e + 360.0 if wrapped_bbox else r_e
-    gridded_bbox = (g_xmin, g_ymin, g_xmax, g_ymax)
 
-    boundaries = _load_admin_boundaries(bbox=None if wrapped_bbox else gridded_bbox)
-    if boundaries is not None and wrapped_bbox:
-        import shapely
-
-        def _wrap_coords(coords):
-            out = coords.copy()
-            out[:, 0] = np.where(out[:, 0] < r_w, out[:, 0] + 360.0, out[:, 0])
-            return out
-
-        boundaries = boundaries.copy()
-        boundaries["geometry"] = boundaries.geometry.apply(
-            lambda g: shapely.transform(g, _wrap_coords) if g is not None and not g.is_empty else g
-        )
-
-    def _plot_row(axes, row, n_panels):
-        ds, da, td, label, _var, _units, scale = row
-        cmap, norm, vmin, vmax = scale
-        is_station = _is_station(ds)
+    def _row_cells(row, scale_id):
+        ds, da, td, _label, _var, _scale = row
         row_sel = da.sel({td: common_labels}, method="nearest", tolerance=common_tol)
-        bin_width = _median_bin_width(da[td].values)
-        last_im = None
-        for col in range(n_panels):
-            ax = axes[col]
+        bin_width = calendar_bin_width(da, da[td].values)
+        titles = [_format_single(row_sel[td].values[col], bin_width=bin_width) for col in range(n)]
+        cells = []
+        is_station = _is_station(ds)
+        for col in range(n):
             sel = row_sel.isel({td: col})
-            title_t = _format_single(row_sel[td].values[col], bin_width=bin_width)
             if is_station:
-                last_im = _scatter_panel(ax, ds, sel, cmap, norm, vmin, vmax)
+                cells.append(
+                    scatter_cell(
+                        ds["longitude"].values,
+                        ds["latitude"].values,
+                        sel.values,
+                        scale=scale_id,
+                    )
+                )
             else:
-                last_im = _grid_panel(ax, sel, cmap, norm, vmin, vmax)
-            ax.set_title(f"{label}: {title_t}", fontsize=9)
-            if boundaries is not None:
-                boundaries.boundary.plot(edgecolor="grey", linewidth=1.0, ax=ax)
-            if col != 0:
-                ax.set_ylabel("")
-                ax.tick_params(left=False, labelleft=False)
-            else:
-                ax.set_ylabel("lat")
-        return last_im
+                lat_dim = cf_dim(sel, "latitude")
+                lon_dim = cf_dim(sel, "longitude")
+                cells.append(heatmap_cell(sel, lat_dim, lon_dim, scale=scale_id))
+        return cells, titles
 
-    sc_top = _plot_row(top_axes, top, n)
-    im_bottom = _plot_row(bottom_axes, bottom, n)
-
-    for ax in top_axes:
-        ax.set_xlim(g_xmin, g_xmax)
-        ax.set_ylim(g_ymin, g_ymax)
-        ax.set_xlabel("")
-    for col, ax in enumerate(bottom_axes):
-        ax.set_xlim(g_xmin, g_xmax)
-        ax.set_ylim(g_ymin, g_ymax)
-        ax.set_xlabel("lon" if col == n // 2 else "")
-
-    def _cbar_label(row):
-        _ds, _da, _td, label, var, units, _scale = row
-        if not use_shared_scale and units:
-            return f"{label} {var} [{units}]"
-        return f"{label} {var}"
-
-    fig.colorbar(sc_top, ax=top_axes, label=_cbar_label(top), shrink=0.6, fraction=0.02, pad=0.02)
-    fig.colorbar(
-        im_bottom, ax=bottom_axes, label=_cbar_label(bottom), shrink=0.6, fraction=0.02, pad=0.02
+    top_cells, col_titles = _row_cells(top, "top")
+    bottom_cells, _ = _row_cells(bottom, "bottom")
+    compiled = compile_grid(
+        [top_cells, bottom_cells],
+        extent=[g_xmin, g_xmax, g_ymin, g_ymax],
+        title=title,
+        col_titles=col_titles,
+        row_titles=[_axis_label(top[3]), _axis_label(bottom[3])],
+        fontsize=fontsize,
+        figsize=figsize,
+        scales={"top": top[5], "bottom": bottom[5]},
+        xlabel=_resolve_axis_label(xlabel, "Longitude"),
+        spec=spec_data,
     )
-
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return output
+    datasets = {"a": ds_a, "b": ds_b}
+    inputs = spec_inputs_from_datasets(datasets)
+    if var_a:
+        inputs[0]["variable"] = var_a
+    if var_b:
+        inputs[1]["variable"] = var_b
+    if label_slots[0]:
+        inputs[0]["label"] = label_slots[0]
+    if label_slots[1]:
+        inputs[1]["label"] = label_slots[1]
+    geo_out = {}
+    if bbox is not None:
+        geo_out["bbox"] = list(bbox) if not isinstance(bbox, str) else bbox
+    if mask_geojson:
+        geo_out["mask_geojson"] = str(mask_geojson)
+    resolved = {
+        "version": SPEC_VERSION,
+        "skill": "plot-compare",
+        "inputs": inputs,
+        "layout": {
+            "facet": {"rows": 2, "columns": n},
+            "shared_colorscale": use_shared_scale,
+            "figsize": list(figsize) if figsize else None,
+        },
+        "traces": [{"kind": "grid"}],
+        "theme": {
+            "template": "weather_skills",
+            "fontsize": fontsize,
+            "colormap": colormap or top[5].get("name"),
+        },
+        "title": title,
+        "xlabel": xlabel,
+        "geo": geo_out,
+    }
+    for side, cmap in ((0, colormap_a), (1, colormap_b)):
+        if cmap and side < len(resolved["inputs"]):
+            resolved["inputs"][side]["colormap"] = cmap
+    if vmin is not None:
+        resolved["vmin"] = vmin
+    if vmax is not None:
+        resolved["vmax"] = vmax
+    compiled.spec = {**compiled.spec, **resolved}
+    return export(
+        compiled,
+        output,
+        datasets=datasets,
+        spec=spec_data,
+    )
 
 
 if __name__ == "__main__":

@@ -1,89 +1,166 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@main",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@plot-refactor",
 #   "cf-xarray",
 #   "cftime",
+#   "matplotlib>=3.8",
+#   "numpy",
 #   "xarray",
 #   "zarr",
-#   # matplotlib<3.10: keep the plot skills on one tested matplotlib
-#   "matplotlib>=3.8,<3.10",
-#   "numpy",
 #   "pint-xarray>=0.6",
 # ]
 # ///
 """ECMWF-style mediogram: forecast vs m-climate ensemble distributions at a point."""
 
-from pathlib import Path
-
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
-from weather_skills_core.units import precip_for_display, to_standard_units
+from weather_skills_core.plot import export
+from weather_skills_core.plot.charts import compile_mediogram
+from weather_skills_core.plot.figure import DEFAULT_FONTSIZE, parse_figsize, resolve_axis_label
+from weather_skills_core.plot.spec import (
+    DUMP_SPEC_ARGUMENT_HELP,
+    PATCH_ARGUMENT_HELP,
+    SPEC_ARGUMENT_HELP,
+    SPEC_VERSION,
+    datasets_from_cli_or_spec,
+    maybe_emit_spec,
+    overlay_spec,
+    parse_plot_patch,
+    parse_plot_spec,
+    resolve_flags,
+    spec_inputs_from_datasets,
+)
+from weather_skills_core.units import (
+    precip_for_display,
+    to_standard_units,
+    variable_label_for_display,
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
+
+_resolve_axis_label = resolve_axis_label
 
 
 def _select_point(da, lat, lon):
     lat_dim = cf_dim(da, "latitude")
     lon_dim = cf_dim(da, "longitude")
     if lat_dim is None or lon_dim is None:
-        raise ValueError(f"Could not identify latitude/longitude in dims {list(da.dims)}.")
+        raise UsageError(f"Could not identify latitude/longitude in dims {list(da.dims)}.")
     return da.sel({lat_dim: lat, lon_dim: lon}, method="nearest")
-
-
-def _bxp_stats(values, lo, q1, q3, hi):
-    import numpy as np
-
-    return {
-        "whislo": float(np.percentile(values, lo)),
-        "q1": float(np.percentile(values, q1)),
-        "med": float(np.percentile(values, 50)),
-        "q3": float(np.percentile(values, q3)),
-        "whishi": float(np.percentile(values, hi)),
-        "fliers": [],
-    }
-
-
-def _draw_bxp(ax, stats, positions, width, facecolor, whisker_lw, cap_alpha=1):
-    ax.bxp(
-        stats,
-        positions=positions,
-        widths=width,
-        showfliers=False,
-        patch_artist=True,
-        boxprops={"facecolor": facecolor, "alpha": 1},
-        medianprops={"color": "black", "linewidth": 1.5},
-        whiskerprops={"color": "black" if whisker_lw <= 1 else "gray", "linewidth": whisker_lw},
-        capprops={
-            "color": "gray" if cap_alpha == 0 else "black",
-            "linewidth": 1,
-            "alpha": cap_alpha,
-        },
-    )
 
 
 @weather_skill(
     name="plot-mediogram",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=True)
+@weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=False)
 @weather_skill.argument("--variable", "-v")
-@weather_skill.argument("--lat", type=float, required=True, help="Point latitude.")
-@weather_skill.argument("--lon", type=float, required=True, help="Point longitude.")
+@weather_skill.argument("--lat", type=float, default=None, help="Point latitude.")
+@weather_skill.argument("--lon", type=float, default=None, help="Point longitude.")
 @weather_skill.argument("--title", default=None, help="Optional plot title.")
-def plot_mediogram(ds, variable, lat, lon, title, output, **kwargs):
+@weather_skill.argument(
+    "--xlabel",
+    default=None,
+    help="Override the x-axis label (default: Forecast step).",
+)
+@weather_skill.argument(
+    "--ylabel",
+    default=None,
+    help="Override the y-axis label (default: from variable metadata).",
+)
+@weather_skill.argument(
+    "--fontsize",
+    type=int,
+    default=DEFAULT_FONTSIZE,
+    help="Base font size for titles, axis labels, ticks, and legend (default 16).",
+)
+@weather_skill.argument(
+    "--figsize",
+    default=None,
+    type=parse_figsize,
+    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default 10,5.",
+)
+@weather_skill.argument(
+    "--spec",
+    default=None,
+    type=parse_plot_spec,
+    help=SPEC_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--patch",
+    default=None,
+    type=parse_plot_patch,
+    help=PATCH_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--dump-spec",
+    nargs="?",
+    const="-",
+    default=None,
+    probe=True,
+    help=DUMP_SPEC_ARGUMENT_HELP,
+)
+def plot_mediogram(
+    ds,
+    variable,
+    lat,
+    lon,
+    title,
+    xlabel,
+    ylabel,
+    fontsize,
+    figsize,
+    output,
+    spec=None,
+    patch=None,
+    dump_spec=None,
+    **kwargs,
+):
     """ECMWF-style mediogram: forecast vs m-climate ensemble distributions at a point."""
-    if len(ds) != 2:
-        raise UsageError(f"expected exactly two --input paths, got {len(ds)}")
-    ds_fc, ds_mc = ds
-    import matplotlib
-
-    matplotlib.use("Agg")
+    ds_fc, ds_mc = datasets_from_cli_or_spec(ds, spec, exactly=2)
+    spec_data = spec.to_dict() if spec is not None else {}
+    if patch:
+        spec_data = overlay_spec(spec_data, patch)
+    flags = resolve_flags(
+        spec_data,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        figsize=figsize,
+        lat=lat,
+        lon=lon,
+        variable=variable,
+    )
+    title, xlabel, ylabel = flags["title"], flags["xlabel"], flags["ylabel"]
+    lat, lon, variable = flags["lat"], flags["lon"], flags["variable"]
+    figsize = tuple(flags["figsize"]) if flags["figsize"] else None
+    if lat is None or lon is None:
+        raise UsageError("pass --lat and --lon, or --spec with geo.lat/geo.lon")
+    lat = float(lat)
+    lon = float(lon)
+    named = {"forecast": ds_fc, "mclimate": ds_mc}
+    assembled = overlay_spec(
+        spec_data,
+        {
+            "version": SPEC_VERSION,
+            "skill": "plot-mediogram",
+            "traces": [{"kind": "mediogram"}],
+            "theme": {"template": "weather_skills", "fontsize": fontsize},
+            "layout": {"figsize": list(figsize) if figsize else None},
+            "geo": {"lat": lat, "lon": lon},
+            "title": title,
+            "xlabel": xlabel,
+            "ylabel": ylabel,
+        },
+    )
+    if maybe_emit_spec(assembled, dump_spec, datasets=named):
+        return None
+    if output is None:
+        raise UsageError("--output is required unless --dump-spec is set")
     import cf_xarray  # noqa: F401 — registers the .cf accessor
-    import matplotlib.pyplot as plt
     import numpy as np
-    from matplotlib.patches import Patch
 
     variable = variable or auto_variable(ds_fc)
     if variable is None or variable not in ds_fc or variable not in ds_mc:
@@ -120,49 +197,58 @@ def plot_mediogram(ds, variable, lat, lon, title, output, **kwargs):
     snapped_lat = float(pt_fc[lat_dim].values) if lat_dim else lat
     snapped_lon = float(pt_fc[lon_dim].values) if lon_dim else lon
 
-    time_steps = np.arange(n_steps)
-    fig, ax = plt.subplots(figsize=(10, 5))
-
-    fc_outer = [_bxp_stats(fc[:, i], 25, 25, 75, 75) for i in range(n_steps)]
-    mc_outer = [_bxp_stats(mc[:, i], 25, 25, 75, 75) for i in range(n_steps)]
-    fc_inner = [_bxp_stats(fc[:, i], 0, 10, 90, 100) for i in range(n_steps)]
-    mc_inner = [_bxp_stats(mc[:, i], 0, 10, 90, 100) for i in range(n_steps)]
-
-    pos_fc = time_steps - 0.2
-    pos_mc = time_steps + 0.2
-    _draw_bxp(ax, fc_inner, pos_fc, 0.2, "cyan", 1, cap_alpha=0)
-    _draw_bxp(ax, mc_inner, pos_mc, 0.2, "red", 1, cap_alpha=0)
-    _draw_bxp(ax, fc_outer, pos_fc, 0.4, "cyan", 2)
-    _draw_bxp(ax, mc_outer, pos_mc, 0.4, "red", 2)
-
-    ax.plot(time_steps, np.mean(fc, axis=0), color="black", linewidth=1.2)
-    ax.set_xticks(time_steps)
     step_vals = np.asarray(pt_fc["step"].values)
     tick_labels = []
     for value in step_vals:
         arr = np.asarray(value)
         if arr.dtype.kind == "m":
             tick_labels.append(f"+{int(arr.astype('timedelta64[D]').astype(int))}d")
+        elif arr.dtype.kind == "M" or hasattr(value, "year"):
+            if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
+                tick_labels.append(
+                    f"{int(value.year):04d}-{int(value.month):02d}-{int(value.day):02d}"
+                )
+            else:
+                tick_labels.append(
+                    str(np.datetime_as_string(arr.astype("datetime64[D]"), unit="D"))
+                )
         else:
             tick_labels.append(str(value))
-    ax.set_xticklabels(tick_labels)
-    ax.set_xlabel("Forecast step")
-    ax.set_ylabel(variable)
-    ax.set_title(title or f"Mediogram: {variable} at lat={snapped_lat:g}, lon={snapped_lon:g}")
-    ax.grid(True, linestyle="--", alpha=0.6)
-    ax.legend(
-        handles=[
-            Patch(facecolor="cyan", edgecolor="black", label="forecast"),
-            Patch(facecolor="red", edgecolor="black", label="m-climate"),
-        ]
+    qty = variable_label_for_display(pt_fc, fallback=variable, include_units=False)
+    compiled = compile_mediogram(
+        fc,
+        mc,
+        tick_labels,
+        title=title or f"Mediogram: {qty} at lat={snapped_lat:g}, lon={snapped_lon:g}",
+        xlabel=_resolve_axis_label(xlabel, "Forecast step"),
+        ylabel=_resolve_axis_label(ylabel, variable_label_for_display(pt_fc, fallback=variable)),
+        fontsize=fontsize,
+        figsize=figsize,
+        spec=spec_data,
     )
-
-    fig.tight_layout()
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return output
+    named = {"forecast": ds_fc, "mclimate": ds_mc}
+    inputs = spec_inputs_from_datasets(named)
+    if variable:
+        for item in inputs:
+            item["variable"] = variable
+    compiled.spec = {
+        "version": SPEC_VERSION,
+        "skill": "plot-mediogram",
+        "inputs": inputs,
+        "traces": [{"kind": "mediogram"}],
+        "theme": {"template": "weather_skills", "fontsize": fontsize},
+        "layout": {"figsize": list(figsize) if figsize else None},
+        "geo": {"lat": snapped_lat, "lon": snapped_lon},
+        "title": title,
+        "xlabel": xlabel,
+        "ylabel": ylabel,
+    }
+    return export(
+        compiled,
+        output,
+        datasets=named,
+        spec=spec_data,
+    )
 
 
 if __name__ == "__main__":

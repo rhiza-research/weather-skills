@@ -1,12 +1,13 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@main",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@plot-refactor",
 #   "cartopy",
 #   "cf-xarray",
 #   "cftime",
 #   # matplotlib<3.10: cartopy gridliner crash
 #   "matplotlib>=3.8,<3.10",
+#   "seaborn>=0.13",
 #   "nc-time-axis",
 #   "numpy",
 #   "shapely>=2.1",
@@ -15,663 +16,925 @@
 #   "pint-xarray>=0.6",
 # ]
 # ///
-"""Render a heatmap or timeseries PNG from a weather-skills standard dataset Zarr."""
+"""Render a heatmap, timeseries, xy scatter, wind-rose, or quiver PNG from a weather-skills standard dataset Zarr."""
 
-import json
-import re
+import argparse
 import sys
 from pathlib import Path
 
 from weather_skills_core import Dataset, UsageError, weather_skill
-from weather_skills_core.cf import auto_variable, cf_dim
-from weather_skills_core.standard_utils import lat_slice, parse_bbox, polygon_from_geojson
-from weather_skills_core.units import (
-    PRECIP_AMOUNT_LONG_NAME,
-    classify_variable,
-    looks_like_rate_display_name,
-    precip_for_display,
-    to_standard_units,
+from weather_skills_core.plot import compile, export
+from weather_skills_core.plot.figure import (
+    DEFAULT_FONTSIZE,
+    parse_figsize,
+    parse_label_list,
+    parse_number_list,
 )
+from weather_skills_core.plot.maps import parse_draw_boxes, parse_layer
+from weather_skills_core.plot.spec import (
+    DUMP_SPEC_ARGUMENT_HELP,
+    PATCH_ARGUMENT_HELP,
+    SPEC_ARGUMENT_HELP,
+    maybe_emit_spec,
+    named_datasets_from_spec,
+    opened_datasets_from_spec,
+    overlay_flags,
+    overlay_spec,
+    parse_index,
+    parse_plot_patch,
+    parse_plot_spec,
+    resolve_flags,
+    spec_from_flags,
+    spec_get,
+    spec_inputs_from_datasets,
+    trace_at,
+)
+from weather_skills_core.plot.theme import deep_merge, load_user_theme
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-_INDEX_INT_RE = re.compile(r"[+-]?[0-9]+")
+_MAP_KINDS = frozenset({"heatmap", "contour", "quiver"})
+_ZARR_LAYER_KINDS = frozenset({"heatmap", "scatter", "quiver"})
 
-# ECMWF-S2S4AFRICA / Kenya product palette (get_ECMWF_functions.cmap).
-PRECIP_COLORS = [
-    "white",
-    "wheat",
-    "lightgreen",
-    "green",
-    "lightblue",
-    "blue",
-    "yellow",
-    "orange",
-    "red",
-    "purple",
-]
-
-
-def _parse_index(spec):
-    """Parse ``--index`` into ``{dim: int | list[int]}`` (e.g. ``step=0,1,2``)."""
-    if not spec or not spec.strip():
-        return {}
-    values = {}
-    current = None
-    for token in spec.split(","):
-        if "=" in token:
-            key, _, raw = token.partition("=")
-            current = key.strip()
-            if not current:
-                raise ValueError(f"--index token {token.strip()!r} has an empty dimension name")
-            if current in values:
-                raise ValueError(f"--index dimension {current!r} is given more than once")
-            values[current] = []
-            raw = raw.strip()
-            if not raw:
-                raise ValueError(f"--index value for {current!r} is empty")
-        else:
-            raw = token.strip()
-            if not raw:
-                raise ValueError("--index spec has an empty token (stray comma)")
-            if current is None:
-                raise ValueError(f"--index token {raw!r} appears before any 'dim=' assignment")
-        if not _INDEX_INT_RE.fullmatch(raw):
-            raise ValueError(f"--index value {raw!r} for {current!r} is not an integer")
-        pos = int(raw)
-        if pos in values[current]:
-            raise ValueError(f"--index position {pos} is repeated for dimension {current!r}")
-        values[current].append(pos)
-    return {k: v[0] if len(v) == 1 else v for k, v in values.items()}
+_MPL_LEGEND_LOCS = frozenset(
+    {
+        "best",
+        "upper right",
+        "upper left",
+        "lower left",
+        "lower right",
+        "right",
+        "center left",
+        "center right",
+        "lower center",
+        "upper center",
+        "center",
+    }
+)
+_LEGEND_ALIASES = {
+    "outside": "outside right",
+    "outside right": "outside right",
+    "right outside": "outside right",
+    "below": "below",
+    "bottom": "below",
+    "none": "none",
+    "off": "none",
+}
 
 
-def _parse_extent(spec):
-    if not spec:
+def parse_legend(value):
+    """Argparse converter for a matplotlib loc, ``outside right``, ``below``, or ``none``."""
+    if value is None:
         return None
-    parts = [float(x) for x in spec.split(",")]
-    if len(parts) != 4:
-        raise ValueError(
-            "--extent expects 4 comma-separated floats: lon_min,lon_max,lat_min,lat_max"
-        )
-    return parts
+    loc = " ".join(str(value).strip().lower().replace("_", " ").replace("-", " ").split())
+    if not loc:
+        raise argparse.ArgumentTypeError("--legend placement is empty")
+    loc = _LEGEND_ALIASES.get(loc, loc)
+    if loc in _MPL_LEGEND_LOCS or loc in ("outside right", "below", "none"):
+        return loc
+    allowed = ", ".join(sorted(_MPL_LEGEND_LOCS | {"below", "none", "outside right"}))
+    raise argparse.ArgumentTypeError(f"--legend {value!r} is not a placement ({allowed})")
 
 
-def _parse_colormap(spec):
-    if spec is None or "," not in spec:
-        return spec
-    from matplotlib.colors import LinearSegmentedColormap
+def _input_path_of(ds):
+    from weather_skills_core.decorator import INPUT_PATH_ATTR
 
-    parts = [p.strip() for p in spec.split(",") if p.strip()]
-    return LinearSegmentedColormap.from_list("custom", parts)
-
-
-def _precip_colormap():
-    from matplotlib.colors import LinearSegmentedColormap
-
-    return LinearSegmentedColormap.from_list("wgbrp", PRECIP_COLORS)
+    if ds is None:
+        return None
+    return ds.attrs.get(INPUT_PATH_ATTR)
 
 
-def _heatmap_cmap(da, colormap):
-    """Explicit ``--colormap``, else the Kenya/S2S precip palette, else viridis."""
-    if colormap:
-        return _parse_colormap(colormap)
-    kind = classify_variable(
-        da.name or "",
-        units=da.attrs.get("units"),
-        standard_name=da.attrs.get("standard_name"),
-    )
-    if kind in ("precip", "precip_amount"):
-        return _precip_colormap()
-    return "viridis"
-
-
-def _variable_label(da):
-    """Colorbar / axis label: GRIB_name, then long_name, then the variable name.
-
-    After convert-to-totals, leftover fetch rate names (``precipitation rate``)
-    are shown as ``Total precipitation``.
-    """
-    label = da.attrs.get("GRIB_name") or da.attrs.get("long_name") or da.name or "value"
-    kind = classify_variable(
-        da.name or "",
-        units=da.attrs.get("units"),
-        standard_name=da.attrs.get("standard_name"),
-    )
-    if kind == "precip_amount" and looks_like_rate_display_name(label):
-        label = PRECIP_AMOUNT_LONG_NAME
-    units = da.attrs.get("units") or ""
-    if units:
-        return f"{label} [{units}]"
-    return label
-
-
-def _parse_cities(spec):
-    if not spec:
+def _spec_data(spec):
+    if spec is None:
         return {}
-    p = Path(spec)
-    raw = p.read_text() if p.exists() else spec
-    data = json.loads(raw)
-    out = {}
-    for name, val in data.items():
-        if isinstance(val, dict):
-            out[name] = (float(val["lat"]), float(val["lon"]))
-        else:
-            out[name] = (float(val[0]), float(val[1]))
+    if hasattr(spec, "to_dict"):
+        return spec.to_dict()
+    return dict(spec) if isinstance(spec, dict) else {}
+
+
+def _overlay_cli_from_spec(spec_data, **cli):
+    """Fill omitted CLI flags from a dumped spec. CLI values win when set."""
+    out = resolve_flags(spec_data, **{k: v for k, v in cli.items() if k != "draw_box"})
+    out["draw_box"] = cli.get("draw_box") or spec_get(spec_data, "draw_boxes")
+    if out.get("bbox") is not None:
+        out["bbox"] = tuple(out["bbox"])
+    if out.get("figsize") is not None:
+        out["figsize"] = tuple(out["figsize"])
     return out
 
 
-def _parse_draw_boxes(specs):
-    """Parse repeatable ``--draw-box N/W/S/E`` into a list of ``(N, W, S, E)``."""
-    if not specs:
-        return []
-    boxes = []
-    for spec in specs:
+def _kind_from_spec(spec_data):
+    if spec_data.get("layers"):
+        return None
+    kind = trace_at(spec_data).get("kind")
+    return kind if kind and kind not in {"layer", "layers", "grid", "mediogram"} else None
+
+
+def _datasets_by_path(spec):
+    from weather_skills_core.decorator import INPUT_PATH_ATTR
+
+    mapping = {}
+    for ds in opened_datasets_from_spec(spec):
+        raw = getattr(ds, "attrs", {}).get(INPUT_PATH_ATTR)
+        if not raw:
+            continue
+        mapping[str(Path(raw))] = ds
         try:
-            boxes.append(parse_bbox(spec))
-        except UsageError as exc:
-            raise UsageError(
-                f"--draw-box {spec!r} must be four decimal degrees N/W/S/E (same form as --bbox)."
-            ) from exc
-    return boxes
+            mapping[str(Path(raw).resolve())] = ds
+        except OSError:
+            pass
+    return mapping
 
 
-def _draw_boxes_on_ax(ax, boxes, transform):
-    """Outline each N/W/S/E box in black (split antimeridian spans into two)."""
-    from matplotlib.patches import Rectangle
+def _layers_from_spec(spec_data, spec):
+    from weather_skills_core.plot.maps import LayerSpec
 
-    for north, west, south, east in boxes:
-        height = north - south
-        if west <= east:
-            ax.add_patch(
-                Rectangle(
-                    (west, south),
-                    east - west,
-                    height,
-                    fill=False,
-                    edgecolor="black",
-                    linewidth=1.5,
-                    transform=transform,
-                    zorder=5,
-                )
-            )
-        else:
-            # Antimeridian: west..180 and -180..east
-            ax.add_patch(
-                Rectangle(
-                    (west, south),
-                    180.0 - west,
-                    height,
-                    fill=False,
-                    edgecolor="black",
-                    linewidth=1.5,
-                    transform=transform,
-                    zorder=5,
-                )
-            )
-            ax.add_patch(
-                Rectangle(
-                    (-180.0, south),
-                    east - (-180.0),
-                    height,
-                    fill=False,
-                    edgecolor="black",
-                    linewidth=1.5,
-                    transform=transform,
-                    zorder=5,
-                )
-            )
+    raw_layers = spec_data.get("layers") or []
+    if not raw_layers:
+        return []
+    by_path = _datasets_by_path(spec)
+    named = named_datasets_from_spec(spec)
+    layers = []
+    for item in raw_layers:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip().lower()
+        path = item.get("path")
+        if not kind or not path:
+            raise UsageError("spec layers[] entries need kind and path")
+        options = dict(item.get("options") or {})
+        raw = item.get("raw") or f"{kind}:{path}"
+        layer = LayerSpec(kind, path, options, raw)
+        if kind in _ZARR_LAYER_KINDS:
+            ds = None
+            input_id = item.get("input")
+            if input_id:
+                ds = named.get(str(input_id))
+            if ds is None:
+                key = str(Path(path))
+                ds = by_path.get(key)
+                if ds is None:
+                    try:
+                        ds = by_path.get(str(Path(path).resolve()))
+                    except OSError:
+                        ds = None
+            layer.ds = ds
+        layers.append(layer)
+    return layers
 
 
-def _figsize_from_extent(lon_min, lon_max, lat_min, lat_max, base_height=5.0):
-    lat_range = abs(lat_max - lat_min)
-    lon_range = abs(lon_max - lon_min)
-    if lat_range == 0 or lon_range == 0:
-        return base_height, base_height
-    height = base_height
-    width = height * lon_range / lat_range
-    return max(width, 2.0), height
-
-
-def _step_dim(da):
-    for cand in ("step", "time", "valid_time"):
-        if cand in da.dims:
-            return cand
-    cf = cf_dim(da, "time")
-    return cf if cf and cf in da.dims else None
-
-
-def _format_step(value):
-    import numpy as np
-
-    arr = np.asarray(value)
-    if arr.dtype.kind == "M":
-        return str(arr)[:16]
-    if arr.dtype.kind == "m":
-        days = arr.astype("timedelta64[D]").astype(int)
-        return f"+{days}d"
-    return str(value)
-
-
-def _timeseries_axis(da, sdim):
-    """X coord and xlabel. Forecast ``step`` (timedelta) + scalar init → valid times."""
-    import numpy as np
-
-    if sdim != "step" or "time" not in da.coords:
-        return da[sdim].values, sdim
-    time_coord = da["time"]
-    if getattr(time_coord, "ndim", 1) != 0:
-        return da[sdim].values, sdim
-    steps = np.asarray(da["step"].values)
-    if steps.dtype.kind != "m":
-        return da[sdim].values, sdim
-    init = np.asarray(time_coord.values)
-    if init.dtype.kind != "M":
-        return da[sdim].values, sdim
-    return (init + steps).astype("datetime64[ns]"), "valid time"
-
-
-def _panel_title(da, sdim, step_value, all_steps):
-    """'<start> until <end>' from time + step; else '<sdim>=<step>'."""
-    import numpy as np
-
-    fallback = f"{sdim}={_format_step(step_value)}"
-    if "time" not in da.coords:
-        return fallback
-    step_arr = np.asarray(all_steps)
-    if step_arr.dtype.kind != "m":
-        return fallback
-    try:
-        time_val = np.asarray(da["time"].values)
-        first = step_arr[0]
-        if step_value == first:
-            start = time_val
-            end = time_val + np.asarray(step_value)
-        else:
-            dt = step_arr[1] - step_arr[0] if step_arr.size > 1 else np.asarray(step_value) - first
-            end = time_val + np.asarray(step_value)
-            start = end - dt
-        return f"{str(start)[:16]} until {str(end)[:16]}"
-    except Exception:  # noqa: BLE001
-        return fallback
-
-
-def _heatmap(
-    da,
-    lat_dim,
-    lon_dim,
-    cmap,
-    extent,
-    cities,
-    title,
-    fontsize,
-    wrap_lon=True,
-    native_step_dim=None,
-    native_steps=None,
-    draw_boxes=None,
-):
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    if "number" in da.dims:
-        da = da.mean("number", keep_attrs=True)
-
-    if wrap_lon:
-        lon_vals = np.asarray(da[lon_dim].values)
-        if lon_vals.size and float(np.nanmax(lon_vals)) > 180.0:
-            da = da.assign_coords({lon_dim: ((da[lon_dim] + 180) % 360 - 180)}).sortby(lon_dim)
-
-    sdim = _step_dim(da)
-    if sdim is None or da.sizes.get(sdim, 1) == 1:
-        if sdim and sdim in da.dims:
-            da = da.squeeze(sdim, drop=True)
-        steps = [None]
-        sdim = None
-    else:
-        steps = list(da[sdim].values)
-
-    title_steps = native_steps if native_steps is not None and native_step_dim == sdim else steps
-
-    num_steps = len(steps)
-    ncols = min(4, num_steps)
-    nrows = int(np.ceil(num_steps / ncols))
-
-    if extent is None:
-        lat_vals = np.asarray(da[lat_dim].values)
-        lon_vals = np.asarray(da[lon_dim].values)
-        dlat = float(np.abs(np.diff(np.sort(lat_vals))).mean()) if lat_vals.size > 1 else 0.0
-        dlon = float(np.abs(np.diff(np.sort(lon_vals))).mean()) if lon_vals.size > 1 else 0.0
-        extent = [
-            float(lon_vals.min()) - dlon / 2,
-            float(lon_vals.max()) + dlon / 2,
-            float(lat_vals.min()) - dlat / 2,
-            float(lat_vals.max()) + dlat / 2,
-        ]
-
-    vmax = float(da.max(skipna=True).values)
-    vmin = float(da.min(skipna=True).values)
-    if vmax > 0 and vmin < 0:
-        m = max(abs(vmax), abs(vmin))
-        vmin, vmax = -m, m
-
-    sw, sh = _figsize_from_extent(*extent)
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(sw * ncols, sh * nrows),
-        sharex=True,
-        sharey=True,
-        subplot_kw={"projection": ccrs.PlateCarree()},
+def _xy_from_spec(spec_data, spec, x_ds, y_ds, x_variable, y_variable, pair_on):
+    named = named_datasets_from_spec(spec)
+    opened = opened_datasets_from_spec(spec)
+    traces = spec_data.get("traces") or []
+    trace = traces[0] if traces and isinstance(traces[0], dict) else {}
+    pair_on = pair_on or trace.get("pair_on") or "time"
+    inputs = [i for i in (spec_data.get("inputs") or []) if isinstance(i, dict)]
+    x_variable = (
+        x_variable
+        or trace.get("x_variable")
+        or (inputs[0].get("variable") if inputs else None)
     )
-    axes = np.array(axes).reshape(nrows, ncols).flatten()
+    y_variable = (
+        y_variable
+        or trace.get("y_variable")
+        or (inputs[1].get("variable") if len(inputs) > 1 else None)
+    )
+    if x_ds is None:
+        x_id = trace.get("x") or trace.get("input") or "x"
+        x_ds = named.get(str(x_id)) or named.get("a")
+        if x_ds is None and opened:
+            x_ds = opened[0]
+    if y_ds is None:
+        if trace.get("y"):
+            y_ds = named.get(str(trace.get("y")))
+        elif named.get("y") is not None:
+            y_ds = named.get("y")
+        elif len(opened) > 1:
+            y_ds = opened[1]
+        elif trace.get("input") or (x_variable and y_variable and len(opened) <= 1 and named):
+            y_ds = named.get(str(trace.get("input") or "a")) or x_ds
+    return x_ds, y_ds, x_variable, y_variable, pair_on
 
-    contour = None
-    boxes = draw_boxes or []
-    for i, s in enumerate(steps):
-        ax = axes[i]
-        slab = da if sdim is None else da.isel({sdim: i})
-        slab = slab.transpose(lat_dim, lon_dim)
-        contour = ax.pcolormesh(
-            slab[lon_dim],
-            slab[lat_dim],
-            slab.values,
-            cmap=cmap,
-            vmin=vmin,
-            vmax=vmax,
-            transform=ccrs.PlateCarree(),
+
+def _layer_datasets(layers, labels=None):
+    named = {}
+    for i, layer in enumerate(layers):
+        if layer.kind not in _ZARR_LAYER_KINDS or layer.ds is None:
+            continue
+        key = chr(ord("a") + len(named))
+        named[key] = layer.ds
+        if labels and i < len(labels) and labels[i]:
+            pass
+    return named
+
+
+def _warn(kind, **flags):
+    legend = flags.get("legend")
+    legend_used = legend is not None and legend != "none"
+    if kind in _MAP_KINDS and legend_used:
+        print(
+            f"Warning: --legend is ignored for --kind {kind} (maps use a colorbar).",
+            file=sys.stderr,
         )
-        if wrap_lon:
-            ax.set_extent(extent, crs=ccrs.PlateCarree())
-        else:
-            ax.set_xlim(extent[0], extent[1])
-            ax.set_ylim(extent[2], extent[3])
-        ax.add_feature(cfeature.COASTLINE, edgecolor="black")
-        ax.add_feature(cfeature.BORDERS, linestyle=":", alpha=0.7)
-        gl = ax.gridlines(draw_labels=True, alpha=0)
-        gl.top_labels = False
-        gl.right_labels = False
-        ax.set_xlabel("Longitude")
-        ax.set_ylabel("Latitude")
-        for city, (lat, lon) in cities.items():
-            ax.plot(lon, lat, marker="o", color="k", markersize=6, transform=ccrs.PlateCarree())
-            ax.text(lon - 2.0, lat + 0.5, city, fontsize=10, transform=ccrs.PlateCarree())
-        if boxes:
-            _draw_boxes_on_ax(ax, boxes, ccrs.PlateCarree())
-        if s is not None:
-            ax.set_title(_panel_title(da, sdim, s, title_steps), fontsize=int(fontsize * 0.8))
+    if kind == "heatmap" and (flags.get("u_variable") or flags.get("v_variable")):
+        print(
+            "Warning: --u-variable/--v-variable is only used with --kind windrose or "
+            "--kind quiver; ignored for --kind heatmap.",
+            file=sys.stderr,
+        )
+    if kind == "timeseries":
+        for name, set_ in {
+            "--extent": bool(flags.get("extent")),
+            "--cities": bool(flags.get("cities")),
+            "--draw-box": bool(flags.get("draw_boxes")),
+            "--rows": flags.get("rows") is not None,
+            "--columns": flags.get("columns") is not None,
+            "--subplot-title": bool(flags.get("subplot_title")),
+            "--bbox": flags.get("bbox") is not None,
+            "--mask-geojson": bool(flags.get("mask_geojson")),
+            "--index": bool(flags.get("index")),
+        }.items():
+            if set_:
+                print(
+                    f"Warning: {name} is a map-only option; ignored for --kind {kind}.",
+                    file=sys.stderr,
+                )
+    if kind in {"xy", "windrose"}:
+        extras = {
+            "--extent": bool(flags.get("extent")),
+            "--cities": bool(flags.get("cities")),
+            "--draw-box": bool(flags.get("draw_boxes")),
+            "--rows": flags.get("rows") is not None,
+            "--columns": flags.get("columns") is not None,
+            "--subplot-title": bool(flags.get("subplot_title")),
+        }
+        if kind == "xy":
+            extras.update(
+                {
+                    "--u-variable": bool(flags.get("u_variable")),
+                    "--v-variable": bool(flags.get("v_variable")),
+                    "--quiver-scale": flags.get("quiver_scale") is not None,
+                    "--quiver-step": flags.get("quiver_step") is not None,
+                    "--vmin": flags.get("vmin") is not None,
+                    "--vmax": flags.get("vmax") is not None,
+                    "--cbar-label": bool(flags.get("cbar_label")),
+                }
+            )
+            if flags.get("variable"):
+                print(
+                    "Warning: --variable is ignored for --kind xy; use --x-variable/--y-variable.",
+                    file=sys.stderr,
+                )
+            if legend_used:
+                print("Warning: --legend is ignored for --kind xy.", file=sys.stderr)
+        if kind == "windrose":
+            extras.update(
+                {
+                    "--quiver-scale": flags.get("quiver_scale") is not None,
+                    "--quiver-step": flags.get("quiver_step") is not None,
+                    "--vmin": flags.get("vmin") is not None,
+                    "--vmax": flags.get("vmax") is not None,
+                    "--cbar-label": bool(flags.get("cbar_label")),
+                }
+            )
+        for name, set_ in extras.items():
+            if set_:
+                print(
+                    f"Warning: {name} is ignored for --kind {kind}.",
+                    file=sys.stderr,
+                )
 
-    for j in range(num_steps, len(axes)):
-        axes[j].set_visible(False)
 
-    if title:
-        fig.suptitle(title, fontsize=fontsize)
-    fig.tight_layout(rect=[0, 0, 1, 0.94] if title else None)
-    cbar_ax = fig.add_axes([0.15, -0.04, 0.7, 0.01 + 0.02 / nrows])
-    cbar = fig.colorbar(contour, cax=cbar_ax, orientation="horizontal", fraction=5)
-    cbar.set_label(_variable_label(da), fontsize=fontsize)
-    return fig
+def _merged_spec(
+    spec_data,
+    *,
+    kind,
+    datasets,
+    user_theme,
+    patch,
+    layers=None,
+    **flags,
+):
+    template = flags.pop("template", None) or user_theme.get("template")
+    flags["template"] = template
+    shared_scale = flags.pop("shared_scale", False)
+    independent_scale = flags.pop("independent_scale", False)
+    layer_labels = flags.pop("layer_labels", None)
+    if flags.get("colormap") is None and user_theme.get("colormap"):
+        flags["colormap"] = user_theme.get("colormap")
+    if flags.get("fontsize") is None and user_theme.get("fontsize") is not None:
+        flags["fontsize"] = user_theme.get("fontsize")
+    if spec_data:
+        merged = overlay_flags(spec_data, kind=kind, **flags)
+        if not merged.get("traces"):
+            merged["traces"] = [{"kind": kind, "input": "a"}]
+        elif kind:
+            merged["traces"][0]["kind"] = kind
+    else:
+        merged = spec_from_flags(kind=kind, **flags)
+    if patch:
+        merged = deep_merge(merged, patch)
+    if layers:
+        named = _layer_datasets(layers)
+        merged["traces"] = [{"kind": "layer"}]
+        merged["layers"] = []
+        inputs = []
+        for i, layer in enumerate(layers):
+            lid = chr(ord("a") + i)
+            entry = {
+                "kind": layer.kind,
+                "path": str(layer.path),
+                "options": dict(layer.options),
+                "raw": layer.raw,
+            }
+            if layer.kind in _ZARR_LAYER_KINDS:
+                entry["input"] = lid
+                if layer.ds is not None:
+                    named.setdefault(lid, layer.ds)
+                item = {"id": lid, "path": str(layer.path)}
+                if layer_labels and i < len(layer_labels) and layer_labels[i]:
+                    item["label"] = layer_labels[i]
+                inputs.append(item)
+            merged["layers"].append(entry)
+        if inputs:
+            merged["inputs"] = inputs
+        datasets = named or datasets
+    elif datasets:
+        merged["inputs"] = spec_inputs_from_datasets(datasets)
+        if kind == "xy" and merged["inputs"]:
+            if flags.get("x_variable"):
+                merged["inputs"][0]["variable"] = flags["x_variable"]
+            if flags.get("y_variable") and len(merged["inputs"]) > 1:
+                merged["inputs"][1]["variable"] = flags["y_variable"]
+    if flags.get("figsize") is not None:
+        merged.setdefault("layout", {})["autosize"] = False
+    if user_theme.get("max_columns") and not (flags.get("rows") or flags.get("columns")):
+        merged.setdefault("layout", {}).setdefault("facet", {}).setdefault(
+            "max_columns", user_theme["max_columns"]
+        )
+    if shared_scale:
+        merged.setdefault("layout", {})["shared_colorscale"] = True
+    if independent_scale:
+        merged.setdefault("layout", {})["shared_colorscale"] = False
+    merged["skill"] = "plot"
+    return merged, datasets
 
 
 @weather_skill(
     name="plot",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("any"), required=True)
+@weather_skill.argument("-i", "--input", type=Dataset("any"), required=False, default=None)
+@weather_skill.argument(
+    "--x",
+    dest="x_ds",
+    type=Dataset("any"),
+    required=False,
+    default=None,
+    help="X-axis Zarr for --kind xy. Mutually exclusive with -i/--input.",
+)
+@weather_skill.argument(
+    "--y",
+    dest="y_ds",
+    type=Dataset("any"),
+    required=False,
+    default=None,
+    help="Y-axis Zarr for --kind xy. Mutually exclusive with -i/--input.",
+)
+@weather_skill.argument(
+    "--layer",
+    action="append",
+    default=None,
+    type=parse_layer,
+    help=(
+        "Map layer KIND:PATH or KIND:PATH::k=v. Repeat for overlays. "
+        "Kinds: heatmap, scatter, quiver, outline, mask. "
+        "Options: variable, colormap, index, u_variable, v_variable, "
+        "quiver_scale, quiver_step, vmin, vmax. Mutually exclusive with -i/--input."
+    ),
+)
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v")
-@weather_skill.argument("--style", choices=["heatmap", "timeseries"], default="heatmap")
+@weather_skill.argument(
+    "--x-variable",
+    default=None,
+    help="X-axis variable for --kind xy. Defaults to the first data variable of --x (or -i).",
+)
+@weather_skill.argument(
+    "--y-variable",
+    default=None,
+    help="Y-axis variable for --kind xy. Defaults to the first data variable of --y (or -i).",
+)
+@weather_skill.argument(
+    "--pair-on",
+    choices=["time", "year", "index"],
+    default=None,
+    help=(
+        "How --kind xy matches --x to --y samples: shared time (default), "
+        "calendar year (e.g. September IOD vs October rain), or position."
+    ),
+)
+@weather_skill.argument(
+    "--kind",
+    choices=["heatmap", "contour", "timeseries", "xy", "windrose", "quiver"],
+    default=None,
+)
+@weather_skill.argument(
+    "--u-variable",
+    default=None,
+    help="Eastward wind variable (windrose/quiver). Auto-detected when omitted.",
+)
+@weather_skill.argument(
+    "--v-variable",
+    default=None,
+    help="Northward wind variable (windrose/quiver). Auto-detected when omitted.",
+)
 @weather_skill.argument(
     "--colormap",
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors. "
-        "Default: Kenya/S2S precip palette for precip variables, else viridis."
+        "Heatmap default: CHC ppt_total / ppt_anomaly classes for precip "
+        "(aliases chirps_total, chirps_anom), else rocket. Also: ppt_poa, "
+        "ppt_spp, spi. Windrose default: blue-to-orange speed classes. "
+        "Quiver default: YlGn (ECMWF S2S 10 m / 700 hPa wind vectors)."
     ),
 )
 @weather_skill.argument(
+    "--colormap-bounds",
+    default=None,
+    type=parse_number_list,
+    help="Discrete colormap class edges (comma-separated). Folds into theme.colormap.bounds.",
+)
+@weather_skill.argument("--colormap-under", default=None, help="Color below the first bound.")
+@weather_skill.argument("--colormap-over", default=None, help="Color above the last bound.")
+@weather_skill.argument(
     "--index",
     default=None,
-    help="Slice like 'step=3,number=0' (heatmap only). Lists keep the dim as panels.",
+    help=(
+        "Slice like 'step=3,number=0' (heatmap, contour, quiver, and windrose). "
+        "Heatmap/contour/quiver lists keep the dim as panels; windrose lists keep samples."
+    ),
+)
+@weather_skill.argument(
+    "--reduce",
+    action="append",
+    default=None,
+    help=(
+        "Average over this dim for --kind timeseries. Repeat once per leftover "
+        "non-time dim (e.g. --reduce latitude --reduce longitude). No dim is "
+        "averaged unless you say so."
+    ),
+)
+@weather_skill.argument(
+    "--along",
+    default=None,
+    help=(
+        "Draw one --kind timeseries line per value of this dim (e.g. --along number "
+        "for ensemble members) instead of reducing it."
+    ),
 )
 @weather_skill.argument(
     "--extent",
     default=None,
-    help="Map extent 'lon_min,lon_max,lat_min,lat_max' (heatmap only).",
+    help="Map extent 'lon_min,lon_max,lat_min,lat_max' (heatmap, contour, and quiver).",
 )
 @weather_skill.argument(
     "--cities",
     default=None,
-    help='City overlay JSON (heatmap only). Inline {"name": [lat, lon]} or file path.',
+    help='City overlay JSON (heatmap, contour, and quiver). Inline {"name": [lat, lon]} or file path.',
 )
-@weather_skill.argument("--fontsize", type=int, default=16)
-@weather_skill.argument("--title", default=None, help="Optional plot title.")
+@weather_skill.argument(
+    "--fontsize",
+    type=int,
+    default=DEFAULT_FONTSIZE,
+    help="Base font size for titles, axis labels, and colorbar text (default 16).",
+)
+@weather_skill.argument(
+    "--figsize",
+    default=None,
+    type=parse_figsize,
+    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default is kind-specific.",
+)
+@weather_skill.argument(
+    "--legend",
+    default=None,
+    type=parse_legend,
+    help=(
+        "Legend placement: matplotlib loc (best, upper right, …), "
+        "'outside right', 'below', or 'none'. Windrose default: outside right. "
+        "Timeseries draws a legend only when this is set."
+    ),
+)
+@weather_skill.argument("--title", default=None, help="Optional figure title (above all panels).")
+@weather_skill.argument(
+    "--subplot-title",
+    action="append",
+    default=None,
+    help=(
+        "Override one map panel title, in panel order. Repeat for each panel. "
+        "Fewer than the panel count keeps auto date/lead titles for the rest; "
+        "more than the panel count is an error. Maps only."
+    ),
+)
+@weather_skill.argument(
+    "--xlabel",
+    default=None,
+    help="Override the x-axis label (default: Longitude; omitted on datetime ticks).",
+)
+@weather_skill.argument(
+    "--ylabel",
+    default=None,
+    help="Override the y-axis label (default: Latitude / variable label / Frequency (%%)).",
+)
+@weather_skill.argument(
+    "--cbar-label",
+    default=None,
+    help=(
+        "Override the colorbar label (heatmap, contour, quiver, layered maps). "
+        "Default is the variable long_name + units. Per-layer --label wins."
+    ),
+)
+@weather_skill.argument(
+    "--cbar-ticks",
+    default=None,
+    type=parse_number_list,
+    help="Explicit colorbar tick values (comma-separated).",
+)
+@weather_skill.argument(
+    "--cbar-labels",
+    default=None,
+    type=parse_label_list,
+    help="Explicit colorbar tick labels (comma-separated; requires --cbar-ticks).",
+)
+@weather_skill.argument(
+    "--rows",
+    type=int,
+    default=None,
+    help=(
+        "Heatmap/contour/quiver panel rows. Extra cells stay blank when the grid is larger than the data."
+    ),
+)
+@weather_skill.argument(
+    "--columns",
+    type=int,
+    default=None,
+    help=(
+        "Heatmap/contour/quiver panel columns. Extra cells stay blank when the grid is larger than the data."
+    ),
+)
 @weather_skill.argument(
     "--mask-geojson",
     default=None,
-    help="GeoJSON polygon; cells outside become NaN (heatmap only).",
+    help="GeoJSON polygon; cells/points outside become NaN (heatmap, contour, quiver, windrose, xy).",
 )
 @weather_skill.argument(
     "--draw-box",
     action="append",
     default=None,
     help=(
-        "Draw a black outline box on the heatmap as N/W/S/E decimal degrees "
-        "(same form as --bbox). Repeat for multiple boxes. Heatmap-only."
+        "Draw a black outline box on the map as N/W/S/E decimal degrees "
+        "(same form as --bbox). Repeat for multiple boxes. Heatmap and quiver."
     ),
+)
+@weather_skill.argument(
+    "--quiver-scale",
+    type=float,
+    default=None,
+    help=(
+        "Matplotlib quiver scale (larger → shorter arrows). "
+        "Default sizes a typical wind to ~1.5× the subsampled grid spacing. "
+        "Quiver-only."
+    ),
+)
+@weather_skill.argument(
+    "--quiver-step",
+    type=int,
+    default=None,
+    help=(
+        "Plot every Nth grid point for --kind quiver "
+        "(S2S plot_wind_and_sst_anomaly quiver_step). "
+        "Default: 1 on ~1.5° grids; finer grids auto-thin to ~1.5°. Quiver-only."
+    ),
+)
+@weather_skill.argument(
+    "--label",
+    action="append",
+    default=None,
+    help="Colorbar label for each --layer, in order. Omit to infer from metadata.",
+)
+@weather_skill.argument(
+    "--shared-scale",
+    action="store_true",
+    help="Force one shared color scale across heatmap/scatter layers.",
+)
+@weather_skill.argument(
+    "--independent-scale",
+    action="store_true",
+    help="Force a separate color scale per heatmap/scatter layer.",
+)
+@weather_skill.argument(
+    "--vmin",
+    type=float,
+    default=None,
+    help="Colorbar lower limit (heatmap, contour, quiver, scatter). Unset = data min.",
+)
+@weather_skill.argument(
+    "--vmax",
+    type=float,
+    default=None,
+    help="Colorbar upper limit (heatmap, contour, quiver, scatter). Unset = data max.",
+)
+@weather_skill.argument(
+    "--spec",
+    default=None,
+    type=parse_plot_spec,
+    help=SPEC_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--theme-file",
+    default=None,
+    help="User plot theme TOML/JSON (colormap, fontsize, template). Overrides ~/.config/weather-skills/theme.toml.",
+)
+@weather_skill.argument(
+    "--theme",
+    default=None,
+    choices=["weather_skills", "colorblind"],
+    help="Seaborn colorway: weather_skills (deep) or colorblind. Default weather_skills.",
+)
+@weather_skill.argument(
+    "--patch",
+    default=None,
+    type=parse_plot_patch,
+    help=PATCH_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--dump-spec",
+    nargs="?",
+    const="-",
+    default=None,
+    probe=True,
+    help=DUMP_SPEC_ARGUMENT_HELP,
 )
 def plot(
     ds,
     bbox,
     variable,
-    style,
+    kind,
     colormap,
     title,
+    subplot_title,
+    xlabel,
+    ylabel,
+    cbar_label,
     index,
+    reduce,
+    along,
     extent,
     cities,
     fontsize,
+    figsize,
+    legend,
     mask_geojson,
     draw_box,
+    rows,
+    columns,
+    u_variable,
+    v_variable,
+    quiver_scale,
+    quiver_step,
     output,
+    layer=None,
+    label=None,
+    shared_scale=False,
+    independent_scale=False,
+    x_ds=None,
+    y_ds=None,
+    x_variable=None,
+    y_variable=None,
+    pair_on=None,
+    vmin=None,
+    vmax=None,
+    spec=None,
+    theme_file=None,
+    theme=None,
+    patch=None,
+    dump_spec=None,
+    colormap_bounds=None,
+    colormap_under=None,
+    colormap_over=None,
+    cbar_ticks=None,
+    cbar_labels=None,
     **kwargs,
 ):
-    """Render a heatmap or timeseries PNG from a weather-skills standard dataset Zarr."""
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import cf_xarray  # noqa: F401 — registers the .cf accessor
-    import matplotlib.pyplot as plt
-    import nc_time_axis  # noqa: F401 — registers the cftime→matplotlib axis converter
-    import xarray as xr
-
-    variable = variable or auto_variable(ds)
-    if not variable or variable not in ds:
-        raise UsageError(f"no usable variable. Available: {list(ds.data_vars)}")
-    ds = to_standard_units(ds, variables=[variable])
-    ds = precip_for_display(ds, variable)
-    da = ds[variable]
-    try:
-        overrides = _parse_index(index)
-    except ValueError as exc:
-        raise UsageError(str(exc)) from None
-
-    bbox_nwse = bbox
-    draw_boxes = _parse_draw_boxes(draw_box)
-    heatmap_only = {
-        "--bbox": bbox_nwse is not None,
-        "--mask-geojson": bool(mask_geojson),
-        "--extent": bool(extent),
-        "--cities": bool(cities),
-        "--index": bool(overrides),
-        "--draw-box": bool(draw_boxes),
-    }
-    if style != "heatmap":
-        for flag, set_ in heatmap_only.items():
-            if not set_:
-                continue
-            detail = (
-                f" {bbox_nwse[0]}/{bbox_nwse[1]}/{bbox_nwse[2]}/{bbox_nwse[3]}"
-                if flag == "--bbox"
-                else (
-                    f" {extent!r}"
-                    if flag == "--extent"
-                    else (
-                        f" {index!r}"
-                        if flag == "--index"
-                        else (f" {draw_box!r}" if flag == "--draw-box" else "")
-                    )
-                )
-            )
-            print(
-                f"Warning: {flag}{detail} is a heatmap-only option; ignored for --style {style}.",
-                file=sys.stderr,
-            )
-
-    if style == "heatmap":
-        lat_dim = cf_dim(da, "latitude")
-        lon_dim = cf_dim(da, "longitude")
-        if lat_dim is None or lon_dim is None:
-            raise UsageError(f"heatmap requires lat/lon coords; got {list(da.dims)}.")
-        if lat_dim not in da.dims or lon_dim not in da.dims:
-            raise UsageError(
-                f"heatmap needs lat/lon as dimensions, but {lat_dim!r}/"
-                f"{lon_dim!r} are non-dimension coordinates here (dims: "
-                f"{list(da.dims)}); station data has no 2D grid to plot."
-            )
-        native_step_dim = _step_dim(da)
-        native_steps = list(da[native_step_dim].values) if native_step_dim else None
-
-        for dim, idx in overrides.items():
-            if dim not in da.dims:
-                raise UsageError(
-                    f"--index dimension {dim!r} is not in the data (dims: {list(da.dims)})"
-                )
-            if isinstance(idx, list) and dim != native_step_dim:
-                panel_desc = repr(native_step_dim) if native_step_dim else "step/time"
-                raise UsageError(
-                    f"--index list selection on {dim!r} is only supported "
-                    f"on the panel dimension ({panel_desc}); give a single position"
-                )
-        for dim, idx in overrides.items():
-            size = da.sizes[dim]
-            positions = idx if isinstance(idx, list) else [idx]
-            seen = {}
-            for pos in positions:
-                if not -size <= pos < size:
-                    raise UsageError(
-                        f"--index position {pos} is out of range for "
-                        f"dimension {dim!r} (size {size})"
-                    )
-                norm = pos % size
-                if norm in seen:
-                    raise UsageError(
-                        f"--index positions {seen[norm]} and {pos} address "
-                        f"the same element of dimension {dim!r} (size {size})"
-                    )
-                seen[norm] = pos
-            da = da.isel({dim: idx}, drop=True)
-
-        for spatial in (lat_dim, lon_dim):
-            if spatial in overrides and spatial not in da.dims:
-                raise UsageError(
-                    f"--index removed the {spatial!r} dimension; heatmap needs a 2D lat/lon grid"
-                )
-        panel_dim = _step_dim(da)
-        for dim in da.dims:
-            if dim not in (panel_dim, "number", lat_dim, lon_dim):
-                panel_desc = repr(panel_dim) if panel_dim else "step/time"
-                raise UsageError(
-                    f"dimension {dim!r} remains after selection; heatmap "
-                    f"panels only the {panel_desc} dimension — select a position "
-                    f"from {dim!r} with --index"
-                )
-        if panel_dim is not None and da.sizes[panel_dim] == 0:
-            raise UsageError(f"dimension {panel_dim!r} has size 0; nothing to plot.")
-
-        extent_vals = _parse_extent(extent)
-        cities_map = _parse_cities(cities)
-        cmap = _heatmap_cmap(da, colormap)
-        region_polygon = polygon_from_geojson(mask_geojson) if mask_geojson else None
-        wrapped_bbox = bbox_nwse is not None and bbox_nwse[1] > bbox_nwse[3]
-
-        if bbox_nwse is not None or region_polygon is not None:
-            import numpy as np
-
-            lon_vals_pre = np.asarray(da[lon_dim].values)
-            if lon_vals_pre.size and float(np.nanmax(lon_vals_pre)) > 180.0:
-                da = da.assign_coords({lon_dim: ((da[lon_dim] + 180) % 360 - 180)}).sortby(lon_dim)
-            if bbox_nwse is not None:
-                r_n, r_w, r_s, r_e = bbox_nwse
-                da = da.sel({lat_dim: lat_slice(da[lat_dim].values, r_n, r_s)})
-                if r_w > r_e:
-                    da = da.where((da[lon_dim] >= r_w) | (da[lon_dim] <= r_e), drop=True)
-                else:
-                    da = da.sel({lon_dim: slice(r_w, r_e)})
-            if region_polygon is not None:
-                import shapely
-
-                lon_grid, lat_grid = np.meshgrid(da[lon_dim].values, da[lat_dim].values)
-                mask = shapely.contains_xy(region_polygon, lon_grid, lat_grid)
-                if not bool(mask.any()):
-                    print(
-                        "Warning: --mask-geojson polygon does not intersect the grid; "
-                        "the map will be entirely empty.",
-                        file=sys.stderr,
-                    )
-                da = da.where(xr.DataArray(mask, dims=(lat_dim, lon_dim)))
-            if bbox_nwse is not None:
-                r_n, r_w, r_s, r_e = bbox_nwse
-                if r_w > r_e:
-                    shifted = ((da[lon_dim] - r_w) % 360.0) + r_w
-                    da = da.assign_coords({lon_dim: shifted}).sortby(lon_dim)
-                if extent_vals is None:
-                    if r_w > r_e:
-                        extent_vals = [float(r_w), float(r_e) + 360.0, float(r_s), float(r_n)]
-                    else:
-                        extent_vals = [float(r_w), float(r_e), float(r_s), float(r_n)]
-
-        if da.sizes[lat_dim] == 0 or da.sizes[lon_dim] == 0:
-            raise UsageError(
-                "selection produced an empty grid (no cells remain after "
-                "--index/--bbox selection); nothing to plot."
-            )
-        fig = _heatmap(
-            da,
-            lat_dim,
-            lon_dim,
-            cmap,
-            extent_vals,
-            cities_map,
-            title,
-            fontsize,
-            wrap_lon=not wrapped_bbox,
-            native_step_dim=native_step_dim,
-            native_steps=native_steps,
-            draw_boxes=draw_boxes,
+    """Render a heatmap, contour, timeseries, xy scatter, wind-rose, quiver, or layered map PNG from weather-skills Zarrs."""
+    spec_data = _spec_data(spec)
+    if patch:
+        spec_data = overlay_spec(spec_data, patch)
+    filled = _overlay_cli_from_spec(
+        spec_data,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        cbar_label=cbar_label,
+        colormap=colormap,
+        legend=legend,
+        index=index,
+        u_variable=u_variable,
+        v_variable=v_variable,
+        variable=variable,
+        bbox=bbox,
+        mask_geojson=mask_geojson,
+        extent=extent,
+        cities=cities,
+        draw_box=draw_box,
+        figsize=figsize,
+        vmin=vmin,
+        vmax=vmax,
+        reduce=reduce,
+        along=along,
+        rows=rows,
+        columns=columns,
+        pair_on=pair_on,
+        x_variable=x_variable,
+        y_variable=y_variable,
+        quiver_scale=quiver_scale,
+        quiver_step=quiver_step,
+        colormap_bounds=colormap_bounds,
+        colormap_under=colormap_under,
+        colormap_over=colormap_over,
+        cbar_ticks=cbar_ticks,
+        cbar_labels=cbar_labels,
+        kind=kind,
+    )
+    title = filled["title"]
+    xlabel = filled["xlabel"]
+    ylabel = filled["ylabel"]
+    cbar_label = filled["cbar_label"]
+    colormap = filled["colormap"]
+    legend = filled["legend"]
+    index = filled["index"]
+    u_variable = filled["u_variable"]
+    v_variable = filled["v_variable"]
+    variable = filled["variable"]
+    bbox = filled["bbox"]
+    mask_geojson = filled["mask_geojson"]
+    extent = filled["extent"]
+    cities = filled["cities"]
+    draw_box = filled["draw_box"]
+    figsize = filled["figsize"]
+    vmin = filled["vmin"]
+    vmax = filled["vmax"]
+    kind = filled.get("kind") or kind
+    layers = list(layer or [])
+    if not layers:
+        layers = _layers_from_spec(spec_data, spec)
+    if kind is None and not layers:
+        kind = _kind_from_spec(spec_data) or "heatmap"
+    if spec is not None and ds is None and not layers and kind != "xy":
+        ds = spec.ds if spec.ds is not None else None
+        if ds is None and spec.datasets:
+            ds = spec.datasets[0]
+    if layers and ds is not None:
+        raise UsageError("pass either -i/--input or --layer, not both")
+    if layers and (x_ds is not None or y_ds is not None):
+        raise UsageError("pass either --layer or --x/--y, not both")
+    if ds is not None and (x_ds is not None or y_ds is not None):
+        raise UsageError("pass either -i/--input or --x/--y, not both")
+    if kind == "xy":
+        x_ds, y_ds, x_variable, y_variable, pair_on = _xy_from_spec(
+            spec_data, spec, x_ds, y_ds, x_variable, y_variable, pair_on
         )
-    else:
-        fig, ax = plt.subplots(figsize=(10, 6))
-        sdim = "step" if "step" in da.dims else cf_dim(da, "time")
-        if sdim is None:
-            raise UsageError(f"timeseries needs 'step' or 'time'; got {list(da.dims)}.")
-        reduce_dims = [d for d in da.dims if d != sdim]
-        reduced = da.mean(reduce_dims, keep_attrs=True)
-        xvals, xlabel = _timeseries_axis(reduced, sdim)
-        ax.plot(xvals, reduced.values)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(_variable_label(reduced))
-        ax.set_title(title or f"{variable} ({style})")
-        if xlabel == "valid time":
-            fig.autofmt_xdate()
-        fig.tight_layout()
+        if layers:
+            raise UsageError("--layer cannot be used with --kind xy")
+        if x_ds is None and y_ds is None:
+            if ds is None:
+                raise UsageError(
+                    "--kind xy needs --x and --y, or -i with --x-variable and --y-variable"
+                )
+            if not x_variable or not y_variable:
+                raise UsageError(
+                    "with a single -i, --kind xy needs both --x-variable and --y-variable"
+                )
+            x_ds = ds
+            y_ds = ds
+        elif x_ds is None or y_ds is None:
+            raise UsageError("--kind xy needs both --x and --y")
+    elif not layers and ds is None:
+        raise UsageError("pass -i/--input, a --spec with inputs, or at least one --layer")
+    if layers and kind in ("timeseries", "xy", "windrose", "contour"):
+        raise UsageError(f"--layer cannot be used with --kind {kind}")
+    if layers and kind == "quiver":
+        raise UsageError(
+            "with --layer, draw wind vectors as --layer quiver:PATH instead of --kind quiver"
+        )
+    if layers and legend is not None and legend != "none":
+        print(
+            "Warning: --legend is ignored for layered maps (they use colorbars).",
+            file=sys.stderr,
+        )
 
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return output
+    parse_index(index)
+    draw_boxes = parse_draw_boxes(draw_box)
+    _warn(
+        "layer" if layers else kind,
+        legend=legend,
+        u_variable=u_variable,
+        v_variable=v_variable,
+        extent=extent,
+        cities=cities,
+        draw_boxes=draw_boxes,
+        rows=rows,
+        columns=columns,
+        subplot_title=subplot_title,
+        bbox=bbox,
+        mask_geojson=mask_geojson,
+        index=index,
+        quiver_scale=quiver_scale,
+        quiver_step=quiver_step,
+        vmin=vmin,
+        vmax=vmax,
+        cbar_label=cbar_label,
+        variable=variable,
+    )
+
+    user_theme = load_user_theme(theme_file)
+    if kind == "xy":
+        datasets = {"a": x_ds} if x_ds is y_ds else {"x": x_ds, "y": y_ds}
+    elif layers:
+        datasets = {}
+    else:
+        datasets = {"a": ds}
+        if spec is not None and spec.datasets:
+            for i, extra in enumerate(spec.datasets):
+                key = (
+                    (spec.data.get("inputs") or [{}])[i].get("id")
+                    if spec.data.get("inputs")
+                    else None
+                )
+                datasets[key or f"i{i}"] = extra
+            datasets["a"] = ds
+
+    merged, datasets = _merged_spec(
+        spec_data,
+        kind=kind if not layers else "layer",
+        datasets=datasets,
+        user_theme=user_theme,
+        patch=None,
+        layers=layers or None,
+        input_path=_input_path_of(ds) or _input_path_of(x_ds),
+        variable=variable,
+        index=index,
+        reduce=reduce,
+        along=along,
+        title=title,
+        subplot_titles=list(subplot_title) if subplot_title else None,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        cbar_label=cbar_label,
+        legend=legend,
+        vmin=vmin,
+        vmax=vmax,
+        colormap=colormap,
+        colormap_bounds=colormap_bounds or filled.get("colormap_bounds"),
+        colormap_under=colormap_under or filled.get("colormap_under"),
+        colormap_over=colormap_over or filled.get("colormap_over"),
+        cbar_ticks=cbar_ticks or filled.get("cbar_ticks"),
+        cbar_labels=cbar_labels or filled.get("cbar_labels"),
+        fontsize=fontsize,
+        template=theme,
+        figsize=figsize,
+        rows=rows,
+        columns=columns,
+        extent=extent,
+        cities=cities,
+        bbox=bbox,
+        mask_geojson=mask_geojson,
+        draw_boxes=draw_boxes,
+        pair_on=pair_on if kind == "xy" else None,
+        x_variable=x_variable if kind == "xy" else None,
+        y_variable=y_variable if kind == "xy" else None,
+        u_variable=u_variable,
+        v_variable=v_variable,
+        quiver_scale=quiver_scale,
+        quiver_step=quiver_step,
+        shared_scale=shared_scale,
+        independent_scale=independent_scale,
+        layer_labels=label,
+    )
+    if maybe_emit_spec(merged, dump_spec, datasets=datasets):
+        return None
+    if output is None:
+        raise UsageError("--output is required unless --dump-spec is set")
+    compiled = compile(merged, datasets, theme_registry=user_theme)
+    return export(
+        compiled,
+        output,
+        datasets=datasets,
+        spec=merged,
+    )
 
 
 if __name__ == "__main__":
