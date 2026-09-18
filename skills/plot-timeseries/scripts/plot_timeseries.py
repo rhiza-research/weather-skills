@@ -105,6 +105,7 @@ _TRACE_KEYS = {
     "alpha": "alpha",
     "zorder": "zorder",
     "mark": "mark",
+    "style": "mark",
 }
 _LINE_ONLY_KEYS = frozenset({"linewidth", "linestyle", "marker", "markersize"})
 _BAR_KEYS = frozenset({"color", "alpha", "zorder"})
@@ -389,9 +390,11 @@ def _day_of_year_tick_label(doy: float) -> str:
 )
 @weather_skill.argument(
     "--mark",
+    "--style",
+    dest="mark",
     choices=["line", "bar"],
     default=None,
-    help="line (default) or bar (see --bar-mode).",
+    help="line (default) or bar (see --bar-mode). --style is kept as an alias of --mark.",
 )
 @weather_skill.argument(
     "--bar-mode",

@@ -32,6 +32,16 @@ def test_heatmap_writes_png(tmp_path, plot_fn):
     assert out.stat().st_size > 0
 
 
+def test_style_alias_writes_contour_png(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "contour.png"
+
+    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--style", "contour")
+
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+
+
 def test_fontsize_writes_png(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "map.png"
