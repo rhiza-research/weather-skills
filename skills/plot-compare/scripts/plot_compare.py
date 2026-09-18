@@ -1,15 +1,11 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cartopy",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@plot-refactor",
 #   "cf-xarray",
 #   "cftime",
-#   "geopandas>=1",
-#   # matplotlib<3.10: cartopy gridliner crash
-#   "matplotlib>=3.8,<3.10",
+#   "matplotlib>=3.8",
 #   "numpy",
-#   "pandas",
 #   "shapely>=2.1",
 #   "xarray",
 #   "zarr",
@@ -19,11 +15,47 @@
 """Side-by-side multi-panel PNG comparing two weather-skills standard dataset Zarrs."""
 
 import sys
-from pathlib import Path
 
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
 from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
+from weather_skills_core.plot import export
+from weather_skills_core.plot.maps import (
+    axis_kind,
+    calendar_bin_width,
+    format_calendar_panel,
+    is_cftime_axis,
+)
+from weather_skills_core.plot.figure import (
+    DEFAULT_FONTSIZE,
+    axis_label,
+    parse_figsize,
+    parse_label_list,
+    parse_number_list,
+    resolve_axis_label,
+)
+from weather_skills_core.plot.spec import (
+    DUMP_SPEC_ARGUMENT_HELP,
+    PATCH_ARGUMENT_HELP,
+    SPEC_ARGUMENT_HELP,
+    SPEC_VERSION,
+    datasets_from_cli_or_spec,
+    maybe_emit_spec,
+    overlay_flags,
+    overlay_spec,
+    parse_plot_patch,
+    parse_plot_spec,
+    resolve_flags,
+    spec_get,
+    spec_input_labels,
+    spec_inputs_from_datasets,
+)
+from weather_skills_core.plot.theme import (
+    aggregation_days,
+    is_precip,
+    is_precip_anomaly,
+    widest_precip_window,
+)
 from weather_skills_core.standard_utils import (
     ensure_normalized_longitude,
     lat_slice,
@@ -31,8 +63,6 @@ from weather_skills_core.standard_utils import (
     polygon_from_geojson,
 )
 from weather_skills_core.units import (
-    classify_variable,
-    parse_aggregation_period,
     precip_for_display,
     to_standard_units,
     units_equal,
@@ -40,349 +70,21 @@ from weather_skills_core.units import (
     variable_units,
 )
 
-from weather_skills_core.figure import (
-    DEFAULT_FONTSIZE,
-    add_shared_colorbar,
-    apply_style,
-    format_plot_date,
-    format_plot_date_range,
-    parse_figsize,
-    resolve_figsize,
-    save_figure,
-)
-
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-# CHIRPS-GEFS / Early Warning eXplorer rainfall-total classes (mm).
-# Under (<2) is white; over (>2500) is pale pink.
-PRECIP_COLORS = [
-    "#ffffff",
-    "#c7ffbb",
-    "#75f676",
-    "#1bb61d",
-    "#b8edfb",
-    "#50a5f8",
-    "#1e6eec",
-    "#dcdcff",
-    "#a08bff",
-    "#7060de",
-    "#fff8ad",
-    "#ff9d00",
-    "#ff1400",
-    "#a30005",
-    "#e58d8b",
-    "#ffe5e4",
-]
-PRECIP_BOUNDS = [2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]
-# Sub-pentad / daily totals (< 5 day aggregation): same colors, lower breaks.
-PRECIP_SHORT_BOUNDS = [0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30, 50, 75, 100, 150, 200]
-PRECIP_LONG_MIN_DAYS = 5
-
-# CHIRPS-GEFS / Early Warning eXplorer rainfall-anomaly classes (mm).
-PRECIP_ANOMALY_COLORS = [
-    "#c00006",
-    "#ff3300",
-    "#ff9d00",
-    "#ffe772",
-    "#7a5044",
-    "#b68c80",
-    "#f2dcd1",
-    "#ffffff",
-    "#c7ffbb",
-    "#75f676",
-    "#1bb61c",
-    "#9bd1f5",
-    "#2583f5",
-    "#dcdcff",
-    "#8070ee",
-]
-PRECIP_ANOMALY_BOUNDS = [-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]
-
-
-def _axis_label(text):
-    """Sentence-case an axis label; map lon/lat shorthand to Longitude/Latitude."""
-    if text is None:
-        return text
-    s = str(text).strip()
-    if not s:
-        return s
-    known = {
-        "lon": "Longitude",
-        "lat": "Latitude",
-        "longitude": "Longitude",
-        "latitude": "Latitude",
-        "valid time": "Valid time",
-        "calendar day": "Calendar day",
-        "time": "Time",
-        "step": "Step",
-        "forecast step": "Forecast step",
-    }
-    key = s.lower()
-    if key in known:
-        return known[key]
-    if s[:1].islower():
-        return s[:1].upper() + s[1:]
-    return s
-
-
-def _resolve_axis_label(override, default):
-    """Use ``override`` verbatim when set; otherwise sentence-case ``default``."""
-    if override is not None and str(override).strip() != "":
-        return str(override)
-    return _axis_label(default)
-
-
-def _parse_colormap(spec):
-    """Matplotlib name, or a LinearSegmentedColormap from comma-separated colors."""
-    if spec is None or "," not in spec:
-        return spec
-    from matplotlib.colors import LinearSegmentedColormap
-
-    parts = [p.strip() for p in spec.split(",") if p.strip()]
-    return LinearSegmentedColormap.from_list("custom", parts)
-
-
-def _is_precip(da):
-    kind = classify_variable(
-        da.name or "",
-        units=variable_units(da),
-        standard_name=da.attrs.get("standard_name"),
-    )
-    return kind in ("precip", "precip_amount")
-
-
-def _is_precip_anomaly(da):
-    """True when precip looks like an anomaly (negatives or 'anomal' in name)."""
-    import numpy as np
-
-    name = f"{da.name or ''} {da.attrs.get('long_name', '')}".lower()
-    if "anomal" in name:
-        return True
-    try:
-        vmin = float(np.nanmin(np.asarray(da.values, dtype=float)))
-    except (TypeError, ValueError):
-        return False
-    return np.isfinite(vmin) and vmin < 0
-
-
-def _aggregation_days(da):
-    """Return stamped ``aggregation_period`` in days, or None."""
-    period = da.attrs.get("aggregation_period")
-    if not (isinstance(period, str) and period.strip()):
-        return None
-    try:
-        return float(parse_aggregation_period(period).to("day").magnitude)
-    except UsageError:
-        return None
-
-
-def _precip_scale(da=None):
-    """Discrete CHIRPS-GEFS rainfall-total classes with under/over colors.
-
-    Periods shorter than ``PRECIP_LONG_MIN_DAYS`` use ``PRECIP_SHORT_BOUNDS``;
-    longer (or unknown) periods use the dekadal-style ``PRECIP_BOUNDS``.
-    """
-    from matplotlib.colors import BoundaryNorm, ListedColormap
-
-    days = _aggregation_days(da) if da is not None else None
-    short = days is not None and days < PRECIP_LONG_MIN_DAYS
-    colors = PRECIP_COLORS
-    bounds = PRECIP_SHORT_BOUNDS if short else PRECIP_BOUNDS
-    name = "chirps_short" if short else "chirps_total"
-    cmap = ListedColormap(colors[1:-1], name=name)
-    cmap.set_under(colors[0])
-    cmap.set_over(colors[-1])
-    return cmap, BoundaryNorm(bounds, ncolors=cmap.N, clip=False)
-
-
-def _precip_anomaly_scale():
-    """Discrete CHIRPS-GEFS rainfall-anomaly classes with under/over colors."""
-    from matplotlib.colors import BoundaryNorm, ListedColormap
-
-    colors = PRECIP_ANOMALY_COLORS
-    cmap = ListedColormap(colors[1:-1], name="chirps_anom")
-    cmap.set_under(colors[0])
-    cmap.set_over(colors[-1])
-    return cmap, BoundaryNorm(PRECIP_ANOMALY_BOUNDS, ncolors=cmap.N, clip=False)
-
-
-def _default_precip_scale(da):
-    if _is_precip_anomaly(da):
-        return _precip_anomaly_scale()
-    return _precip_scale(da)
-
-
-def _resolve_color_limits(da, vmin=None, vmax=None, *, norm=None, flag="--vmin/--vmax"):
-    """Resolve colorbar limits. User limits drop a discrete ``BoundaryNorm``."""
-    import numpy as np
-    from matplotlib.colors import BoundaryNorm
-
-    user_set = vmin is not None or vmax is not None
-    if user_set and isinstance(norm, BoundaryNorm):
-        norm = None
-    if norm is not None and not user_set:
-        return None, None, norm
-
-    data_min = float(da.min(skipna=True).values)
-    data_max = float(da.max(skipna=True).values)
-    if not np.isfinite(data_min) or not np.isfinite(data_max):
-        data_min, data_max = 0.0, 1.0
-    lo = data_min if vmin is None else float(vmin)
-    hi = data_max if vmax is None else float(vmax)
-    if not user_set and hi > 0 and lo < 0:
-        m = max(abs(hi), abs(lo))
-        lo, hi = -m, m
-    if lo > hi:
-        raise UsageError(f"{flag}: lower limit {lo} is greater than upper limit {hi}")
-    if lo == hi:
-        pad = abs(lo) * 0.05 if lo != 0 else 1.0
-        lo, hi = lo - pad, hi + pad
-    return lo, hi, None
-
-
-def _stretched_precip_cmap(da):
-    colors = PRECIP_ANOMALY_COLORS if _is_precip_anomaly(da) else PRECIP_COLORS
-    return _parse_colormap(",".join(colors))
-
-
-def _row_scale(da, colormap, vmin=None, vmax=None):
-    """Per-row ``(cmap, norm, vmin, vmax)``. Default precip is discrete CHIRPS classes."""
-    stretch = vmin is not None or vmax is not None
-    if colormap:
-        cmap, norm = _parse_colormap(colormap), None
-    elif _is_precip(da) and not stretch:
-        cmap, norm = _default_precip_scale(da)
-        return cmap, norm, None, None
-    elif _is_precip(da):
-        cmap, norm = _stretched_precip_cmap(da), None
-    else:
-        cmap, norm = "viridis", None
-    lo, hi, norm = _resolve_color_limits(da, vmin, vmax, norm=norm)
-    return cmap, norm, lo, hi
-
-
-def _cbar_kwargs(norm, cmap=None):
-    from matplotlib.colors import BoundaryNorm
-
-    if isinstance(norm, BoundaryNorm):
-        kw = {"spacing": "uniform", "ticks": list(norm.boundaries)}
-        if getattr(cmap, "name", None) in ("chirps_anom", "chirps_total", "chirps_short"):
-            kw["extend"] = "both"
-        return kw
-    return {}
+_aggregation_days = aggregation_days
+_axis_kind = axis_kind
+_axis_label = axis_label
+_format_single = format_calendar_panel
+_is_cftime_axis = is_cftime_axis
+_is_precip = is_precip
+_is_precip_anomaly = is_precip_anomaly
+_resolve_axis_label = resolve_axis_label
 
 
 def _is_station(ds):
     return "station_id" in ds.dims
-
-
-def _format_single(t, bin_width=None):
-    """Render a time-bin label; with bin_width, ``4–10 Aug '26`` (left-edge)."""
-    import datetime as _dt
-
-    import pandas as pd
-
-    if hasattr(t, "calendar"):
-        if bin_width is None:
-            return format_plot_date(t)
-        try:
-            end = t + bin_width - _dt.timedelta(days=1)
-        except (TypeError, ValueError):
-            return format_plot_date(t)
-        return format_plot_date_range(t, end)
-
-    try:
-        start = pd.Timestamp(t)
-    except (TypeError, ValueError):
-        if hasattr(t, "year") and hasattr(t, "month") and hasattr(t, "day"):
-            return format_plot_date(t)
-        return format_plot_date(t)
-    if bin_width is None:
-        return format_plot_date(start)
-    try:
-        end = start + bin_width - pd.Timedelta(days=1)
-    except (TypeError, ValueError):
-        return format_plot_date(start)
-    return format_plot_date_range(start, end)
-
-
-def _load_admin_boundaries(bbox=None):
-    """Natural Earth admin-1 via cartopy; optional shapely clip to bbox. None on failure."""
-    try:
-        import cartopy.io.shapereader as shpreader
-        import geopandas as gpd
-
-        shp_path = shpreader.natural_earth(
-            resolution="10m", category="cultural", name="admin_1_states_provinces"
-        )
-        gdf = gpd.read_file(shp_path)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Warning: admin boundaries unavailable ({exc}); skipping overlay.", file=sys.stderr)
-        return None
-    if bbox is None:
-        return gdf
-    try:
-        from shapely.geometry import box
-
-        xmin, ymin, xmax, ymax = bbox
-        clip_geom = box(xmin, ymin, xmax, ymax)
-        try:
-            gdf = gdf.clip(clip_geom)
-        except Exception:  # noqa: BLE001
-            gdf = gdf.copy()
-            gdf["geometry"] = gdf.geometry.intersection(clip_geom)
-        return gdf[~gdf.geometry.is_empty & gdf.geometry.notna()]
-    except Exception as exc:  # noqa: BLE001
-        print(
-            f"Warning: could not clip admin boundaries to bbox ({exc}); drawing unclipped overlay.",
-            file=sys.stderr,
-        )
-        return gdf
-
-
-def _median_bin_width(time_values):
-    """Median spacing of a 1-D time coord (pandas.Timedelta or datetime.timedelta)."""
-    import datetime as _dt
-
-    import numpy as np
-    import pandas as pd
-
-    arr = np.asarray(time_values)
-    if arr.size < 2:
-        return None
-    if arr.dtype.kind == "O" and hasattr(arr.flat[0], "calendar"):
-        ordered = np.sort(arr)
-        deltas = [
-            abs((ordered[i + 1] - ordered[i]).total_seconds()) for i in range(ordered.size - 1)
-        ]
-        return _dt.timedelta(seconds=float(np.median(deltas))) if deltas else None
-    try:
-        diffs = np.diff(pd.to_datetime(arr).values)
-    except (TypeError, ValueError):
-        return None
-    return pd.Timedelta(pd.Series(diffs).median()) if diffs.size else None
-
-
-def _scatter_panel(ax, ds, sel, cmap, norm, vmin, vmax):
-    return ax.scatter(
-        ds["longitude"].values,
-        ds["latitude"].values,
-        c=sel.values,
-        cmap=cmap,
-        norm=norm,
-        vmin=vmin,
-        vmax=vmax,
-        s=30,
-    )
-
-
-def _grid_panel(ax, sel, cmap, norm, vmin, vmax):
-    lat_dim = cf_dim(sel, "latitude")
-    lon_dim = cf_dim(sel, "longitude")
-    return sel.transpose(lat_dim, lon_dim).plot.pcolormesh(
-        ax=ax, x=lon_dim, y=lat_dim, cmap=cmap, norm=norm, vmin=vmin, vmax=vmax, add_colorbar=False
-    )
 
 
 def _ax_bounds(ds, variable):
@@ -402,32 +104,11 @@ def _ax_bounds(ds, variable):
     )
 
 
-def _is_cftime_axis(values):
-    import numpy as np
-
-    return (
-        getattr(values.dtype, "kind", None) == "O"
-        and values.size > 0
-        and hasattr(np.asarray(values).flat[0], "calendar")
-    )
-
-
-def _axis_kind(values):
-    kind = getattr(values.dtype, "kind", None)
-    if kind == "M":
-        return "datetime"
-    if kind == "m":
-        return "timedelta"
-    if _is_cftime_axis(values):
-        return "datetime"
-    return None
-
-
 @weather_skill(
     name="plot-compare",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=True)
+@weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=False)
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument(
@@ -445,8 +126,29 @@ def _axis_kind(values):
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors. "
-        "Precip default: discrete CHIRPS-GEFS classes (BoundaryNorm)."
+        "Precip default: nested absolute-mm classes (BoundaryNorm). "
+        "Discrete custom classes: pass --colormap-bounds or a spec object."
     ),
+)
+@weather_skill.argument(
+    "--colormap-bounds",
+    default=None,
+    type=parse_number_list,
+    help="Comma-separated class stops; folds into style.colormap.bounds.",
+)
+@weather_skill.argument("--colormap-under", default=None, help="Color below the first class stop.")
+@weather_skill.argument("--colormap-over", default=None, help="Color above the last class stop.")
+@weather_skill.argument(
+    "--cbar-ticks",
+    default=None,
+    type=parse_number_list,
+    help="Comma-separated colorbar tick positions.",
+)
+@weather_skill.argument(
+    "--cbar-labels",
+    default=None,
+    type=parse_label_list,
+    help="Comma-separated colorbar tick labels. Requires --cbar-ticks.",
 )
 @weather_skill.argument(
     "--colormap-a",
@@ -468,7 +170,7 @@ def _axis_kind(values):
     action="store_true",
     help="Force per-row color scales.",
 )
-@weather_skill.argument("--panels", type=int, default=3)
+@weather_skill.argument("--panels", type=int, default=None)
 @weather_skill.argument(
     "--time-dim", default=None, help="Override the time axis. Defaults to time, else step."
 )
@@ -513,6 +215,26 @@ def _axis_kind(values):
     default=None,
     help="Colorbar upper limit. Unset = data max (or discrete precip classes).",
 )
+@weather_skill.argument(
+    "--spec",
+    default=None,
+    type=parse_plot_spec,
+    help=SPEC_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--patch",
+    default=None,
+    type=parse_plot_patch,
+    help=PATCH_ARGUMENT_HELP,
+)
+@weather_skill.argument(
+    "--dump-spec",
+    nargs="?",
+    const="-",
+    default=None,
+    probe=True,
+    help=DUMP_SPEC_ARGUMENT_HELP,
+)
 def plot_compare(
     ds,
     bbox,
@@ -535,25 +257,114 @@ def plot_compare(
     output,
     vmin=None,
     vmax=None,
+    spec=None,
+    patch=None,
+    dump_spec=None,
+    colormap_bounds=None,
+    colormap_under=None,
+    colormap_over=None,
+    cbar_ticks=None,
+    cbar_labels=None,
     **kwargs,
 ):
     """Side-by-side multi-panel PNG comparing two weather-skills standard dataset Zarrs."""
-    if len(ds) != 2:
-        raise UsageError(f"expected exactly two --input paths, got {len(ds)}")
-    ds_a, ds_b = ds
+    ds_a, ds_b = datasets_from_cli_or_spec(ds, spec, exactly=2)
+    spec_data = spec.to_dict() if spec is not None else {}
+    if patch:
+        spec_data = overlay_spec(spec_data, patch)
+    flags = resolve_flags(
+        spec_data,
+        title=title,
+        xlabel=xlabel,
+        colormap=colormap,
+        colormap_a=colormap_a,
+        colormap_b=colormap_b,
+        colormap_bounds=colormap_bounds,
+        colormap_under=colormap_under,
+        colormap_over=colormap_over,
+        cbar_ticks=cbar_ticks,
+        cbar_labels=cbar_labels,
+        figsize=figsize,
+        panels=panels,
+        bbox=bbox,
+        mask_geojson=mask_geojson,
+        vmin=vmin,
+        vmax=vmax,
+        variable=variable,
+        variable_a=variable_a,
+        variable_b=variable_b,
+    )
+    title, xlabel = flags["title"], flags["xlabel"]
+    colormap, colormap_a, colormap_b = (
+        flags["colormap"],
+        flags["colormap_a"],
+        flags["colormap_b"],
+    )
+    spec_data = overlay_flags(
+        spec_data,
+        colormap=colormap,
+        colormap_a=colormap_a,
+        colormap_b=colormap_b,
+        colormap_bounds=flags.get("colormap_bounds"),
+        colormap_under=flags.get("colormap_under"),
+        colormap_over=flags.get("colormap_over"),
+        cbar_ticks=flags.get("cbar_ticks"),
+        cbar_labels=flags.get("cbar_labels"),
+    )
+    colormap = spec_get(spec_data, "colormap")
+    colormap_a = spec_get(spec_data, "colormap_a")
+    colormap_b = spec_get(spec_data, "colormap_b")
+    bbox, mask_geojson = flags["bbox"], flags["mask_geojson"]
+    vmin, vmax = flags["vmin"], flags["vmax"]
+    variable, variable_a, variable_b = (
+        flags["variable"],
+        flags["variable_a"],
+        flags["variable_b"],
+    )
+    figsize = tuple(flags["figsize"]) if flags["figsize"] else None
+    panels = flags["panels"] or 3
+    if not shared_scale and not independent_scale:
+        shared = spec_get(spec_data, "shared_colorscale")
+        if shared is True:
+            shared_scale = True
+        elif shared is False:
+            independent_scale = True
+    if not label:
+        label = spec_input_labels(spec_data)
     if shared_scale and independent_scale:
         raise UsageError("--shared-scale and --independent-scale are mutually exclusive.")
 
     label_slots = resolve_input_labels(label, 2)
     label_a = label_slots[0] or dataset_display_label(ds_a, "A")
     label_b = label_slots[1] or dataset_display_label(ds_b, "B")
+    datasets = {"a": ds_a, "b": ds_b}
+    geo_out = {}
+    if bbox is not None:
+        geo_out["bbox"] = list(bbox) if not isinstance(bbox, str) else bbox
+    if mask_geojson:
+        geo_out["mask_geojson"] = str(mask_geojson)
+    assembled = overlay_spec(
+        spec_data,
+        {
+            "version": SPEC_VERSION,
+            "skill": "plot-compare",
+            "layout": {
+                "facet": {"rows": 2, "columns": panels},
+                "figsize": list(figsize) if figsize else None,
+            },
+            "traces": [{"kind": "grid"}],
+            "theme": {"template": "weather_skills", "fontsize": fontsize},
+            "title": title,
+            "xlabel": xlabel,
+            "geo": geo_out,
+        },
+    )
+    if maybe_emit_spec(assembled, dump_spec, datasets=datasets):
+        return None
+    if output is None:
+        raise UsageError("--output is required unless --dump-spec is set")
 
-    import matplotlib
-
-    matplotlib.use("Agg")
-    apply_style(fontsize)
     import cf_xarray  # noqa: F401 — registers the .cf accessor
-    import matplotlib.pyplot as plt
     import numpy as np
 
     var_a = variable_a or variable or auto_variable(ds_a)
@@ -834,65 +645,70 @@ def plot_compare(
     a_station = _is_station(ds_a)
     b_station = _is_station(ds_b)
 
-    def _row_units(da):
-        return variable_units(da)
+    from weather_skills_core.plot.maps import (
+        compile_grid,
+        heatmap_cell,
+        scale_from_da,
+        scatter_cell,
+    )
 
     user_vlim = vmin is not None or vmax is not None
+
+    def _finite_limits(*das):
+        data_min = float(np.nanmin([float(d.min().values) for d in das]))
+        data_max = float(np.nanmax([float(d.max().values) for d in das]))
+        if not np.isfinite(data_min) or not np.isfinite(data_max):
+            return 0.0, 1.0
+        return data_min, data_max
+
+    def _apply_vlim(lo, hi, *, stretch_symmetric):
+        if lo > hi:
+            raise UsageError(f"--vmin/--vmax: lower limit {lo} is greater than upper limit {hi}")
+        if lo == hi:
+            pad = abs(lo) * 0.05 if lo != 0 else 1.0
+            lo, hi = lo - pad, hi + pad
+        elif stretch_symmetric and hi > 0 and lo < 0:
+            m = max(abs(hi), abs(lo))
+            lo, hi = -m, m
+        return lo, hi
+
+    def _indep_scale(da, cmap_name, label):
+        if cmap_name or not _is_precip(da) or user_vlim:
+            dmin, dmax = _finite_limits(da)
+            lo = dmin if vmin is None else float(vmin)
+            hi = dmax if vmax is None else float(vmax)
+            lo, hi = _apply_vlim(lo, hi, stretch_symmetric=not user_vlim)
+            return scale_from_da(da, cmap_name, stretch=True, label=label, vmin=lo, vmax=hi)
+        return scale_from_da(da, cmap_name, stretch=False, label=label)
+
+    def _cbar_label(da, label, var):
+        return f"{label} {variable_label_for_display(da, fallback=var)}"
+
+    label_scale_a = _cbar_label(da_a, label_a, var_a)
+    label_scale_b = _cbar_label(da_b, label_b, var_b)
     if use_shared_scale:
+        cmap_name = colormap
         if colormap is None and _is_precip(da_a) and _is_precip(da_b) and not user_vlim:
             if _is_precip_anomaly(da_a) or _is_precip_anomaly(da_b):
-                shared_cmap, shared_norm = _precip_anomaly_scale()
+                cmap_name = "chirps_anom"
             else:
-                days_a = _aggregation_days(da_a)
-                days_b = _aggregation_days(da_b)
-                both_short = (
-                    days_a is not None
-                    and days_a < PRECIP_LONG_MIN_DAYS
-                    and days_b is not None
-                    and days_b < PRECIP_LONG_MIN_DAYS
-                )
-                shared_cmap, shared_norm = _precip_scale(da_a if both_short else None)
-            shared_vmin = shared_vmax = None
+                cmap_name = widest_precip_window(_aggregation_days(da_a), _aggregation_days(da_b))
+            scale_shared = scale_from_da(da_a, cmap_name, stretch=False)
         else:
-            if colormap is not None:
-                shared_cmap = _parse_colormap(colormap)
-            elif _is_precip(da_a) and _is_precip(da_b):
-                shared_cmap = _stretched_precip_cmap(da_a if _is_precip_anomaly(da_a) else da_b)
-            else:
-                shared_cmap = "viridis"
-            shared_norm = None
-            data_min = float(np.nanmin([da_a.min().values, da_b.min().values]))
-            data_max = float(np.nanmax([da_a.max().values, da_b.max().values]))
-            if not np.isfinite(data_min) or not np.isfinite(data_max):
-                data_min, data_max = 0.0, 1.0
-            shared_vmin = data_min if vmin is None else float(vmin)
-            shared_vmax = data_max if vmax is None else float(vmax)
-            if not user_vlim and shared_vmax > 0 and shared_vmin < 0:
-                m = max(abs(shared_vmax), abs(shared_vmin))
-                shared_vmin, shared_vmax = -m, m
-            if shared_vmin > shared_vmax:
-                raise UsageError(
-                    f"--vmin/--vmax: lower limit {shared_vmin} is greater than "
-                    f"upper limit {shared_vmax}"
-                )
-            if shared_vmin == shared_vmax:
-                pad = abs(shared_vmin) * 0.05 if shared_vmin != 0 else 1.0
-                shared_vmin, shared_vmax = shared_vmin - pad, shared_vmax + pad
-        scale_a = scale_b = (shared_cmap, shared_norm, shared_vmin, shared_vmax)
+            dmin, dmax = _finite_limits(da_a, da_b)
+            lo = dmin if vmin is None else float(vmin)
+            hi = dmax if vmax is None else float(vmax)
+            lo, hi = _apply_vlim(lo, hi, stretch_symmetric=not user_vlim)
+            scale_shared = scale_from_da(da_a, colormap, stretch=True, vmin=lo, vmax=hi)
+        scale_a = {**scale_shared, "label": label_scale_a}
+        scale_b = {**scale_shared, "label": label_scale_b}
     else:
-        scale_a = _row_scale(da_a, colormap_a or colormap, vmin, vmax)
-        scale_b = _row_scale(da_b, colormap_b or colormap, vmin, vmax)
+        scale_a = _indep_scale(da_a, colormap_a or colormap, label_scale_a)
+        scale_b = _indep_scale(da_b, colormap_b or colormap, label_scale_b)
 
-    side_a = (ds_a, da_a, td_a, label_a, var_a, _row_units(da_a), scale_a)
-    side_b = (ds_b, da_b, td_b, label_b, var_b, _row_units(da_b), scale_b)
+    side_a = (ds_a, da_a, td_a, label_a, var_a, scale_a)
+    side_b = (ds_b, da_b, td_b, label_b, var_b, scale_b)
     top, bottom = (side_b, side_a) if b_station and not a_station else (side_a, side_b)
-
-    fig = plt.figure(figsize=resolve_figsize(figsize, (22, 10)), layout="compressed")
-    gs = fig.add_gridspec(2, n, wspace=0.05, hspace=0.08)
-    top_axes = [fig.add_subplot(gs[0, i]) for i in range(n)]
-    bottom_axes = [fig.add_subplot(gs[1, i]) for i in range(n)]
-    if title:
-        fig.suptitle(title)
 
     if a_station and not b_station:
         gridded_ds, gridded_var = ds_b, var_b
@@ -906,91 +722,93 @@ def plot_compare(
         r_n, r_w, r_s, r_e = region_bbox
         g_xmin, g_ymin, g_ymax = r_w, r_s, r_n
         g_xmax = r_e + 360.0 if wrapped_bbox else r_e
-    gridded_bbox = (g_xmin, g_ymin, g_xmax, g_ymax)
 
-    boundaries = _load_admin_boundaries(bbox=None if wrapped_bbox else gridded_bbox)
-    if boundaries is not None and wrapped_bbox:
-        import shapely
-
-        def _wrap_coords(coords):
-            out = coords.copy()
-            out[:, 0] = np.where(out[:, 0] < r_w, out[:, 0] + 360.0, out[:, 0])
-            return out
-
-        boundaries = boundaries.copy()
-        boundaries["geometry"] = boundaries.geometry.apply(
-            lambda g: shapely.transform(g, _wrap_coords) if g is not None and not g.is_empty else g
-        )
-
-    def _plot_row(axes, row, n_panels):
-        ds, da, td, label, _var, _units, scale = row
-        cmap, norm, vmin, vmax = scale
-        is_station = _is_station(ds)
+    def _row_cells(row, scale_id):
+        ds, da, td, _label, _var, _scale = row
         row_sel = da.sel({td: common_labels}, method="nearest", tolerance=common_tol)
-        import pandas as pd
-
-        bin_width = None
-        agg_days = _aggregation_days(da)
-        if agg_days is not None and agg_days >= 2:
-            bin_width = pd.Timedelta(days=float(agg_days))
-        else:
-            median = _median_bin_width(da[td].values)
-            if median is not None:
-                try:
-                    seconds = float(median.total_seconds())
-                except AttributeError:
-                    seconds = float(pd.Timedelta(median).total_seconds())
-                if seconds >= 2 * 86_400:
-                    bin_width = median
-        last_im = None
-        for col in range(n_panels):
-            ax = axes[col]
+        bin_width = calendar_bin_width(da, da[td].values)
+        titles = [_format_single(row_sel[td].values[col], bin_width=bin_width) for col in range(n)]
+        cells = []
+        is_station = _is_station(ds)
+        for col in range(n):
             sel = row_sel.isel({td: col})
-            title_t = _format_single(row_sel[td].values[col], bin_width=bin_width)
             if is_station:
-                last_im = _scatter_panel(ax, ds, sel, cmap, norm, vmin, vmax)
+                cells.append(
+                    scatter_cell(
+                        ds["longitude"].values,
+                        ds["latitude"].values,
+                        sel.values,
+                        scale=scale_id,
+                    )
+                )
             else:
-                last_im = _grid_panel(ax, sel, cmap, norm, vmin, vmax)
-            ax.set_title(title_t)
-            if boundaries is not None:
-                boundaries.boundary.plot(edgecolor="grey", linewidth=1.0, ax=ax)
-            ax.set_ylabel(_axis_label(label))
-            ax.tick_params(bottom=False, labelbottom=False, left=False, labelleft=False)
-        return last_im
+                lat_dim = cf_dim(sel, "latitude")
+                lon_dim = cf_dim(sel, "longitude")
+                cells.append(heatmap_cell(sel, lat_dim, lon_dim, scale=scale_id))
+        return cells, titles
 
-    sc_top = _plot_row(top_axes, top, n)
-    im_bottom = _plot_row(bottom_axes, bottom, n)
-
-    for ax in top_axes:
-        ax.set_xlim(g_xmin, g_xmax)
-        ax.set_ylim(g_ymin, g_ymax)
-        ax.set_xlabel("")
-    for col, ax in enumerate(bottom_axes):
-        ax.set_xlim(g_xmin, g_xmax)
-        ax.set_ylim(g_ymin, g_ymax)
-        ax.set_xlabel(_resolve_axis_label(xlabel, "Longitude") if col == n // 2 else "")
-
-    def _cbar_label(row):
-        _ds, da, _td, label, var, _units, _scale = row
-        return f"{label} {variable_label_for_display(da, fallback=var)}"
-
-    add_shared_colorbar(
-        fig,
-        sc_top,
-        top_axes,
-        _cbar_label(top),
-        location="right",
-        **_cbar_kwargs(top[-1][1], top[-1][0]),
+    top_cells, col_titles = _row_cells(top, "top")
+    bottom_cells, _ = _row_cells(bottom, "bottom")
+    compiled = compile_grid(
+        [top_cells, bottom_cells],
+        extent=[g_xmin, g_xmax, g_ymin, g_ymax],
+        title=title,
+        col_titles=col_titles,
+        row_titles=[_axis_label(top[3]), _axis_label(bottom[3])],
+        fontsize=fontsize,
+        figsize=figsize,
+        scales={"top": top[5], "bottom": bottom[5]},
+        xlabel=_resolve_axis_label(xlabel, "Longitude"),
+        spec=spec_data,
     )
-    add_shared_colorbar(
-        fig,
-        im_bottom,
-        bottom_axes,
-        _cbar_label(bottom),
-        location="right",
-        **_cbar_kwargs(bottom[-1][1], bottom[-1][0]),
+    datasets = {"a": ds_a, "b": ds_b}
+    inputs = spec_inputs_from_datasets(datasets)
+    if var_a:
+        inputs[0]["variable"] = var_a
+    if var_b:
+        inputs[1]["variable"] = var_b
+    if label_slots[0]:
+        inputs[0]["label"] = label_slots[0]
+    if label_slots[1]:
+        inputs[1]["label"] = label_slots[1]
+    geo_out = {}
+    if bbox is not None:
+        geo_out["bbox"] = list(bbox) if not isinstance(bbox, str) else bbox
+    if mask_geojson:
+        geo_out["mask_geojson"] = str(mask_geojson)
+    resolved = {
+        "version": SPEC_VERSION,
+        "skill": "plot-compare",
+        "inputs": inputs,
+        "layout": {
+            "facet": {"rows": 2, "columns": n},
+            "shared_colorscale": use_shared_scale,
+            "figsize": list(figsize) if figsize else None,
+        },
+        "traces": [{"kind": "grid"}],
+        "theme": {
+            "template": "weather_skills",
+            "fontsize": fontsize,
+            "colormap": colormap or top[5].get("name"),
+        },
+        "title": title,
+        "xlabel": xlabel,
+        "geo": geo_out,
+    }
+    for side, cmap in ((0, colormap_a), (1, colormap_b)):
+        if cmap and side < len(resolved["inputs"]):
+            resolved["inputs"][side]["colormap"] = cmap
+    if vmin is not None:
+        resolved["vmin"] = vmin
+    if vmax is not None:
+        resolved["vmax"] = vmax
+    compiled.spec = {**compiled.spec, **resolved}
+    return export(
+        compiled,
+        output,
+        datasets=datasets,
+        spec=spec_data,
     )
-    return save_figure(fig, output, tight=figsize is None)
 
 
 if __name__ == "__main__":

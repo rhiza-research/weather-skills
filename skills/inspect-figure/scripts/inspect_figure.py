@@ -23,6 +23,8 @@ _BLACK = 8
 _BLANK_FRAC = 0.92
 _UNIFORM_UNIQUE = 12
 _ARG_KEYS = (
+    "kind",
+    "mark",
     "style",
     "title",
     "variable",

@@ -53,19 +53,38 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
     --forecast <week2.zarr> --verify <verify_w2.zarr> \
     ... \
     -o <out.png> [--variable NAME] \
-    [--lead "1-week lead" ...] [--title TEXT] [--fontsize N] [--figsize W,H] [--colormap NAME] \
-    [--bbox N/W/S/E] [--mask-geojson PATH]
+    [--lead "1-week lead" ...] [--title TEXT] [--fontsize N] [--figsize W,H] \
+    [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
+    [--bbox N/W/S/E] [--mask-geojson PATH] \
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
+
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
+    --obs <obs.zarr> --forecast <week1.zarr> --verify <verify_w1.zarr> \
+    -o <out.png> --patch '{"title": "Edited"}'
 ```
 
 ### Arguments
 
-- `--obs` — observation Zarr for the verifying week (required). Must
-  already be one time.
+- `--obs` — observation Zarr for the verifying week. Must already be one
+  time. Optional when `--spec` already lists an obs input.
 - `--forecast` — forecast Zarr for that same week at one lead. Pass
   **week-1 first**, then week-2, week-3, week-4. Repeat with matching
-  `--verify`. Must already be one time.
+  `--verify`. Must already be one time. Optional when `--spec` lists forecast
+  inputs.
 - `--verify` — verify Zarr from the `verify` skill for that lead.
-  **Required once per `--forecast`**, same order.
+  **Once per `--forecast`**, same order. Optional when `--spec` lists verify
+  inputs.
+- `--spec` — optional full plot spec JSON (file or inline). First runs are
+  CLI flags only. Prefer `--patch` for edits. Pass `--spec` only when
+  replaying a dumped object. Spec input paths are opened as Datasets so
+  provenance chains from the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
+  before CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a
+  spec object is rejected.
+- `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
+  PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
+  stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
+  a key you cannot name from the CLI.
 - `--variable`, `-v` — obs/forecast data variable (verify Zarrs carry
   their own verification variable).
 - `--lead` — column title, once per `--forecast`. Default: `1-week lead`
@@ -79,7 +98,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `14,8`).
   When set, the PNG is that canvas at 150 dpi. When omitted, size follows
   the map grid and crops tightly.
-- `--colormap`, `--title`, `--bbox`, `--mask-geojson`, `--output` — as before.
+- `--colormap`, `--colormap-bounds`, `--cbar-ticks`, `--cbar-labels`,
+  `--title`, `--bbox`, `--mask-geojson`, `--output` — as `plot`.
   A long `--title` (or title plus verifying-week dates) wraps onto a second
   line.
 

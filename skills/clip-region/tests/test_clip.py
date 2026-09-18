@@ -29,6 +29,24 @@ def test_clip_bbox_subsets_and_stamps_history(tmp_path, clip_region):
     assert load_history(out)[-1]["skill"] == "clip-region"
 
 
+def test_clip_region_rejects_bbox_together(tmp_path, clip_region):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            clip_region,
+            "-i",
+            str(src),
+            "-o",
+            str(out),
+            "--region",
+            "Kenya",
+            "--bbox",
+            "5/34/-5/42",
+        )
+    assert exc.value.code == 2
+
+
 def test_clip_empty_bbox_exits_1(tmp_path, clip_region):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
@@ -74,6 +92,26 @@ def test_clip_geojson_polygon(tmp_path, clip_region):
     ds = xr.open_zarr(out, consolidated=True)
     assert list(ds.latitude.values) == [1.0, 2.0]
     assert list(ds.longitude.values) == [11.0, 12.0]
+
+
+def test_clip_region_keeps_cells_overlapping_country_boundary(tmp_path, clip_region):
+    from weather_skills_core.region import bbox_from_feature, lookup_region
+
+    kenya = lookup_region("KEN")
+    _north, west, _south, _east = bbox_from_feature(kenya)
+    # 2° cells so a center west of Kenya's bbox can still overlap the border.
+    src = write_zarr(
+        make_gridded(lats=(-2.0, 0.0, 2.0), lons=(31.0, 33.0, 35.0, 37.0)),
+        tmp_path / "in.zarr",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(clip_region, "-i", str(src), "-o", str(out), "--region", "Kenya")
+    ds = xr.open_zarr(out, consolidated=True)
+    lons = [float(v) for v in ds.longitude.values]
+    assert 33.0 in lons
+    assert 33.0 < west
+    assert load_history(out)[-1]["skill"] == "clip-region"
+    assert load_history(out)[-1]["args"]["region"] == "Kenya"
 
 
 def test_clip_geojson_keeps_cells_with_any_overlap(tmp_path, clip_region):

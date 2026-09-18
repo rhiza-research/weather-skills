@@ -46,22 +46,18 @@ on one figure.
 
 The color scale adapts to what is being compared. When both rows resolve
 to the same variable and matching units, one shared scale is used (for
-precipitation, the CHIRPS-GEFS total or anomaly classes with `BoundaryNorm`,
+precipitation, the nested absolute-mm total classes or CHIRPS anomaly classes,
 so values are visually comparable across rows). When the rows are different
 variables or have differing units, each row gets its own independent
-scale, colormap, and labeled colorbar — rainfall still uses those CHIRPS
-classes. `--shared-scale` and
-`--independent-scale` force either mode. An admin-1 country boundary
-overlay (Natural Earth, fetched and cached via `cartopy`) is drawn on
-every panel. The polygon overlay is spatially
-*clipped* to the gridded input's bbox (`gdf.clip(box(*bbox))`), so
-polygons that straddle the bbox edge are truncated at the edge rather
-than rendered whole and neighboring regions never extend beyond the
-base.
+scale, colormap, and labeled colorbar — rainfall still uses the nested
+absolute-mm classes. `--shared-scale` and
+`--independent-scale` force either mode. Country outlines come from the
+bundled Natural Earth GeoJSON (same store as `resolve-region`), compiled
+through matplotlib.
 
 Both rows always share the gridded input's spatial extent so the figure
 is centered on the gridded base; station points outside that extent are
-clipped by matplotlib.
+clipped by the shared lon/lat range.
 
 Panel titles render the time-bin range as `30 Apr–9 May '26`
 with the bin coord interpreted as the inclusive **left** edge: end =
@@ -82,14 +78,30 @@ dataset has no matching time, use `plot-compare-forecasts`.
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --output <out.png> \
     [--variable NAME] [--variable-a NAME] [--variable-b NAME] \
-    [--colormap NAME] [--colormap-a NAME] [--colormap-b NAME] [--vmin N] [--vmax N] \
+    [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
+    [--colormap-a NAME] [--colormap-b NAME] [--vmin N] [--vmax N] \
     [--shared-scale | --independent-scale] [--title TEXT] [--xlabel TEXT] [--fontsize N] [--figsize W,H] \
     [--panels N] [--time-dim DIM] \
-    [--bbox N/W/S/E] [--mask-geojson PATH]
+    [--bbox N/W/S/E] [--mask-geojson PATH] \
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
+
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py \
+    -i <a.zarr> -i <b.zarr> -o <out.png> --patch '{"title": "Edited"}'
 ```
 
 ### Arguments
-- `--input`, `-i` — pass exactly twice. The first input is row A, the second is row B. Station-schema is allowed on either.
+- `--input`, `-i` — pass exactly twice. The first input is row A, the second is row B. Station-schema is allowed on either. Optional when `--spec` already lists both paths.
+- `--spec` — optional full plot spec JSON (file or inline). First runs are
+  CLI flags only. Prefer `--patch` for edits. Pass `--spec` only when
+  replaying a dumped object. Spec input paths are opened as Datasets so
+  provenance chains from the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
+  before CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a
+  spec object is rejected.
+- `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
+  PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
+  stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
+  a key you cannot name from the CLI.
 - `--label` — row label for each `--input`, in order. When omitted, labels are
   inferred from provenance (`weather_skills_source`, fetch skill history).
 - `--output`, `-o` — PNG path.
@@ -100,26 +112,19 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
   (CF grid-mapping/CRS container vars such as `latitude_longitude` are
   skipped during auto-pick).
 - `--variable-b` — variable for row B (same resolution as `--variable-a`).
-- `--colormap` — matplotlib colormap name, or a comma-separated list of
-  colors to interpolate (e.g. `white,wheat,green`). Named matplotlib
-  colormaps cannot contain commas, so a comma selects the custom-list
-  form. When omitted, precipitation totals use the CHIRPS-GEFS total-rainfall
-  classes (`BoundaryNorm` over
-  `[2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]`
-  mm with white under / pale-pink over) when `aggregation_period` is missing
-  or ≥ 5 days; sub-pentad totals (< 5 days) use lower breaks
-  (`0.5 … 200` mm, same colors). Precipitation anomalies (negatives,
-  or `anomal` in the name) use the CHIRPS-GEFS diverging classes
-  (`[-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]`
-  mm). In independent-scale mode a non-precip row falls back
-  to `viridis`.
+- `--colormap` — matplotlib colormap name, comma-separated colors, or a
+  `{colors, bounds}` object (also `--colormap-bounds` / `--cbar-ticks` /
+  `--cbar-labels`). When omitted, precipitation totals use the nested
+  absolute-mm classes (`ppt_daily` / `ppt_week` / `ppt_month` / `ppt_season`);
+  anomalies use the diverging CHIRPS classes. In independent-scale
+  mode a non-precip row falls back to `viridis`.
 - `--colormap-a` / `--colormap-b` — per-row matplotlib colormap name or
   comma-separated colors in independent-scale mode. Precedence per row:
-  `--colormap-a`/`-b`, then `--colormap`, then the CHIRPS total / anomaly
-  precip classes or `viridis`.
+  `--colormap-a`/`-b`, then `--colormap`, then the nested precip total /
+  CHIRPS anomaly classes or `viridis`.
 - `--vmin` / `--vmax` — shared colorbar limits. Either may be omitted
   (the unset end uses the data min/max). Setting either one drops the
-  default discrete CHIRPS precip classes and stretches those colors (or
+  default discrete precip classes and stretches those colors (or
   `--colormap`) across the requested range. In independent-scale mode the
   same limits apply to both rows.
 - `--shared-scale` / `--independent-scale` — mutually exclusive; force one

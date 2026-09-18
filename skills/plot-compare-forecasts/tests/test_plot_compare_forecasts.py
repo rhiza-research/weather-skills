@@ -1,5 +1,6 @@
 """Correctness tests for plot-compare-forecasts."""
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +43,27 @@ def test_two_forecasts_write_png_and_stamp_history(tmp_path, plot_fn):
     assert history is not None
     assert history[-1]["skill"] == "plot-compare-forecasts"
     assert history[-1]["args"]["title"] == "Two forecasts"
+
+
+def test_patch_flag_merges_into_spec(tmp_path, plot_fn):
+    a = write_zarr(make_forecast(fill=1.0), tmp_path / "a.zarr")
+    b = write_zarr(make_forecast(fill=2.0), tmp_path / "b.zarr")
+    out = tmp_path / "grid.png"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "--patch",
+        '{"title": "Patched"}',
+        "--dump-spec",
+        str(tmp_path / "grid.plot.json"),
+    )
+    spec = json.loads((tmp_path / "grid.plot.json").read_text())
+    assert spec["title"] == "Patched"
+    assert "patch" not in spec
+    assert not out.exists()
 
 
 def test_parse_figsize(plot_mod):
@@ -190,54 +212,47 @@ def test_forecast_and_obs_share_valid_times(tmp_path, plot_fn, plot_mod):
     assert out.stat().st_size > 0
 
 
-def test_precip_default_colormap_is_discrete_chirps_total_palette(plot_mod):
-    from matplotlib.colors import BoundaryNorm, ListedColormap
+def test_precip_default_colormap_is_nested_week_window():
+    from weather_skills_core.plot.theme import precip_nested_palette, resolve_colorscale
 
     da = make_forecast()["tp"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
-    cmap, norm = plot_mod._heatmap_scale(da, None)
-    assert isinstance(cmap, ListedColormap)
-    assert cmap.name == "chirps_total"
-    assert cmap.N == 14
-    assert isinstance(norm, BoundaryNorm)
-    assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_BOUNDS)
+    scale = resolve_colorscale(da, None)
+    week = precip_nested_palette("ppt_week")
+    assert scale["name"] == "ppt_week"
+    assert scale["bounds"] == pytest.approx(week["bounds"])
 
     da.attrs["aggregation_period"] = "1 day"
-    cmap_short, norm_short = plot_mod._heatmap_scale(da, None)
-    assert cmap_short.name == "chirps_short"
-    assert list(norm_short.boundaries) == pytest.approx(plot_mod.PRECIP_SHORT_BOUNDS)
+    scale_daily = resolve_colorscale(da, None)
+    daily = precip_nested_palette("ppt_daily")
+    assert scale_daily["name"] == "ppt_daily"
+    assert scale_daily["bounds"] == pytest.approx(daily["bounds"])
 
     t2m = make_gridded(name="t2m")["t2m"]
     t2m.attrs.update(units="degree_Celsius", standard_name="air_temperature")
-    cmap_t, norm_t = plot_mod._heatmap_scale(t2m, None)
-    assert cmap_t == "viridis"
-    assert norm_t is None
+    scale_t = resolve_colorscale(t2m, None)
+    assert scale_t["name"] == "rocket"
+    assert scale_t.get("bounds") is None
 
 
-def test_precip_anomaly_colormap_is_chirps_palette(plot_mod):
-    from matplotlib.colors import BoundaryNorm, ListedColormap
+def test_precip_anomaly_colormap_is_chirps_palette():
+    from weather_skills_core.plot.theme import PRECIP_ANOMALY_BOUNDS, resolve_colorscale
 
     da = make_gridded(fill=-25.0)["precip"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
-    cmap, norm = plot_mod._heatmap_scale(da, None)
-    assert isinstance(cmap, ListedColormap)
-    assert cmap.name == "chirps_anom"
-    assert isinstance(norm, BoundaryNorm)
-    assert list(norm.boundaries) == pytest.approx(plot_mod.PRECIP_ANOMALY_BOUNDS)
+    scale = resolve_colorscale(da, None)
+    assert scale["name"] == "chirps_anom"
+    assert scale["bounds"] == pytest.approx(PRECIP_ANOMALY_BOUNDS)
 
 
-def test_lakes_are_filled_blue(plot_mod):
-    assert plot_mod._LAKE_FACECOLOR == "#4da6ff"
-
-
-def test_heatmap_scale_stretch_drops_precip_boundary_norm(plot_mod):
-    from matplotlib.colors import LinearSegmentedColormap
+def test_heatmap_scale_stretch_drops_precip_boundary_norm():
+    from weather_skills_core.plot.theme import resolve_colorscale
 
     da = make_forecast()["tp"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
-    cmap, norm = plot_mod._heatmap_scale(da, None, stretch=True)
-    assert isinstance(cmap, LinearSegmentedColormap)
-    assert norm is None
+    scale = resolve_colorscale(da, None, stretch=True)
+    assert scale.get("bounds") is None
+    assert scale["name"] == "ppt_week"
 
 
 def test_vmin_vmax_writes_png_and_stamps_history(tmp_path, plot_fn):
@@ -263,3 +278,32 @@ def test_vmin_vmax_writes_png_and_stamps_history(tmp_path, plot_fn):
     history = load_figure_history(out)
     assert history[-1]["args"]["vmin"] == 0.0
     assert history[-1]["args"]["vmax"] == 5.0
+
+
+def test_replot_from_spec(tmp_path, plot_fn):
+    a = write_zarr(make_forecast(fill=1.0), tmp_path / "a.zarr")
+    b = write_zarr(make_forecast(fill=2.0), tmp_path / "b.zarr")
+    first = tmp_path / "grid.png"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "--title",
+        "Original",
+        "--dump-spec",
+        str(tmp_path / "grid.plot.json"),
+    )
+    spec_path = tmp_path / "grid.plot.json"
+    data = json.loads(spec_path.read_text())
+    data["title"] = "Edited"
+    spec_path.write_text(json.dumps(data))
+    assert not first.exists()
+    second = tmp_path / "grid2.png"
+    run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
+    assert second.is_file() and second.stat().st_size > 0
+    history = load_figure_history(second)
+    assert history[-1]["skill"] == "plot-compare-forecasts"
+    basenames = [item["basename"] for item in history[-1]["input"]]
+    assert "a.zarr" in basenames and "b.zarr" in basenames

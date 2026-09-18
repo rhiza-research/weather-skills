@@ -11,7 +11,8 @@ metadata:
 
 # plot-compare-forecasts
 
-N-dataset comparison grid. Each `--input` is one row; columns are the
+N-dataset comparison grid (matplotlib heatmap grid with GeoJSON country
+outlines). Each `--input` is one row; columns are the
 **union** of times across those inputs, sorted earliest-first. A cell whose
 dataset has no field at that time stays on the grid as a blank `n/a` panel
 (map frame kept, no mesh) — unlike `plot-compare`, which drops any bin the
@@ -49,29 +50,45 @@ forecasts with a hits row, use `plot-verify`.
 
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.zarr> [-i <c.zarr> ...] \
-    --output <out.png> [--variable NAME] [--title TEXT] [--fontsize N] [--figsize W,H] [--colormap NAME] [--vmin N] [--vmax N] \
-    [--bbox N/W/S/E] [--mask-geojson PATH] [--panels N]
+    --output <out.png> [--variable NAME] [--title TEXT] [--fontsize N] [--figsize W,H] \
+    [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
+    [--vmin N] [--vmax N] \
+    [--bbox N/W/S/E] [--mask-geojson PATH] [--panels N] \
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
+
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py \
+    -i <a.zarr> -i <b.zarr> -o <out.png> --patch '{"title": "Edited"}'
 ```
 
 ### Arguments
 - `--input`, `-i` — input Zarr; repeat once per dataset (at least twice).
   Order is the row order. Each panel's y-axis is that row's name
   (`weather_skills_source` when stamped, else `input 1`, `input 2`, …).
+  Optional when `--spec` already lists input paths.
+- `--spec` — optional full plot spec JSON (file or inline). First runs are
+  CLI flags only. Prefer `--patch` for edits. Pass `--spec` only when
+  replaying a dumped object. Spec input paths are opened as Datasets so
+  provenance chains from the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
+  before CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a
+  spec object is rejected.
+- `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
+  PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
+  stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
+  a key you cannot name from the CLI.
 - `--label` — row label for each `--input`, in order. Overrides the default
   y-axis names when passed.
 - `--output`, `-o` — PNG output path.
 - `--variable`, `-v` — variable name. Defaults to the first data variable of
   the first input. Must exist in every input.
-- `--colormap` — matplotlib colormap name, or comma-separated colors to
-  interpolate. When omitted, precipitation totals use the CHIRPS-GEFS
-  total-rainfall classes (same bins as `plot`; sub-pentad
-  `aggregation_period` < 5 days uses the short breaks); precipitation
-  anomalies (negatives, or `anomal` in the name) use the CHIRPS-GEFS
-  diverging classes. Every other variable uses `viridis`. One shared
-  scale across all present cells.
+- `--colormap` — matplotlib colormap name, comma-separated colors, or a
+  `{colors, bounds}` object (`--colormap-bounds` / `--cbar-ticks` /
+  `--cbar-labels`). When omitted, precipitation totals use the nested
+  absolute-mm classes; anomalies use the diverging classes. Every other variable uses
+  `viridis`. One shared scale across all present cells.
 - `--vmin` / `--vmax` — shared colorbar limits. Either may be omitted
   (the unset end uses the data min/max). Setting either one drops the
-  default discrete CHIRPS precip classes and stretches those colors (or
+  default discrete precip classes and stretches those colors (or
   `--colormap`) across the requested range.
 - `--title` — optional figure title. Long titles wrap onto a second line.
 - `--fontsize` — base font size for column titles, row labels, ticks, and

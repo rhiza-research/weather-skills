@@ -19,7 +19,10 @@ metadata:
 
 Source-agnostic daily **indicator**: a 0/1 mask from one `--rule` string, then
 optional reductions. Apply the rule **per ensemble member** (do not average
-`number` first). Plot the output with `plot`.
+`number` first). Plot `--detect first` onset dates (or daily 0/1 /
+`--probability` fields) with `plot`. Do not average `number` before mapping
+onset dates; use `summarize-dim --dim number --method mean` on `indicator_doy`
+when you want a mean onset day-of-year.
 
 `--rule` is taken once. It is a named alias or a string of clauses joined by
 `and` or `or` (not both).
@@ -81,6 +84,7 @@ Applied in order. Default: 0/1 `indicator`, all dims kept.
 | Onset date per member | `--detect first` |
 | P(onset has occurred by this date) | `--cumulative --probability` |
 | P(event happens at least once) | `--detect any --probability` |
+| Onset date map | `--detect first`, then `plot` (do not reduce `number` first) |
 | Mean onset day-of-year | `--detect first`, then `summarize-dim --dim number --method mean` on `indicator_doy` |
 
 ## Usage

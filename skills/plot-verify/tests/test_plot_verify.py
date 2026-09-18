@@ -1,5 +1,6 @@
 """Correctness tests for plot-verify."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -89,33 +90,92 @@ def test_metric_bias_writes_png(tmp_path, plot_fn, verify_fn, capsys):
     assert "bias" in capsys.readouterr().out
 
 
-def test_error_scale_bias_white_at_zero(plot_mod):
+def test_replot_from_spec(tmp_path, plot_fn, verify_fn):
+    obs = write_zarr(_week(event_at=[(0, 0)], fill=1.0), tmp_path / "obs.zarr")
+    fc = write_zarr(_week(event_at=[(0, 0)], fill=3.0), tmp_path / "fc.zarr")
+    vpath = tmp_path / "bias.zarr"
+    _run_verify(verify_fn, fc, obs, vpath, metric="bias")
+    first = tmp_path / "verify_bias.png"
+    run_skill(
+        plot_fn,
+        "--obs",
+        str(obs),
+        "--forecast",
+        str(fc),
+        "--verify",
+        str(vpath),
+        "--title",
+        "Original",
+        "--dump-spec",
+        str(tmp_path / "verify_bias.plot.json"),
+    )
+    spec_path = tmp_path / "verify_bias.plot.json"
+    data = json.loads(spec_path.read_text())
+    assert any(item.get("id") == "verify1" for item in data["inputs"])
+    data["title"] = "Edited"
+    spec_path.write_text(json.dumps(data))
+    assert not first.exists()
+    assert not first.exists()
+    second = tmp_path / "verify_bias2.png"
+    run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
+    assert second.is_file() and second.stat().st_size > 0
+    history = load_figure_history(second)
+    assert history[-1]["skill"] == "plot-verify"
+    basenames = [item["basename"] for item in history[-1]["input"]]
+    assert "obs.zarr" in basenames and "fc.zarr" in basenames and "bias.zarr" in basenames
+
+
+def test_patch_flag_merges_into_spec(tmp_path, plot_fn, verify_fn):
+    obs = write_zarr(_week(event_at=[(0, 0)], fill=1.0), tmp_path / "obs.zarr")
+    fc = write_zarr(_week(event_at=[(0, 0)], fill=3.0), tmp_path / "fc.zarr")
+    vpath = tmp_path / "bias.zarr"
+    _run_verify(verify_fn, fc, obs, vpath, metric="bias")
+    out = tmp_path / "verify_bias.png"
+    run_skill(
+        plot_fn,
+        "--obs",
+        str(obs),
+        "--forecast",
+        str(fc),
+        "--verify",
+        str(vpath),
+        "--patch",
+        '{"title": "Patched"}',
+        "--dump-spec",
+        str(tmp_path / "verify_bias.plot.json"),
+    )
+    spec = json.loads((tmp_path / "verify_bias.plot.json").read_text())
+    assert spec["title"].startswith("Patched")
+    assert "patch" not in spec
+    assert not out.exists()
+
+
+def test_error_scale_bias_white_at_zero():
     import numpy as np
     import xarray as xr
-    from matplotlib.colors import TwoSlopeNorm
+    from weather_skills_core.plot.maps import error_scale
 
     da = xr.DataArray(np.array([[-2.0, 0.0], [0.5, 3.0]]), name="bias")
-    cmap, norm, vmin, vmax = plot_mod._error_scale(da, "bias")
-    assert cmap.name == "verify_bias"
-    assert isinstance(norm, TwoSlopeNorm)
-    assert norm.vcenter == 0.0
-    assert vmin is None and vmax is None
-    # Midpoint of the colormap is white
-    mid = cmap(0.5)[:3]
-    assert all(c > 0.95 for c in mid)
+    scale = error_scale(da, "bias")
+    assert scale["name"] == "verify_bias"
+    assert scale["cmin"] == -scale["cmax"]
+    assert scale["cmax"] == 3.0
+    colors = scale["colors"]
+    mid = colors[len(colors) // 2]
+    assert mid.lower() in {"#ffffff", "rgb(255,255,255)", "white"}
 
 
-def test_error_scale_mae_white_at_zero(plot_mod):
+def test_error_scale_mae_white_at_zero():
     import numpy as np
     import xarray as xr
+    from weather_skills_core.plot.maps import error_scale
 
     da = xr.DataArray(np.array([[0.0, 1.0], [2.0, 4.0]]), name="mae")
-    cmap, norm, vmin, vmax = plot_mod._error_scale(da, "mae")
-    assert cmap.name == "verify_mae"
-    assert norm is None
-    assert vmin == 0.0
-    assert vmax == 4.0
-    assert all(c > 0.95 for c in cmap(0.0)[:3])
+    scale = error_scale(da, "mae")
+    assert scale["name"] == "verify_mae"
+    assert scale["cmin"] == 0.0
+    assert scale["cmax"] == 4.0
+    assert scale["colors"][0].lower() in {"#ffffff", "white"}
 
 
 def test_verify_count_mismatch_is_refused(tmp_path, plot_fn):
@@ -298,10 +358,6 @@ def test_bbox_slices_before_draw(tmp_path, plot_fn, verify_fn):
     assert out.stat().st_size > 0
 
 
-def test_lakes_are_filled_blue(plot_mod):
-    assert plot_mod._LAKE_FACECOLOR == "#4da6ff"
-
-
 def test_order_week1_first_sorts_week_labels(plot_mod):
     leads, forecasts, verifies, labels = plot_mod._order_week1_first(
         ["Week 4 (init Sep 1)", "Week 1 (init Sep 22)"],
@@ -359,18 +415,3 @@ def test_week_labels_print_week1_to_week4(tmp_path, plot_fn, verify_fn, capsys):
     printed = capsys.readouterr().out
     lines = [ln.split("  ", 1)[0] for ln in printed.splitlines() if ln.startswith("Week ")]
     assert lines == ["Week 1", "Week 4"]
-
-
-def test_colorbars_sit_side_by_side_at_bottom(plot_mod):
-    import matplotlib.pyplot as plt
-
-    fig = plt.figure(figsize=(10, 6))
-    _map_gs, field_cax, verify_cax = plot_mod._verify_figure_layout(fig, n_cols=5)
-    fig.canvas.draw()
-    fx0, fy0, fw, fh = field_cax.get_position().bounds
-    vx0, vy0, _vw, vh = verify_cax.get_position().bounds
-    plt.close(fig)
-    assert fy0 < 0.25 and vy0 < 0.25
-    assert abs(fy0 - vy0) < 0.05
-    assert fx0 + fw <= vx0 + 0.02
-    assert fh < 0.08 and vh < 0.08

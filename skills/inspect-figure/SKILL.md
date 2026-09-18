@@ -21,7 +21,12 @@ near-black, how many distinct colors a downsample has, a 16×10 hex preview,
 and the last `weather_skills_history` step if the file was stamped.
 
 `provenance` is still the skill for the full lineage. `inspect-zarr` is still
-the skill for the Zarr that fed the plot.
+the skill for the Zarr that fed the plot. HTML figures are stamped with
+`<meta name="weather_skills_history">` when HTML is a decorator `--output`;
+this skill does not inspect HTML — use `provenance` for lineage and look at
+the file in a browser. To iterate on a figure, `--dump-spec -` (skips the
+PNG; only when needed) then `--patch`; that is not a QA substitute for this
+skill.
 
 ## When to use
 
@@ -54,7 +59,7 @@ File: map.png  18432 bytes
 Image: 800 × 500 RGB PNG
 Fill: 4% near-white, 1% near-black  unique colors (downsampled): 842
 Flags: ok
-Last skill: plot 0.0.2  style='heatmap' title='Precip'
+Last skill: plot 0.0.2  kind='heatmap' title='Precip'
 Preview:
   #f8f8f8 #e0e0e0 ...
 ```

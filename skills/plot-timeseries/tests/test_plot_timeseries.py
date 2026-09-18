@@ -1,5 +1,6 @@
 """Correctness tests for plot-timeseries."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -241,12 +242,12 @@ def test_date_ticks_are_calendar_dates_not_timestamps():
     import matplotlib.dates as mdates
     import matplotlib.pyplot as plt
     import numpy as np
+    from weather_skills_core.plot.figure import apply_date_ticks
 
-    mod = load_skill("plot-timeseries", "plot_timeseries")
     fig, ax = plt.subplots()
     days = mdates.date2num(np.arange("2026-08-05", "2026-09-10", dtype="datetime64[D]"))
     ax.plot(days, np.arange(len(days)))
-    mod._apply_date_ticks(ax)
+    apply_date_ticks(ax)
     fig.canvas.draw()
     labels = [tick.get_text() for tick in ax.get_xticklabels() if tick.get_text()]
     assert labels
@@ -300,22 +301,9 @@ def test_day_of_year_tick_label():
 
 
 def test_apply_day_of_year_ticks(tmp_path, plot_timeseries):
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
     mod = load_skill("plot-timeseries", "plot_timeseries")
-    fig, ax = plt.subplots()
-    ax.plot([1, 180, 274, 365], [1, 2, 3, 4])
-    ax.set_xlim(1, 366)
-    mod._apply_day_of_year_ticks(ax)
-    fig.canvas.draw()
-    labels = [tick.get_text() for tick in ax.get_xticklabels() if tick.get_text()]
-    assert labels
-    assert "274" not in labels
-    assert any(any(ch.isalpha() for ch in label) for label in labels)
-    plt.close(fig)
+    assert mod._day_of_year_tick_label(1) == "1 Jan"
+    assert "Oct" in mod._day_of_year_tick_label(274)
 
     src = write_zarr(make_gridded(n_time=12, start="2023-01-01"), tmp_path / "in.zarr")
     out = tmp_path / "doy.png"
@@ -344,7 +332,7 @@ def test_bar_writes_png(tmp_path, plot_timeseries):
         str(src),
         "-o",
         str(out),
-        "--style",
+        "--mark",
         "bar",
         "--reduce",
         "latitude",
@@ -369,7 +357,7 @@ def test_bar_grouped_multi_input_writes_png(tmp_path, plot_timeseries):
         str(b),
         "-o",
         str(out),
-        "--style",
+        "--mark",
         "bar",
         "--reduce",
         "latitude",
@@ -383,7 +371,7 @@ def test_bar_grouped_multi_input_writes_png(tmp_path, plot_timeseries):
     assert out.stat().st_size > 0
     history = load_figure_history(out)
     assert history[-1]["skill"] == "plot-timeseries"
-    assert history[-1]["args"]["style"] == "bar"
+    assert history[-1]["args"]["mark"] == "bar"
 
 
 def test_bar_forecast_step_writes_png(tmp_path, plot_timeseries):
@@ -397,7 +385,7 @@ def test_bar_forecast_step_writes_png(tmp_path, plot_timeseries):
         str(src),
         "-o",
         str(out),
-        "--style",
+        "--mark",
         "bar",
         "--reduce",
         "latitude",
@@ -421,14 +409,14 @@ def test_parse_trace_selector_and_aliases():
         "zorder": 5.0,
     }
     assert str(spec) == "2026:color=black,lw=2.5,ms=7,zorder=5"
-    styled = mod.parse_trace("clim:style=line,ls=--,lw=2.5")
-    assert styled.options == {"style": "line", "linestyle": "--", "linewidth": 2.5}
+    styled = mod.parse_trace("clim:mark=line,ls=--,lw=2.5")
+    assert styled.options == {"mark": "line", "linestyle": "--", "linewidth": 2.5}
     with pytest.raises(argparse.ArgumentTypeError, match="SELECTOR:k=v"):
         mod.parse_trace("black")
     with pytest.raises(argparse.ArgumentTypeError, match="unknown --trace option"):
         mod.parse_trace("1:colour=red")
     with pytest.raises(argparse.ArgumentTypeError, match="must be line or bar"):
-        mod.parse_trace("1:style=scatter")
+        mod.parse_trace("1:mark=scatter")
 
 
 def test_resolve_trace_styles_star_then_token():
@@ -484,24 +472,32 @@ def test_along_dim_resolves_member_alias():
 
 
 def test_draw_lines_along_is_one_call_one_legend_entry():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
     import numpy as np
+    from weather_skills_core.plot.charts import compile_lines
 
-    mod = load_skill("plot-timeseries", "plot_timeseries")
-    fig, ax = plt.subplots()
     y = np.column_stack([np.arange(4.0), np.arange(4.0) + 1.0, np.arange(4.0) + 2.0])
     series = [([1, 2, 3, 4], y, "ens")]
-    mod._draw_lines(ax, series, [{}])
-    assert len(ax.get_lines()) == 3
-    colors = {line.get_color() for line in ax.get_lines()}
-    assert len(colors) == 1
-    handles, labels = mod._legend_handles(ax, series)
-    assert labels == ["ens"]
-    assert len(handles) == 1
-    plt.close(fig)
+    fig = compile_lines(series, styles=[{}]).fig
+    lines = fig.axes[0].lines
+    assert len(lines) == 3
+    assert lines[0].get_label() == "ens"
+    assert all(ln.get_label() == "_nolegend_" for ln in lines[1:])
+
+
+def test_draw_lines_along_cycle_uses_distinct_colors():
+    import numpy as np
+    from matplotlib.colors import to_hex
+    from weather_skills_core.plot.charts import compile_lines
+
+    y = np.column_stack([np.arange(4.0), np.arange(4.0) + 1.0, np.arange(4.0) + 2.0])
+    series = [([1, 2, 3, 4], y, "ens")]
+    fig = compile_lines(
+        series,
+        styles=[{"along_color": "cycle", "along_labels": ["0", "1", "2"]}],
+    ).fig
+    lines = fig.axes[0].lines
+    assert len({to_hex(ln.get_color()) for ln in lines}) == 3
+    assert [ln.get_label() for ln in lines] == ["0", "1", "2"]
 
 
 def test_along_number_writes_png(tmp_path, plot_timeseries):
@@ -526,6 +522,81 @@ def test_along_number_writes_png(tmp_path, plot_timeseries):
     assert out.stat().st_size > 0
     history = load_figure_history(out)
     assert history[-1]["args"]["along"] == "number"
+
+
+def test_along_color_cycle_writes_png(tmp_path, plot_timeseries):
+    ds = make_forecast(members=3)
+    ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
+    src = write_zarr(ds, tmp_path / "ens.zarr")
+    out = tmp_path / "cycle.png"
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+        "--along",
+        "number",
+        "--along-color",
+        "cycle",
+    )
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+    history = load_figure_history(out)
+    assert history[-1]["args"]["along_color"] == "cycle"
+
+
+def test_band_with_along_writes_png(tmp_path, plot_timeseries):
+    ds = make_forecast(members=8)
+    ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
+    src = write_zarr(ds, tmp_path / "ens.zarr")
+    out = tmp_path / "band.png"
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+        "--along",
+        "number",
+        "--band",
+        "10,90",
+        "--theme",
+        "colorblind",
+    )
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+    history = load_figure_history(out)
+    assert history[-1]["args"]["along"] == "number"
+    assert history[-1]["args"]["band"] == "10,90"
+
+
+def test_band_without_along_exits(tmp_path, plot_timeseries):
+    ds = make_forecast(members=3)
+    ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
+    src = write_zarr(ds, tmp_path / "ens.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            plot_timeseries,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "no.png"),
+            "--reduce",
+            "latitude",
+            "--reduce",
+            "longitude",
+            "--band",
+            "10,90",
+        )
 
 
 def test_along_member_alias_and_1d_overlay(tmp_path, plot_timeseries):
@@ -633,7 +704,7 @@ def test_along_bar_overlay_writes_png(tmp_path, plot_timeseries):
         str(ens_path),
         "-o",
         str(out),
-        "--style",
+        "--mark",
         "bar",
         "--reduce",
         "latitude",
@@ -650,14 +721,11 @@ def test_along_bar_overlay_writes_png(tmp_path, plot_timeseries):
 
 
 def test_draw_lines_applies_color_and_width():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.colors as mcolors
-    import matplotlib.pyplot as plt
+    from matplotlib.colors import to_rgb
+    from weather_skills_core.plot.charts import compile_lines
+    from weather_skills_core.plot.theme import mpl_color
 
     mod = load_skill("plot-timeseries", "plot_timeseries")
-    fig, ax = plt.subplots()
     series = [([1, 2], [0.0, 1.0], "chirps_2006"), ([1, 2], [1.0, 2.0], "chirps_2026")]
     styles = mod.resolve_trace_styles(
         ["chirps_2006", "chirps_2026"],
@@ -666,12 +734,11 @@ def test_draw_lines_applies_color_and_width():
             mod.parse_trace("2026:color=black,linewidth=3"),
         ],
     )
-    mod._draw_lines(ax, series, styles)
-    lines = ax.get_lines()
-    assert mcolors.to_hex(lines[0].get_color()) == mcolors.to_hex("0.65")
-    assert mcolors.to_hex(lines[1].get_color()) == "#000000"
+    fig = compile_lines(series, styles=styles).fig
+    lines = fig.axes[0].lines
+    assert to_rgb(lines[0].get_color()) == to_rgb(mpl_color("0.65"))
+    assert to_rgb(lines[1].get_color()) == to_rgb("black")
     assert lines[1].get_linewidth() == 3
-    plt.close(fig)
 
 
 def test_trace_writes_png_and_stamps_args(tmp_path, plot_timeseries):
@@ -712,7 +779,7 @@ def test_trace_bar_rejects_linewidth(tmp_path, plot_timeseries):
             str(src),
             "-o",
             str(tmp_path / "bars.png"),
-            "--style",
+            "--mark",
             "bar",
             "--reduce",
             "latitude",
@@ -725,40 +792,30 @@ def test_trace_bar_rejects_linewidth(tmp_path, plot_timeseries):
 
 
 def test_draw_mixed_bars_and_line():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    from weather_skills_core.plot.charts import compile_lines
 
     mod = load_skill("plot-timeseries", "plot_timeseries")
-    fig, ax = plt.subplots()
     series = [
         ([1.0, 2.0, 3.0], [1.0, 2.0, 1.5], "obs"),
         ([1.0, 2.0, 3.0], [0.8, 1.1, 0.9], "clim"),
     ]
     styles = mod.resolve_trace_styles(
         ["obs", "clim"],
-        [mod.parse_trace("clim:style=line,linestyle=--,linewidth=2.5,marker=none")],
+        [mod.parse_trace("clim:mark=line,linestyle=--,linewidth=2.5,marker=none")],
     )
-    mod._draw_traces(ax, series, styles, "bar")
+    fig = compile_lines(series, kinds=["bar", "line"], styles=styles).fig
+    ax = fig.axes[0]
+    handles, labels = ax.get_legend_handles_labels()
+    assert "obs" in labels
+    assert "clim" in labels
     assert len(ax.patches) == 3
-    assert len(ax.get_lines()) == 1
-    line = ax.get_lines()[0]
-    assert line.get_linestyle() == "--"
-    assert line.get_linewidth() == 2.5
-    handles, labels = mod._legend_handles(ax, series)
-    assert labels == ["obs", "clim"]
-    assert handles[1] is line
-    plt.close(fig)
+    assert ax.lines[0].get_label() == "clim"
+    assert ax.lines[0].get_linewidth() == 2.5
 
 
 def test_place_legend_below_axis():
-    import matplotlib
+    from weather_skills_core.plot.charts import compile_lines
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    mod = load_skill("plot-timeseries", "plot_timeseries")
     labels = [
         "2006 (analog)",
         "2015 (analog)",
@@ -768,22 +825,13 @@ def test_place_legend_below_axis():
         "2026 ECMWF S2S members",
         "ECMWF S2S ensemble mean",
     ]
-    fig, ax = plt.subplots(figsize=(16, 9), layout="constrained")
-    series = []
-    for i, label in enumerate(labels):
-        y = [1.0 + 0.1 * i, 2.0 + 0.1 * i]
-        ax.plot([1, 2], y, label=label)
-        series.append(([1, 2], y, label))
-    handles, legend_labels = mod._legend_handles(ax, series)
-    legend = mod._place_legend_below(ax, handles, legend_labels)
+    series = [([1, 2], [1.0 + 0.1 * i, 2.0 + 0.1 * i], label) for i, label in enumerate(labels)]
+    fig = compile_lines(series, figsize=(16, 9)).fig
     fig.canvas.draw()
-    renderer = fig.canvas.get_renderer()
-    legend_bbox = legend.get_window_extent(renderer)
-    fig_bbox = fig.bbox
-    assert legend_bbox.y0 >= fig_bbox.y0 - 1
-    assert legend_bbox.y1 <= fig_bbox.y1 + 1
-    assert legend_bbox.y1 < ax.get_window_extent(renderer).y0
-    plt.close(fig)
+    ax = fig.axes[0]
+    legend = ax.get_legend()
+    assert legend is not None
+    assert legend.get_window_extent().y1 < ax.get_window_extent().y0
 
 
 def test_trace_per_series_style_bar_plus_line(tmp_path, plot_timeseries):
@@ -798,7 +846,7 @@ def test_trace_per_series_style_bar_plus_line(tmp_path, plot_timeseries):
         str(clim),
         "-o",
         str(out),
-        "--style",
+        "--mark",
         "bar",
         "--reduce",
         "latitude",
@@ -809,15 +857,42 @@ def test_trace_per_series_style_bar_plus_line(tmp_path, plot_timeseries):
         "--label",
         "clim",
         "--trace",
-        "clim:style=line,linestyle=--,linewidth=2.5,marker=none",
+        "clim:mark=line,linestyle=--,linewidth=2.5,marker=none",
     )
     assert Path(out).exists()
     assert out.stat().st_size > 0
     history = load_figure_history(out)
-    assert history[-1]["args"]["style"] == "bar"
+    assert history[-1]["args"]["mark"] == "bar"
     assert history[-1]["args"]["trace"] == [
-        "clim:style=line,linestyle=--,linewidth=2.5,marker=none"
+        "clim:mark=line,linestyle=--,linewidth=2.5,marker=none"
     ]
+
+
+def test_bar_mode_stacked_writes_png(tmp_path, plot_timeseries):
+    a = write_zarr(make_gridded(fill=1.0), tmp_path / "a.zarr")
+    b = write_zarr(make_gridded(fill=0.5), tmp_path / "b.zarr")
+    out = tmp_path / "stacked.png"
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(out),
+        "--mark",
+        "bar",
+        "--bar-mode",
+        "stacked",
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+    )
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+    history = load_figure_history(out)
+    assert history[-1]["args"]["bar_mode"] == "stacked"
 
 
 def test_trace_unmatched_selector_exits(tmp_path, plot_timeseries):
@@ -837,3 +912,105 @@ def test_trace_unmatched_selector_exits(tmp_path, plot_timeseries):
             "2026:color=black",
         )
     assert exc.value.code == 2
+
+
+def test_replot_from_spec(tmp_path, plot_timeseries):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    first = tmp_path / "ts.png"
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(src),
+        "--mark",
+        "bar",
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+        "--title",
+        "Original",
+        "--dump-spec",
+        str(tmp_path / "ts.plot.json"),
+    )
+    spec_path = tmp_path / "ts.plot.json"
+    data = json.loads(spec_path.read_text())
+    assert data["traces"][0]["mark"] == "bar"
+    assert data["traces"][0]["reduce"] == ["latitude", "longitude"]
+    assert data["layout"]["bar_mode"] == "grouped"
+    assert data["axes"] == {}
+    assert not first.exists()
+    data["title"] = "Edited"
+    data["axes"] = {"yticks": [0.0, 0.5, 1.0]}
+    spec_path.write_text(json.dumps(data))
+    second = tmp_path / "ts2.png"
+    second_spec = tmp_path / "ts2.plot.json"
+    run_skill(
+        plot_timeseries,
+        "--spec",
+        str(spec_path),
+        "--dump-spec",
+        str(second_spec),
+    )
+    assert not second.exists()
+    replotted = json.loads(second_spec.read_text())
+    assert replotted["axes"]["yticks"] == [0.0, 0.5, 1.0]
+    assert replotted["title"] == "Edited"
+    run_skill(
+        plot_timeseries,
+        "--spec",
+        str(spec_path),
+        "-o",
+        str(second),
+    )
+    assert second.is_file() and second.stat().st_size > 0
+    history = load_figure_history(second)
+    assert history[-1]["skill"] == "plot-timeseries"
+    assert history[-1]["input"]["basename"] == "in.zarr"
+
+
+def test_dump_spec_bar_mode_stacked(tmp_path, plot_timeseries):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "ts.png"
+    spec_path = tmp_path / "ts.plot.json"
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(src),
+        "--mark",
+        "bar",
+        "--bar-mode",
+        "stacked",
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+        "--dump-spec",
+        str(spec_path),
+    )
+    data = json.loads(spec_path.read_text())
+    assert data["layout"]["bar_mode"] == "stacked"
+    assert data["traces"][0]["mark"] == "bar"
+    assert not out.exists()
+
+
+def test_patch_flag_merges_into_spec(tmp_path, plot_timeseries):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "ts.png"
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(src),
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+        "--patch",
+        '{"title": "Patched", "axes": {"xticks": ["2026-08-17"]}}',
+        "--dump-spec",
+        str(tmp_path / "ts.plot.json"),
+    )
+    spec = json.loads((tmp_path / "ts.plot.json").read_text())
+    assert spec["title"] == "Patched"
+    assert spec["axes"]["xticks"] == ["2026-08-17"]
+    assert "patch" not in spec
+    assert not Path(out).exists()
