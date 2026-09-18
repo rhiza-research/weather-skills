@@ -1564,15 +1564,30 @@ def test_layer_independent_scale(tmp_path, plot_fn):
     assert out.stat().st_size > 0
 
 
-def test_heatmap_writes_plot_spec_sidecar(tmp_path, plot_fn):
+def test_default_heatmap_does_not_write_spec_file(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "map.png"
-
     run_skill(plot_fn, "-i", str(src), "-o", str(out), "--title", "Precip")
+    assert out.is_file() and out.stat().st_size > 0
+    assert not (tmp_path / "map.plot.json").exists()
 
-    sidecar = tmp_path / "map.plot.json"
-    assert sidecar.is_file()
-    spec = json.loads(sidecar.read_text())
+
+def test_heatmap_dump_spec_on_request(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "map.png"
+    spec_path = tmp_path / "map.plot.json"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dump-spec",
+        str(spec_path),
+        "--title",
+        "Precip",
+    )
+    spec = json.loads(spec_path.read_text())
     assert spec["title"] == "Precip"
     assert spec["traces"][0]["kind"] == "heatmap"
     assert spec["layout"]["facet"]["n_panels"] == 2
@@ -1582,8 +1597,18 @@ def test_heatmap_writes_plot_spec_sidecar(tmp_path, plot_fn):
 def test_replot_from_spec(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     first = tmp_path / "map.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(first), "--title", "Original")
     spec_path = tmp_path / "map.plot.json"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(first),
+        "--dump-spec",
+        str(spec_path),
+        "--title",
+        "Original",
+    )
     data = json.loads(spec_path.read_text())
     data["title"] = "Edited"
     spec_path.write_text(json.dumps(data))
@@ -1598,8 +1623,19 @@ def test_replot_from_spec(tmp_path, plot_fn):
 def test_patch_flag_merges_into_spec_and_spec_patch_key_is_refused(tmp_path, plot_fn, capsys):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "map.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--patch", '{"title": "Patched"}')
-    spec, spec_path = _assert_sidecar(out, trace_type="heatmap", title="Patched")
+    spec_path = tmp_path / "map.plot.json"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dump-spec",
+        str(spec_path),
+        "--patch",
+        '{"title": "Patched"}',
+    )
+    spec, spec_path = _assert_dumped_spec(spec_path, trace_type="heatmap", title="Patched")
     assert "patch" not in spec
 
     # The old second home for these edits now names where they belong.
@@ -1611,44 +1647,70 @@ def test_patch_flag_merges_into_spec_and_spec_patch_key_is_refused(tmp_path, plo
     assert "patch" in capsys.readouterr().err
 
 
-def _assert_sidecar(out, *, trace_type, title=None):
-    sidecar = Path(out).with_name(Path(out).stem + ".plot.json")
-    assert sidecar.is_file()
-    spec = json.loads(sidecar.read_text())
+def _assert_dumped_spec(spec_path, *, trace_type, title=None):
+    spec_path = Path(spec_path)
+    assert spec_path.is_file()
+    spec = json.loads(spec_path.read_text())
     assert spec["traces"][0]["kind"] == trace_type
     assert "axes" in spec
     if title is not None:
         assert spec["title"] == title
-    return spec, sidecar
+    return spec, spec_path
 
 
-def test_windrose_writes_plot_spec_sidecar(tmp_path, plot_fn):
+def test_windrose_dump_spec_on_request(tmp_path, plot_fn):
     src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
     out = tmp_path / "rose.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--kind", "windrose", "--title", "Rose")
-    spec, sidecar = _assert_sidecar(out, trace_type="windrose", title="Rose")
+    spec_path = tmp_path / "rose.plot.json"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dump-spec",
+        str(spec_path),
+        "--kind",
+        "windrose",
+        "--title",
+        "Rose",
+    )
+    spec, spec_path = _assert_dumped_spec(spec_path, trace_type="windrose", title="Rose")
     assert spec["inputs"][0]["path"].endswith("wind.zarr")
     second = tmp_path / "rose2.png"
-    run_skill(plot_fn, "--spec", str(sidecar), "-o", str(second))
+    run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
     assert second.is_file() and second.stat().st_size > 0
     history = load_figure_history(second)
     assert history[-1]["skill"] == "plot"
     assert history[-1]["input"]["basename"] == "wind.zarr"
 
 
-def test_quiver_writes_plot_spec_sidecar(tmp_path, plot_fn):
+def test_quiver_dump_spec_on_request(tmp_path, plot_fn):
     src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
     out = tmp_path / "quiver.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--kind", "quiver", "--title", "Wind")
-    spec, sidecar = _assert_sidecar(out, trace_type="quiver", title="Wind")
+    spec_path = tmp_path / "quiver.plot.json"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dump-spec",
+        str(spec_path),
+        "--kind",
+        "quiver",
+        "--title",
+        "Wind",
+    )
+    spec, spec_path = _assert_dumped_spec(spec_path, trace_type="quiver", title="Wind")
     second = tmp_path / "quiver2.png"
-    run_skill(plot_fn, "--spec", str(sidecar), "-o", str(second))
+    run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
     assert second.is_file() and second.stat().st_size > 0
     history = load_figure_history(second)
     assert history[-1]["skill"] == "plot"
 
 
-def test_xy_writes_plot_spec_sidecar(tmp_path, plot_fn):
+def test_xy_dump_spec_on_request(tmp_path, plot_fn):
     iod = make_gridded(n_time=2, start="2024-09-01", name="iod_mode_index", fill=0.4)
     iod = iod.assign_coords(time=np.array(["2024-09-01", "2025-09-01"], dtype="datetime64[ns]"))
     iod["iod_mode_index"].attrs.update(
@@ -1678,27 +1740,40 @@ def test_xy_writes_plot_spec_sidecar(tmp_path, plot_fn):
         "year",
         "-o",
         str(out),
+        "--dump-spec",
+        str(tmp_path / "xy.plot.json"),
         "--title",
         "IOD vs rain",
     )
-    spec, sidecar = _assert_sidecar(out, trace_type="xy", title="IOD vs rain")
+    spec, spec_path = _assert_dumped_spec(tmp_path / "xy.plot.json", trace_type="xy", title="IOD vs rain")
     assert spec["traces"][0]["pair_on"] == "year"
     second = tmp_path / "xy2.png"
-    run_skill(plot_fn, "--spec", str(sidecar), "-o", str(second))
+    run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
     assert second.is_file() and second.stat().st_size > 0
     history = load_figure_history(second)
     assert history[-1]["skill"] == "plot"
 
 
-def test_layer_writes_plot_spec_sidecar(tmp_path, plot_fn):
+def test_layer_dump_spec_on_request(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "layer.png"
-    run_skill(plot_fn, "--layer", f"heatmap:{src}", "-o", str(out), "--title", "Layered")
-    spec, sidecar = _assert_sidecar(out, trace_type="layer", title="Layered")
+    spec_path = tmp_path / "layer.plot.json"
+    run_skill(
+        plot_fn,
+        "--layer",
+        f"heatmap:{src}",
+        "-o",
+        str(out),
+        "--dump-spec",
+        str(spec_path),
+        "--title",
+        "Layered",
+    )
+    spec, spec_path = _assert_dumped_spec(spec_path, trace_type="layer", title="Layered")
     assert spec["layers"][0]["kind"] == "heatmap"
     assert spec["layers"][0]["path"].endswith("in.zarr")
     second = tmp_path / "layer2.png"
-    run_skill(plot_fn, "--spec", str(sidecar), "-o", str(second))
+    run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
     assert second.is_file() and second.stat().st_size > 0
     history = load_figure_history(second)
     assert history[-1]["skill"] == "plot"

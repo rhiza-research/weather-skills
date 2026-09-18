@@ -56,9 +56,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
     [--lead "1-week lead" ...] [--title TEXT] [--fontsize N] [--figsize W,H] \
     [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
     [--bbox N/W/S/E] [--mask-geojson PATH] \
-    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec PATH|-|none]
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
 
-uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py --spec <out.plot.json> -o <out2.png>
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
+    --obs <obs.zarr> --forecast <week1.zarr> --verify <verify_w1.zarr> \
+    -o <out.png> --patch '{"title": "Edited"}'
 ```
 
 ### Arguments
@@ -72,16 +74,17 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py --spec <out.plot.json> -o <out
 - `--verify` — verify Zarr from the `verify` skill for that lead.
   **Once per `--forecast`**, same order. Optional when `--spec` lists verify
   inputs.
-- `--spec` — plot spec JSON (file or inline). Optional; a first run can be
-  CLI flags only. A default run writes
-  `<output-stem>.plot.json` with obs, forecast, and verify paths. Edit and
-  re-run with `--spec`. CLI flags overlay the spec. Spec input paths are
-  opened as Datasets so provenance chains from the Zarr.
-- `--patch` — optional JSON (file or inline) deep-merged onto `--spec` before
-  CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a spec file
-  is rejected.
-- `--dump-spec` — where to write the resolved plot spec. Default:
-  `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
+- `--spec` — optional full plot spec JSON (file or inline). First runs are
+  CLI flags only. Prefer `--patch` for edits. Pass `--spec` only when
+  replaying a dumped object. Spec input paths are opened as Datasets so
+  provenance chains from the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
+  before CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a
+  spec object is rejected.
+- `--dump-spec` — dump the resolved plot spec. Default: skip (PNG only).
+  `-` prints JSON to stdout when you need to inspect knobs before `--patch`.
+  A path writes a file. Token-expensive; omit unless `--patch` needs a key
+  you cannot name from the CLI.
 - `--variable`, `-v` — obs/forecast data variable (verify Zarrs carry
   their own verification variable).
 - `--lead` — column title, once per `--forecast`. Default: `1-week lead`

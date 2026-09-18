@@ -543,11 +543,13 @@ def test_along_color_cycle_writes_png(tmp_path, plot_timeseries):
         "number",
         "--along-color",
         "cycle",
+        "--dump-spec",
+        str(tmp_path / "cycle.plot.json"),
     )
     assert Path(out).exists()
     assert out.stat().st_size > 0
-    sidecar = json.loads((tmp_path / "cycle.plot.json").read_text())
-    assert sidecar["traces"][0]["along_color"] == "cycle"
+    dumped = json.loads((tmp_path / "cycle.plot.json").read_text())
+    assert dumped["traces"][0]["along_color"] == "cycle"
     history = load_figure_history(out)
     assert history[-1]["args"]["along_color"] == "cycle"
 
@@ -906,6 +908,8 @@ def test_replot_from_spec(tmp_path, plot_timeseries):
         "longitude",
         "--title",
         "Original",
+        "--dump-spec",
+        str(tmp_path / "ts.plot.json"),
     )
     spec_path = tmp_path / "ts.plot.json"
     data = json.loads(spec_path.read_text())
@@ -916,9 +920,18 @@ def test_replot_from_spec(tmp_path, plot_timeseries):
     data["axes"] = {"yticks": [0.0, 0.5, 1.0]}
     spec_path.write_text(json.dumps(data))
     second = tmp_path / "ts2.png"
-    run_skill(plot_timeseries, "--spec", str(spec_path), "-o", str(second))
+    second_spec = tmp_path / "ts2.plot.json"
+    run_skill(
+        plot_timeseries,
+        "--spec",
+        str(spec_path),
+        "-o",
+        str(second),
+        "--dump-spec",
+        str(second_spec),
+    )
     assert second.is_file() and second.stat().st_size > 0
-    replotted = json.loads((tmp_path / "ts2.plot.json").read_text())
+    replotted = json.loads(second_spec.read_text())
     assert replotted["axes"]["yticks"] == [0.0, 0.5, 1.0]
     assert replotted["title"] == "Edited"
     history = load_figure_history(second)
@@ -941,6 +954,8 @@ def test_patch_flag_merges_into_spec(tmp_path, plot_timeseries):
         "longitude",
         "--patch",
         '{"title": "Patched", "axes": {"xticks": ["2026-08-17"]}}',
+        "--dump-spec",
+        str(tmp_path / "ts.plot.json"),
     )
     spec = json.loads((tmp_path / "ts.plot.json").read_text())
     assert spec["title"] == "Patched"

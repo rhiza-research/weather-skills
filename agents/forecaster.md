@@ -72,11 +72,11 @@ Prefer small steps over stuffing every filter into one call:
 - **Plotters:** `plot` is the default figure skill, including overlays
   (`--layer heatmap:… --layer scatter:…`). First runs use CLI flags
   (`--title`, `--variable`, `--mask-geojson`, `--figsize`, `--kind`, …).
-  Every figure skill also writes `<stem>.plot.json` next to the PNG. Read
-  that spec, edit `axes` / facet / colormap / annotations, then
-  `plot --spec out.plot.json -o out2.png` (CLI flags overlay the spec).
-  `--spec` is dump/edit/replot, not a requirement for the first PNG.
-  `--patch` is the same merge helper on every figure skill.
+  `--dump-spec -` prints the resolved spec when you need to inspect knobs
+  (token-expensive; skip it when you already know the key). Re-run the same
+  CLI plus `--patch '{"axes": …}'`. There is no `*.plot.json` sidecar.
+  `--spec` is an optional full JSON object, not a requirement for the first
+  PNG. `--patch` is on every figure skill.
   PNG remains the canonical stamped artifact; `inspect-figure` is PNG QA;
   `provenance` reads lineage from the PNG.
   Onset dates from `indicator --detect first` are ordinary `plot` maps (do not
@@ -136,8 +136,8 @@ A plot PNG has two things to inspect, and they are not interchangeable:
   If `inspect-figure` reports `BLANK`, inspect the input Zarr (`inspect-zarr`)
   before regenerating. `inspect-figure` is PNG QA only (not HTML). Stamped
   HTML (`--output *.html`) carries lineage in `<meta name="weather_skills_history">`;
-  use `provenance` on it. The `*.plot.json` sidecar is the iteration object
-  (dump → edit → `--spec`), not a substitute for looking at the PNG.
+  use `provenance` on it. To iterate on a figure, `--dump-spec -` (only
+  when needed) then `--patch`; that is not a substitute for looking at the PNG.
 - **Lineage** — `provenance` reads `weather_skills_history` from PNG `tEXt`
   chunks that `Read` cannot see. Use it for "how was this made, and how do I
   regenerate it?", not as a substitute for looking at the picture.

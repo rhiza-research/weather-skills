@@ -11,7 +11,7 @@ metadata:
 
 # plot-mediogram
 
-Single-point mediogram plotting an ECMWF ensemble forecast distribution against an m-climate (historical) ensemble distribution. For each forecast step, two side-by-side box plots are drawn (forecast left/cyan, m-climate right/red) with the forecast ensemble mean as a black line. A default run writes `<stem>.plot.json` next to the PNG.
+Single-point mediogram plotting an ECMWF ensemble forecast distribution against an m-climate (historical) ensemble distribution. For each forecast step, two side-by-side box plots are drawn (forecast left/cyan, m-climate right/red) with the forecast ensemble mean as a black line.
 
 ## Input schema
 
@@ -29,24 +29,27 @@ Lat/lon selection is nearest-neighbor.
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py -i <forecast.zarr> -i <mclimate.zarr> \
     --lat <lat> --lon <lon> --output <out.png> \
     [--variable NAME] [--title TEXT] [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H] \
-    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec PATH|-|none]
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
 
-uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py --spec <out.plot.json> --output <out2.png>
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py \
+    -i <forecast.zarr> -i <mclimate.zarr> --lat <lat> --lon <lon> \
+    -o <out.png> --patch '{"title": "Edited"}'
 ```
 
 ### Arguments
 - `--input`, `-i` — pass exactly twice: forecast Zarr first, m-climate Zarr second. Optional when `--spec` already lists both paths.
 - `--lat`, `--lon` — point location (nearest-neighbor selection). Optional when `--spec` has `geo.lat` / `geo.lon`.
-- `--spec` — plot spec JSON (file or inline). Optional; a first run can be
-  CLI flags only. A default run writes
-  `<output-stem>.plot.json` with the snapped lat/lon. Edit and re-run with
-  `--spec`. CLI flags overlay the spec. Spec input paths are opened as Datasets
-  so provenance chains from the Zarr.
-- `--patch` — optional JSON (file or inline) deep-merged onto `--spec` before
-  CLI flags overlay. Same knobs as `--spec` (`title`, `axes`, `layout`, …).
-  A `patch` key inside a spec file is rejected.
-- `--dump-spec` — where to write the resolved plot spec. Default:
-  `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
+- `--spec` — optional full plot spec JSON (file or inline). First runs are
+  CLI flags only. Prefer `--patch` for edits. Pass `--spec` only when
+  replaying a dumped object. Spec input paths are opened as Datasets so
+  provenance chains from the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
+  before CLI flags overlay. Same knobs as `--spec` (`title`, `axes`, `layout`,
+  …). A `patch` key inside a spec object is rejected.
+- `--dump-spec` — dump the resolved plot spec. Default: skip (PNG only).
+  `-` prints JSON to stdout when you need to inspect knobs before `--patch`.
+  A path writes a file. Token-expensive; omit unless `--patch` needs a key
+  you cannot name from the CLI.
 - `--output`, `-o` — PNG output path.
 - `--variable`, `-v` — variable name. Defaults to the first data variable in the forecast input.
 - `--title` — optional plot title. Long titles wrap onto a second line.

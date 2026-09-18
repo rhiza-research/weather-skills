@@ -10,7 +10,8 @@ compiler.
 flowchart LR
   CLI[CLI flags] --> Flags[FLAG_TO_SPEC]
   Flags --> Spec[spec.py]
-  Sidecar["*.plot.json"] --> Spec
+  Dump["--dump-spec -"] --> Spec
+  Patch["--patch"] --> Spec
   Zarrs["Decorator-opened Zarrs"] --> Compile
   Spec --> Compile["plot.compile"]
   Compile --> Maps[maps.py]
@@ -19,7 +20,7 @@ flowchart LR
   Charts --> Figure
   Maps --> Out[CompiledFigure]
   Charts --> Out
-  Out --> Export["PNG + sidecar"]
+  Out --> Export["PNG"]
 ```
 
 - **Data** comes only from decorator-opened Zarrs (`-i`, `--layer`,
@@ -27,15 +28,16 @@ flowchart LR
   must not open files itself.
 - **Layout** is JSON with **one home per knob** (see the table below). An
   unknown key is an error naming the canonical path, never a silent no-op.
-  A default run writes `<stem>.plot.json` holding only the values that were
-  actually resolved; edit it and replot with `--spec`.
+  A default run writes only the PNG. `--dump-spec -` prints the resolved
+  spec when you need to inspect knobs; `--patch` submits edits. There is no
+  `*.plot.json` sidecar.
 - **One flag-to-spec bridge.** First runs use CLI flags (`--title`,
   `--variable`, `--mask-geojson`, `--figsize`, `--kind`, …). `--spec` is
-  dump/edit/replot, or a way to pack many knobs as JSON — not a replacement
-  for those flags. `FLAG_TO_SPEC` in `plot/spec.py` is the only place that
-  knows how a CLI flag lands in the spec. Skills read values back through
-  `resolve_flags(spec, **cli)`, which is the single precedence rule:
-  a set CLI value wins, otherwise the spec's value is used.
+  an optional full JSON object (replay a dump, or pack many knobs) — not a
+  replacement for those flags. `FLAG_TO_SPEC` in `plot/spec.py` is the only
+  place that knows how a CLI flag lands in the spec. Skills read values
+  back through `resolve_flags(spec, **cli)`, which is the single
+  precedence rule: a set CLI value wins, otherwise the spec's value is used.
 - **One map renderer.** `heatmap`, `contour`, `quiver` and `--layer` all
   compile through `plot.maps`: a single-input kind is just a one-layer
   figure. `plot --kind heatmap x.zarr` and `plot --layer heatmap:x.zarr`
@@ -110,7 +112,7 @@ CLI and JSON use the same words:
 | `--theme` | `theme.template` (`weather_skills` / `colorblind`) |
 | `--theme-file` | user palette registry (not a spec key) |
 
-Old sidecar keys (`style`, `traces[].type`, `traces[].style`, …) are rejected
+Old dumped-spec keys (`style`, `traces[].type`, `traces[].style`, …) are rejected
 with a relocation message. There is no silent rewrite.
 
 Key details:
@@ -122,7 +124,7 @@ Key details:
   `xlim`/`ylim`, labels, `xticks`/`yticks` (list or `{values, labels}`),
   `tick_params`, locators (`auto`/`log`/`maxn`/`null`/`multiple`), formatters
   (`scalar`/`log`/`percent`/`date`/`format`/`dayofyear`), spines, grid,
-  legend, `twinx`/`twiny`. A sidecar dumps only the keys you set; the full
+  legend, `twinx`/`twiny`. A dump includes only the keys you set; the full
   editable catalog is `AXES_TEMPLATE` in `plot/figure.py`.
 - **`theme.colormap`**: a matplotlib name, a comma-separated color list, or
   `{colors, bounds, under, over}` for a discrete `BoundaryNorm` scale.
@@ -140,10 +142,10 @@ Key details:
   reads a `patch` object, so there is one place a title or annotation can
   live.
 
-Dump → edit → `--spec out.plot.json` is the replot loop, not the first run.
-Pass `--title` / `--variable` / `--figsize` (and the rest) as CLI flags;
-`--spec` and `--patch` are optional. CLI flags overlay the spec. Provenance
-still chains from the Zarrs.
+`--dump-spec -` (only when needed) then `--patch` is the edit loop, not the
+first run. Pass `--title` / `--variable` / `--figsize` (and the rest) as CLI
+flags; `--spec` and `--patch` are optional. CLI flags overlay the spec.
+Provenance still chains from the Zarrs.
 
 Neither `plot --kind timeseries` nor `plot-timeseries` will average a leftover
 dim — pass `--reduce` per dim or `--along` to fan it out.
@@ -152,10 +154,10 @@ dim — pass `--reduce` per dim or `--along` to fan it out.
 
 ## Suggested evaluation path
 
-1. One heatmap: `plot -i … -o out.png` → read `out.plot.json` → change
-   `axes.spines` / `layout.colorbar` → `--spec` replot.
+1. One heatmap: `plot -i … -o out.png`. If you need a knob that is not a
+   CLI flag, re-run with `--dump-spec -`, then the same CLI plus `--patch`
+   (`axes.spines`, `layout.colorbar`, …).
 2. Analog-year spaghetti: `plot-timeseries --along` / `--band` /
-   `--align-day-of-year` → edit `axes.xticks` and `line`.
+   `--align-day-of-year` → `--patch` `axes.xticks` and `line`.
 3. Two-row compare, a mediogram, and a windrose or `--layer` map: confirm
-   the sidecar contains the same `axes` keys and that `--spec` changes
-   ticks/legend without re-passing `--kind` / `--layer`.
+   `--patch` changes ticks/legend without re-passing `--kind` / `--layer`.

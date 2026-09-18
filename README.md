@@ -70,13 +70,12 @@ credentialed or source-specific fetcher only when it does not.
 ### Figure skills
 
 `plot`, `plot-timeseries`, `plot-compare`, `plot-compare-forecasts`,
-`plot-verify`, and `plot-mediogram` all write a PNG plus a
-`<stem>.plot.json` sidecar. First runs use CLI flags (`--title`,
-`--variable`, `--figsize`, …). Edit `axes` (or annotations / artist kwargs)
-and replot with `--spec`; a set CLI flag still overlays the spec. `--patch`
-is on every figure skill. See
-[docs/plotting.md](docs/plotting.md) for the catalog, the shared JSON spec,
-and remaining limits.
+`plot-verify`, and `plot-mediogram` all write a PNG. First runs use CLI
+flags (`--title`, `--variable`, `--figsize`, …). `--dump-spec -` prints
+the resolved spec when you need to inspect knobs; `--patch` submits edits.
+There is no `*.plot.json` sidecar. A set CLI flag still overlays the spec.
+See [docs/plotting.md](docs/plotting.md) for the catalog, the shared JSON
+spec, and remaining limits.
 
 | Skill | Use when |
 |---|---|

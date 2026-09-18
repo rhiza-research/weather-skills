@@ -27,9 +27,8 @@ Source-agnostic visualization. Single-input kinds (`-i`) plus layered maps
   blank. Ensemble members (`number` dim) are averaged. Use `--index` to
   override the default reduction for any other extra dim. Precipitation totals
   default to a nested absolute-mm palette (same color = same millimetres;
-  the colorbar window follows `aggregation_period`). A default run writes `*.plot.json` next
-  to the PNG so you can edit layout/annotations (including axis-label
-  position) and replot with `--spec`.
+  the colorbar window follows `aggregation_period`). Dump the resolved spec
+  with `--dump-spec -` only when you need to inspect knobs, then `--patch`.
 - `contour` — the same map layout as `heatmap` (panels, shared color scale,
   colorbar, geo overlays, `--bbox` / `--mask-geojson` / `--extent` /
   `--cities` / `--index` / `--draw-box` / `--rows` / `--columns`), compiled
@@ -62,8 +61,7 @@ Source-agnostic visualization. Single-input kinds (`-i`) plus layered maps
   samples (does **not** average the ensemble — a frequency rose needs the
   members). `--bbox` / `--mask-geojson` / `--index` subset samples first.
   16 compass sectors; speed classes 0–2, 2–4, …, ≥12 m/s (empty high-speed
-  bins dropped). `--colormap` colors the speed stacks (default blue→orange).
-  A default run writes `*.plot.json` next to the PNG.
+  bins dropped).   `--colormap` colors the speed stacks (default blue→orange).
 - `quiver` — wind-vector map: speed as `pcolormesh` (`YlGn` by default,
   matching `plot_s2s` 10 m / 700 hPa `10m-wind_vectors.png`) with native-grid
   `u`/`v` arrows like `plot_wind_and_sst_anomaly` (optional `--quiver-step`
@@ -131,7 +129,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --input <in.zarr> --output <out.png> 
     [--bbox N/W/S/E] \
     [--mask-geojson PATH] [--draw-box N/W/S/E ...] \
     [--rows N] [--columns N] \
-    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec PATH|-|none] \
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH] \
     [--theme-file PATH] [--theme weather_skills|colorblind]
 
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --output <out.png> \
@@ -147,26 +145,25 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
 ### Arguments
 - `--input`, `-i` — Zarr input (single-dataset mode). Mutually exclusive with `--layer`
   and with `--x` / `--y`. Optional when `--spec` already lists input paths.
-- `--spec` — plot spec JSON (file or inline). Optional. A first run can be
-  CLI flags only (`--title`, `--variable`, `--mask-geojson`, `--figsize`, …).
-  A default run of any kind (including `--kind xy` / `windrose` / `quiver`
-  and `--layer`) writes `<output-stem>.plot.json` holding the values it
-  actually resolved (traces, input paths, layer KIND+path, and any `axes`
-  knobs you set). Edit that file and re-run with `--spec`, or pass `--patch`
-  to change a value without editing. CLI flags overlay the spec. Spec input
-  paths are opened as Datasets so provenance still chains from the Zarr.
-- `--patch` — optional JSON (file or inline) deep-merged onto `--spec` before
-  CLI flags overlay. Same knobs as `--spec` (`title`, `axes`, `layout`,
-  `annotations`, `shapes`, `theme`, …). A `patch` key *inside* a spec file
-  is rejected. Colorbar size:
+- `--spec` — optional full plot spec JSON (file or inline). A first run can
+  be CLI flags only (`--title`, `--variable`, `--mask-geojson`, `--figsize`,
+  …). Prefer `--patch` for edits. Pass `--spec` only when replaying a dumped
+  object. Spec input paths are opened as Datasets so provenance still chains
+  from the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
+  (CLI-built, or `--spec` if you passed one) before CLI flags overlay. Same
+  knobs as `--spec` (`title`, `axes`, `layout`, `annotations`, `shapes`,
+  `theme`, …). A `patch` key *inside* a spec object is rejected. Colorbar size:
   `{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}`.
   Reposition a polar windrose frequency label with
   `{"axes": {"ylabel": {"coords": [1.15, 0.5], "rotation": 0}}}`.
-- `--dump-spec` — where to write the resolved plot spec. Default:
-  `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
+- `--dump-spec` — dump the resolved plot spec. Default: skip (PNG only).
+  `-` prints JSON to stdout when you need to inspect knobs before `--patch`.
+  A path writes a file. Token-expensive; omit unless `--patch` needs a key
+  you cannot name from the CLI.
 - `--theme` — `weather_skills` (seaborn `deep` colorway, default) or
   `colorblind`. Heatmap classified precip palettes are unchanged.
-  Writes `theme.template` in the sidecar.
+  Writes `theme.template` in a dumped spec.
 - `--theme-file` — user palette registry (JSON or TOML). Unknown keys are an
   error. Named `--colormap` values resolve against this file, then
   `~/.config/weather-skills/plot.toml`.
@@ -364,8 +361,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
 
 ### Output
 
-A PNG at `--output`. Every kind also writes a resolved
-`<stem>.plot.json` sidecar (override with `--dump-spec`). The colorbar (and timeseries y-axis) label resolves
+A PNG at `--output`. The colorbar (and timeseries y-axis) label resolves
 from variable attrs: `long_name` → `GRIB_name` → bare variable name →
 `"value"`, suffixed with `[units]` when the `units` attr is present. Units
 on the figure are a short display form (`mm/day`, `°C`, `mm`, `m/s`), not the
@@ -497,27 +493,29 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/s2s_10wind.zarr -o /tmp/10m-w
     --kind quiver --bbox 5/34/-5/42 --title "10 m wind"
 ```
 
-## Iterate on a plot (dump → edit → replot)
+## Inspect and edit a plot (stateless)
+
+PNG is the only artifact. There is no `*.plot.json` sidecar.
 
 Every kind compiles a small weather-skills JSON spec (Zarr paths and layout,
 not the raster `z` grid). The first PNG does not need `--spec`: pass
 `--title`, `--variable`, `--mask-geojson`, `--figsize`, and the rest as CLI
-flags. A default run also writes `<output-stem>.plot.json` next to the PNG
-holding the values it **resolved** (traces, input paths, and for maps
-`layout.facet` / colormap / extent). Unset knobs are omitted, so every line
-in the sidecar is something the figure actually used.
+flags.
 
-1. `plot -i data.zarr -o out.png --title "Precip" --variable precip` writes
-   `out.png` + `out.plot.json`.
-2. Read `out.plot.json`. Change facet/colormap/annotations, or pass `--patch`
-   on the CLI (`layout`, `annotations`, `shapes`, `axes`). Do not add a
-   `patch` key inside the sidecar; that is rejected.
-3. `plot --spec out.plot.json -o out2.png` re-renders. CLI flags overlay
-   the spec (`--title`, `--colormap`, `--index`). Spec input Zarrs are
-   opened as Datasets so provenance chains from the Zarr, not the previous PNG.
+1. `plot -i data.zarr -o out.png --title "Precip" --variable precip`
+2. If a knob is not a CLI flag (or you need to see the resolved object),
+   re-run the same command with `--dump-spec -` and read stdout. Do this
+   only when needed — the full JSON is token-expensive.
+3. Re-run the same CLI plus `--patch '{"axes": {"xticks": [...]}}'`.
+   Do not pass the full dumped spec back unless you are replaying it with
+   `--spec`.
 
-`--dump-spec -` prints the spec on stdout. `--dump-spec none` skips the sidecar.
-`--patch '{"title": "Edited"}'` sets spec values without editing the file —
+`--patch` merges onto this invocation's spec (CLI-built, or `--spec` if you
+passed one). A `patch` key inside a spec object is rejected.
+`--dump-spec PATH` writes a file for tests or local editing; agents should
+prefer stdout (`-`) then `--patch`.
+
+`--patch '{"title": "Edited"}'` sets spec values without a dump —
 handy for title, annotations, shapes, axis-label position, and colorbar size.
 Shorten a colorbar with
 `--patch '{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}'`.
@@ -535,7 +533,7 @@ the seaborn theme, so they win. Backend / interactive keys (`backend`,
 
 | Spec key | Matplotlib surface |
 | --- | --- |
-| `axes` | Matplotlib Axes config applied after the data are drawn: scales, limits, labels, **ticks** (`xticks`/`yticks` lists or `{values, labels}`), locators, formatters, spines, grid, legend, twins. `xlabel` / `ylabel` may be a string or `{text, loc, pad, coords, rotation, ha, va, …}` (`coords` is `[x, y]` in axes fraction; omit `text` to keep the already-drawn label). Same object on every figure skill. A sidecar dumps only the keys you set. |
+| `axes` | Matplotlib Axes config applied after the data are drawn: scales, limits, labels, **ticks** (`xticks`/`yticks` lists or `{values, labels}`), locators, formatters, spines, grid, legend, twins. `xlabel` / `ylabel` may be a string or `{text, loc, pad, coords, rotation, ha, va, …}` (`coords` is `[x, y]` in axes fraction; omit `text` to keep the already-drawn label). Same object on every figure skill. A dump includes only the keys you set. |
 | `annotations` | `ax.text` or `ax.annotate` (`xy`, `xytext`, `arrowprops`, fonts, `bbox`). `xref: paper` / `transform: axes` uses axes fraction. `axes`/`panel` picks a subplot |
 | `shapes` | `rect`, `hline`, `vline`, `hspan`, `vspan`, `line`, `circle`/`ellipse` |
 | `traces[].line` / `.mesh` / `.contour` / `.scatter` / `.bar` / `.quiver` / `.windrose` | kwargs for the matching artist (`linewidth`, `alpha`, `marker`, `shading`, `levels`, `scale`, `nsector`, …). `contour.lines: false` skips isoline overlay |

@@ -69,27 +69,29 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
     [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H] \
     [--mark line|bar] [--subplots] [--align-day-of-year] [--band LOW,HIGH] \
     [--theme weather_skills|colorblind] [--trace SELECTOR:k=v ...] \
-    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec PATH|-|none]
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
 
-uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py --spec <out.plot.json> --output <out2.png>
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
+    -i <a.zarr> -o <out.png> --dump-spec -   # inspect knobs only when needed
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
+    -i <a.zarr> -o <out.png> --patch '{"axes": {"xticks": ["2026-08-17"]}}'
 ```
 
 ### Arguments
 - `--input`, `-i` — input Zarr; repeat the flag for each input. Order is
   preserved and controls the legend order. Optional when `--spec` already
   lists input paths.
-- `--spec` — plot spec JSON (file or inline). Optional; a first run can be
-  CLI flags only. A default run writes
-  `<output-stem>.plot.json` with resolved inputs, `--reduce`/`--along`,
-  `--mark`, labels, and the shared matplotlib `axes` object (limits, ticks,
-  locators, spines, …). Edit `axes` and re-run with `--spec`. CLI flags
-  overlay the spec. Spec input paths are opened as Datasets so provenance
-  still chains from the Zarr.
-- `--patch` — optional JSON (file or inline) deep-merged onto `--spec` before
-  CLI flags overlay. Same knobs as `--spec` (`title`, `axes`, `layout`, …).
-  A `patch` key inside a spec file is rejected.
-- `--dump-spec` — where to write the resolved plot spec. Default:
-  `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
+- `--spec` — optional full plot spec JSON (file or inline). First runs are
+  CLI flags only. Prefer `--patch` for edits. Pass `--spec` only when
+  replaying a dumped object. Spec input paths are opened as Datasets so
+  provenance still chains from the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
+  before CLI flags overlay. Same knobs as `--spec` (`title`, `axes`, `layout`,
+  …). A `patch` key inside a spec object is rejected.
+- `--dump-spec` — dump the resolved plot spec. Default: skip (PNG only).
+  `-` prints JSON to stdout when you need to inspect knobs before `--patch`.
+  A path writes a file. Token-expensive; omit unless `--patch` needs a key
+  you cannot name from the CLI.
 - `--label` — legend label (overlay) or subplot title (`--subplots`) for each
   `--input`, in order. When omitted, labels are inferred from station
   metadata, filename, or provenance.
@@ -113,8 +115,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py --spec <out.plot.json> --o
   ensemble spaghetti (one color). `cycle` gives each along-value its own
   color and legend entry (the coord value, e.g. member `0` or year `2015`).
   Spec key: `traces[].along_color`. Cannot combine `cycle` with `--band` or
-  with a `--trace color=` on that series. Edit the sidecar and replot with
-  `--spec` to switch without re-passing flags.
+  with a `--trace color=` on that series. `--dump-spec -` then `--patch`
+  `{"traces": [{"along_color": "cycle"}]}` to switch without re-passing flags.
 - `--title` — optional figure title. Titles longer than about 56 characters
   wrap onto a second line at a `·` / `:` / word break.
 - `--xlabel` / `--ylabel` — optional axis-label overrides. When omitted, x is
@@ -282,10 +284,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
     --title "30-day precip vs climatology"
 ```
 
-Replot from the sidecar after editing title/theme/reduce:
+Same CLI plus `--patch` after `--dump-spec -` if you need to inspect knobs:
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
-    --spec /tmp/precip_ts.plot.json \
-    --output /tmp/precip_ts.png
+    -i /tmp/precip.zarr --reduce latitude --reduce longitude \
+    --output /tmp/precip_ts.png \
+    --patch '{"title": "Edited", "theme": {"template": "colorblind"}}'
 ```

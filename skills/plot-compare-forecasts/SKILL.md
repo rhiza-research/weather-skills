@@ -54,9 +54,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.z
     [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
     [--vmin N] [--vmax N] \
     [--bbox N/W/S/E] [--mask-geojson PATH] [--panels N] \
-    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec PATH|-|none]
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
 
-uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py --spec <out.plot.json> --output <out2.png>
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py \
+    -i <a.zarr> -i <b.zarr> -o <out.png> --patch '{"title": "Edited"}'
 ```
 
 ### Arguments
@@ -64,16 +65,17 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py --spec <out.plot.js
   Order is the row order. Each panel's y-axis is that row's name
   (`weather_skills_source` when stamped, else `input 1`, `input 2`, …).
   Optional when `--spec` already lists input paths.
-- `--spec` — plot spec JSON (file or inline). Optional; a first run can be
-  CLI flags only. A default run writes
-  `<output-stem>.plot.json`. Edit and re-run with `--spec`. CLI flags overlay
-  the spec. Spec input paths are opened as Datasets so provenance chains from
-  the Zarr.
-- `--patch` — optional JSON (file or inline) deep-merged onto `--spec` before
-  CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a spec file
-  is rejected.
-- `--dump-spec` — where to write the resolved plot spec. Default:
-  `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
+- `--spec` — optional full plot spec JSON (file or inline). First runs are
+  CLI flags only. Prefer `--patch` for edits. Pass `--spec` only when
+  replaying a dumped object. Spec input paths are opened as Datasets so
+  provenance chains from the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
+  before CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a
+  spec object is rejected.
+- `--dump-spec` — dump the resolved plot spec. Default: skip (PNG only).
+  `-` prints JSON to stdout when you need to inspect knobs before `--patch`.
+  A path writes a file. Token-expensive; omit unless `--patch` needs a key
+  you cannot name from the CLI.
 - `--label` — row label for each `--input`, in order. Overrides the default
   y-axis names when passed.
 - `--output`, `-o` — PNG output path.

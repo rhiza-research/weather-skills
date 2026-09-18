@@ -50,6 +50,8 @@ def test_patch_flag_merges_into_spec(tmp_path, plot_compare):
         "2",
         "--patch",
         '{"title": "Patched"}',
+        "--dump-spec",
+        str(tmp_path / "cmp.plot.json"),
     )
     spec = json.loads((tmp_path / "cmp.plot.json").read_text())
     assert spec["title"] == "Patched"
@@ -203,6 +205,8 @@ def test_replot_from_spec(tmp_path, plot_compare):
         "2",
         "--title",
         "Original",
+        "--dump-spec",
+        str(tmp_path / "cmp.plot.json"),
     )
     spec_path = tmp_path / "cmp.plot.json"
     data = json.loads(spec_path.read_text())
