@@ -6,10 +6,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 from conftest import load_skill, make_forecast, make_gridded, make_point_obs, run_skill, write_zarr
-from weather_skills_core import figure as ws_figure
-from weather_skills_core import plot_compile as ws_compile
-from weather_skills_core import plot_geo, plot_layers
-from weather_skills_core import plot_spec as ws_spec
+from weather_skills_core.plot import compile as ws_compile
+from weather_skills_core.plot import figure as ws_figure
+from weather_skills_core.plot import geo as plot_geo
+from weather_skills_core.plot import layers as plot_layers
+from weather_skills_core.plot import spec as ws_spec
 from weather_skills_core.provenance import load_figure_history
 
 plot_mod = load_skill("plot", "plot")
@@ -34,7 +35,7 @@ def test_fontsize_writes_png(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "map.png"
 
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--fontsize", "22", "--title", "Large")
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"style":{"fontsize":22},"title":"Large"}')
 
     assert Path(out).exists()
     assert out.stat().st_size > 0
@@ -66,7 +67,7 @@ def test_figsize_writes_png(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "map.png"
 
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--figsize", "7,5", "--title", "Small")
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"layout":{"figsize":[7.0,5.0]},"title":"Small"}')
 
     assert Path(out).exists()
     assert out.stat().st_size > 0
@@ -83,23 +84,7 @@ def test_timeseries_legend_writes_png(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "ts.png"
 
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--style",
-        "timeseries",
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--legend",
-        "upper right",
-        "--figsize",
-        "9x4",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"timeseries"},{"reduce":["latitude"]},{"reduce":["longitude"]}],"legend":"upper right","layout":{"figsize":[9.0,4.0]}}')
 
     assert Path(out).exists()
     assert out.stat().st_size > 0
@@ -128,7 +113,7 @@ def test_heatmap_ignores_legend(tmp_path, plot_fn, capsys):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "map.png"
 
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--legend", "best")
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"legend":"best"}')
 
     assert Path(out).exists()
     assert "ignored for --style heatmap" in capsys.readouterr().err
@@ -151,7 +136,7 @@ def test_contour_writes_png(tmp_path, plot_fn):
     src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "contour.png"
 
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--style", "contour")
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"contour"}]}')
 
     assert Path(out).exists()
     assert out.stat().st_size > 0
@@ -161,7 +146,7 @@ def test_contour_stamps_history(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "contour.png"
 
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--style", "contour", "--title", "Isolines")
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"contour"}],"title":"Isolines"}')
 
     history = load_figure_history(out)
     assert history is not None
@@ -174,7 +159,7 @@ def test_heatmap_stamps_history(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "map.png"
 
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--title", "Precip")
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"title":"Precip"}')
 
     history = load_figure_history(out)
     assert history is not None
@@ -321,40 +306,14 @@ def test_subplot_title_too_many_exits(tmp_path, plot_fn):
     src = write_zarr(make_gridded(n_time=1), tmp_path / "in.zarr")
     out = tmp_path / "map.png"
     with pytest.raises(SystemExit) as exc:
-        run_skill(
-            plot_fn,
-            "-i",
-            str(src),
-            "-o",
-            str(out),
-            "--subplot-title",
-            "A",
-            "--subplot-title",
-            "B",
-        )
+        run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"subplot_titles":["A","B"]}')
     assert exc.value.code == 2
 
 
 def test_cbar_label_writes_png(tmp_path, plot_fn):
     src = write_zarr(make_gridded(n_time=1), tmp_path / "in.zarr")
     out = tmp_path / "map.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--title",
-        "Kenya rainfall",
-        "--subplot-title",
-        "Latest day",
-        "--xlabel",
-        "Lon",
-        "--ylabel",
-        "Lat",
-        "--cbar-label",
-        "Rain (mm)",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"title":"Kenya rainfall","subplot_titles":["Latest day"],"xlabel":"Lon","ylabel":"Lat","cbar_label":"Rain (mm)"}')
     assert Path(out).exists()
     history = load_figure_history(out)
     assert history[-1]["args"]["title"] == "Kenya rainfall"
@@ -446,19 +405,7 @@ def test_timeseries_forecast_writes_png(tmp_path, plot_fn):
     ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
     src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "ts.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--style",
-        "timeseries",
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"timeseries"},{"reduce":["latitude"]},{"reduce":["longitude"]}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -466,7 +413,7 @@ def test_timeseries_forecast_writes_png(tmp_path, plot_fn):
 def test_timeseries_refuses_to_average_leftover_dims(tmp_path, plot_fn, capsys):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     with pytest.raises(SystemExit):
-        run_skill(plot_fn, "-i", str(src), "-o", str(tmp_path / "ts.png"), "--style", "timeseries")
+        run_skill(plot_fn, '-i', str(src), '-o', str(tmp_path / 'ts.png'), '--spec', '{"traces":[{"type":"timeseries"}]}')
     err = capsys.readouterr().err
     assert "--reduce" in err and "--along" in err
 
@@ -475,21 +422,7 @@ def test_timeseries_along_draws_one_line_per_member(tmp_path, plot_fn):
     ds = make_forecast(members=4)
     src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "ts.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--style",
-        "timeseries",
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--along",
-        "number",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"timeseries"},{"reduce":["latitude"]},{"reduce":["longitude"]},{"along":"number"}]}')
     assert Path(out).exists() and out.stat().st_size > 0
 
 
@@ -599,19 +532,7 @@ def test_resolve_color_limits_user_and_auto():
 def test_vmin_vmax_writes_png_and_stamps_history(tmp_path, plot_fn):
     src = write_zarr(make_gridded(fill=8.0), tmp_path / "in.zarr")
     out = tmp_path / "vlim.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--vmin",
-        "0",
-        "--vmax",
-        "20",
-        "--title",
-        "Pinned",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"vmin":0.0,"vmax":20.0,"title":"Pinned"}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
     history = load_figure_history(out)
@@ -752,17 +673,7 @@ def test_heatmap_draw_box_writes_png(tmp_path, plot_fn):
     ds = make_gridded(lats=(-15.0, 0.0, 15.0), lons=(40.0, 70.0, 100.0, 120.0))
     src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "boxes.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--draw-box",
-        "10/50/-10/70",
-        "--draw-box",
-        "0/90/-10/110",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"geo":{"draw_boxes":["10/50/-10/70","0/90/-10/110"]}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -812,7 +723,7 @@ def test_panel_shape_rows_and_columns_allow_blank_cells():
 def test_heatmap_rows_columns_writes_png(tmp_path, plot_fn):
     src = write_zarr(make_forecast(n_step=6), tmp_path / "in.zarr")
     out = tmp_path / "grid.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--rows", "2", "--columns", "3")
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"layout":{"facet":{"rows":2,"columns":3}}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -820,7 +731,7 @@ def test_heatmap_rows_columns_writes_png(tmp_path, plot_fn):
 def test_heatmap_rows_columns_blank_panel_writes_png(tmp_path, plot_fn):
     src = write_zarr(make_forecast(n_step=5), tmp_path / "in.zarr")
     out = tmp_path / "grid.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--rows", "2", "--columns", "3")
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"layout":{"facet":{"rows":2,"columns":3}}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -829,17 +740,7 @@ def test_heatmap_rows_columns_too_small_exits(tmp_path, plot_fn, capsys):
     src = write_zarr(make_forecast(n_step=7), tmp_path / "in.zarr")
     out = tmp_path / "bad.png"
     with pytest.raises(SystemExit):
-        run_skill(
-            plot_fn,
-            "-i",
-            str(src),
-            "-o",
-            str(out),
-            "--rows",
-            "2",
-            "--columns",
-            "3",
-        )
+        run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"layout":{"facet":{"rows":2,"columns":3}}}')
     assert "must hold at least" in capsys.readouterr().err
 
 
@@ -915,7 +816,7 @@ def test_resolve_uv_missing_pair_errors():
 def test_windrose_writes_png(tmp_path, plot_fn):
     src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
     out = tmp_path / "rose.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--style", "windrose")
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"windrose"}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -923,19 +824,7 @@ def test_windrose_writes_png(tmp_path, plot_fn):
 def test_windrose_legend_below_writes_png(tmp_path, plot_fn):
     src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
     out = tmp_path / "rose.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--style",
-        "windrose",
-        "--legend",
-        "below",
-        "--figsize",
-        "6,6",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"windrose"}],"legend":"below","layout":{"figsize":[6.0,6.0]}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -943,17 +832,7 @@ def test_windrose_legend_below_writes_png(tmp_path, plot_fn):
 def test_windrose_stamps_history(tmp_path, plot_fn):
     src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
     out = tmp_path / "rose.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--style",
-        "windrose",
-        "--title",
-        "10 m wind",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"windrose"}],"title":"10 m wind"}')
     history = load_figure_history(out)
     assert history is not None
     assert history[-1]["skill"] == "plot"
@@ -964,21 +843,7 @@ def test_windrose_stamps_history(tmp_path, plot_fn):
 def test_windrose_forecast_and_explicit_vars(tmp_path, plot_fn):
     src = write_zarr(_make_wind(forecast=True, members=2), tmp_path / "fc.zarr")
     out = tmp_path / "rose.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--style",
-        "windrose",
-        "--u-variable",
-        "u10",
-        "--v-variable",
-        "v10",
-        "--index",
-        "step=0",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"windrose"},{"u_variable":"u10"},{"v_variable":"v10"}],"inputs":[{"index":"step=0"}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -987,17 +852,7 @@ def test_windrose_bbox_writes_png(tmp_path, plot_fn):
     ds = _make_wind(lats=(-5.0, 0.0, 5.0), lons=(30.0, 35.0, 40.0, 45.0))
     src = write_zarr(ds, tmp_path / "wind.zarr")
     out = tmp_path / "rose.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--style",
-        "windrose",
-        "--bbox",
-        "3/32/-3/42",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"windrose"}],"geo":{"bbox":"3/32/-3/42"}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -1006,22 +861,14 @@ def test_windrose_missing_uv_exits(tmp_path, plot_fn, capsys):
     src = write_zarr(make_gridded(), tmp_path / "precip.zarr")
     out = tmp_path / "rose.png"
     with pytest.raises(SystemExit):
-        run_skill(plot_fn, "-i", str(src), "-o", str(out), "--style", "windrose")
+        run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"windrose"}]}')
     assert "eastward" in capsys.readouterr().err
 
 
 def test_heatmap_ignores_uv_flags(tmp_path, plot_fn, capsys):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "map.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--u-variable",
-        "u10",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"u_variable":"u10"}]}')
     err = capsys.readouterr().err
     assert "only used with --style windrose or --style quiver" in err
     assert Path(out).exists()
@@ -1037,7 +884,7 @@ def test_wind_speed_da_is_hypot():
 def test_quiver_writes_png(tmp_path, plot_fn):
     src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
     out = tmp_path / "quiver.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--style", "quiver")
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"quiver"}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -1045,17 +892,7 @@ def test_quiver_writes_png(tmp_path, plot_fn):
 def test_quiver_stamps_history(tmp_path, plot_fn):
     src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
     out = tmp_path / "quiver.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--style",
-        "quiver",
-        "--title",
-        "10 m wind",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"quiver"}],"title":"10 m wind"}')
     history = load_figure_history(out)
     assert history is not None
     assert history[-1]["skill"] == "plot"
@@ -1066,21 +903,7 @@ def test_quiver_stamps_history(tmp_path, plot_fn):
 def test_quiver_forecast_panels(tmp_path, plot_fn):
     src = write_zarr(_make_wind(forecast=True, members=2, u=3.0, v=-4.0), tmp_path / "fc.zarr")
     out = tmp_path / "quiver.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--style",
-        "quiver",
-        "--u-variable",
-        "u10",
-        "--v-variable",
-        "v10",
-        "--quiver-scale",
-        "40",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"quiver"},{"u_variable":"u10"},{"v_variable":"v10"},{"quiver":{"scale":40.0}}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -1089,7 +912,7 @@ def test_quiver_missing_uv_exits(tmp_path, plot_fn, capsys):
     src = write_zarr(make_gridded(), tmp_path / "precip.zarr")
     out = tmp_path / "quiver.png"
     with pytest.raises(SystemExit):
-        run_skill(plot_fn, "-i", str(src), "-o", str(out), "--style", "quiver")
+        run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"quiver"}]}')
     assert "eastward" in capsys.readouterr().err
 
 
@@ -1161,19 +984,7 @@ def test_subsample_quiver_stride():
 def test_quiver_step_flag_writes_png(tmp_path, plot_fn):
     src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
     out = tmp_path / "quiver.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--style",
-        "quiver",
-        "--quiver-step",
-        "1",
-        "--quiver-scale",
-        "100",
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"quiver"},{"quiver":{"step":1}},{"quiver":{"scale":100.0}}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -1250,17 +1061,7 @@ def test_layer_heatmap_and_scatter_overlay(tmp_path, plot_fn):
     grid = write_zarr(make_gridded(), tmp_path / "grid.zarr")
     pts = write_zarr(make_point_obs(n_time=2), tmp_path / "pts.zarr")
     out = tmp_path / "overlay.png"
-    run_skill(
-        plot_fn,
-        "--layer",
-        f"heatmap:{grid}",
-        "--layer",
-        f"scatter:{pts}",
-        "-o",
-        str(out),
-        "--title",
-        "grid vs stations",
-    )
+    run_skill(plot_fn, '--layer', f'heatmap:{grid}', '--layer', f'scatter:{pts}', '-o', str(out), '--spec', '{"title":"grid vs stations"}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
     history = load_figure_history(out)
@@ -1392,15 +1193,7 @@ def test_layer_rejects_timeseries_style(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "bad.png"
     with pytest.raises(SystemExit):
-        run_skill(
-            plot_fn,
-            "--layer",
-            f"heatmap:{src}",
-            "--style",
-            "timeseries",
-            "-o",
-            str(out),
-        )
+        run_skill(plot_fn, '--layer', f'heatmap:{src}', '-o', str(out), '--spec', '{"traces":[{"type":"timeseries"}]}')
 
 
 def test_calendar_year_and_pair_key():
@@ -1450,19 +1243,7 @@ def test_xy_writes_png_pair_on_year(tmp_path, plot_fn):
     x_src = write_zarr(iod, tmp_path / "iod.zarr")
     y_src = write_zarr(rain, tmp_path / "rain.zarr")
     out = tmp_path / "xy.png"
-    run_skill(
-        plot_fn,
-        "--style",
-        "xy",
-        "--x",
-        str(x_src),
-        "--y",
-        str(y_src),
-        "--pair-on",
-        "year",
-        "-o",
-        str(out),
-    )
+    run_skill(plot_fn, '--x', str(x_src), '--y', str(y_src), '-o', str(out), '--spec', '{"traces":[{"type":"xy"},{"pair_on":"year"}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
     history = load_figure_history(out)
@@ -1480,48 +1261,20 @@ def test_xy_same_input_two_variables(tmp_path, plot_fn):
     )
     src = write_zarr(ds, tmp_path / "both.zarr")
     out = tmp_path / "xy.png"
-    run_skill(
-        plot_fn,
-        "--style",
-        "xy",
-        "-i",
-        str(src),
-        "--x-variable",
-        "iod_mode_index",
-        "--y-variable",
-        "precip",
-        "-o",
-        str(out),
-    )
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"xy"},{"x_variable":"iod_mode_index"},{"y_variable":"precip"}]}')
     assert Path(out).exists()
 
 
 def test_xy_requires_both_x_and_y(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     with pytest.raises(SystemExit):
-        run_skill(
-            plot_fn,
-            "--style",
-            "xy",
-            "--x",
-            str(src),
-            "-o",
-            str(tmp_path / "out.png"),
-        )
+        run_skill(plot_fn, '--x', str(src), '-o', str(tmp_path / 'out.png'), '--spec', '{"traces":[{"type":"xy"}]}')
 
 
 def test_xy_rejects_layer(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     with pytest.raises(SystemExit):
-        run_skill(
-            plot_fn,
-            "--style",
-            "xy",
-            "--layer",
-            f"heatmap:{src}",
-            "-o",
-            str(tmp_path / "out.png"),
-        )
+        run_skill(plot_fn, '--layer', f'heatmap:{src}', '-o', str(tmp_path / 'out.png'), '--spec', '{"traces":[{"type":"xy"}]}')
 
 
 def test_layer_independent_scale(tmp_path, plot_fn):
@@ -1530,16 +1283,7 @@ def test_layer_independent_scale(tmp_path, plot_fn):
     t2m["t2m"].attrs.update(units="degree_Celsius", standard_name="air_temperature")
     other = write_zarr(t2m, tmp_path / "t2m.zarr")
     out = tmp_path / "indep.png"
-    run_skill(
-        plot_fn,
-        "--layer",
-        f"heatmap:{grid}::variable=precip",
-        "--layer",
-        f"heatmap:{other}::variable=t2m",
-        "--independent-scale",
-        "-o",
-        str(out),
-    )
+    run_skill(plot_fn, '--layer', f'heatmap:{grid}::variable=precip', '--layer', f'heatmap:{other}::variable=t2m', '-o', str(out), '--spec', '{"layout":{"shared_colorscale":false}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -1548,7 +1292,7 @@ def test_heatmap_writes_plot_spec_sidecar(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "map.png"
 
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--title", "Precip")
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"title":"Precip"}')
 
     sidecar = tmp_path / "map.plot.json"
     assert sidecar.is_file()
@@ -1562,7 +1306,7 @@ def test_heatmap_writes_plot_spec_sidecar(tmp_path, plot_fn):
 def test_replot_from_spec(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     first = tmp_path / "map.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(first), "--title", "Original")
+    run_skill(plot_fn, '-i', str(src), '-o', str(first), '--spec', '{"title":"Original"}')
     spec_path = tmp_path / "map.plot.json"
     data = json.loads(spec_path.read_text())
     data["title"] = "Edited"
@@ -1605,7 +1349,7 @@ def _assert_sidecar(out, *, trace_type, title=None):
 def test_windrose_writes_plot_spec_sidecar(tmp_path, plot_fn):
     src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
     out = tmp_path / "rose.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--style", "windrose", "--title", "Rose")
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"windrose"}],"title":"Rose"}')
     spec, sidecar = _assert_sidecar(out, trace_type="windrose", title="Rose")
     assert spec["inputs"][0]["path"].endswith("wind.zarr")
     second = tmp_path / "rose2.png"
@@ -1619,7 +1363,7 @@ def test_windrose_writes_plot_spec_sidecar(tmp_path, plot_fn):
 def test_quiver_writes_plot_spec_sidecar(tmp_path, plot_fn):
     src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
     out = tmp_path / "quiver.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--style", "quiver", "--title", "Wind")
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"type":"quiver"}],"title":"Wind"}')
     spec, sidecar = _assert_sidecar(out, trace_type="quiver", title="Wind")
     second = tmp_path / "quiver2.png"
     run_skill(plot_fn, "--spec", str(sidecar), "-o", str(second))
@@ -1646,21 +1390,7 @@ def test_xy_writes_plot_spec_sidecar(tmp_path, plot_fn):
     x_src = write_zarr(iod, tmp_path / "iod.zarr")
     y_src = write_zarr(rain, tmp_path / "rain.zarr")
     out = tmp_path / "xy.png"
-    run_skill(
-        plot_fn,
-        "--style",
-        "xy",
-        "--x",
-        str(x_src),
-        "--y",
-        str(y_src),
-        "--pair-on",
-        "year",
-        "-o",
-        str(out),
-        "--title",
-        "IOD vs rain",
-    )
+    run_skill(plot_fn, '--x', str(x_src), '--y', str(y_src), '-o', str(out), '--spec', '{"traces":[{"type":"xy"},{"pair_on":"year"}],"title":"IOD vs rain"}')
     spec, sidecar = _assert_sidecar(out, trace_type="xy", title="IOD vs rain")
     assert spec["traces"][0]["pair_on"] == "year"
     second = tmp_path / "xy2.png"
@@ -1673,7 +1403,7 @@ def test_xy_writes_plot_spec_sidecar(tmp_path, plot_fn):
 def test_layer_writes_plot_spec_sidecar(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "layer.png"
-    run_skill(plot_fn, "--layer", f"heatmap:{src}", "-o", str(out), "--title", "Layered")
+    run_skill(plot_fn, '--layer', f'heatmap:{src}', '-o', str(out), '--spec', '{"title":"Layered"}')
     spec, sidecar = _assert_sidecar(out, trace_type="layer", title="Layered")
     assert spec["layers"][0]["kind"] == "heatmap"
     assert spec["layers"][0]["path"].endswith("in.zarr")

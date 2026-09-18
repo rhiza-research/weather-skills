@@ -50,7 +50,9 @@ forecasts with a hits row, use `plot-verify`.
 
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.zarr> [-i <c.zarr> ...] \
-    --output <out.png> [--variable NAME] [--title TEXT] [--fontsize N] [--figsize W,H] [--colormap NAME] [--vmin N] [--vmax N] \
+    --output <out.png> [--variable NAME] [--title TEXT] [--fontsize N] [--figsize W,H] \
+    [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
+    [--vmin N] [--vmax N] \
     [--bbox N/W/S/E] [--mask-geojson PATH] [--panels N] \
     [--spec PATH_OR_JSON] [--dump-spec PATH|-|none]
 
@@ -73,13 +75,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py --spec <out.plot.js
 - `--output`, `-o` — PNG output path.
 - `--variable`, `-v` — variable name. Defaults to the first data variable of
   the first input. Must exist in every input.
-- `--colormap` — matplotlib colormap name, or comma-separated colors to
-  interpolate. When omitted, precipitation totals use the CHIRPS-GEFS
-  total-rainfall classes (same bins as `plot`; sub-pentad
-  `aggregation_period` < 5 days uses the short breaks); precipitation
-  anomalies (negatives, or `anomal` in the name) use the CHIRPS-GEFS
-  diverging classes. Every other variable uses `viridis`. One shared
-  scale across all present cells.
+- `--colormap` — matplotlib colormap name, comma-separated colors, or a
+  `{colors, bounds}` object (`--colormap-bounds` / `--cbar-ticks` /
+  `--cbar-labels`). When omitted, precipitation totals use the CHIRPS-GEFS
+  classes; anomalies use the diverging classes. Every other variable uses
+  `viridis`. One shared scale across all present cells.
 - `--vmin` / `--vmax` — shared colorbar limits. Either may be omitted
   (the unset end uses the data min/max). Setting either one drops the
   default discrete CHIRPS precip classes and stretches those colors (or

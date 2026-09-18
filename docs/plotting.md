@@ -11,8 +11,8 @@ flowchart LR
   Table[FLAG_TO_SPEC table]
   Spec[Canonical JSON spec]
   Data["Named -i Zarrs"]
-  MapRenderer[plot_layers: every map]
-  Recipes[plot_recipes: grids, lines, boxes]
+  MapRenderer[plot.layers: every map]
+  Recipes[plot.recipes: grids, lines, boxes]
   Finish[finish_figure axes annotations shapes]
   PNG[PNG plus plot.json]
 
@@ -34,15 +34,15 @@ flowchart LR
   unknown key is an error naming the canonical path, never a silent no-op.
   A default run writes `<stem>.plot.json` holding only the values that were
   actually resolved; edit it and replot with `--spec`.
-- **One flag-to-spec bridge.** `FLAG_TO_SPEC` in `plot_spec.py` is the only
+- **One flag-to-spec bridge.** `FLAG_TO_SPEC` in `plot/spec.py` is the only
   place that knows how a CLI flag lands in the spec. Skills read values back
   through `resolve_flags(spec, **cli)`, which is the single precedence rule:
   a set CLI value wins, otherwise the spec's value is used.
 - **One map renderer.** `heatmap`, `contour`, `quiver` and `--layer` all
-  compile through `plot_layers`: a single-input style is just a one-layer
+  compile through `plot.layers`: a single-input style is just a one-layer
   figure. `plot --style heatmap x.zarr` and `plot --layer heatmap:x.zarr`
   render pixel-identical output. Overlays (coastlines, borders, filled lakes,
-  admin-1) come from `plot_geo`, which picks a Natural Earth resolution from
+  admin-1) come from `plot.geo`, which picks a Natural Earth resolution from
   the map span and skips a layer with a warning if it cannot be fetched.
 - **Recipes stay Python** (compare grid, verify grid, mediogram boxes).
   There is no generic mosaic DSL.
@@ -75,7 +75,7 @@ average `number` first; use `summarize-dim --dim number --method mean` on
 
 ## Shared JSON spec
 
-Every knob has exactly one home. `normalize_spec` in `plot_spec.py` validates
+Every knob has exactly one home. `normalize_spec` in `plot/spec.py` validates
 against this table and rejects anything else, naming the canonical path for a
 key that used to be readable somewhere else.
 
@@ -84,7 +84,8 @@ key that used to be readable somewhere else.
 | top level | `version`, `skill`, `inputs`, `traces`, `layers`, `axes`, `annotations`, `shapes`, `title`, `subplot_titles`, `xlabel`, `ylabel`, `cbar_label`, `legend`, `vmin`, `vmax` |
 | `layout` | `figsize`, `autosize`, `dpi`, `facecolor`, `colorbar`, `shared_colorscale`, `subplots`, `facet` |
 | `layout.facet` | `rows`, `columns`, `max_columns`, `n_panels` |
-| `style` | `template`, `colormap`, `fontsize`, `rc` |
+| `style` | `template`, `colormap` (name, comma list, or `{name, colors, bounds, under, over, cmap}`), `fontsize`, `rc` |
+| `layout.colorbar` | `len`/`shrink`, `thickness`, `extend`, `pad`, `location`, `ticks`, `labels`, plus matplotlib extras |
 | `geo` | `extent`, `bbox`, `cities`, `mask_geojson`, `draw_boxes`, `overlays`, `lat`, `lon` |
 | `inputs[]` | `id`, `path`, `variable`, `index`, `label`, `colormap`, `role` |
 | `traces[]` | `type`, `input`, `style`, `x`, `y`, `path`, `along`, `reduce`, `align`, `band`, `pair_on`, `u_variable`, `v_variable`, `x_variable`, `y_variable`, `metric`, `leads`, plus the artist blocks |
@@ -98,7 +99,15 @@ Key details:
   `tick_params`, locators (`auto`/`log`/`maxn`/`null`/`multiple`), formatters
   (`scalar`/`log`/`percent`/`date`/`format`/`dayofyear`), spines, grid,
   legend, `twinx`/`twiny`. A sidecar dumps only the keys you set; the full
-  editable set is `AXES_TEMPLATE` in `plot_mpl.py`.
+  editable set is `AXES_TEMPLATE` in `plot/mpl.py`.
+- **`style.colormap`**: a matplotlib name, a comma-separated color list, or
+  `{colors, bounds, under, over}` for a discrete `BoundaryNorm` scale.
+  `len(colors)` is `len(bounds) - 1`, or two extra colors packed as under +
+  classes + over. Named palettes also resolve from `--style-file` /
+  `colormaps` in the user style file.
+- **`layout.colorbar.ticks` / `labels`**: explicit colorbar ticks. Labels
+  need ticks and the same count. CLI: `--colormap-bounds`, `--cbar-ticks`,
+  `--cbar-labels`.
 - **`annotations` / `shapes`**: text/arrows; rect, h/v lines and spans, circle.
 - **`style.rc`**: matplotlib rcParams after seaborn; backend keys rejected.
 - **No `patch` key.** `--patch` is still a CLI convenience — it deep-merges

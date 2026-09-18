@@ -53,7 +53,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
     --forecast <week2.zarr> --verify <verify_w2.zarr> \
     ... \
     -o <out.png> [--variable NAME] \
-    [--lead "1-week lead" ...] [--title TEXT] [--fontsize N] [--figsize W,H] [--colormap NAME] \
+    [--lead "1-week lead" ...] [--title TEXT] [--fontsize N] [--figsize W,H] \
+    [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
     [--bbox N/W/S/E] [--mask-geojson PATH] \
     [--spec PATH_OR_JSON] [--dump-spec PATH|-|none]
 
@@ -90,7 +91,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py --spec <out.plot.json> -o <out
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `14,8`).
   When set, the PNG is that canvas at 150 dpi. When omitted, size follows
   the map grid and crops tightly.
-- `--colormap`, `--title`, `--bbox`, `--mask-geojson`, `--output` — as before.
+- `--colormap`, `--colormap-bounds`, `--cbar-ticks`, `--cbar-labels`,
+  `--title`, `--bbox`, `--mask-geojson`, `--output` — as `plot`.
   A long `--title` (or title plus verifying-week dates) wraps onto a second
   line.
 

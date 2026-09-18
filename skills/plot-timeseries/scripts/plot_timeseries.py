@@ -22,7 +22,7 @@ from pathlib import Path
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable
 from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
-from weather_skills_core.figure import (
+from weather_skills_core.plot.figure import (
     DEFAULT_FONTSIZE,
     format_plot_date,
     is_datetime_axis,
@@ -30,7 +30,7 @@ from weather_skills_core.figure import (
     resolve_axis_label,
     resolve_time_axis_label,
 )
-from weather_skills_core.plot_spec import (
+from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     datasets_from_cli_or_spec,
@@ -40,7 +40,7 @@ from weather_skills_core.plot_spec import (
     spec_input_labels,
     spec_inputs_from_datasets,
 )
-from weather_skills_core.plot_style import along_dim, normalize_template, parse_band
+from weather_skills_core.plot.style import along_dim, normalize_template, parse_band
 from weather_skills_core.standard_utils import pick_time_dim
 from weather_skills_core.units import (
     precip_for_display,
@@ -628,8 +628,8 @@ def plot_timeseries(
         if subplots
         else [_resolve_axis_label(ylabel, y_labels[0])]
     )
-    from weather_skills_core.plot_export import write_plot_outputs
-    from weather_skills_core.plot_recipes import compile_line_figure
+    from weather_skills_core.plot.export import write_plot_outputs
+    from weather_skills_core.plot.recipes import compile_line_figure
 
     if align_day_of_year:
         if not isinstance(spec_data.get("axes"), dict):

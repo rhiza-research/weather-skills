@@ -25,15 +25,7 @@ from pathlib import Path
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
-from weather_skills_core.figure import (
-    DEFAULT_FONTSIZE,
-    add_shared_colorbar,
-    apply_style,
-    parse_figsize,
-    resolve_axis_label,
-    resolve_figsize,
-)
-from weather_skills_core.plot_compile import (
+from weather_skills_core.plot.compile import (
     figsize_from_extent,
     panel_title,
     parse_cities,
@@ -43,12 +35,20 @@ from weather_skills_core.plot_compile import (
     subset_spatial,
     timeseries_axis,
 )
-from weather_skills_core.plot_geo import (
+from weather_skills_core.plot.figure import (
+    DEFAULT_FONTSIZE,
+    add_shared_colorbar,
+    apply_style,
+    parse_figsize,
+    resolve_axis_label,
+    resolve_figsize,
+)
+from weather_skills_core.plot.geo import (
     draw_box_outlines,
     draw_geo_overlays,
     load_geo_overlays,
 )
-from weather_skills_core.plot_layers import (
+from weather_skills_core.plot.layers import (
     _SAMPLE_DIM_NAMES,
     _ZARR_LAYER_KINDS,
     QUIVER_CMAP,
@@ -78,14 +78,14 @@ from weather_skills_core.plot_layers import (
     _wind_speed_da,
     parse_layer,
 )
-from weather_skills_core.plot_mpl import (
+from weather_skills_core.plot.mpl import (
     apply_rc,
     finish_figure,
     mesh_kwargs,
     quiver_kwargs,
     windrose_kwargs,
 )
-from weather_skills_core.plot_spec import (
+from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     PlotSpec,
@@ -96,22 +96,26 @@ from weather_skills_core.plot_spec import (
     overlay_flags,
     overlay_spec,
     panel_shape,
+    params_from_spec,
     parse_index,
     parse_plot_spec,
-    resolve_flags,
+    patch_parser_for_spec_flags,
     spec_from_flags,
     spec_get,
+    spec_input_labels,
     spec_inputs_from_datasets,
     trace_at,
 )
-from weather_skills_core.plot_style import (
+from weather_skills_core.plot.style import (
     PRECIP_ANOMALY_BOUNDS,
     PRECIP_BOUNDS,
     PRECIP_SHORT_BOUNDS,
     load_user_style,
+    set_active_style,
 )
 from weather_skills_core.standard_utils import (
     ensure_normalized_longitude,
+    parse_bbox,
     polygon_from_geojson,
 )
 from weather_skills_core.units import (
@@ -135,13 +139,6 @@ _PRECIP_PALETTE_BOUNDS = (PRECIP_BOUNDS, PRECIP_SHORT_BOUNDS, PRECIP_ANOMALY_BOU
 # native grid (plot_wind_and_sst_anomaly), thinned to ~1.5°. Scale is
 # auto-picked so a typical wind is ~1.5× that spacing — a fixed 100 matches
 # S2S *anomaly* magnitudes and overdraws 10 m/s basin winds.
-
-
-
-
-
-
-
 
 
 def parse_json_object(value):
@@ -234,28 +231,6 @@ def _rotate_date_labels(ax) -> None:
     for label in ax.get_xticklabels():
         label.set_ha("right")
         label.set_rotation(30)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def _calendar_year(value) -> int:
@@ -412,18 +387,6 @@ def _plot_xy(
     return fig
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def _is_sample_dim(da, dim):
     """True if ``dim`` is flattened into wind-rose samples rather than indexed."""
     if dim in _SAMPLE_DIM_NAMES:
@@ -452,8 +415,6 @@ def _uv_to_speed_fromdir(u, v):
     speed = np.hypot(u, v)
     fromdir = (np.degrees(np.arctan2(-u, -v)) + 360.0) % 360.0
     return speed, fromdir
-
-
 
 
 def _speed_edges(speed, units):
@@ -664,20 +625,6 @@ def _plot_windrose(
         ylabel=ylabel,
         mpl_spec=mpl_spec,
     )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def _quiver_map(
@@ -944,62 +891,6 @@ def _plot_quiver(
     )
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 _SPEC_STYLES = frozenset({"heatmap", "timeseries", "contour"})
 
 
@@ -1026,15 +917,83 @@ def _first_spec_input(spec_data):
     return {}
 
 
-def _overlay_cli_from_spec(spec_data, **cli):
-    """Fill omitted CLI flags from a dumped spec. CLI values win when set."""
-    out = resolve_flags(spec_data, **{k: v for k, v in cli.items() if k != "draw_box"})
-    out["draw_box"] = cli.get("draw_box") or spec_get(spec_data, "draw_boxes")
-    if out.get("bbox") is not None:
-        out["bbox"] = tuple(out["bbox"])
-    if out.get("figsize") is not None:
-        out["figsize"] = tuple(out["figsize"])
-    return out
+def _coerce_spec_params(spec_data, user_style=None):
+    """Read figure knobs from the spec (plus user-style defaults)."""
+    user_style = user_style or {}
+    p = params_from_spec(spec_data)
+    bbox = p.get("bbox")
+    if isinstance(bbox, str):
+        bbox = parse_bbox(bbox)
+    elif bbox is not None:
+        bbox = tuple(bbox)
+    figsize = p.get("figsize")
+    if isinstance(figsize, str):
+        figsize = parse_figsize(figsize)
+    elif figsize is not None:
+        figsize = tuple(figsize)
+    legend = p.get("legend")
+    if legend is not None:
+        legend = parse_legend(legend)
+    fontsize = p.get("fontsize")
+    if fontsize is None:
+        fontsize = user_style.get("fontsize", DEFAULT_FONTSIZE)
+    reduce = p.get("reduce") or []
+    if isinstance(reduce, str):
+        reduce = [reduce]
+    subplot_titles = p.get("subplot_titles")
+    if subplot_titles is not None:
+        subplot_titles = list(subplot_titles)
+    shared = p.get("shared_colorscale")
+    quiver = trace_at(spec_data).get("quiver") or {}
+    if not isinstance(quiver, dict):
+        quiver = {}
+    scale = p.get("quiver_scale")
+    if scale is None:
+        scale = quiver.get("scale")
+    step = p.get("quiver_step")
+    if step is None:
+        step = quiver.get("step")
+    return {
+        "title": p.get("title"),
+        "xlabel": p.get("xlabel"),
+        "ylabel": p.get("ylabel"),
+        "cbar_label": p.get("cbar_label"),
+        "colormap": p.get("colormap") or user_style.get("colormap"),
+        "colormap_bounds": p.get("colormap_bounds"),
+        "colormap_under": p.get("colormap_under"),
+        "colormap_over": p.get("colormap_over"),
+        "cbar_ticks": p.get("cbar_ticks"),
+        "cbar_labels": p.get("cbar_labels"),
+        "legend": legend,
+        "index": p.get("index"),
+        "u_variable": p.get("u_variable"),
+        "v_variable": p.get("v_variable"),
+        "variable": p.get("variable"),
+        "bbox": bbox,
+        "mask_geojson": p.get("mask_geojson"),
+        "extent": p.get("extent"),
+        "cities": p.get("cities"),
+        "draw_box": p.get("draw_boxes"),
+        "figsize": figsize,
+        "vmin": p.get("vmin"),
+        "vmax": p.get("vmax"),
+        "fontsize": fontsize,
+        "template": p.get("template") or user_style.get("template"),
+        "rows": p.get("rows"),
+        "columns": p.get("columns"),
+        "reduce": reduce,
+        "along": p.get("along"),
+        "subplot_title": subplot_titles,
+        "x_variable": p.get("x_variable"),
+        "y_variable": p.get("y_variable"),
+        "pair_on": p.get("pair_on"),
+        "shared_scale": shared is True,
+        "independent_scale": shared is False,
+        "quiver_scale": scale,
+        "quiver_step": step,
+        "label": spec_input_labels(spec_data),
+        "style": _style_from_spec(spec_data),
+    }
 
 
 def _style_from_spec(spec_data):
@@ -1247,7 +1206,7 @@ def _resolved_drawn_spec(
 
 
 def _export_drawn_figure(fig, resolved, output, *, datasets, dump_spec, spec_data):
-    from weather_skills_core.plot_export import write_plot_outputs
+    from weather_skills_core.plot.export import write_plot_outputs
 
     finish_figure(fig, spec_data or resolved)
     return write_plot_outputs(
@@ -1263,90 +1222,32 @@ def _export_drawn_figure(fig, resolved, output, *, datasets, dump_spec, spec_dat
 def _render_spec_plot(
     ds,
     spec,
+    spec_data,
     *,
-    variable,
     style,
-    colormap,
-    title,
-    subplot_title,
-    xlabel,
-    ylabel,
-    cbar_label,
-    index,
-    extent,
-    cities,
-    fontsize,
-    figsize,
-    legend,
-    mask_geojson,
-    draw_boxes,
-    rows,
-    columns,
-    bbox_nwse,
-    vmin,
-    vmax,
-    style_file,
-    patch,
     dump_spec_path,
     output,
-    theme=None,
-    reduce=None,
-    along=None,
+    user_style,
 ):
     """Compile heatmap/timeseries/contour and write PNG + spec sidecar."""
-    from weather_skills_core.plot_compile import compile_figure
-    from weather_skills_core.plot_export import write_plot_outputs
-    from weather_skills_core.plot_style import deep_merge
+    from weather_skills_core.plot.compile import compile_figure
+    from weather_skills_core.plot.export import write_plot_outputs
 
-    user_style = load_user_style(style_file)
-    template = theme or user_style.get("template")
+    template = (spec_data.get("style") or {}).get("template") or user_style.get("template")
     input_path = _input_path_of(ds)
-    flags = dict(
+    defaults = spec_from_flags(
+        trace_type=style,
         input_path=input_path,
-        variable=variable,
-        index=index,
-        reduce=reduce,
-        along=along,
-        title=title,
-        subplot_titles=list(subplot_title) if subplot_title else None,
-        xlabel=xlabel,
-        ylabel=ylabel,
-        cbar_label=cbar_label,
-        legend=legend,
-        vmin=vmin,
-        vmax=vmax,
-        colormap=colormap,
-        fontsize=fontsize,
+        colormap=user_style.get("colormap"),
+        fontsize=user_style.get("fontsize"),
         template=template,
-        figsize=figsize,
-        rows=rows,
-        columns=columns,
-        extent=extent,
-        cities=cities,
-        bbox=bbox_nwse,
-        mask_geojson=mask_geojson,
-        draw_boxes=draw_boxes,
     )
-    if spec is not None:
-        merged = overlay_flags(spec.to_dict() if isinstance(spec, PlotSpec) else spec, **flags)
-        if not merged.get("traces"):
-            merged["traces"] = [{"type": style, "input": "a"}]
-    else:
-        flags.setdefault("colormap", user_style.get("colormap"))
-        merged = spec_from_flags(
-            trace_type=style,
-            **{
-                **flags,
-                "colormap": colormap or user_style.get("colormap"),
-                "fontsize": fontsize if fontsize is not None else user_style.get("fontsize"),
-            },
-        )
-    if patch:
-        merged = deep_merge(merged, patch)
-    if user_style.get("max_columns") and not (rows or columns):
-        merged.setdefault("layout", {}).setdefault("facet", {}).setdefault(
-            "max_columns", user_style["max_columns"]
-        )
+    merged = overlay_spec(defaults, spec_data or {})
+    if not merged.get("traces"):
+        merged["traces"] = [{"type": style, "input": "a"}]
+    facet = merged.setdefault("layout", {}).setdefault("facet", {})
+    if user_style.get("max_columns") and facet.get("rows") is None and facet.get("columns") is None:
+        facet.setdefault("max_columns", user_style["max_columns"])
 
     datasets = {"a": ds}
     if spec is not None and spec.datasets:
@@ -1380,7 +1281,7 @@ def _render_spec_plot(
     type=Dataset("any"),
     required=False,
     default=None,
-    help="X-axis Zarr for --style xy. Mutually exclusive with -i/--input.",
+    help="X-axis Zarr for traces[].type xy. Mutually exclusive with -i/--input.",
 )
 @weather_skill.argument(
     "--y",
@@ -1388,7 +1289,7 @@ def _render_spec_plot(
     type=Dataset("any"),
     required=False,
     default=None,
-    help="Y-axis Zarr for --style xy. Mutually exclusive with -i/--input.",
+    help="Y-axis Zarr for traces[].type xy. Mutually exclusive with -i/--input.",
 )
 @weather_skill.argument(
     "--layer",
@@ -1398,221 +1299,8 @@ def _render_spec_plot(
     help=(
         "Map layer KIND:PATH or KIND:PATH::k=v. Repeat for overlays. "
         "Kinds: heatmap, scatter, quiver, outline, mask. "
-        "Options: variable, colormap, index, u-variable, v-variable, "
-        "quiver-scale, quiver-step, vmin, vmax. Mutually exclusive with -i/--input."
+        "Mutually exclusive with -i/--input. Layer options also belong in spec layers[]."
     ),
-)
-@weather_skill.argument("--bbox")
-@weather_skill.argument("--variable", "-v")
-@weather_skill.argument(
-    "--x-variable",
-    default=None,
-    help="X-axis variable for --style xy. Defaults to the first data variable of --x (or -i).",
-)
-@weather_skill.argument(
-    "--y-variable",
-    default=None,
-    help="Y-axis variable for --style xy. Defaults to the first data variable of --y (or -i).",
-)
-@weather_skill.argument(
-    "--pair-on",
-    choices=["time", "year", "index"],
-    default=None,
-    help=(
-        "How --style xy matches --x to --y samples: shared time (default), "
-        "calendar year (e.g. September IOD vs October rain), or position."
-    ),
-)
-@weather_skill.argument(
-    "--style",
-    choices=["heatmap", "contour", "timeseries", "xy", "windrose", "quiver"],
-    default=None,
-)
-@weather_skill.argument(
-    "--u-variable",
-    default=None,
-    help="Eastward wind variable (windrose/quiver). Auto-detected when omitted.",
-)
-@weather_skill.argument(
-    "--v-variable",
-    default=None,
-    help="Northward wind variable (windrose/quiver). Auto-detected when omitted.",
-)
-@weather_skill.argument(
-    "--colormap",
-    default=None,
-    help=(
-        "matplotlib colormap name, or comma-separated colors. "
-        "Heatmap default: CHC ppt_total / ppt_anomaly classes for precip "
-        "(aliases chirps_total, chirps_anom), else rocket. Also: ppt_poa, "
-        "ppt_spp, spi. Windrose default: blue-to-orange speed classes. "
-        "Quiver default: YlGn (ECMWF S2S 10 m / 700 hPa wind vectors)."
-    ),
-)
-@weather_skill.argument(
-    "--index",
-    default=None,
-    help=(
-        "Slice like 'step=3,number=0' (heatmap, contour, quiver, and windrose). "
-        "Heatmap/contour/quiver lists keep the dim as panels; windrose lists keep samples."
-    ),
-)
-@weather_skill.argument(
-    "--reduce",
-    action="append",
-    default=None,
-    help=(
-        "Average over this dim for --style timeseries. Repeat once per leftover "
-        "non-time dim (e.g. --reduce latitude --reduce longitude). No dim is "
-        "averaged unless you say so."
-    ),
-)
-@weather_skill.argument(
-    "--along",
-    default=None,
-    help=(
-        "Draw one --style timeseries line per value of this dim (e.g. --along number "
-        "for ensemble members) instead of reducing it."
-    ),
-)
-@weather_skill.argument(
-    "--extent",
-    default=None,
-    help="Map extent 'lon_min,lon_max,lat_min,lat_max' (heatmap, contour, and quiver).",
-)
-@weather_skill.argument(
-    "--cities",
-    default=None,
-    help='City overlay JSON (heatmap, contour, and quiver). Inline {"name": [lat, lon]} or file path.',
-)
-@weather_skill.argument(
-    "--fontsize",
-    type=int,
-    default=DEFAULT_FONTSIZE,
-    help="Base font size for titles, axis labels, and colorbar text (default 16).",
-)
-@weather_skill.argument(
-    "--figsize",
-    default=None,
-    type=parse_figsize,
-    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default is style-specific.",
-)
-@weather_skill.argument(
-    "--legend",
-    default=None,
-    type=parse_legend,
-    help=(
-        "Legend placement: matplotlib loc (best, upper right, …), "
-        "'outside right', 'below', or 'none'. Windrose default: outside right. "
-        "Timeseries draws a legend only when this is set."
-    ),
-)
-@weather_skill.argument("--title", default=None, help="Optional figure title (above all panels).")
-@weather_skill.argument(
-    "--subplot-title",
-    action="append",
-    default=None,
-    help=(
-        "Override one map panel title, in panel order. Repeat for each panel. "
-        "Fewer than the panel count keeps auto date/lead titles for the rest; "
-        "more than the panel count is an error. Maps only."
-    ),
-)
-@weather_skill.argument(
-    "--xlabel",
-    default=None,
-    help="Override the x-axis label (default: Longitude; omitted on datetime ticks).",
-)
-@weather_skill.argument(
-    "--ylabel",
-    default=None,
-    help="Override the y-axis label (default: Latitude / variable label / Frequency (%%)).",
-)
-@weather_skill.argument(
-    "--cbar-label",
-    default=None,
-    help=(
-        "Override the colorbar label (heatmap, contour, quiver, layered maps). "
-        "Default is the variable long_name + units. Per-layer --label wins."
-    ),
-)
-@weather_skill.argument(
-    "--rows",
-    type=int,
-    default=None,
-    help=(
-        "Heatmap/contour/quiver panel rows. Extra cells stay blank when the grid is larger than the data."
-    ),
-)
-@weather_skill.argument(
-    "--columns",
-    type=int,
-    default=None,
-    help=(
-        "Heatmap/contour/quiver panel columns. Extra cells stay blank when the grid is larger than the data."
-    ),
-)
-@weather_skill.argument(
-    "--mask-geojson",
-    default=None,
-    help="GeoJSON polygon; cells/points outside become NaN (heatmap, contour, quiver, windrose, xy).",
-)
-@weather_skill.argument(
-    "--draw-box",
-    action="append",
-    default=None,
-    help=(
-        "Draw a black outline box on the map as N/W/S/E decimal degrees "
-        "(same form as --bbox). Repeat for multiple boxes. Heatmap and quiver."
-    ),
-)
-@weather_skill.argument(
-    "--quiver-scale",
-    type=float,
-    default=None,
-    help=(
-        "Matplotlib quiver scale (larger → shorter arrows). "
-        "Default sizes a typical wind to ~1.5× the subsampled grid spacing. "
-        "Quiver-only."
-    ),
-)
-@weather_skill.argument(
-    "--quiver-step",
-    type=int,
-    default=None,
-    help=(
-        "Plot every Nth grid point for --style quiver "
-        "(S2S plot_wind_and_sst_anomaly quiver_step). "
-        "Default: 1 on ~1.5° grids; finer grids auto-thin to ~1.5°. Quiver-only."
-    ),
-)
-@weather_skill.argument(
-    "--label",
-    action="append",
-    default=None,
-    help="Colorbar label for each --layer, in order. Omit to infer from metadata.",
-)
-@weather_skill.argument(
-    "--shared-scale",
-    action="store_true",
-    help="Force one shared color scale across heatmap/scatter layers.",
-)
-@weather_skill.argument(
-    "--independent-scale",
-    action="store_true",
-    help="Force a separate color scale per heatmap/scatter layer.",
-)
-@weather_skill.argument(
-    "--vmin",
-    type=float,
-    default=None,
-    help="Colorbar lower limit (heatmap, contour, quiver, scatter). Unset = data min.",
-)
-@weather_skill.argument(
-    "--vmax",
-    type=float,
-    default=None,
-    help="Colorbar upper limit (heatmap, contour, quiver, scatter). Unset = data max.",
 )
 @weather_skill.argument(
     "--spec",
@@ -1626,18 +1314,12 @@ def _render_spec_plot(
     help="User plot style TOML/JSON (colormap, fontsize, template). Overrides ~/.config/weather-skills/plot.toml.",
 )
 @weather_skill.argument(
-    "--theme",
-    default=None,
-    choices=["weather_skills", "colorblind"],
-    help="Seaborn colorway: weather_skills (deep) or colorblind. Default weather_skills.",
-)
-@weather_skill.argument(
     "--patch",
     default=None,
     type=parse_json_object,
     help=(
-        "Partial figure update (title/annotations/shapes/colorbar) merged after compile. "
-        'Colorbar size: {"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}.'
+        "Partial spec merged onto --spec (or onto defaults). "
+        'Example: {"title": "Edited", "layout": {"colorbar": {"len": 0.45}}}.'
     ),
 )
 @weather_skill.argument(
@@ -1647,46 +1329,12 @@ def _render_spec_plot(
 )
 def plot(
     ds,
-    bbox,
-    variable,
-    style,
-    colormap,
-    title,
-    subplot_title,
-    xlabel,
-    ylabel,
-    cbar_label,
-    index,
-    reduce,
-    along,
-    extent,
-    cities,
-    fontsize,
-    figsize,
-    legend,
-    mask_geojson,
-    draw_box,
-    rows,
-    columns,
-    u_variable,
-    v_variable,
-    quiver_scale,
-    quiver_step,
     output,
     layer=None,
-    label=None,
-    shared_scale=False,
-    independent_scale=False,
     x_ds=None,
     y_ds=None,
-    x_variable=None,
-    y_variable=None,
-    pair_on=None,
-    vmin=None,
-    vmax=None,
     spec=None,
     style_file=None,
-    theme=None,
     patch=None,
     dump_spec=None,
     **kwargs,
@@ -1695,27 +1343,9 @@ def plot(
     spec_data = _spec_data(spec)
     if patch:
         spec_data = overlay_spec(spec_data, patch)
-    filled = _overlay_cli_from_spec(
-        spec_data,
-        title=title,
-        xlabel=xlabel,
-        ylabel=ylabel,
-        cbar_label=cbar_label,
-        colormap=colormap,
-        legend=legend,
-        index=index,
-        u_variable=u_variable,
-        v_variable=v_variable,
-        variable=variable,
-        bbox=bbox,
-        mask_geojson=mask_geojson,
-        extent=extent,
-        cities=cities,
-        draw_box=draw_box,
-        figsize=figsize,
-        vmin=vmin,
-        vmax=vmax,
-    )
+    user_style = load_user_style(style_file)
+    set_active_style(user_style)
+    filled = _coerce_spec_params(spec_data, user_style)
     title = filled["title"]
     xlabel = filled["xlabel"]
     ylabel = filled["ylabel"]
@@ -1734,11 +1364,37 @@ def plot(
     figsize = filled["figsize"]
     vmin = filled["vmin"]
     vmax = filled["vmax"]
+    fontsize = filled["fontsize"]
+    theme = filled["template"]
+    rows = filled["rows"]
+    columns = filled["columns"]
+    reduce = filled["reduce"]
+    along = filled["along"]
+    subplot_title = filled["subplot_title"]
+    x_variable = filled["x_variable"]
+    y_variable = filled["y_variable"]
+    pair_on = filled["pair_on"]
+    shared_scale = filled["shared_scale"]
+    independent_scale = filled["independent_scale"]
+    quiver_scale = filled["quiver_scale"]
+    quiver_step = filled["quiver_step"]
+    label = filled["label"]
+    style = filled["style"]
+    spec_data = overlay_flags(
+        spec_data,
+        colormap=filled["colormap"],
+        colormap_bounds=filled.get("colormap_bounds"),
+        colormap_under=filled.get("colormap_under"),
+        colormap_over=filled.get("colormap_over"),
+        cbar_ticks=filled.get("cbar_ticks"),
+        cbar_labels=filled.get("cbar_labels"),
+    )
+    colormap = spec_get(spec_data, "colormap")
     layers = list(layer or [])
     if not layers:
         layers = _layers_from_spec(spec_data, spec)
     if style is None and not layers:
-        style = _style_from_spec(spec_data) or "heatmap"
+        style = "heatmap"
     if spec is not None and ds is None and not layers and style != "xy":
         ds = spec.ds if spec.ds is not None else None
         if ds is None and spec.datasets:
@@ -1754,20 +1410,22 @@ def plot(
             spec_data, spec, x_ds, y_ds, x_variable, y_variable, pair_on
         )
         if layers:
-            raise UsageError("--layer cannot be used with --style xy")
+            raise UsageError("--layer cannot be used with traces[].type xy")
         if x_ds is None and y_ds is None:
             if ds is None:
                 raise UsageError(
-                    "--style xy needs --x and --y, or -i with --x-variable and --y-variable"
+                    "traces[].type xy needs --x and --y, or -i with traces[].x_variable "
+                    "and traces[].y_variable in --spec"
                 )
             if not x_variable or not y_variable:
                 raise UsageError(
-                    "with a single -i, --style xy needs both --x-variable and --y-variable"
+                    "with a single -i, traces[].type xy needs both traces[].x_variable "
+                    "and traces[].y_variable in --spec"
                 )
             x_ds = ds
             y_ds = ds
         elif x_ds is None or y_ds is None:
-            raise UsageError("--style xy needs both --x and --y")
+            raise UsageError("traces[].type xy needs both --x and --y")
     elif not layers and ds is None:
         raise UsageError("pass -i/--input, a --spec with inputs, or at least one --layer")
     if layers and style in ("timeseries", "xy", "windrose", "contour"):
@@ -1823,34 +1481,11 @@ def plot(
         return _render_spec_plot(
             ds,
             spec,
-            variable=variable,
+            spec_data,
             style=style,
-            colormap=colormap,
-            title=title,
-            subplot_title=subplot_title,
-            xlabel=xlabel,
-            ylabel=ylabel,
-            cbar_label=cbar_label,
-            index=index,
-            reduce=reduce,
-            along=along,
-            extent=extent,
-            cities=cities,
-            fontsize=fontsize,
-            figsize=figsize,
-            legend=legend,
-            mask_geojson=mask_geojson,
-            draw_boxes=draw_boxes,
-            rows=rows,
-            columns=columns,
-            bbox_nwse=bbox_nwse,
-            vmin=vmin,
-            vmax=vmax,
-            style_file=style_file,
-            theme=theme,
-            patch=patch,
             dump_spec_path=dump_spec,
             output=output,
+            user_style=user_style,
         )
 
     import matplotlib
@@ -2111,6 +1746,9 @@ def plot(
         dump_spec=dump_spec,
         spec_data=spec_data,
     )
+
+
+patch_parser_for_spec_flags(plot.parser)
 
 
 if __name__ == "__main__":

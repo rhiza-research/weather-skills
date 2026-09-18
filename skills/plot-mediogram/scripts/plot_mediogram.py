@@ -15,8 +15,8 @@
 
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
-from weather_skills_core.figure import DEFAULT_FONTSIZE, parse_figsize, resolve_axis_label
-from weather_skills_core.plot_spec import (
+from weather_skills_core.plot.figure import DEFAULT_FONTSIZE, parse_figsize, resolve_axis_label
+from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     datasets_from_cli_or_spec,
@@ -178,8 +178,8 @@ def plot_mediogram(
         else:
             tick_labels.append(str(value))
     qty = variable_label_for_display(pt_fc, fallback=variable, include_units=False)
-    from weather_skills_core.plot_export import write_plot_outputs
-    from weather_skills_core.plot_recipes import compile_mediogram
+    from weather_skills_core.plot.export import write_plot_outputs
+    from weather_skills_core.plot.recipes import compile_mediogram
 
     fig = compile_mediogram(
         fc,
@@ -210,7 +210,12 @@ def plot_mediogram(
         "ylabel": ylabel,
     }
     return write_plot_outputs(
-        fig, resolved, output, datasets=named, dump_spec_path=dump_spec_dest(dump_spec), spec=spec_data
+        fig,
+        resolved,
+        output,
+        datasets=named,
+        dump_spec_path=dump_spec_dest(dump_spec),
+        spec=spec_data,
     )
 
 

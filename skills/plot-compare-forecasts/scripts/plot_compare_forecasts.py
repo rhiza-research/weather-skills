@@ -22,8 +22,7 @@ import sys
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
 from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
-from weather_skills_core.figure import DEFAULT_FONTSIZE, axis_label, parse_figsize
-from weather_skills_core.plot_compile import (
+from weather_skills_core.plot.compile import (
     axis_kind,
     extent_from_da,
     format_calendar_panel,
@@ -31,17 +30,26 @@ from weather_skills_core.plot_compile import (
     is_cftime_axis,
     slice_bbox_mask,
 )
-from weather_skills_core.plot_spec import (
+from weather_skills_core.plot.figure import (
+    DEFAULT_FONTSIZE,
+    axis_label,
+    parse_figsize,
+    parse_label_list,
+    parse_number_list,
+)
+from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     datasets_from_cli_or_spec,
     dump_spec_dest,
+    overlay_flags,
     parse_plot_spec,
     resolve_flags,
+    spec_get,
     spec_input_labels,
     spec_inputs_from_datasets,
 )
-from weather_skills_core.plot_style import is_precip_anomaly
+from weather_skills_core.plot.style import is_precip_anomaly
 from weather_skills_core.standard_utils import (
     pick_time_dim,
     polygon_from_geojson,
@@ -366,8 +374,29 @@ def _flatten_da(da, panel_dim, lat_dim, lon_dim):
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors. "
-        "Default: discrete CHIRPS-GEFS precip classes for precip variables, else viridis."
+        "Default: discrete CHIRPS-GEFS precip classes for precip variables, else viridis. "
+        "Discrete custom classes: pass --colormap-bounds or a spec object."
     ),
+)
+@weather_skill.argument(
+    "--colormap-bounds",
+    default=None,
+    type=parse_number_list,
+    help="Comma-separated class stops; folds into style.colormap.bounds.",
+)
+@weather_skill.argument("--colormap-under", default=None, help="Color below the first class stop.")
+@weather_skill.argument("--colormap-over", default=None, help="Color above the last class stop.")
+@weather_skill.argument(
+    "--cbar-ticks",
+    default=None,
+    type=parse_number_list,
+    help="Comma-separated colorbar tick positions.",
+)
+@weather_skill.argument(
+    "--cbar-labels",
+    default=None,
+    type=parse_label_list,
+    help="Comma-separated colorbar tick labels. Requires --cbar-ticks.",
 )
 @weather_skill.argument("--title", default=None, help="Optional figure title.")
 @weather_skill.argument(
@@ -438,6 +467,11 @@ def plot_compare_forecasts(
     vmax=None,
     spec=None,
     dump_spec=None,
+    colormap_bounds=None,
+    colormap_under=None,
+    colormap_over=None,
+    cbar_ticks=None,
+    cbar_labels=None,
     **kwargs,
 ):
     """Compare two or more gridded datasets as a heatmap grid PNG."""
@@ -447,6 +481,11 @@ def plot_compare_forecasts(
         spec_data,
         title=title,
         colormap=colormap,
+        colormap_bounds=colormap_bounds,
+        colormap_under=colormap_under,
+        colormap_over=colormap_over,
+        cbar_ticks=cbar_ticks,
+        cbar_labels=cbar_labels,
         figsize=figsize,
         panels=panels,
         bbox=bbox,
@@ -456,6 +495,16 @@ def plot_compare_forecasts(
         variable=variable,
     )
     title, colormap, variable = flags["title"], flags["colormap"], flags["variable"]
+    spec_data = overlay_flags(
+        spec_data,
+        colormap=colormap,
+        colormap_bounds=flags.get("colormap_bounds"),
+        colormap_under=flags.get("colormap_under"),
+        colormap_over=flags.get("colormap_over"),
+        cbar_ticks=flags.get("cbar_ticks"),
+        cbar_labels=flags.get("cbar_labels"),
+    )
+    colormap = spec_get(spec_data, "colormap")
     bbox, mask_geojson = flags["bbox"], flags["mask_geojson"]
     vmin, vmax, panels = flags["vmin"], flags["vmax"], flags["panels"]
     figsize = tuple(flags["figsize"]) if flags["figsize"] else None
@@ -525,8 +574,8 @@ def plot_compare_forecasts(
 
     extent = _extent_from_da(das[0], lat_dims[0], lon_dims[0], bbox)
 
-    from weather_skills_core.plot_export import write_plot_outputs
-    from weather_skills_core.plot_recipes import (
+    from weather_skills_core.plot.export import write_plot_outputs
+    from weather_skills_core.plot.recipes import (
         blank_cell,
         compile_heatmap_grid,
         heatmap_cell,
@@ -637,7 +686,12 @@ def plot_compare_forecasts(
     if vmax is not None:
         resolved["vmax"] = vmax
     return write_plot_outputs(
-        fig, resolved, output, datasets=named, dump_spec_path=dump_spec_dest(dump_spec), spec=spec_data
+        fig,
+        resolved,
+        output,
+        datasets=named,
+        dump_spec_path=dump_spec_dest(dump_spec),
+        spec=spec_data,
     )
 
 

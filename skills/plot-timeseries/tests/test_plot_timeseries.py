@@ -17,17 +17,7 @@ def test_single_input_writes_png(tmp_path, plot_timeseries):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "ts.png"
 
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-    )
+    run_skill(plot_timeseries, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]}]}')
 
     assert Path(out).exists()
     assert out.stat().st_size > 0
@@ -37,21 +27,7 @@ def test_fontsize_writes_png(tmp_path, plot_timeseries):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "ts.png"
 
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--fontsize",
-        "22",
-        "--title",
-        "Large labels",
-    )
+    run_skill(plot_timeseries, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]}],"style":{"fontsize":22},"title":"Large labels"}')
 
     assert Path(out).exists()
     assert out.stat().st_size > 0
@@ -71,19 +47,7 @@ def test_figsize_writes_png(tmp_path, plot_timeseries):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "ts.png"
 
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--figsize",
-        "9x4",
-    )
+    run_skill(plot_timeseries, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]}],"layout":{"figsize":[9.0,4.0]}}')
 
     assert Path(out).exists()
     import matplotlib.image as mpimg
@@ -99,19 +63,7 @@ def test_reduce_spatial_dims(tmp_path, plot_timeseries):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "ts.png"
 
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--title",
-        "Area mean",
-    )
+    run_skill(plot_timeseries, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]}],"title":"Area mean"}')
 
     assert Path(out).exists()
 
@@ -121,17 +73,7 @@ def test_forecast_step_writes_png(tmp_path, plot_timeseries):
     ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
     src = write_zarr(ds, tmp_path / "fc.zarr")
     out = tmp_path / "ts.png"
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-    )
+    run_skill(plot_timeseries, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -140,26 +82,7 @@ def test_subplots_two_inputs_write_png(tmp_path, plot_timeseries):
     a = write_zarr(make_gridded(fill=1.0), tmp_path / "a.zarr")
     b = write_zarr(make_gridded(fill=2.0), tmp_path / "b.zarr")
     out = tmp_path / "ts.png"
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(a),
-        "-i",
-        str(b),
-        "-o",
-        str(out),
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--subplots",
-        "--label",
-        "A",
-        "--label",
-        "B",
-        "--title",
-        "Two panels",
-    )
+    run_skill(plot_timeseries, '-i', str(a), '-i', str(b), '-o', str(out), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]}],"layout":{"subplots":true},"inputs":[{"label":"A"},{"label":"B"}],"title":"Two panels"}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
     history = load_figure_history(out)
@@ -171,19 +94,7 @@ def test_two_inputs_write_png(tmp_path, plot_timeseries):
     a = write_zarr(make_gridded(fill=1.0), tmp_path / "a.zarr")
     b = write_zarr(make_gridded(fill=2.0), tmp_path / "b.zarr")
     out = tmp_path / "ts.png"
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(a),
-        "-i",
-        str(b),
-        "-o",
-        str(out),
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-    )
+    run_skill(plot_timeseries, '-i', str(a), '-i', str(b), '-o', str(out), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -194,21 +105,7 @@ def test_repeated_dash_i_keeps_every_input(tmp_path, plot_timeseries):
     a = write_zarr(make_gridded(name="other"), tmp_path / "a.zarr")
     b = write_zarr(make_gridded(), tmp_path / "b.zarr")
     with pytest.raises(SystemExit) as exc:
-        run_skill(
-            plot_timeseries,
-            "-i",
-            str(a),
-            "-i",
-            str(b),
-            "-o",
-            str(tmp_path / "ts.png"),
-            "-v",
-            "precip",
-            "--reduce",
-            "latitude",
-            "--reduce",
-            "longitude",
-        )
+        run_skill(plot_timeseries, '-i', str(a), '-i', str(b), '-o', str(tmp_path / 'ts.png'), '--spec', '{"inputs":[{"variable":"precip"}],"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]}]}')
     assert exc.value.code == 2
 
 
@@ -242,7 +139,7 @@ def test_date_ticks_are_calendar_dates_not_timestamps():
     import matplotlib.dates as mdates
     import matplotlib.pyplot as plt
     import numpy as np
-    from weather_skills_core.figure import apply_date_ticks
+    from weather_skills_core.plot.figure import apply_date_ticks
 
     fig, ax = plt.subplots()
     days = mdates.date2num(np.arange("2026-08-05", "2026-09-10", dtype="datetime64[D]"))
@@ -307,18 +204,7 @@ def test_apply_day_of_year_ticks(tmp_path, plot_timeseries):
 
     src = write_zarr(make_gridded(n_time=12, start="2023-01-01"), tmp_path / "in.zarr")
     out = tmp_path / "doy.png"
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--align-day-of-year",
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-    )
+    run_skill(plot_timeseries, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"align":"dayofyear"},{"reduce":["latitude"]},{"reduce":["longitude"]}]}')
     assert out.exists()
 
 
@@ -326,19 +212,7 @@ def test_bar_writes_png(tmp_path, plot_timeseries):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "bars.png"
 
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--style",
-        "bar",
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-    )
+    run_skill(plot_timeseries, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"style":"bar","type":"timeseries"},{"reduce":["latitude"]},{"reduce":["longitude"]}]}')
 
     assert Path(out).exists()
     assert out.stat().st_size > 0
@@ -349,23 +223,7 @@ def test_bar_grouped_multi_input_writes_png(tmp_path, plot_timeseries):
     b = write_zarr(make_gridded(fill=2.0), tmp_path / "b.zarr")
     out = tmp_path / "grouped.png"
 
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(a),
-        "-i",
-        str(b),
-        "-o",
-        str(out),
-        "--style",
-        "bar",
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--title",
-        "Grouped",
-    )
+    run_skill(plot_timeseries, '-i', str(a), '-i', str(b), '-o', str(out), '--spec', '{"traces":[{"style":"bar","type":"timeseries"},{"reduce":["latitude"]},{"reduce":["longitude"]}],"title":"Grouped"}')
 
     assert Path(out).exists()
     assert out.stat().st_size > 0
@@ -379,19 +237,7 @@ def test_bar_forecast_step_writes_png(tmp_path, plot_timeseries):
     ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
     src = write_zarr(ds, tmp_path / "fc.zarr")
     out = tmp_path / "bars.png"
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--style",
-        "bar",
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-    )
+    run_skill(plot_timeseries, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"style":"bar","type":"timeseries"},{"reduce":["latitude"]},{"reduce":["longitude"]}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -473,7 +319,7 @@ def test_along_dim_resolves_member_alias():
 
 def test_draw_lines_along_is_one_call_one_legend_entry():
     import numpy as np
-    from weather_skills_core.plot_recipes import compile_line_figure
+    from weather_skills_core.plot.recipes import compile_line_figure
 
     y = np.column_stack([np.arange(4.0), np.arange(4.0) + 1.0, np.arange(4.0) + 2.0])
     series = [([1, 2, 3, 4], y, "ens")]
@@ -489,19 +335,7 @@ def test_along_number_writes_png(tmp_path, plot_timeseries):
     ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
     src = write_zarr(ds, tmp_path / "ens.zarr")
     out = tmp_path / "spaghetti.png"
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--along",
-        "number",
-    )
+    run_skill(plot_timeseries, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]},{"along":"number"}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
     history = load_figure_history(out)
@@ -513,23 +347,7 @@ def test_band_with_along_writes_png(tmp_path, plot_timeseries):
     ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
     src = write_zarr(ds, tmp_path / "ens.zarr")
     out = tmp_path / "band.png"
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--along",
-        "number",
-        "--band",
-        "10,90",
-        "--theme",
-        "colorblind",
-    )
+    run_skill(plot_timeseries, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]},{"along":"number"},{"band":[10.0,90.0]}],"style":{"template":"colorblind"}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
     history = load_figure_history(out)
@@ -542,19 +360,7 @@ def test_band_without_along_exits(tmp_path, plot_timeseries):
     ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
     src = write_zarr(ds, tmp_path / "ens.zarr")
     with pytest.raises(SystemExit):
-        run_skill(
-            plot_timeseries,
-            "-i",
-            str(src),
-            "-o",
-            str(tmp_path / "no.png"),
-            "--reduce",
-            "latitude",
-            "--reduce",
-            "longitude",
-            "--band",
-            "10,90",
-        )
+        run_skill(plot_timeseries, '-i', str(src), '-o', str(tmp_path / 'no.png'), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]},{"band":[10.0,90.0]}]}')
 
 
 def test_along_member_alias_and_1d_overlay(tmp_path, plot_timeseries):
@@ -565,27 +371,7 @@ def test_along_member_alias_and_1d_overlay(tmp_path, plot_timeseries):
     ens_path = write_zarr(ens, tmp_path / "ens.zarr")
     obs_path = write_zarr(obs, tmp_path / "obs.zarr")
     out = tmp_path / "overlay.png"
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(ens_path),
-        "-i",
-        str(obs_path),
-        "-o",
-        str(out),
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--along",
-        "member",
-        "--label",
-        "ens",
-        "--label",
-        "obs",
-        "--trace",
-        "obs:color=black,linewidth=2.5,alpha=1",
-    )
+    run_skill(plot_timeseries, '-i', str(ens_path), '-i', str(obs_path), '-o', str(out), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]},{"along":"member"},{"type":"timeseries","line":{"color":"black","linewidth":2.5,"alpha":1},"_selector":"obs"}],"inputs":[{"label":"ens"},{"label":"obs"}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -595,19 +381,7 @@ def test_along_101_members_is_one_input(tmp_path, plot_timeseries):
     ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
     src = write_zarr(ds, tmp_path / "ens101.zarr")
     out = tmp_path / "ens101.png"
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--along",
-        "number",
-    )
+    run_skill(plot_timeseries, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]},{"along":"number"}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -617,32 +391,14 @@ def test_leftover_member_dim_suggests_along(tmp_path, plot_timeseries):
     ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
     src = write_zarr(ds, tmp_path / "ens.zarr")
     with pytest.raises(SystemExit) as exc:
-        run_skill(
-            plot_timeseries,
-            "-i",
-            str(src),
-            "-o",
-            str(tmp_path / "ts.png"),
-            "--reduce",
-            "latitude",
-            "--reduce",
-            "longitude",
-        )
+        run_skill(plot_timeseries, '-i', str(src), '-o', str(tmp_path / 'ts.png'), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]}]}')
     assert exc.value.code == 2
 
 
 def test_along_missing_dim_with_other_extras_exits(tmp_path, plot_timeseries):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     with pytest.raises(SystemExit) as exc:
-        run_skill(
-            plot_timeseries,
-            "-i",
-            str(src),
-            "-o",
-            str(tmp_path / "ts.png"),
-            "--along",
-            "number",
-        )
+        run_skill(plot_timeseries, '-i', str(src), '-o', str(tmp_path / 'ts.png'), '--spec', '{"traces":[{"along":"number"}]}')
     assert exc.value.code == 2
 
 
@@ -654,34 +410,14 @@ def test_along_bar_overlay_writes_png(tmp_path, plot_timeseries):
     obs_path = write_zarr(obs, tmp_path / "obs.zarr")
     ens_path = write_zarr(ens, tmp_path / "ens.zarr")
     out = tmp_path / "bars_plus_ens.png"
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(obs_path),
-        "-i",
-        str(ens_path),
-        "-o",
-        str(out),
-        "--style",
-        "bar",
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--along",
-        "number",
-        "--label",
-        "obs",
-        "--label",
-        "ens",
-    )
+    run_skill(plot_timeseries, '-i', str(obs_path), '-i', str(ens_path), '-o', str(out), '--spec', '{"traces":[{"style":"bar","type":"timeseries"},{"reduce":["latitude"]},{"reduce":["longitude"]},{"along":"number"}],"inputs":[{"label":"obs"},{"label":"ens"}]}')
     assert Path(out).exists()
 
 
 def test_draw_lines_applies_color_and_width():
     from matplotlib.colors import to_rgb
-    from weather_skills_core.plot_recipes import compile_line_figure
-    from weather_skills_core.plot_style import mpl_color
+    from weather_skills_core.plot.recipes import compile_line_figure
+    from weather_skills_core.plot.style import mpl_color
 
     mod = load_skill("plot-timeseries", "plot_timeseries")
     series = [([1, 2], [0.0, 1.0], "chirps_2006"), ([1, 2], [1.0, 2.0], "chirps_2026")]
@@ -703,23 +439,7 @@ def test_trace_writes_png_and_stamps_args(tmp_path, plot_timeseries):
     a = write_zarr(make_gridded(fill=1.0), tmp_path / "chirps_2006.zarr")
     b = write_zarr(make_gridded(fill=2.0), tmp_path / "chirps_2026.zarr")
     out = tmp_path / "analogs.png"
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(a),
-        "-i",
-        str(b),
-        "-o",
-        str(out),
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--trace",
-        "*:color=0.65,linewidth=1.2",
-        "--trace",
-        "2026:color=black,linewidth=2.5,zorder=5",
-    )
+    run_skill(plot_timeseries, '-i', str(a), '-i', str(b), '-o', str(out), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]},{"type":"timeseries","line":{"color":"0.65","linewidth":1.2},"_selector":"*"},{},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries","line":{"color":"black","linewidth":2.5,"zorder":5}}]}')
     assert Path(out).exists()
     history = load_figure_history(out)
     assert history[-1]["args"]["trace"] == [
@@ -731,26 +451,12 @@ def test_trace_writes_png_and_stamps_args(tmp_path, plot_timeseries):
 def test_trace_bar_rejects_linewidth(tmp_path, plot_timeseries):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     with pytest.raises(SystemExit) as exc:
-        run_skill(
-            plot_timeseries,
-            "-i",
-            str(src),
-            "-o",
-            str(tmp_path / "bars.png"),
-            "--style",
-            "bar",
-            "--reduce",
-            "latitude",
-            "--reduce",
-            "longitude",
-            "--trace",
-            "1:linewidth=3",
-        )
+        run_skill(plot_timeseries, '-i', str(src), '-o', str(tmp_path / 'bars.png'), '--spec', '{"traces":[{"style":"bar","type":"timeseries"},{"reduce":["latitude"]},{"reduce":["longitude"]},{"line":{"linewidth":3}}]}')
     assert exc.value.code == 2
 
 
 def test_draw_mixed_bars_and_line():
-    from weather_skills_core.plot_recipes import compile_line_figure
+    from weather_skills_core.plot.recipes import compile_line_figure
 
     mod = load_skill("plot-timeseries", "plot_timeseries")
     series = [
@@ -772,7 +478,7 @@ def test_draw_mixed_bars_and_line():
 
 
 def test_place_legend_below_axis():
-    from weather_skills_core.plot_recipes import compile_line_figure
+    from weather_skills_core.plot.recipes import compile_line_figure
 
     labels = [
         "2006 (analog)",
@@ -796,27 +502,7 @@ def test_trace_per_series_style_bar_plus_line(tmp_path, plot_timeseries):
     obs = write_zarr(make_gridded(fill=1.0), tmp_path / "obs.zarr")
     clim = write_zarr(make_gridded(fill=0.5), tmp_path / "clim.zarr")
     out = tmp_path / "obs_vs_clim.png"
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(obs),
-        "-i",
-        str(clim),
-        "-o",
-        str(out),
-        "--style",
-        "bar",
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--label",
-        "obs",
-        "--label",
-        "clim",
-        "--trace",
-        "clim:style=line,linestyle=--,linewidth=2.5,marker=none",
-    )
+    run_skill(plot_timeseries, '-i', str(obs), '-i', str(clim), '-o', str(out), '--spec', '{"traces":[{"style":"bar","type":"timeseries"},{"reduce":["latitude"]},{"reduce":["longitude"]},{"type":"timeseries","line":{"linestyle":"--","linewidth":2.5,"marker":"none"},"style":"line","_selector":"clim"}],"inputs":[{"label":"obs"},{"label":"clim"}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
     history = load_figure_history(out)
@@ -829,40 +515,14 @@ def test_trace_per_series_style_bar_plus_line(tmp_path, plot_timeseries):
 def test_trace_unmatched_selector_exits(tmp_path, plot_timeseries):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     with pytest.raises(SystemExit) as exc:
-        run_skill(
-            plot_timeseries,
-            "-i",
-            str(src),
-            "-o",
-            str(tmp_path / "ts.png"),
-            "--reduce",
-            "latitude",
-            "--reduce",
-            "longitude",
-            "--trace",
-            "2026:color=black",
-        )
+        run_skill(plot_timeseries, '-i', str(src), '-o', str(tmp_path / 'ts.png'), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]},{},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries"},{"type":"timeseries","line":{"color":"black"}}]}')
     assert exc.value.code == 2
 
 
 def test_replot_from_spec(tmp_path, plot_timeseries):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     first = tmp_path / "ts.png"
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(src),
-        "-o",
-        str(first),
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--style",
-        "bar",
-        "--title",
-        "Original",
-    )
+    run_skill(plot_timeseries, '-i', str(src), '-o', str(first), '--spec', '{"traces":[{"reduce":["latitude"]},{"reduce":["longitude"]},{"style":"bar","type":"timeseries"}],"title":"Original"}')
     spec_path = tmp_path / "ts.plot.json"
     data = json.loads(spec_path.read_text())
     assert data["traces"][0]["style"] == "bar"

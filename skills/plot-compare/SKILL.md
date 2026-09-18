@@ -78,7 +78,8 @@ dataset has no matching time, use `plot-compare-forecasts`.
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --output <out.png> \
     [--variable NAME] [--variable-a NAME] [--variable-b NAME] \
-    [--colormap NAME] [--colormap-a NAME] [--colormap-b NAME] [--vmin N] [--vmax N] \
+    [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
+    [--colormap-a NAME] [--colormap-b NAME] [--vmin N] [--vmax N] \
     [--shared-scale | --independent-scale] [--title TEXT] [--xlabel TEXT] [--fontsize N] [--figsize W,H] \
     [--panels N] [--time-dim DIM] \
     [--bbox N/W/S/E] [--mask-geojson PATH] \
@@ -105,19 +106,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py --spec <out.plot.json> --outp
   (CF grid-mapping/CRS container vars such as `latitude_longitude` are
   skipped during auto-pick).
 - `--variable-b` — variable for row B (same resolution as `--variable-a`).
-- `--colormap` — matplotlib colormap name, or a comma-separated list of
-  colors to interpolate (e.g. `white,wheat,green`). Named matplotlib
-  colormaps cannot contain commas, so a comma selects the custom-list
-  form. When omitted, precipitation totals use the CHIRPS-GEFS total-rainfall
-  classes (`BoundaryNorm` over
-  `[2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]`
-  mm with white under / pale-pink over) when `aggregation_period` is missing
-  or ≥ 5 days; sub-pentad totals (< 5 days) use lower breaks
-  (`0.5 … 200` mm, same colors). Precipitation anomalies (negatives,
-  or `anomal` in the name) use the CHIRPS-GEFS diverging classes
-  (`[-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]`
-  mm). In independent-scale mode a non-precip row falls back
-  to `viridis`.
+- `--colormap` — matplotlib colormap name, comma-separated colors, or a
+  `{colors, bounds}` object (also `--colormap-bounds` / `--cbar-ticks` /
+  `--cbar-labels`). When omitted, precipitation totals use the CHIRPS-GEFS
+  classes; anomalies use the diverging CHIRPS classes. In independent-scale
+  mode a non-precip row falls back to `viridis`.
 - `--colormap-a` / `--colormap-b` — per-row matplotlib colormap name or
   comma-separated colors in independent-scale mode. Precedence per row:
   `--colormap-a`/`-b`, then `--colormap`, then the CHIRPS total / anomaly

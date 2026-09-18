@@ -19,30 +19,33 @@ import sys
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
 from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
-from weather_skills_core.figure import (
-    DEFAULT_FONTSIZE,
-    axis_label,
-    parse_figsize,
-    resolve_axis_label,
-)
-from weather_skills_core.plot_compile import (
+from weather_skills_core.plot.compile import (
     axis_kind,
     calendar_bin_width,
     format_calendar_panel,
     is_cftime_axis,
 )
-from weather_skills_core.plot_spec import (
+from weather_skills_core.plot.figure import (
+    DEFAULT_FONTSIZE,
+    axis_label,
+    parse_figsize,
+    parse_label_list,
+    parse_number_list,
+    resolve_axis_label,
+)
+from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     datasets_from_cli_or_spec,
     dump_spec_dest,
+    overlay_flags,
     parse_plot_spec,
     resolve_flags,
     spec_get,
     spec_input_labels,
     spec_inputs_from_datasets,
 )
-from weather_skills_core.plot_style import (
+from weather_skills_core.plot.style import (
     PRECIP_LONG_MIN_DAYS,
     aggregation_days,
     is_precip,
@@ -118,8 +121,29 @@ def _ax_bounds(ds, variable):
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors. "
-        "Precip default: discrete CHIRPS-GEFS classes (BoundaryNorm)."
+        "Precip default: discrete CHIRPS-GEFS classes (BoundaryNorm). "
+        "Discrete custom classes: pass --colormap-bounds or a spec object."
     ),
+)
+@weather_skill.argument(
+    "--colormap-bounds",
+    default=None,
+    type=parse_number_list,
+    help="Comma-separated class stops; folds into style.colormap.bounds.",
+)
+@weather_skill.argument("--colormap-under", default=None, help="Color below the first class stop.")
+@weather_skill.argument("--colormap-over", default=None, help="Color above the last class stop.")
+@weather_skill.argument(
+    "--cbar-ticks",
+    default=None,
+    type=parse_number_list,
+    help="Comma-separated colorbar tick positions.",
+)
+@weather_skill.argument(
+    "--cbar-labels",
+    default=None,
+    type=parse_label_list,
+    help="Comma-separated colorbar tick labels. Requires --cbar-ticks.",
 )
 @weather_skill.argument(
     "--colormap-a",
@@ -221,6 +245,11 @@ def plot_compare(
     vmax=None,
     spec=None,
     dump_spec=None,
+    colormap_bounds=None,
+    colormap_under=None,
+    colormap_over=None,
+    cbar_ticks=None,
+    cbar_labels=None,
     **kwargs,
 ):
     """Side-by-side multi-panel PNG comparing two weather-skills standard dataset Zarrs."""
@@ -233,6 +262,11 @@ def plot_compare(
         colormap=colormap,
         colormap_a=colormap_a,
         colormap_b=colormap_b,
+        colormap_bounds=colormap_bounds,
+        colormap_under=colormap_under,
+        colormap_over=colormap_over,
+        cbar_ticks=cbar_ticks,
+        cbar_labels=cbar_labels,
         figsize=figsize,
         panels=panels,
         bbox=bbox,
@@ -249,6 +283,20 @@ def plot_compare(
         flags["colormap_a"],
         flags["colormap_b"],
     )
+    spec_data = overlay_flags(
+        spec_data,
+        colormap=colormap,
+        colormap_a=colormap_a,
+        colormap_b=colormap_b,
+        colormap_bounds=flags.get("colormap_bounds"),
+        colormap_under=flags.get("colormap_under"),
+        colormap_over=flags.get("colormap_over"),
+        cbar_ticks=flags.get("cbar_ticks"),
+        cbar_labels=flags.get("cbar_labels"),
+    )
+    colormap = spec_get(spec_data, "colormap")
+    colormap_a = spec_get(spec_data, "colormap_a")
+    colormap_b = spec_get(spec_data, "colormap_b")
     bbox, mask_geojson = flags["bbox"], flags["mask_geojson"]
     vmin, vmax = flags["vmin"], flags["vmax"]
     variable, variable_a, variable_b = (
@@ -554,8 +602,8 @@ def plot_compare(
     a_station = _is_station(ds_a)
     b_station = _is_station(ds_b)
 
-    from weather_skills_core.plot_export import write_plot_outputs
-    from weather_skills_core.plot_recipes import (
+    from weather_skills_core.plot.export import write_plot_outputs
+    from weather_skills_core.plot.recipes import (
         compile_heatmap_grid,
         heatmap_cell,
         scale_from_da,

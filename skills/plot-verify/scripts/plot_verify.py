@@ -25,23 +25,27 @@ from weather_skills_core.display_labels import (
     dataset_display_label,
     resolve_input_labels,
 )
-from weather_skills_core.figure import (
+from weather_skills_core.plot.compile import extent_from_da, slice_bbox_mask
+from weather_skills_core.plot.figure import (
     DEFAULT_FONTSIZE,
     format_plot_date_range,
     parse_figsize,
+    parse_label_list,
+    parse_number_list,
 )
-from weather_skills_core.plot_compile import extent_from_da, slice_bbox_mask
-from weather_skills_core.plot_spec import (
+from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     dump_spec_dest,
     named_datasets_from_spec,
+    overlay_flags,
     parse_plot_spec,
     resolve_flags,
+    spec_get,
     spec_inputs_from_datasets,
     spec_role_datasets,
 )
-from weather_skills_core.plot_style import aggregation_days
+from weather_skills_core.plot.style import aggregation_days
 from weather_skills_core.standard_utils import polygon_from_geojson
 from weather_skills_core.units import (
     format_units_for_display,
@@ -349,8 +353,29 @@ def _prepare(ds, variable):
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors, for obs/forecast rows. "
-        "Default: discrete CHIRPS-GEFS precip classes for precip, else viridis."
+        "Default: discrete CHIRPS-GEFS precip classes for precip, else viridis. "
+        "Discrete custom classes: pass --colormap-bounds or a spec object."
     ),
+)
+@weather_skill.argument(
+    "--colormap-bounds",
+    default=None,
+    type=parse_number_list,
+    help="Comma-separated class stops; folds into style.colormap.bounds.",
+)
+@weather_skill.argument("--colormap-under", default=None, help="Color below the first class stop.")
+@weather_skill.argument("--colormap-over", default=None, help="Color above the last class stop.")
+@weather_skill.argument(
+    "--cbar-ticks",
+    default=None,
+    type=parse_number_list,
+    help="Comma-separated colorbar tick positions.",
+)
+@weather_skill.argument(
+    "--cbar-labels",
+    default=None,
+    type=parse_label_list,
+    help="Comma-separated colorbar tick labels. Requires --cbar-ticks.",
 )
 @weather_skill.argument(
     "--label",
@@ -406,6 +431,11 @@ def plot_verify(
     output,
     spec=None,
     dump_spec=None,
+    colormap_bounds=None,
+    colormap_under=None,
+    colormap_over=None,
+    cbar_ticks=None,
+    cbar_labels=None,
     **kwargs,
 ):
     """Lead-week verification grid from obs, forecast, and pre-computed verify Zarrs."""
@@ -423,6 +453,11 @@ def plot_verify(
         spec_data,
         title=title,
         colormap=colormap,
+        colormap_bounds=colormap_bounds,
+        colormap_under=colormap_under,
+        colormap_over=colormap_over,
+        cbar_ticks=cbar_ticks,
+        cbar_labels=cbar_labels,
         figsize=figsize,
         bbox=bbox,
         mask_geojson=mask_geojson,
@@ -430,6 +465,16 @@ def plot_verify(
         leads=lead,
     )
     title, colormap, variable = flags["title"], flags["colormap"], flags["variable"]
+    spec_data = overlay_flags(
+        spec_data,
+        colormap=colormap,
+        colormap_bounds=flags.get("colormap_bounds"),
+        colormap_under=flags.get("colormap_under"),
+        colormap_over=flags.get("colormap_over"),
+        cbar_ticks=flags.get("cbar_ticks"),
+        cbar_labels=flags.get("cbar_labels"),
+    )
+    colormap = spec_get(spec_data, "colormap")
     bbox, mask_geojson, lead = flags["bbox"], flags["mask_geojson"], flags["leads"]
     figsize = tuple(flags["figsize"]) if flags["figsize"] else None
     if not label:
@@ -523,8 +568,8 @@ def plot_verify(
         columns.append((label, fc_da, verify_da, lat_dim, lon_dim))
 
     extent = _extent_from_da(obs_da, obs_lat, obs_lon, bbox)
-    from weather_skills_core.plot_export import write_plot_outputs
-    from weather_skills_core.plot_recipes import (
+    from weather_skills_core.plot.export import write_plot_outputs
+    from weather_skills_core.plot.recipes import (
         blank_cell,
         compile_heatmap_grid,
         error_scale,
@@ -628,7 +673,12 @@ def plot_verify(
         "geo": geo_out,
     }
     return write_plot_outputs(
-        fig, resolved, output, datasets=named, dump_spec_path=dump_spec_dest(dump_spec), spec=spec_data
+        fig,
+        resolved,
+        output,
+        datasets=named,
+        dump_spec_path=dump_spec_dest(dump_spec),
+        spec=spec_data,
     )
 
 

@@ -119,8 +119,11 @@ with a hits row, use `plot-verify`. For rainy-season onset dates from
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --input <in.zarr> --output <out.png> \
     [--variable NAME] [--style heatmap|contour|timeseries|xy|windrose|quiver] \
     [--u-variable NAME] [--v-variable NAME] [--quiver-scale N] [--quiver-step N] \
-    [--colormap NAME] [--vmin N] [--vmax N] [--title TEXT] [--subplot-title TEXT ...] \
+    [--colormap NAME|COLORS|{JSON}] [--colormap-bounds 0,10,50] \
+    [--colormap-under COLOR] [--colormap-over COLOR] \
+    [--vmin N] [--vmax N] [--title TEXT] [--subplot-title TEXT ...] \
     [--xlabel TEXT] [--ylabel TEXT] [--cbar-label TEXT] \
+    [--cbar-ticks 0,50,100] [--cbar-labels dry,mid,wet] \
     [--index DIM=POS,...] [--reduce DIM ...] [--along DIM] \
     [--extent LON_MIN,LON_MAX,LAT_MIN,LAT_MAX] \
     [--cities JSON_OR_PATH] [--fontsize N] [--figsize W,H] [--legend LOC] \
@@ -193,12 +196,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   names (`u10`/`v10`, `10m_u_component_of_wind`/`10m_v_component_of_wind`,
   `u`/`v`, …). Passing only one infers its partner (`u10` → `v10`).
   Heatmap/timeseries ignore these with a stderr warning.
-- `--colormap` — either a matplotlib colormap name or a comma-separated
-  list of colors to interpolate between (e.g. `white,wheat,green`). Named
-  matplotlib colormaps cannot contain commas, so the presence of a comma
-  unambiguously selects the custom-list form. When omitted, precipitation
-  totals (rate or amount) use the CHC `ppt_total_cmap` classes
-  (`BoundaryNorm` over
+- `--colormap` — matplotlib colormap name, comma-separated colors to
+  interpolate (`white,wheat,green`), or a JSON object
+  `{name, colors, bounds, under, over}` for a discrete class scale. Named
+  matplotlib colormaps cannot contain commas, so a comma selects the custom
+  list. When omitted, precipitation totals (rate or amount) use the CHC
+  `ppt_total_cmap` classes (`BoundaryNorm` over
   `[0, 2, 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2500]`
   mm: white for null/negative and 0–2 mm, pale-pink over `>2500`) when
   `aggregation_period` is missing or ≥ 5 days. Sub-pentad totals
@@ -209,12 +212,27 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --style xy --output <out.png> \
   (`[-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]`
   mm with under/over colors). Percent-of-normal (`poa` / `%`) uses `ppt_poa`;
   SPI uses `spi`. Named aliases: `ppt_total`/`chirps_total`, `ppt_anomaly`/`chirps_anom`,
-  `ppt_poa`, `ppt_spp`, `spi`. Every other variable uses `rocket`. Windrose uses a blue→orange
+  `ppt_poa`, `ppt_spp`, `spi`. Custom names resolve against `--style-file` /
+  `~/.config/weather-skills/plot.toml` `colormaps` (they used to be ignored).
+  Every other variable uses `rocket`. Windrose uses a blue→orange
   speed palette; `--colormap` recolors the speed stacks. Quiver defaults to
   `YlGn` (S2S 10 m / 700 hPa wind-vector maps); `--colormap PiYG` matches their
   anomaly quivers. A variable with CF `flag_values` (e.g. `verify --metric hits`) uses a
   discrete colormap and labeled colorbar ticks; `--colormap` as comma-separated
   colors must then match the flag count.
+  Discrete custom classes: `len(colors) == len(bounds) - 1` (one color per
+  interval), or two extra colors packed as under + classes + over. Example
+  spec: `{"style": {"colormap": {"colors": ["white", "green", "navy"],
+  "bounds": [0, 10, 50, 100], "under": "grey", "over": "magenta"}}}`.
+- `--colormap-bounds` — comma-separated class stops (`0,10,50,100`). Folds
+  into `style.colormap.bounds` (a string `--colormap magma` becomes
+  `{name, bounds}`). Combine with `--colormap white,green,blue` for a custom
+  discrete scale, or with a matplotlib name to bin that cmap.
+- `--colormap-under` / `--colormap-over` — colors for values below the first
+  stop / above the last. Folds into `style.colormap.under` / `.over`.
+- `--cbar-ticks` / `--cbar-labels` — colorbar tick positions and labels
+  (`layout.colorbar.ticks` / `.labels`). Labels require ticks and the same
+  count. Example: `--cbar-ticks 0,50,100 --cbar-labels dry,ok,wet`.
 - `--vmin` / `--vmax` — colorbar limits for heatmap, contour, quiver, and
   scatter. Either may be omitted (the unset end uses the data min/max).
   Setting either one drops the default discrete CHIRPS precip classes and
