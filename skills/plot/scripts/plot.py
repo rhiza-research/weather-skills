@@ -438,11 +438,8 @@ def _merged_spec(
 )
 @weather_skill.argument(
     "--kind",
-    "--style",
-    dest="kind",
     choices=["heatmap", "contour", "timeseries", "xy", "windrose", "quiver"],
     default=None,
-    help="Figure kind. --style is kept as an alias of --kind.",
 )
 @weather_skill.argument(
     "--u-variable",

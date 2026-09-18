@@ -344,30 +344,6 @@ def test_bar_writes_png(tmp_path, plot_timeseries):
     assert out.stat().st_size > 0
 
 
-def test_style_alias_writes_bar_png(tmp_path, plot_timeseries):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "bars_style.png"
-
-    run_skill(
-        plot_timeseries,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--style",
-        "bar",
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--trace",
-        "1:style=line,linewidth=2",
-    )
-
-    assert Path(out).exists()
-    assert out.stat().st_size > 0
-
-
 def test_bar_grouped_multi_input_writes_png(tmp_path, plot_timeseries):
     a = write_zarr(make_gridded(fill=1.0), tmp_path / "a.zarr")
     b = write_zarr(make_gridded(fill=2.0), tmp_path / "b.zarr")
