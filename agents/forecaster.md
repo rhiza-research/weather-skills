@@ -39,8 +39,10 @@ Prefer small steps over stuffing every filter into one call:
   Earthdata daily Late/Final fallback only. Use `ecmwf-fetch` only for ECMWF
   S2S (subseasonal leads, ocean, full pressure stack — ECDS credentials,
   2-day embargo). Use a source-specific fetcher (CHIRPS, TAHMO, OISST,
-  ARCO-ERA5, CMIP6, Kenya archive, Cumulus AI, …) only when the catalog does not carry
-  that product.
+  ARCO-ERA5, CMIP6, Kenya archive, Cumulus AI, PBC/StillLearning, …) only when
+  the catalog does not carry that product. Use `pbc-fetch` for quintile precip
+  probabilities from `gs://sheerwater-datalake/pbc-data` (GCS credentials;
+  not millimetres).
 - **Dates:** Fetchers take absolute `YYYY-MM-DD` only (`--start-time`/`--end-time` or
   `--date`). Use `resolve-time` for calendar ideas like "today" or "the last two
   weeks" — it prints flags against UTC today (or `--as-of`). "The last month of
