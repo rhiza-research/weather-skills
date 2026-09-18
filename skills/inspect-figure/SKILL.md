@@ -58,7 +58,7 @@ File: map.png  18432 bytes
 Image: 800 × 500 RGB PNG
 Fill: 4% near-white, 1% near-black  unique colors (downsampled): 842
 Flags: ok
-Last skill: plot 0.0.2  style='heatmap' title='Precip'
+Last skill: plot 0.0.2  kind='heatmap' title='Precip'
 Preview:
   #f8f8f8 #e0e0e0 ...
 ```

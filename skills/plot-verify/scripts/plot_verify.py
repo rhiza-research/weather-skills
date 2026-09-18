@@ -25,7 +25,8 @@ from weather_skills_core.display_labels import (
     dataset_display_label,
     resolve_input_labels,
 )
-from weather_skills_core.plot.compile import extent_from_da, slice_bbox_mask
+from weather_skills_core.plot import export
+from weather_skills_core.plot.maps import extent_from_da, slice_bbox_mask
 from weather_skills_core.plot.figure import (
     DEFAULT_FONTSIZE,
     format_plot_date_range,
@@ -36,6 +37,7 @@ from weather_skills_core.plot.figure import (
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
+    SPEC_VERSION,
     dump_spec_dest,
     named_datasets_from_spec,
     overlay_flags,
@@ -45,7 +47,7 @@ from weather_skills_core.plot.spec import (
     spec_inputs_from_datasets,
     spec_role_datasets,
 )
-from weather_skills_core.plot.style import (
+from weather_skills_core.plot.theme import (
     aggregation_days,
     is_precip,
     widest_precip_window,
@@ -572,10 +574,9 @@ def plot_verify(
         columns.append((label, fc_da, verify_da, lat_dim, lon_dim))
 
     extent = _extent_from_da(obs_da, obs_lat, obs_lon, bbox)
-    from weather_skills_core.plot.export import write_plot_outputs
-    from weather_skills_core.plot.recipes import (
+    from weather_skills_core.plot.maps import (
         blank_cell,
-        compile_heatmap_grid,
+        compile_grid,
         error_scale,
         heatmap_cell,
         hits_scale,
@@ -628,7 +629,7 @@ def plot_verify(
         bottom_row.append(heatmap_cell(verify_da, lat_dim, lon_dim, scale="verify"))
         col_titles.append(col_label)
 
-    fig = compile_heatmap_grid(
+    compiled = compile_grid(
         [top_row, bottom_row],
         extent=extent,
         title=fig_title,
@@ -666,15 +667,15 @@ def plot_verify(
     if mask_geojson:
         geo_out["mask_geojson"] = str(mask_geojson)
     resolved = {
-        "version": 1,
+        "version": SPEC_VERSION,
         "skill": "plot-verify",
         "inputs": inputs,
         "layout": {
             "facet": {"rows": 2, "columns": 1 + n_leads},
             "figsize": list(figsize) if figsize else None,
         },
-        "traces": [{"type": "heatmap_grid", "metric": metric, "leads": list(leads)}],
-        "style": {
+        "traces": [{"kind": "grid", "metric": metric, "leads": list(leads)}],
+        "theme": {
             "template": "weather_skills",
             "fontsize": fontsize,
             "colormap": colormap or field_scale.get("name"),
@@ -682,9 +683,9 @@ def plot_verify(
         "title": fig_title,
         "geo": geo_out,
     }
-    return write_plot_outputs(
-        fig,
-        resolved,
+    compiled.spec = {**compiled.spec, **resolved}
+    return export(
+        compiled,
         output,
         datasets=named,
         dump_spec_path=dump_spec_dest(dump_spec),

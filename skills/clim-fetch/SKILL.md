@@ -1,6 +1,6 @@
 ---
 name: clim-fetch
-description: Fetch a precomputed daily climatology (avg + std) for a `--dataset` (imerg_final, era5, chirps, ...) from Sheerwater's public GCS mirror, select one `--prediction-timedelta` lead, optionally roll it up to a coarser `--window` in days, and expand it onto a requested `--start-time`/`--end-time` calendar window, so timestamps line up with the rest of a pipeline's data. Optional `--bbox N/W/S/E` (compose with resolve-region) subsets before download. Use when a task needs a climatological baseline for anomalies, verification, or comparison — not live observations (use imerg-fetch, dynamical-fetch, arco-era5-fetch, etc. for those).
+description: Fetch a precomputed daily climatology (avg + std) for a `--dataset` (imerg_final, era5, chirps, oisst, ...) from Sheerwater's public GCS mirror, select one `--prediction-timedelta` lead, optionally roll it up to a coarser `--window` in days, and expand it onto a requested `--start-time`/`--end-time` calendar window, so timestamps line up with the rest of a pipeline's data. Precipitation sources default to `--variable precip`; OISST sea-surface temperature uses `--dataset oisst --variable sst`. Optional `--bbox N/W/S/E` (compose with resolve-region) subsets before download. Use when a task needs a climatological baseline for anomalies, verification, or comparison — not live observations (use imerg-fetch, dynamical-fetch, arco-era5-fetch, oisst-fetch, etc. for those).
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads a static climatology Zarr from the public GCS bucket sheerwater-public-datalake over anonymous HTTPS; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -8,6 +8,7 @@ metadata:
   catalog-group: fetchers
   variables:
     - precip
+    - sst
 ---
 
 # clim-fetch
@@ -40,19 +41,25 @@ One skill covers every mirrored climatology — the source is selected with
   climatological baseline) rather than just the init-date value.
 
 Not for live observations — use `imerg-fetch` / `dynamical-fetch` for IMERG,
-`chirps-fetch` for live CHIRPS, `arco-era5-fetch` for ERA5, etc. Not for
-datasets not yet mirrored — see "Supported datasets" below.
+`chirps-fetch` for live CHIRPS, `arco-era5-fetch` for ERA5, `oisst-fetch` for
+live OISST SST, etc. Not for datasets not yet mirrored — see "Supported
+datasets" below.
 
 ### Supported datasets
 
 `--dataset` must be the exact bucket product prefix — no aliasing.
+`--variable` is part of the object key
+(`climatologies/<dataset>_<variable>_<window>d.zarr`); the default `precip`
+is correct for the precipitation sources below. OISST SST is a different
+variable — pass `--variable sst`.
 
 | `--dataset` | Source |
 | --- | --- |
-| `imerg_final` | IMERG final daily precipitation climatology |
-| `era5` | ERA5 daily climatology |
-| `chirps` | CHIRPS daily precipitation climatology |
-| `ecmwf_ifs` | ECMWF IFS reforecast daily precipitation climatology |
+| `imerg_final` | IMERG final daily precipitation climatology (`--variable precip`) |
+| `era5` | ERA5 daily climatology (`--variable precip`) |
+| `chirps` | CHIRPS daily precipitation climatology (`--variable precip`) |
+| `ecmwf_ifs` | ECMWF IFS reforecast daily precipitation climatology (`--variable precip`) |
+| `oisst` | NOAA OISST v2.1 daily sea-surface temperature climatology. Requires `--variable sst`. For live SST observations use `oisst-fetch`, not this skill. |
 
 More datasets are added by mirroring a new Zarr under the same bucket
 convention — no CLI change needed once added.
@@ -62,7 +69,7 @@ convention — no CLI change needed once added.
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
   --dataset <id> --start-time YYYY-MM-DD --end-time YYYY-MM-DD -o <path.zarr> \
-  [--variable precip] [--prediction-timedelta 0] [--window 1] [--align left] [--bbox N/W/S/E]
+  [--variable precip|sst] [--prediction-timedelta 0] [--window 1] [--align left] [--bbox N/W/S/E]
 ```
 
 ### Arguments
@@ -71,8 +78,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
 - `--start-time`, `--end-time` — inclusive calendar window, absolute ISO dates
   `YYYY-MM-DD`. The output has one row per calendar day in this window.
 - `--output`, `-o` — output Zarr path (overwritten if it exists).
-- `--variable`, `-v` — climate variable (default: `precip`); used only as a
-  fallback name if the cached Zarr has no `variable` global attr of its own.
+- `--variable`, `-v` — climate variable (default: `precip`). Selects the
+  remote object key `climatologies/<dataset>_<variable>_<window>d.zarr`,
+  and is also a fallback name if the cached Zarr has no `variable` global
+  attr of its own. Precipitation sources use the default. For OISST SST
+  pass `--dataset oisst --variable sst` (the default `precip` looks for a
+  store that does not exist).
 - `--prediction-timedelta` — forecast lead in whole days to select from the
   source's `prediction_timedelta` dim (default: `0`). Errors listing the
   available leads if the requested value isn't cached.
@@ -117,8 +128,9 @@ calendar window (real dates, not the source's 1904 placeholder). Data
 variables are named `<variable>_avg` (climatological mean) and
 `<variable>_std` (climatological standard deviation), where `<variable>`
 comes from the cached Zarr's own `variable` global attr (e.g. `precip_avg`,
-`precip_std`) — both converted to standard display units (e.g. `mm day-1`
-for precip). Unlike variance, std shares the mean's units and converts
+`precip_std`, or `sst_avg` / `sst_std` for `--dataset oisst`) — both
+converted to standard display units (e.g. `mm day-1` for precip,
+`degree_Celsius` for SST). Unlike variance, std shares the mean's units and converts
 linearly, so both variables go through the same unit-conversion path safely.
 Global attrs include `weather_skills_source=sheerwater-mirror:<dataset>`,
 `climatology_dataset`, `climatology_variable`,
@@ -169,6 +181,14 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
   --dataset imerg_final --start-time 2020-01-01 --end-time 2020-12-31 \
   --bbox 5.5/33.9/-4.7/41.9 -o /tmp/imerg_clim_2020_kenya.zarr
+
+# OISST sea-surface temperature climatology. --variable sst is required;
+# the default precip key is not mirrored for this dataset. For live SST
+# observations use oisst-fetch, then difference / standardize-anomaly
+# against this climatology.
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
+  --dataset oisst --variable sst --start-time 2020-01-01 --end-time 2020-12-31 \
+  -o /tmp/oisst_clim_2020.zarr
 ```
 
 ### Recipe: weekly accumulation climatology (3-skill)

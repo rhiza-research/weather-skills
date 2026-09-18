@@ -73,7 +73,7 @@ def test_figsize_writes_png(tmp_path, plot_compare):
 
 
 def test_precip_shared_scale_is_nested_week_window():
-    from weather_skills_core.plot_style import precip_nested_palette, resolve_colorscale
+    from weather_skills_core.plot.theme import precip_nested_palette, resolve_colorscale
 
     da = make_gridded(fill=8.0)["precip"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
@@ -84,7 +84,7 @@ def test_precip_shared_scale_is_nested_week_window():
 
 
 def test_precip_anomaly_row_scale_is_chirps_palette():
-    from weather_skills_core.plot_style import PRECIP_ANOMALY_BOUNDS, resolve_colorscale
+    from weather_skills_core.plot.theme import PRECIP_ANOMALY_BOUNDS, resolve_colorscale
 
     da = make_gridded(fill=-40.0)["precip"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
@@ -94,7 +94,7 @@ def test_precip_anomaly_row_scale_is_chirps_palette():
 
 
 def test_parse_colormap_accepts_comma_separated_colors():
-    from weather_skills_core.plot_style import parse_colormap_spec
+    from weather_skills_core.plot.theme import parse_colormap_spec
 
     assert parse_colormap_spec(None) == {}
     assert parse_colormap_spec("magma") == {"name": "magma"}
@@ -127,7 +127,7 @@ def test_custom_color_list_writes_png(tmp_path, plot_compare):
 
 
 def test_row_scale_vmin_vmax_drops_precip_boundary_norm():
-    from weather_skills_core.plot_recipes import scale_from_da
+    from weather_skills_core.plot.maps import scale_from_da
 
     da = make_gridded(fill=8.0)["precip"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")

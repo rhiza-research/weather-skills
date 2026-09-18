@@ -19,7 +19,8 @@ import sys
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
 from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
-from weather_skills_core.plot.compile import (
+from weather_skills_core.plot import export
+from weather_skills_core.plot.maps import (
     axis_kind,
     calendar_bin_width,
     format_calendar_panel,
@@ -36,6 +37,7 @@ from weather_skills_core.plot.figure import (
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
+    SPEC_VERSION,
     datasets_from_cli_or_spec,
     dump_spec_dest,
     overlay_flags,
@@ -45,7 +47,7 @@ from weather_skills_core.plot.spec import (
     spec_input_labels,
     spec_inputs_from_datasets,
 )
-from weather_skills_core.plot.style import (
+from weather_skills_core.plot.theme import (
     aggregation_days,
     is_precip,
     is_precip_anomaly,
@@ -602,9 +604,8 @@ def plot_compare(
     a_station = _is_station(ds_a)
     b_station = _is_station(ds_b)
 
-    from weather_skills_core.plot.export import write_plot_outputs
-    from weather_skills_core.plot.recipes import (
-        compile_heatmap_grid,
+    from weather_skills_core.plot.maps import (
+        compile_grid,
         heatmap_cell,
         scale_from_da,
         scatter_cell,
@@ -707,7 +708,7 @@ def plot_compare(
 
     top_cells, col_titles = _row_cells(top, "top")
     bottom_cells, _ = _row_cells(bottom, "bottom")
-    fig = compile_heatmap_grid(
+    compiled = compile_grid(
         [top_cells, bottom_cells],
         extent=[g_xmin, g_xmax, g_ymin, g_ymax],
         title=title,
@@ -735,7 +736,7 @@ def plot_compare(
     if mask_geojson:
         geo_out["mask_geojson"] = str(mask_geojson)
     resolved = {
-        "version": 1,
+        "version": SPEC_VERSION,
         "skill": "plot-compare",
         "inputs": inputs,
         "layout": {
@@ -743,8 +744,8 @@ def plot_compare(
             "shared_colorscale": use_shared_scale,
             "figsize": list(figsize) if figsize else None,
         },
-        "traces": [{"type": "heatmap_grid"}],
-        "style": {
+        "traces": [{"kind": "grid"}],
+        "theme": {
             "template": "weather_skills",
             "fontsize": fontsize,
             "colormap": colormap or top[5].get("name"),
@@ -760,9 +761,9 @@ def plot_compare(
         resolved["vmin"] = vmin
     if vmax is not None:
         resolved["vmax"] = vmax
-    return write_plot_outputs(
-        fig,
-        resolved,
+    compiled.spec = {**compiled.spec, **resolved}
+    return export(
+        compiled,
         output,
         datasets=datasets,
         dump_spec_path=dump_spec_dest(dump_spec),

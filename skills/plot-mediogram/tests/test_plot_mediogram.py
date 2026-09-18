@@ -29,7 +29,19 @@ def test_ensemble_forecast_vs_mclimate(tmp_path, plot_mediogram):
     mc = write_zarr(_ensemble_rate_forecast(members=5, n_step=4, fill=0.5), tmp_path / "mc.zarr")
     out = tmp_path / "medio.png"
 
-    run_skill(plot_mediogram, '-i', str(fc), '-i', str(mc), '-o', str(out), '--spec', '{"geo":{"lat":1.0,"lon":10.0}}')
+    run_skill(
+        plot_mediogram,
+        "-i",
+        str(fc),
+        "-i",
+        str(mc),
+        "-o",
+        str(out),
+        "--lat",
+        "1.0",
+        "--lon",
+        "10.0",
+    )
 
     assert Path(out).exists()
     assert out.stat().st_size > 0
@@ -49,7 +61,21 @@ def test_figsize_writes_png(tmp_path, plot_mediogram):
     mc = write_zarr(_ensemble_rate_forecast(members=5, n_step=4, fill=0.5), tmp_path / "mc.zarr")
     out = tmp_path / "medio.png"
 
-    run_skill(plot_mediogram, '-i', str(fc), '-i', str(mc), '-o', str(out), '--spec', '{"geo":{"lat":1.0,"lon":10.0},"layout":{"figsize":[8.0,4.0]}}')
+    run_skill(
+        plot_mediogram,
+        "-i",
+        str(fc),
+        "-i",
+        str(mc),
+        "-o",
+        str(out),
+        "--lat",
+        "1.0",
+        "--lon",
+        "10.0",
+        "--figsize",
+        "8x4",
+    )
 
     assert Path(out).exists()
     import matplotlib.image as mpimg
@@ -65,7 +91,21 @@ def test_replot_from_spec(tmp_path, plot_mediogram):
     fc = write_zarr(_ensemble_rate_forecast(members=5, n_step=4), tmp_path / "fc.zarr")
     mc = write_zarr(_ensemble_rate_forecast(members=5, n_step=4, fill=0.5), tmp_path / "mc.zarr")
     first = tmp_path / "medio.png"
-    run_skill(plot_mediogram, '-i', str(fc), '-i', str(mc), '-o', str(first), '--spec', '{"geo":{"lat":1.0,"lon":10.0},"title":"Original"}')
+    run_skill(
+        plot_mediogram,
+        "-i",
+        str(fc),
+        "-i",
+        str(mc),
+        "-o",
+        str(first),
+        "--lat",
+        "1.0",
+        "--lon",
+        "10.0",
+        "--title",
+        "Original",
+    )
     spec_path = tmp_path / "medio.plot.json"
     data = json.loads(spec_path.read_text())
     assert data["geo"]["lat"] == pytest.approx(1.0)

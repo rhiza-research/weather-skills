@@ -1,30 +1,25 @@
 # Plotting skills
 
-Figure stack on `plot-refactor`. Agent how-tos live in each skill’s
-[`SKILL.md`](../skills/plot/SKILL.md); this page is for judging the *design*.
+Figure stack. Agent how-tos live in each skill’s
+[`SKILL.md`](../skills/plot/SKILL.md); this page is the design of the
+compiler.
 
 ## How the stack works
 
 ```mermaid
 flowchart LR
-  CLI[CLI flags]
-  Table[FLAG_TO_SPEC table]
-  Spec[Canonical JSON spec]
-  Data["Named -i Zarrs"]
-  MapRenderer[plot.layers: every map]
-  Recipes[plot.recipes: grids, lines, boxes]
-  Finish[finish_figure axes annotations shapes]
-  PNG[PNG plus plot.json]
-
-  CLI --> Table
-  Table --> Spec
-  Spec --> MapRenderer
-  Spec --> Recipes
-  Data --> MapRenderer
-  Data --> Recipes
-  MapRenderer --> Finish
-  Recipes --> Finish
-  Finish --> PNG
+  CLI[CLI flags] --> Flags[FLAG_TO_SPEC]
+  Flags --> Spec[spec.py]
+  Sidecar["*.plot.json"] --> Spec
+  Zarrs["Decorator-opened Zarrs"] --> Compile
+  Spec --> Compile["plot.compile"]
+  Compile --> Maps[maps.py]
+  Compile --> Charts[charts.py]
+  Maps --> Figure[figure.py]
+  Charts --> Figure
+  Maps --> Out[CompiledFigure]
+  Charts --> Out
+  Out --> Export["PNG + sidecar"]
 ```
 
 - **Data** comes only from decorator-opened Zarrs (`-i`, `--layer`,
@@ -39,16 +34,27 @@ flowchart LR
   through `resolve_flags(spec, **cli)`, which is the single precedence rule:
   a set CLI value wins, otherwise the spec's value is used.
 - **One map renderer.** `heatmap`, `contour`, `quiver` and `--layer` all
-  compile through `plot.layers`: a single-input style is just a one-layer
-  figure. `plot --style heatmap x.zarr` and `plot --layer heatmap:x.zarr`
+  compile through `plot.maps`: a single-input kind is just a one-layer
+  figure. `plot --kind heatmap x.zarr` and `plot --layer heatmap:x.zarr`
   render pixel-identical output. Overlays (coastlines, borders, filled lakes,
-  admin-1) come from `plot.geo`, which picks a Natural Earth resolution from
-  the map span and skips a layer with a warning if it cannot be fetched.
+  admin-1) pick a Natural Earth resolution from the map span and skip a layer
+  with a warning if it cannot be fetched.
 - **Recipes stay Python** (compare grid, verify grid, mediogram boxes).
-  There is no generic mosaic DSL.
-- **Chrome** is seaborn (`weather_skills` / `colorblind`) then optional
-  `style.rc`. The renderer applies its own chart theme, so a caller cannot
+  There is no generic mosaic DSL. Those skills still call
+  `maps.compile_grid` / `charts.compile_lines` / `charts.compile_mediogram`
+  and go through `export`.
+- **Theme** is seaborn (`weather_skills` / `colorblind`) then optional
+  `theme.rc`. The renderer applies its own chart theme, so a caller cannot
   hand a map the line-chart style. PNG via matplotlib Agg.
+
+Python surface (`import weather_skills_core.plot` does not load matplotlib):
+
+```python
+from weather_skills_core.plot import PlotSpec, compile, dump_spec, export, load_spec
+
+compiled = compile(spec, datasets)
+export(compiled, output, datasets=datasets)
+```
 
 ## Skill catalog
 
@@ -77,20 +83,32 @@ average `number` first; use `summarize-dim --dim number --method mean` on
 
 Every knob has exactly one home. `normalize_spec` in `plot/spec.py` validates
 against this table and rejects anything else, naming the canonical path for a
-key that used to be readable somewhere else.
+key that used to be readable somewhere else. Spec version is `2`.
 
 | Where | Keys |
 | --- | --- |
 | top level | `version`, `skill`, `inputs`, `traces`, `layers`, `axes`, `annotations`, `shapes`, `title`, `subplot_titles`, `xlabel`, `ylabel`, `cbar_label`, `legend`, `vmin`, `vmax` |
 | `layout` | `figsize`, `autosize`, `dpi`, `facecolor`, `colorbar`, `shared_colorscale`, `subplots`, `facet` |
 | `layout.facet` | `rows`, `columns`, `max_columns`, `n_panels` |
-| `style` | `template`, `colormap` (name, comma list, or `{name, colors, bounds, under, over, cmap}`), `fontsize`, `rc` |
+| `theme` | `template`, `colormap` (name, comma list, or `{name, colors, bounds, under, over, cmap}`), `fontsize`, `rc` |
 | `layout.colorbar` | `len`/`shrink`, `thickness`, `extend`, `pad`, `location`, `ticks`, `labels`, plus matplotlib extras |
 | `geo` | `extent`, `bbox`, `cities`, `mask_geojson`, `draw_boxes`, `overlays`, `lat`, `lon` |
 | `inputs[]` | `id`, `path`, `variable`, `index`, `label`, `colormap`, `role` |
-| `traces[]` | `type`, `input`, `style`, `x`, `y`, `path`, `along`, `along_color`, `reduce`, `align`, `band`, `pair_on`, `u_variable`, `v_variable`, `x_variable`, `y_variable`, `metric`, `leads`, plus the artist blocks |
+| `traces[]` | `kind`, `input`, `mark`, `x`, `y`, `path`, `along`, `along_color`, `reduce`, `align`, `band`, `pair_on`, `u_variable`, `v_variable`, `x_variable`, `y_variable`, `metric`, `leads`, plus the artist blocks |
 | `traces[]` artist blocks | `line`, `mesh`, `contour`, `scatter`, `bar`, `quiver`, `windrose`, `fill`, `box`, `mediogram` |
 | `layers[]` | `kind`, `path`, `options`, `input`, `raw` |
+
+CLI and JSON use the same words:
+
+| CLI | Spec |
+| --- | --- |
+| `plot --kind` | `traces[0].kind` (`heatmap`, `contour`, `quiver`, `layer`, `timeseries`, `xy`, `windrose`, `grid`, `mediogram`) |
+| `plot-timeseries --mark` | `traces[].mark` (`line` or `bar`) |
+| `--theme` | `theme.template` (`weather_skills` / `colorblind`) |
+| `--theme-file` | user palette registry (not a spec key) |
+
+Old sidecar keys (`style`, `traces[].type`, `traces[].style`, …) are rejected
+with a relocation message. There is no silent rewrite.
 
 Key details:
 
@@ -102,17 +120,18 @@ Key details:
   `tick_params`, locators (`auto`/`log`/`maxn`/`null`/`multiple`), formatters
   (`scalar`/`log`/`percent`/`date`/`format`/`dayofyear`), spines, grid,
   legend, `twinx`/`twiny`. A sidecar dumps only the keys you set; the full
-  editable set is `AXES_TEMPLATE` in `plot/mpl.py`.
-- **`style.colormap`**: a matplotlib name, a comma-separated color list, or
+  editable catalog is `AXES_TEMPLATE` in `plot/figure.py`.
+- **`theme.colormap`**: a matplotlib name, a comma-separated color list, or
   `{colors, bounds, under, over}` for a discrete `BoundaryNorm` scale.
   `len(colors)` is `len(bounds) - 1`, or two extra colors packed as under +
-  classes + over. Named palettes also resolve from `--style-file` /
-  `colormaps` in the user style file.
+  classes + over. Named palettes also resolve from `--theme-file` /
+  `colormaps` in the user theme file. Unknown keys in that file are an error.
 - **`layout.colorbar.ticks` / `labels`**: explicit colorbar ticks. Labels
   need ticks and the same count. CLI: `--colormap-bounds`, `--cbar-ticks`,
   `--cbar-labels`.
 - **`annotations` / `shapes`**: text/arrows; rect, h/v lines and spans, circle.
-- **`style.rc`**: matplotlib rcParams after seaborn; backend keys rejected.
+- **`theme.rc`**: matplotlib rcParams after seaborn; backend keys rejected.
+- **Layer options** are snake_case (`u_variable`, `quiver_scale`).
 - **No `patch` key.** `--patch` is still a CLI convenience — it deep-merges
   into the spec before compile — but the compiler never reads a `patch`
   object, so there is one place a title or annotation can live.
@@ -120,20 +139,10 @@ Key details:
 Dump → edit → `--spec out.plot.json` is the intended agent loop. CLI flags
 overlay the spec. Provenance still chains from the Zarrs.
 
-## What is still not uniform
-
-- **Recipe internals still own some ticks until spec overrides** (mediogram
-  category labels, heatmap lon/lat ticks, date formatters). Spec wins
-  because `finish_figure` runs last.
-- **Closed allowlists**, not the full matplotlib Artist API. That is
-  deliberate (safe JSON), not a complete `ax.*` mirror.
-- **Two CLIs for 1D**, but they now agree on the data question: neither
-  `plot --style timeseries` nor `plot-timeseries` will average a leftover dim
-  for you — pass `--reduce` per dim or `--along` to fan it out.
-  `plot-timeseries` remains the one for several inputs, `--subplots`,
-  `--band`, and `--trace` styling.
-- **Core vs skill pin**: scripts depend on a matching `weather-skills-core`
-  checkout. Evaluating locally may need `PYTHONPATH` to that core.
+Neither `plot --kind timeseries` nor `plot-timeseries` will average a leftover
+dim — pass `--reduce` per dim or `--along` to fan it out.
+`plot-timeseries` remains the one for several inputs, `--subplots`,
+`--band`, and `--trace` styling.
 
 ## Suggested evaluation path
 
@@ -143,4 +152,4 @@ overlay the spec. Provenance still chains from the Zarrs.
    `--align-day-of-year` → edit `axes.xticks` and `line`.
 3. Two-row compare, a mediogram, and a windrose or `--layer` map: confirm
    the sidecar contains the same `axes` keys and that `--spec` changes
-   ticks/legend without re-passing `--style` / `--layer`.
+   ticks/legend without re-passing `--kind` / `--layer`.

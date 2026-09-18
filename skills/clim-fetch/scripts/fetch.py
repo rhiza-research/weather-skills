@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@main",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 #   "cftime",
 #   "fsspec",
 #   "aiohttp",
@@ -44,7 +44,7 @@ _BUCKET = "sheerwater-public-datalake"
 _GCS_MEDIA = f"https://storage.googleapis.com/{_BUCKET}"
 
 # Valid --dataset ids — exactly the bucket's product prefix, no aliasing.
-_DATASETS = ("imerg_final", "era5", "chirps", "ecmwf_ifs")
+_DATASETS = ("imerg_final", "era5", "chirps", "ecmwf_ifs", "oisst")
 
 _DEFAULT_VARIABLE = "precip"
 _DEFAULT_LEAD_DAYS = 0
@@ -171,7 +171,13 @@ def _expand_climatology(clim: xr.Dataset, start, end) -> xr.Dataset:
     "--variable",
     "-v",
     default=_DEFAULT_VARIABLE,
-    help=f"Climate variable (default: {_DEFAULT_VARIABLE}).",
+    help=(
+        f"Climate variable used in the remote object key "
+        f"{_BUCKET}/climatologies/<dataset>_<variable>_<window>d.zarr "
+        f"(default: {_DEFAULT_VARIABLE}). Precipitation sources use the "
+        "default; OISST SST requires --variable sst. Also used as a "
+        "fallback name if the cached Zarr has no variable global attr."
+    ),
 )
 @weather_skill.argument(
     "--prediction-timedelta",

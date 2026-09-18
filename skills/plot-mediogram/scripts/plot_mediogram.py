@@ -15,10 +15,13 @@
 
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
+from weather_skills_core.plot import export
+from weather_skills_core.plot.charts import compile_mediogram
 from weather_skills_core.plot.figure import DEFAULT_FONTSIZE, parse_figsize, resolve_axis_label
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
+    SPEC_VERSION,
     datasets_from_cli_or_spec,
     dump_spec_dest,
     parse_plot_spec,
@@ -41,7 +44,7 @@ def _select_point(da, lat, lon):
     lat_dim = cf_dim(da, "latitude")
     lon_dim = cf_dim(da, "longitude")
     if lat_dim is None or lon_dim is None:
-        raise ValueError(f"Could not identify latitude/longitude in dims {list(da.dims)}.")
+        raise UsageError(f"Could not identify latitude/longitude in dims {list(da.dims)}.")
     return da.sel({lat_dim: lat, lon_dim: lon}, method="nearest")
 
 
@@ -178,10 +181,7 @@ def plot_mediogram(
         else:
             tick_labels.append(str(value))
     qty = variable_label_for_display(pt_fc, fallback=variable, include_units=False)
-    from weather_skills_core.plot.export import write_plot_outputs
-    from weather_skills_core.plot.recipes import compile_mediogram
-
-    fig = compile_mediogram(
+    compiled = compile_mediogram(
         fc,
         mc,
         tick_labels,
@@ -197,21 +197,20 @@ def plot_mediogram(
     if variable:
         for item in inputs:
             item["variable"] = variable
-    resolved = {
-        "version": 1,
+    compiled.spec = {
+        "version": SPEC_VERSION,
         "skill": "plot-mediogram",
         "inputs": inputs,
-        "traces": [{"type": "mediogram"}],
-        "style": {"template": "weather_skills", "fontsize": fontsize},
+        "traces": [{"kind": "mediogram"}],
+        "theme": {"template": "weather_skills", "fontsize": fontsize},
         "layout": {"figsize": list(figsize) if figsize else None},
         "geo": {"lat": snapped_lat, "lon": snapped_lon},
         "title": title,
         "xlabel": xlabel,
         "ylabel": ylabel,
     }
-    return write_plot_outputs(
-        fig,
-        resolved,
+    return export(
+        compiled,
         output,
         datasets=named,
         dump_spec_path=dump_spec_dest(dump_spec),

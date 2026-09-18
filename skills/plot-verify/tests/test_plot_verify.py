@@ -96,7 +96,19 @@ def test_replot_from_spec(tmp_path, plot_fn, verify_fn):
     vpath = tmp_path / "bias.zarr"
     _run_verify(verify_fn, fc, obs, vpath, metric="bias")
     first = tmp_path / "verify_bias.png"
-    run_skill(plot_fn, '--obs', str(obs), '--forecast', str(fc), '--verify', str(vpath), '-o', str(first), '--spec', '{"title":"Original"}')
+    run_skill(
+        plot_fn,
+        "--obs",
+        str(obs),
+        "--forecast",
+        str(fc),
+        "--verify",
+        str(vpath),
+        "-o",
+        str(first),
+        "--title",
+        "Original",
+    )
     spec_path = tmp_path / "verify_bias.plot.json"
     data = json.loads(spec_path.read_text())
     assert any(item.get("id") == "verify1" for item in data["inputs"])
@@ -114,7 +126,7 @@ def test_replot_from_spec(tmp_path, plot_fn, verify_fn):
 def test_error_scale_bias_white_at_zero():
     import numpy as np
     import xarray as xr
-    from weather_skills_core.plot.recipes import error_scale
+    from weather_skills_core.plot.maps import error_scale
 
     da = xr.DataArray(np.array([[-2.0, 0.0], [0.5, 3.0]]), name="bias")
     scale = error_scale(da, "bias")
@@ -129,7 +141,7 @@ def test_error_scale_bias_white_at_zero():
 def test_error_scale_mae_white_at_zero():
     import numpy as np
     import xarray as xr
-    from weather_skills_core.plot.recipes import error_scale
+    from weather_skills_core.plot.maps import error_scale
 
     da = xr.DataArray(np.array([[0.0, 1.0], [2.0, 4.0]]), name="mae")
     scale = error_scale(da, "mae")
@@ -207,7 +219,25 @@ def test_custom_lead_labels(tmp_path, plot_fn, verify_fn, capsys):
     _run_verify(verify_fn, a, obs, va)
     _run_verify(verify_fn, b, obs, vb)
     out = tmp_path / "verify.png"
-    run_skill(plot_fn, '--obs', str(obs), '--forecast', str(a), '--verify', str(va), '--forecast', str(b), '--verify', str(vb), '-o', str(out), '--spec', '{"traces":[{"leads":["W1"]},{"leads":["W2"]}]}')
+    run_skill(
+        plot_fn,
+        "--obs",
+        str(obs),
+        "--forecast",
+        str(a),
+        "--verify",
+        str(va),
+        "--forecast",
+        str(b),
+        "--verify",
+        str(vb),
+        "--lead",
+        "W1",
+        "--lead",
+        "W2",
+        "-o",
+        str(out),
+    )
     assert "W1" in capsys.readouterr().out
     assert Path(out).exists()
 
@@ -218,7 +248,21 @@ def test_lead_count_mismatch_is_refused(tmp_path, plot_fn, verify_fn):
     vpath = tmp_path / "v.zarr"
     _run_verify(verify_fn, fc, obs, vpath)
     with pytest.raises(SystemExit) as exc:
-        run_skill(plot_fn, '--obs', str(obs), '--forecast', str(fc), '--verify', str(vpath), '-o', str(tmp_path / 'out.png'), '--spec', '{"traces":[{"leads":["W1"]},{"leads":["W2"]}]}')
+        run_skill(
+            plot_fn,
+            "--obs",
+            str(obs),
+            "--forecast",
+            str(fc),
+            "--verify",
+            str(vpath),
+            "--lead",
+            "W1",
+            "--lead",
+            "W2",
+            "-o",
+            str(tmp_path / "out.png"),
+        )
     assert exc.value.code == 2
 
 
@@ -270,7 +314,19 @@ def test_bbox_slices_before_draw(tmp_path, plot_fn, verify_fn):
     vpath = tmp_path / "v.zarr"
     _run_verify(verify_fn, fc, obs, vpath)
     out = tmp_path / "verify.png"
-    run_skill(plot_fn, '--obs', str(obs), '--forecast', str(fc), '--verify', str(vpath), '-o', str(out), '--spec', '{"geo":{"bbox":"3/9/0/12"}}')
+    run_skill(
+        plot_fn,
+        "--obs",
+        str(obs),
+        "--forecast",
+        str(fc),
+        "--verify",
+        str(vpath),
+        "-o",
+        str(out),
+        "--bbox",
+        "3/9/0/12",
+    )
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
@@ -310,7 +366,25 @@ def test_week_labels_print_week1_to_week4(tmp_path, plot_fn, verify_fn, capsys):
     _run_verify(verify_fn, w4, obs, v4)
     _run_verify(verify_fn, w1, obs, v1)
     out = tmp_path / "verify.png"
-    run_skill(plot_fn, '--obs', str(obs), '--forecast', str(w4), '--verify', str(v4), '--forecast', str(w1), '--verify', str(v1), '-o', str(out), '--spec', '{"traces":[{"leads":["Week 4"]},{"leads":["Week 1"]}]}')
+    run_skill(
+        plot_fn,
+        "--obs",
+        str(obs),
+        "--forecast",
+        str(w4),
+        "--verify",
+        str(v4),
+        "--forecast",
+        str(w1),
+        "--verify",
+        str(v1),
+        "--lead",
+        "Week 4",
+        "--lead",
+        "Week 1",
+        "-o",
+        str(out),
+    )
     printed = capsys.readouterr().out
     lines = [ln.split("  ", 1)[0] for ln in printed.splitlines() if ln.startswith("Week ")]
     assert lines == ["Week 1", "Week 4"]

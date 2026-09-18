@@ -1,6 +1,6 @@
 ---
 name: plot-timeseries
-description: Render a single PNG with traces overlaid on a shared time axis, as lines (default) or grouped bars. Pass --subplots for one stacked panel per --input (shared time axis, independent y-scales). Each --input can be 1D already, reduced to 1D via --reduce, or fanned along one leftover dim with --along (e.g. --along number for 101 ensemble members as one spaghetti group — one Zarr, one legend entry, not 101 --input files). Repeatable --trace SELECTOR:k=v styles a series (color, linewidth, marker, zorder, style=line|bar) by 1-based input index, legend label, or a unique token in the label (e.g. 2026). Per-trace style=line|bar overrides global --style so one series can be bars and another a line. Use when you want to compare a variable across datasets or plot ensemble-member traces. Inputs whose variable still has non-time dims after selection must --reduce or --along them; no silent averaging. For precipitation, run aggregate-temporal then convert-to-totals first — plot totals (`mm`), not rates. Use --fontsize to enlarge titles, axis labels, ticks, and legend (default 16).
+description: Render a single PNG with traces overlaid on a shared time axis, as lines (default) or grouped bars. Pass --subplots for one stacked panel per --input (shared time axis, independent y-scales). Each --input can be 1D already, reduced to 1D via --reduce, or fanned along one leftover dim with --along (e.g. --along number for 101 ensemble members as one spaghetti group — one Zarr, one legend entry, not 101 --input files). Repeatable --trace SELECTOR:k=v styles a series (color, linewidth, marker, zorder, mark=line|bar) by 1-based input index, legend label, or a unique token in the label (e.g. 2026). Per-trace mark=line|bar overrides global --mark so one series can be bars and another a line. Use when you want to compare a variable across datasets or plot ensemble-member traces. Inputs whose variable still has non-time dims after selection must --reduce or --along them; no silent averaging. For precipitation, run aggregate-temporal then convert-to-totals first — plot totals (`mm`), not rates. Use --fontsize to enlarge titles, axis labels, ticks, and legend (default 16).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py *)
@@ -13,9 +13,9 @@ metadata:
 
 Source-agnostic multi-input timeseries plotting. Takes one or more weather-skills
 standard dataset Zarrs and draws them on a single set of axes against the
-time/step coord. `--style line` (default) is a polyline with a marker at each
-time; `--style bar` is a grouped bar chart (one bar group per time, one bar per
-bar-styled input). `--trace style=line|bar` overrides that global choice per
+time/step coord. `--mark line` (default) is a polyline with a marker at each
+time; `--mark bar` is a grouped bar chart (one bar group per time, one bar per
+bar-styled input). `--trace mark=line|bar` overrides that global choice per
 series, so observed totals can be bars with a climatology drawn as a line.
 
 Each `--input` is one legend series. A leftover non-time dim can be fanned
@@ -40,7 +40,7 @@ shows calendar dates, not raw nanoseconds. Run `step-to-time` first if you
 need a real `time` dim for other skills (difference, plot-compare).
 
 For a single-input quick-look, use the `plot` skill with
-`--style timeseries`, which averages across all non-time dims by default
+`--kind timeseries`, which averages across all non-time dims by default
 (no `--reduce` flags needed).
 
 ## When to use
@@ -51,11 +51,11 @@ For a single-input quick-look, use the `plot` skill with
 - Plotting every ensemble member as a spaghetti / difference trace from one
   forecast Zarr (`--along number`), optionally with a 1D overlay (mean, obs).
 - Highlighting one input among analog years (`--trace 2026:color=black,linewidth=2.5`).
-- Overlaying a climatology line on observed period totals (`--style bar` plus
-  `--trace clim:style=line,linestyle=--,linewidth=2.5`).
+- Overlaying a climatology line on observed period totals (`--mark bar` plus
+  `--trace clim:mark=line,linestyle=--,linewidth=2.5`).
 - Plotting a single dataset as a 1D timeseries when you want explicit
   control over which dims are reduced. Period totals (dekadal/monthly precip)
-  often read better as `--style bar`.
+  often read better as `--mark bar`.
 
 For maps of N forecasts (or forecasts vs gridded obs) over time, use
 `plot-compare-forecasts`.
@@ -67,7 +67,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
     [--variable NAME] [--time-dim DIM] [--reduce DIM ...] [--along DIM] \
     [--along-color same|cycle] [--title TEXT] \
     [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H] \
-    [--style line|bar] [--subplots] [--align-day-of-year] [--band LOW,HIGH] \
+    [--mark line|bar] [--subplots] [--align-day-of-year] [--band LOW,HIGH] \
     [--theme weather_skills|colorblind] [--trace SELECTOR:k=v ...] \
     [--spec PATH_OR_JSON] [--dump-spec PATH|-|none]
 
@@ -80,7 +80,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py --spec <out.plot.json> --o
   lists input paths.
 - `--spec` — plot spec JSON (file or inline). A default run writes
   `<output-stem>.plot.json` with resolved inputs, `--reduce`/`--along`,
-  `--style`, labels, and the shared matplotlib `axes` object (limits, ticks,
+  `--mark`, labels, and the shared matplotlib `axes` object (limits, ticks,
   locators, spines, …). Edit `axes` and re-run with `--spec`. CLI flags
   overlay the spec. Spec input paths are opened as Datasets so provenance
   still chains from the Zarr.
@@ -102,7 +102,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py --spec <out.plot.json> --o
   `number`, `member`, `realization`). One `--input` yields many lines.
   Default `--along-color same`: one legend entry, shared color. Inputs that
   lack the dim are unchanged (so an ensemble Zarr and a 1D obs Zarr can share
-  the same `--along number`). `--along` traces are lines even when `--style
+  the same `--along number`). `--along` traces are lines even when `--mark
   bar`. `--trace` selectors refer to the `--input` (1-based index / label),
   not to individual members.
 - `--along-color` — `same` (default) or `cycle`. With `--along`, `same` is
@@ -122,8 +122,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py --spec <out.plot.json> --o
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `10,6`).
   When set, the PNG is that canvas at 150 dpi (the overlay legend stays
   inside it). Default `10×6`, cropped tightly.
-- `--style` — `line` (default) or `bar`. Default for every series; a per-trace
-  `style=line|bar` on `--trace` overrides it. `bar` draws grouped bars (one
+- `--mark` — `line` (default) or `bar`. Default for every series; a per-trace
+  `mark=line|bar` on `--trace` overrides it. `bar` draws grouped bars (one
   group per time step; one bar per bar-styled `--input`, offset within the
   group). Bar width is 80% of the median time spacing, split across bar
   series only (line overlays do not take a bar slot). Single-input `bar` is
@@ -165,7 +165,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py --spec <out.plot.json> --o
   - a unique alphanumeric token in that label (`2026` matches `chirps_2026`)
   Keys: `color` (matplotlib name, hex, or grayscale `0-1`), `linewidth` /
   `lw`, `linestyle` / `ls`, `marker`, `markersize` / `ms`, `alpha`,
-  `zorder`, `style` (`line` or `bar`; overrides global `--style` for that
+  `zorder`, `mark` (`line` or `bar`; overrides global `--mark` for that
   series). Line-only keys (`linewidth`, `linestyle`, `marker`, `markersize`)
   error on a bar series. Quote hex colors (`--trace '2026:color=#222'`).
   An unmatched or ambiguous selector exits 2.
@@ -175,7 +175,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py --spec <out.plot.json> --o
 A PNG at `--output`. Overlay mode is a single axes (default `figsize=(10, 6)`).
 `--subplots` is one stacked panel per `--input` (taller default). Override with
 `--figsize`. One series per `--input`
-(line with markers, `--along` spaghetti, or bars; mixed `--trace style=` overlays a line on bars), legend below the traces. The y-axis label is the variable `long_name` (then
+(line with markers, `--along` spaghetti, or bars; mixed `--trace mark=` overlays a line on bars), legend below the traces. The y-axis label is the variable `long_name` (then
 `GRIB_name`, then the variable name) plus `[<units>]` when the variable
 carries a `units` attribute. Units are a short display form (`mm/day`,
 `°C`), not the on-disk CF string.
@@ -248,7 +248,7 @@ Period totals as grouped bars (forecast vs observations):
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
     -i /tmp/ecmwf_weekly.zarr -i /tmp/imerg_weekly.zarr \
-    --variable tp --style bar \
+    --variable tp --mark bar \
     --reduce latitude --reduce longitude \
     --output /tmp/precip_bars.png \
     --title "Weekly precip totals"
@@ -271,14 +271,14 @@ Observed period totals as bars, climatology as a heavy dashed line:
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
     -i /tmp/obs.zarr -i /tmp/clim.zarr \
-    --variable tp --style bar \
+    --variable tp --mark bar \
     --reduce latitude --reduce longitude \
-    --trace 'clim:style=line,linestyle=--,linewidth=2.5,marker=none' \
+    --trace 'clim:mark=line,linestyle=--,linewidth=2.5,marker=none' \
     --output /tmp/obs_vs_clim.png \
     --title "30-day precip vs climatology"
 ```
 
-Replot from the sidecar after editing title/style/reduce:
+Replot from the sidecar after editing title/theme/reduce:
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \

@@ -192,7 +192,7 @@ def test_forecast_and_obs_share_valid_times(tmp_path, plot_fn, plot_mod):
 
 
 def test_precip_default_colormap_is_nested_week_window():
-    from weather_skills_core.plot_style import precip_nested_palette, resolve_colorscale
+    from weather_skills_core.plot.theme import precip_nested_palette, resolve_colorscale
 
     da = make_forecast()["tp"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
@@ -215,7 +215,7 @@ def test_precip_default_colormap_is_nested_week_window():
 
 
 def test_precip_anomaly_colormap_is_chirps_palette():
-    from weather_skills_core.plot_style import PRECIP_ANOMALY_BOUNDS, resolve_colorscale
+    from weather_skills_core.plot.theme import PRECIP_ANOMALY_BOUNDS, resolve_colorscale
 
     da = make_gridded(fill=-25.0)["precip"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
@@ -225,7 +225,7 @@ def test_precip_anomaly_colormap_is_chirps_palette():
 
 
 def test_heatmap_scale_stretch_drops_precip_boundary_norm():
-    from weather_skills_core.plot_style import resolve_colorscale
+    from weather_skills_core.plot.theme import resolve_colorscale
 
     da = make_forecast()["tp"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
