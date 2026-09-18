@@ -71,9 +71,10 @@ credentialed or source-specific fetcher only when it does not.
 
 `plot`, `plot-timeseries`, `plot-compare`, `plot-compare-forecasts`,
 `plot-verify`, and `plot-mediogram` all write a PNG. First runs use CLI
-flags (`--title`, `--variable`, `--figsize`, …). `--dump-spec -` prints
-the resolved spec when you need to inspect knobs; `--patch` submits edits.
-There is no `*.plot.json` sidecar. A set CLI flag still overlays the spec.
+flags (`--title`, `--variable`, `--figsize`, …). `--dump-spec -` dumps the
+assembled spec as JSON and skips the PNG (`-o` is not required); `--patch`
+submits edits. There is no `*.plot.json` sidecar. A set CLI flag still
+overlays the spec.
 See [docs/plotting.md](docs/plotting.md) for the catalog, the shared JSON
 spec, and remaining limits.
 

@@ -38,7 +38,8 @@ from weather_skills_core.plot.spec import (
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
     datasets_from_cli_or_spec,
-    dump_spec_dest,
+    maybe_emit_spec,
+    overlay_flags,
     overlay_spec,
     parse_plot_patch,
     parse_plot_spec,
@@ -390,7 +391,13 @@ def _day_of_year_tick_label(doy: float) -> str:
     "--mark",
     choices=["line", "bar"],
     default=None,
-    help="line (default) or grouped bar.",
+    help="line (default) or bar (see --bar-mode).",
+)
+@weather_skill.argument(
+    "--bar-mode",
+    choices=["grouped", "stacked", "overlay"],
+    default=None,
+    help="How bar traces compose: grouped (default), stacked, or overlay. Spec: layout.bar_mode.",
 )
 @weather_skill.argument(
     "--align-day-of-year",
@@ -456,7 +463,10 @@ def _day_of_year_tick_label(doy: float) -> str:
 )
 @weather_skill.argument(
     "--dump-spec",
+    nargs="?",
+    const="-",
     default=None,
+    probe=True,
     help=DUMP_SPEC_ARGUMENT_HELP,
 )
 def plot_timeseries(
@@ -482,6 +492,7 @@ def plot_timeseries(
     spec=None,
     patch=None,
     dump_spec=None,
+    bar_mode=None,
     **kwargs,
 ):
     """Render a multi-input timeseries PNG from weather-skills standard dataset Zarrs."""
@@ -500,6 +511,7 @@ def plot_timeseries(
         along=along,
         along_color=along_color,
         mark=mark,
+        bar_mode=bar_mode,
         subplots=subplots,
         align_day_of_year=True if align_day_of_year else None,
         band=band,
@@ -519,11 +531,47 @@ def plot_timeseries(
     )
     band = flags["band"]
     theme = flags["template"] or "weather_skills"
+    bar_mode = flags["bar_mode"]
+    spec_data = overlay_flags(spec_data, bar_mode=bar_mode, mark=mark)
     if not label:
         label = spec_input_labels(spec_data)
     if len(datasets) > 26:
         raise UsageError(f"--input must be passed at most 26 times; got {len(datasets)}.")
     label_slots = resolve_input_labels(label, len(datasets))
+    named = {chr(ord("a") + i): d for i, d in enumerate(datasets)}
+    traces = []
+    for key in named:
+        item = {"kind": "timeseries", "input": key, "mark": mark}
+        if along:
+            item["along"] = along
+            item["along_color"] = along_color
+        if reduce:
+            item["reduce"] = list(reduce)
+        if align_day_of_year:
+            item["align"] = "dayofyear"
+        if band is not None:
+            item["band"] = list(band) if not isinstance(band, str) else band
+        traces.append(item)
+    layout = {"subplots": subplots, "figsize": list(figsize) if figsize else None}
+    if bar_mode or mark == "bar":
+        layout["bar_mode"] = bar_mode or "grouped"
+    assembled = overlay_spec(
+        spec_data,
+        {
+            "version": SPEC_VERSION,
+            "skill": "plot-timeseries",
+            "layout": layout,
+            "traces": traces,
+            "theme": {"template": theme, "fontsize": fontsize},
+            "title": title,
+            "xlabel": xlabel,
+            "ylabel": ylabel,
+        },
+    )
+    if maybe_emit_spec(assembled, dump_spec, datasets=named):
+        return None
+    if output is None:
+        raise UsageError("--output is required unless --dump-spec is set")
 
     import cf_xarray  # noqa: F401 — registers the .cf accessor
     import numpy as np
@@ -723,7 +771,11 @@ def plot_timeseries(
         "version": SPEC_VERSION,
         "skill": "plot-timeseries",
         "inputs": inputs,
-        "layout": {"subplots": subplots, "figsize": list(figsize) if figsize else None},
+        "layout": {
+            "subplots": subplots,
+            "figsize": list(figsize) if figsize else None,
+            **({"bar_mode": bar_mode or "grouped"} if bar_mode or mark == "bar" else {}),
+        },
         "traces": traces,
         "theme": {"template": template, "fontsize": fontsize},
         "title": title,
@@ -735,7 +787,6 @@ def plot_timeseries(
         compiled,
         output,
         datasets=named,
-        dump_spec_path=dump_spec_dest(dump_spec),
         spec=spec_data,
     )
 

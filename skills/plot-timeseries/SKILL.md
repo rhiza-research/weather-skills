@@ -67,12 +67,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
     [--variable NAME] [--time-dim DIM] [--reduce DIM ...] [--along DIM] \
     [--along-color same|cycle] [--title TEXT] \
     [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H] \
-    [--mark line|bar] [--subplots] [--align-day-of-year] [--band LOW,HIGH] \
+    [--mark line|bar] [--bar-mode grouped|stacked|overlay] [--subplots] \
+    [--align-day-of-year] [--band LOW,HIGH] \
     [--theme weather_skills|colorblind] [--trace SELECTOR:k=v ...] \
     [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
 
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
-    -i <a.zarr> -o <out.png> --dump-spec -   # inspect knobs only when needed
+    -i <a.zarr> --dump-spec -   # inspect knobs; skips PNG, -o not required
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
     -i <a.zarr> -o <out.png> --patch '{"axes": {"xticks": ["2026-08-17"]}}'
 ```
@@ -88,10 +89,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
 - `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
   before CLI flags overlay. Same knobs as `--spec` (`title`, `axes`, `layout`,
   …). A `patch` key inside a spec object is rejected.
-- `--dump-spec` — dump the resolved plot spec. Default: skip (PNG only).
-  `-` prints JSON to stdout when you need to inspect knobs before `--patch`.
-  A path writes a file. Token-expensive; omit unless `--patch` needs a key
-  you cannot name from the CLI.
+- `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
+  PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
+  stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
+  a key you cannot name from the CLI.
 - `--label` — legend label (overlay) or subplot title (`--subplots`) for each
   `--input`, in order. When omitted, labels are inferred from station
   metadata, filename, or provenance.
@@ -129,11 +130,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
   When set, the PNG is that canvas at 150 dpi (the overlay legend stays
   inside it). Default `10×6`, cropped tightly.
 - `--mark` — `line` (default) or `bar`. Default for every series; a per-trace
-  `mark=line|bar` on `--trace` overrides it. `bar` draws grouped bars (one
-  group per time step; one bar per bar-styled `--input`, offset within the
-  group). Bar width is 80% of the median time spacing, split across bar
-  series only (line overlays do not take a bar slot). Single-input `bar` is
-  just one bar per time.
+  `mark=line|bar` on `--trace` overrides it. `bar` width is 80% of the median
+  time spacing. Single-input `bar` is one bar per time. `--along` traces stay
+  lines even when `--mark bar`.
+- `--bar-mode` — how bar traces compose: `grouped` (default; offset
+  side-by-side), `stacked` (cumulative), or `overlay` (same x, overlapping).
+  Spec: `layout.bar_mode`. Line overlays do not take a bar slot. Patch with
+  `{"layout": {"bar_mode": "stacked"}}`.
 - `--subplots` — one stacked panel per `--input`, sharing the time axis, with
   an independent y-scale (and y-label) on each. Use this when the series have
   different units or ranges. Default is overlay on one axes. `--along` still

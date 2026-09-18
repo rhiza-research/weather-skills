@@ -157,10 +157,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   `{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}`.
   Reposition a polar windrose frequency label with
   `{"axes": {"ylabel": {"coords": [1.15, 0.5], "rotation": 0}}}`.
-- `--dump-spec` — dump the resolved plot spec. Default: skip (PNG only).
-  `-` prints JSON to stdout when you need to inspect knobs before `--patch`.
-  A path writes a file. Token-expensive; omit unless `--patch` needs a key
-  you cannot name from the CLI.
+- `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
+  PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
+  stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
+  a key you cannot name from the CLI.
 - `--theme` — `weather_skills` (seaborn `deep` colorway, default) or
   `colorblind`. Heatmap classified precip palettes are unchanged.
   Writes `theme.template` in a dumped spec.
@@ -504,8 +504,8 @@ flags.
 
 1. `plot -i data.zarr -o out.png --title "Precip" --variable precip`
 2. If a knob is not a CLI flag (or you need to see the resolved object),
-   re-run the same command with `--dump-spec -` and read stdout. Do this
-   only when needed — the full JSON is token-expensive.
+   re-run the same command with `--dump-spec -` (no PNG; `-o` not required)
+   and read stdout. Do this only when needed — the full JSON is token-expensive.
 3. Re-run the same CLI plus `--patch '{"axes": {"xticks": [...]}}'`.
    Do not pass the full dumped spec back unless you are replaying it with
    `--spec`.
@@ -513,7 +513,7 @@ flags.
 `--patch` merges onto this invocation's spec (CLI-built, or `--spec` if you
 passed one). A `patch` key inside a spec object is rejected.
 `--dump-spec PATH` writes a file for tests or local editing; agents should
-prefer stdout (`-`) then `--patch`.
+prefer stdout (`-`) then `--patch`. Either form skips the PNG.
 
 `--patch '{"title": "Edited"}'` sets spec values without a dump —
 handy for title, annotations, shapes, axis-label position, and colorbar size.

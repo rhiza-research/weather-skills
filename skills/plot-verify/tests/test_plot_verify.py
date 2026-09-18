@@ -104,8 +104,6 @@ def test_replot_from_spec(tmp_path, plot_fn, verify_fn):
         str(fc),
         "--verify",
         str(vpath),
-        "-o",
-        str(first),
         "--title",
         "Original",
         "--dump-spec",
@@ -116,6 +114,8 @@ def test_replot_from_spec(tmp_path, plot_fn, verify_fn):
     assert any(item.get("id") == "verify1" for item in data["inputs"])
     data["title"] = "Edited"
     spec_path.write_text(json.dumps(data))
+    assert not first.exists()
+    assert not first.exists()
     second = tmp_path / "verify_bias2.png"
     run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
     assert second.is_file() and second.stat().st_size > 0
@@ -139,8 +139,6 @@ def test_patch_flag_merges_into_spec(tmp_path, plot_fn, verify_fn):
         str(fc),
         "--verify",
         str(vpath),
-        "-o",
-        str(out),
         "--patch",
         '{"title": "Patched"}',
         "--dump-spec",
@@ -149,6 +147,7 @@ def test_patch_flag_merges_into_spec(tmp_path, plot_fn, verify_fn):
     spec = json.loads((tmp_path / "verify_bias.plot.json").read_text())
     assert spec["title"].startswith("Patched")
     assert "patch" not in spec
+    assert not out.exists()
 
 
 def test_error_scale_bias_white_at_zero():

@@ -543,13 +543,9 @@ def test_along_color_cycle_writes_png(tmp_path, plot_timeseries):
         "number",
         "--along-color",
         "cycle",
-        "--dump-spec",
-        str(tmp_path / "cycle.plot.json"),
     )
     assert Path(out).exists()
     assert out.stat().st_size > 0
-    dumped = json.loads((tmp_path / "cycle.plot.json").read_text())
-    assert dumped["traces"][0]["along_color"] == "cycle"
     history = load_figure_history(out)
     assert history[-1]["args"]["along_color"] == "cycle"
 
@@ -872,6 +868,33 @@ def test_trace_per_series_style_bar_plus_line(tmp_path, plot_timeseries):
     ]
 
 
+def test_bar_mode_stacked_writes_png(tmp_path, plot_timeseries):
+    a = write_zarr(make_gridded(fill=1.0), tmp_path / "a.zarr")
+    b = write_zarr(make_gridded(fill=0.5), tmp_path / "b.zarr")
+    out = tmp_path / "stacked.png"
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(out),
+        "--mark",
+        "bar",
+        "--bar-mode",
+        "stacked",
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+    )
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+    history = load_figure_history(out)
+    assert history[-1]["args"]["bar_mode"] == "stacked"
+
+
 def test_trace_unmatched_selector_exits(tmp_path, plot_timeseries):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     with pytest.raises(SystemExit) as exc:
@@ -898,8 +921,6 @@ def test_replot_from_spec(tmp_path, plot_timeseries):
         plot_timeseries,
         "-i",
         str(src),
-        "-o",
-        str(first),
         "--mark",
         "bar",
         "--reduce",
@@ -915,7 +936,9 @@ def test_replot_from_spec(tmp_path, plot_timeseries):
     data = json.loads(spec_path.read_text())
     assert data["traces"][0]["mark"] == "bar"
     assert data["traces"][0]["reduce"] == ["latitude", "longitude"]
+    assert data["layout"]["bar_mode"] == "grouped"
     assert data["axes"] == {}
+    assert not first.exists()
     data["title"] = "Edited"
     data["axes"] = {"yticks": [0.0, 0.5, 1.0]}
     spec_path.write_text(json.dumps(data))
@@ -925,18 +948,49 @@ def test_replot_from_spec(tmp_path, plot_timeseries):
         plot_timeseries,
         "--spec",
         str(spec_path),
-        "-o",
-        str(second),
         "--dump-spec",
         str(second_spec),
     )
-    assert second.is_file() and second.stat().st_size > 0
+    assert not second.exists()
     replotted = json.loads(second_spec.read_text())
     assert replotted["axes"]["yticks"] == [0.0, 0.5, 1.0]
     assert replotted["title"] == "Edited"
+    run_skill(
+        plot_timeseries,
+        "--spec",
+        str(spec_path),
+        "-o",
+        str(second),
+    )
+    assert second.is_file() and second.stat().st_size > 0
     history = load_figure_history(second)
     assert history[-1]["skill"] == "plot-timeseries"
     assert history[-1]["input"]["basename"] == "in.zarr"
+
+
+def test_dump_spec_bar_mode_stacked(tmp_path, plot_timeseries):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "ts.png"
+    spec_path = tmp_path / "ts.plot.json"
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(src),
+        "--mark",
+        "bar",
+        "--bar-mode",
+        "stacked",
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+        "--dump-spec",
+        str(spec_path),
+    )
+    data = json.loads(spec_path.read_text())
+    assert data["layout"]["bar_mode"] == "stacked"
+    assert data["traces"][0]["mark"] == "bar"
+    assert not out.exists()
 
 
 def test_patch_flag_merges_into_spec(tmp_path, plot_timeseries):
@@ -946,8 +1000,6 @@ def test_patch_flag_merges_into_spec(tmp_path, plot_timeseries):
         plot_timeseries,
         "-i",
         str(src),
-        "-o",
-        str(out),
         "--reduce",
         "latitude",
         "--reduce",
@@ -961,4 +1013,4 @@ def test_patch_flag_merges_into_spec(tmp_path, plot_timeseries):
     assert spec["title"] == "Patched"
     assert spec["axes"]["xticks"] == ["2026-08-17"]
     assert "patch" not in spec
-    assert Path(out).is_file() and out.stat().st_size > 0
+    assert not Path(out).exists()

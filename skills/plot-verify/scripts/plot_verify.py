@@ -39,8 +39,8 @@ from weather_skills_core.plot.spec import (
     PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
-    dump_spec_dest,
     named_datasets_from_spec,
+    maybe_emit_spec,
     overlay_flags,
     overlay_spec,
     parse_plot_patch,
@@ -427,7 +427,10 @@ def _prepare(ds, variable):
 )
 @weather_skill.argument(
     "--dump-spec",
+    nargs="?",
+    const="-",
     default=None,
+    probe=True,
     help=DUMP_SPEC_ARGUMENT_HELP,
 )
 def plot_verify(
@@ -530,6 +533,35 @@ def plot_verify(
         raise UsageError(f"all --verify inputs must share the same verify_metric; got {metrics}.")
     metric = metrics[0]
     row_labels = _row_labels(obs, forecasts, metric, labels=labels)
+    named = {
+        "obs": obs,
+        **{f"forecast{i}": fc for i, fc in enumerate(forecasts, start=1)},
+        **{f"verify{i}": ds for i, ds in enumerate(verify_sets, start=1)},
+    }
+    geo_out = {}
+    if bbox is not None:
+        geo_out["bbox"] = list(bbox) if not isinstance(bbox, str) else bbox
+    if mask_geojson:
+        geo_out["mask_geojson"] = str(mask_geojson)
+    assembled = overlay_spec(
+        spec_data,
+        {
+            "version": SPEC_VERSION,
+            "skill": "plot-verify",
+            "layout": {
+                "facet": {"rows": 2, "columns": 1 + len(forecasts)},
+                "figsize": list(figsize) if figsize else None,
+            },
+            "traces": [{"kind": "grid", "metric": metric, "leads": list(leads)}],
+            "theme": {"template": "weather_skills", "fontsize": fontsize},
+            "title": title,
+            "geo": geo_out,
+        },
+    )
+    if maybe_emit_spec(assembled, dump_spec, datasets=named):
+        return None
+    if output is None:
+        raise UsageError("--output is required unless --dump-spec is set")
 
     import cf_xarray  # noqa: F401 — registers the .cf accessor
     import numpy as np
@@ -700,7 +732,6 @@ def plot_verify(
         compiled,
         output,
         datasets=named,
-        dump_spec_path=dump_spec_dest(dump_spec),
         spec=spec_data,
     )
 

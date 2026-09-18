@@ -44,7 +44,7 @@ from weather_skills_core.plot.spec import (
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
     datasets_from_cli_or_spec,
-    dump_spec_dest,
+    maybe_emit_spec,
     overlay_flags,
     overlay_spec,
     parse_plot_patch,
@@ -464,7 +464,10 @@ def _flatten_da(da, panel_dim, lat_dim, lon_dim):
 )
 @weather_skill.argument(
     "--dump-spec",
+    nargs="?",
+    const="-",
     default=None,
+    probe=True,
     help=DUMP_SPEC_ARGUMENT_HELP,
 )
 def plot_compare_forecasts(
@@ -531,6 +534,31 @@ def plot_compare_forecasts(
         label = spec_input_labels(spec_data)
     if panels is not None and panels < 1:
         raise UsageError(f"--panels must be >= 1, got {panels}")
+    named = {chr(ord("a") + i): one for i, one in enumerate(ds)}
+    geo_out = {}
+    if bbox is not None:
+        geo_out["bbox"] = list(bbox) if not isinstance(bbox, str) else bbox
+    if mask_geojson:
+        geo_out["mask_geojson"] = str(mask_geojson)
+    assembled = overlay_spec(
+        spec_data,
+        {
+            "version": SPEC_VERSION,
+            "skill": "plot-compare-forecasts",
+            "layout": {
+                "facet": {"columns": panels} if panels else {},
+                "figsize": list(figsize) if figsize else None,
+            },
+            "traces": [{"kind": "grid"}],
+            "theme": {"template": "weather_skills", "fontsize": fontsize},
+            "title": title,
+            "geo": geo_out,
+        },
+    )
+    if maybe_emit_spec(assembled, dump_spec, datasets=named):
+        return None
+    if output is None:
+        raise UsageError("--output is required unless --dump-spec is set")
 
     import cf_xarray  # noqa: F401 — registers the .cf accessor
     import numpy as np
@@ -711,7 +739,6 @@ def plot_compare_forecasts(
         compiled,
         output,
         datasets=named,
-        dump_spec_path=dump_spec_dest(dump_spec),
         spec=spec_data,
     )
 

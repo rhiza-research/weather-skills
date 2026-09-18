@@ -44,8 +44,6 @@ def test_patch_flag_merges_into_spec(tmp_path, plot_compare):
         str(a),
         "-i",
         str(b),
-        "-o",
-        str(out),
         "--panels",
         "2",
         "--patch",
@@ -56,6 +54,8 @@ def test_patch_flag_merges_into_spec(tmp_path, plot_compare):
     spec = json.loads((tmp_path / "cmp.plot.json").read_text())
     assert spec["title"] == "Patched"
     assert "patch" not in spec
+    assert not out.exists()
+    assert not out.exists()
 
 
 def test_parse_figsize():
@@ -199,8 +199,6 @@ def test_replot_from_spec(tmp_path, plot_compare):
         str(a),
         "-i",
         str(b),
-        "-o",
-        str(first),
         "--panels",
         "2",
         "--title",
@@ -212,6 +210,7 @@ def test_replot_from_spec(tmp_path, plot_compare):
     data = json.loads(spec_path.read_text())
     data["title"] = "Edited"
     spec_path.write_text(json.dumps(data))
+    assert not first.exists()
     second = tmp_path / "cmp2.png"
     run_skill(plot_compare, "--spec", str(spec_path), "-o", str(second))
     assert second.is_file() and second.stat().st_size > 0

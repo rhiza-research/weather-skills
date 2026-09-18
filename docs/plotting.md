@@ -28,9 +28,10 @@ flowchart LR
   must not open files itself.
 - **Layout** is JSON with **one home per knob** (see the table below). An
   unknown key is an error naming the canonical path, never a silent no-op.
-  A default run writes only the PNG. `--dump-spec -` prints the resolved
-  spec when you need to inspect knobs; `--patch` submits edits. There is no
-  `*.plot.json` sidecar.
+  A default run writes only the PNG. `--dump-spec` dumps the assembled spec
+  as JSON and skips drawing a PNG (`-o` is not required). `--dump-spec -`
+  prints to stdout when you need to inspect knobs; `--patch` submits edits.
+  There is no `*.plot.json` sidecar.
 - **One flag-to-spec bridge.** First runs use CLI flags (`--title`,
   `--variable`, `--mask-geojson`, `--figsize`, `--kind`, …). `--spec` is
   an optional full JSON object (replay a dump, or pack many knobs) — not a
@@ -93,7 +94,7 @@ key that used to be readable somewhere else. Spec version is `2`.
 | Where | Keys |
 | --- | --- |
 | top level | `version`, `skill`, `inputs`, `traces`, `layers`, `axes`, `annotations`, `shapes`, `title`, `subplot_titles`, `xlabel`, `ylabel`, `cbar_label`, `legend`, `vmin`, `vmax` |
-| `layout` | `figsize`, `autosize`, `dpi`, `facecolor`, `colorbar`, `shared_colorscale`, `subplots`, `facet` |
+| `layout` | `figsize`, `autosize`, `dpi`, `facecolor`, `colorbar`, `shared_colorscale`, `subplots`, `bar_mode`, `facet` |
 | `layout.facet` | `rows`, `columns`, `max_columns`, `n_panels` |
 | `theme` | `template`, `colormap` (name, comma list, or `{name, colors, bounds, under, over, cmap}`), `fontsize`, `rc` |
 | `layout.colorbar` | `len`/`shrink`, `thickness`, `extend`, `pad`, `location`, `ticks`, `labels`, plus matplotlib extras |
@@ -109,6 +110,7 @@ CLI and JSON use the same words:
 | --- | --- |
 | `plot --kind` | `traces[0].kind` (`heatmap`, `contour`, `quiver`, `layer`, `timeseries`, `xy`, `windrose`, `grid`, `mediogram`) |
 | `plot-timeseries --mark` | `traces[].mark` (`line` or `bar`) |
+| `plot-timeseries --bar-mode` | `layout.bar_mode` (`grouped` default, `stacked`, `overlay`) |
 | `--theme` | `theme.template` (`weather_skills` / `colorblind`) |
 | `--theme-file` | user palette registry (not a spec key) |
 
@@ -126,6 +128,11 @@ Key details:
   (`scalar`/`log`/`percent`/`date`/`format`/`dayofyear`), spines, grid,
   legend, `twinx`/`twiny`. A dump includes only the keys you set; the full
   editable catalog is `AXES_TEMPLATE` in `plot/figure.py`.
+- **`layout.bar_mode`**: how bar traces compose on a shared axis:
+  `grouped` (default; offset side-by-side), `stacked` (cumulative
+  `bottom`), or `overlay` (same x, overlapping). CLI:
+  `plot-timeseries --bar-mode`. Per-trace `traces[].bar.mode` is an alias
+  when `layout.bar_mode` is unset. Along traces stay lines.
 - **`theme.colormap`**: a matplotlib name, a comma-separated color list, or
   `{colors, bounds, under, over}` for a discrete `BoundaryNorm` scale.
   `len(colors)` is `len(bounds) - 1`, or two extra colors packed as under +
@@ -142,6 +149,7 @@ Key details:
   reads a `patch` object, so there is one place a title or annotation can
   live.
 
+`--dump-spec` dumps assembled JSON and skips the PNG (`-o` is not required).
 `--dump-spec -` (only when needed) then `--patch` is the edit loop, not the
 first run. Pass `--title` / `--variable` / `--figsize` (and the rest) as CLI
 flags; `--spec` and `--patch` are optional. CLI flags overlay the spec.

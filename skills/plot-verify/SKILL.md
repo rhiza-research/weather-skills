@@ -81,10 +81,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
 - `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
   before CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a
   spec object is rejected.
-- `--dump-spec` — dump the resolved plot spec. Default: skip (PNG only).
-  `-` prints JSON to stdout when you need to inspect knobs before `--patch`.
-  A path writes a file. Token-expensive; omit unless `--patch` needs a key
-  you cannot name from the CLI.
+- `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
+  PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
+  stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
+  a key you cannot name from the CLI.
 - `--variable`, `-v` — obs/forecast data variable (verify Zarrs carry
   their own verification variable).
 - `--lead` — column title, once per `--forecast`. Default: `1-week lead`

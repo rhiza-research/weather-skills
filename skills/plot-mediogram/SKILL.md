@@ -46,10 +46,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py \
 - `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
   before CLI flags overlay. Same knobs as `--spec` (`title`, `axes`, `layout`,
   …). A `patch` key inside a spec object is rejected.
-- `--dump-spec` — dump the resolved plot spec. Default: skip (PNG only).
-  `-` prints JSON to stdout when you need to inspect knobs before `--patch`.
-  A path writes a file. Token-expensive; omit unless `--patch` needs a key
-  you cannot name from the CLI.
+- `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
+  PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
+  stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
+  a key you cannot name from the CLI.
 - `--output`, `-o` — PNG output path.
 - `--variable`, `-v` — variable name. Defaults to the first data variable in the forecast input.
 - `--title` — optional plot title. Long titles wrap onto a second line.

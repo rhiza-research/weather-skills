@@ -24,7 +24,7 @@ from weather_skills_core.plot.spec import (
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
     datasets_from_cli_or_spec,
-    dump_spec_dest,
+    maybe_emit_spec,
     overlay_spec,
     parse_plot_patch,
     parse_plot_spec,
@@ -96,7 +96,10 @@ def _select_point(da, lat, lon):
 )
 @weather_skill.argument(
     "--dump-spec",
+    nargs="?",
+    const="-",
     default=None,
+    probe=True,
     help=DUMP_SPEC_ARGUMENT_HELP,
 )
 def plot_mediogram(
@@ -137,6 +140,25 @@ def plot_mediogram(
         raise UsageError("pass --lat and --lon, or --spec with geo.lat/geo.lon")
     lat = float(lat)
     lon = float(lon)
+    named = {"forecast": ds_fc, "mclimate": ds_mc}
+    assembled = overlay_spec(
+        spec_data,
+        {
+            "version": SPEC_VERSION,
+            "skill": "plot-mediogram",
+            "traces": [{"kind": "mediogram"}],
+            "theme": {"template": "weather_skills", "fontsize": fontsize},
+            "layout": {"figsize": list(figsize) if figsize else None},
+            "geo": {"lat": lat, "lon": lon},
+            "title": title,
+            "xlabel": xlabel,
+            "ylabel": ylabel,
+        },
+    )
+    if maybe_emit_spec(assembled, dump_spec, datasets=named):
+        return None
+    if output is None:
+        raise UsageError("--output is required unless --dump-spec is set")
     import cf_xarray  # noqa: F401 — registers the .cf accessor
     import numpy as np
 
@@ -225,7 +247,6 @@ def plot_mediogram(
         compiled,
         output,
         datasets=named,
-        dump_spec_path=dump_spec_dest(dump_spec),
         spec=spec_data,
     )
 

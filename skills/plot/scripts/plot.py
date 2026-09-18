@@ -35,7 +35,7 @@ from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
     PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
-    dump_spec_dest,
+    maybe_emit_spec,
     named_datasets_from_spec,
     opened_datasets_from_spec,
     overlay_flags,
@@ -672,7 +672,10 @@ def _merged_spec(
 )
 @weather_skill.argument(
     "--dump-spec",
+    nargs="?",
+    const="-",
     default=None,
+    probe=True,
     help=DUMP_SPEC_ARGUMENT_HELP,
 )
 def plot(
@@ -921,12 +924,15 @@ def plot(
         independent_scale=independent_scale,
         layer_labels=label,
     )
+    if maybe_emit_spec(merged, dump_spec, datasets=datasets):
+        return None
+    if output is None:
+        raise UsageError("--output is required unless --dump-spec is set")
     compiled = compile(merged, datasets, theme_registry=user_theme)
     return export(
         compiled,
         output,
         datasets=datasets,
-        dump_spec_path=dump_spec_dest(dump_spec),
         spec=merged,
     )
 

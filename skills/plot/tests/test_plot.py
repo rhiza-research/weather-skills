@@ -1580,8 +1580,6 @@ def test_heatmap_dump_spec_on_request(tmp_path, plot_fn):
         plot_fn,
         "-i",
         str(src),
-        "-o",
-        str(out),
         "--dump-spec",
         str(spec_path),
         "--title",
@@ -1590,8 +1588,28 @@ def test_heatmap_dump_spec_on_request(tmp_path, plot_fn):
     spec = json.loads(spec_path.read_text())
     assert spec["title"] == "Precip"
     assert spec["traces"][0]["kind"] == "heatmap"
-    assert spec["layout"]["facet"]["n_panels"] == 2
     assert spec["inputs"][0]["path"].endswith("in.zarr")
+    assert not out.exists()
+
+
+def test_dump_spec_skips_png_even_when_output_is_set(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "map.png"
+    spec_path = tmp_path / "map.plot.json"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dump-spec",
+        str(spec_path),
+        "--title",
+        "Precip",
+    )
+    assert spec_path.is_file()
+    assert json.loads(spec_path.read_text())["title"] == "Precip"
+    assert not out.exists()
 
 
 def test_replot_from_spec(tmp_path, plot_fn):
@@ -1602,13 +1620,12 @@ def test_replot_from_spec(tmp_path, plot_fn):
         plot_fn,
         "-i",
         str(src),
-        "-o",
-        str(first),
         "--dump-spec",
         str(spec_path),
         "--title",
         "Original",
     )
+    assert not first.exists()
     data = json.loads(spec_path.read_text())
     data["title"] = "Edited"
     spec_path.write_text(json.dumps(data))
@@ -1628,8 +1645,6 @@ def test_patch_flag_merges_into_spec_and_spec_patch_key_is_refused(tmp_path, plo
         plot_fn,
         "-i",
         str(src),
-        "-o",
-        str(out),
         "--dump-spec",
         str(spec_path),
         "--patch",
@@ -1637,6 +1652,7 @@ def test_patch_flag_merges_into_spec_and_spec_patch_key_is_refused(tmp_path, plo
     )
     spec, spec_path = _assert_dumped_spec(spec_path, trace_type="heatmap", title="Patched")
     assert "patch" not in spec
+    assert not out.exists()
 
     # The old second home for these edits now names where they belong.
     data = json.loads(spec_path.read_text())
@@ -1666,8 +1682,6 @@ def test_windrose_dump_spec_on_request(tmp_path, plot_fn):
         plot_fn,
         "-i",
         str(src),
-        "-o",
-        str(out),
         "--dump-spec",
         str(spec_path),
         "--kind",
@@ -1677,6 +1691,7 @@ def test_windrose_dump_spec_on_request(tmp_path, plot_fn):
     )
     spec, spec_path = _assert_dumped_spec(spec_path, trace_type="windrose", title="Rose")
     assert spec["inputs"][0]["path"].endswith("wind.zarr")
+    assert not out.exists()
     second = tmp_path / "rose2.png"
     run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
     assert second.is_file() and second.stat().st_size > 0
@@ -1693,8 +1708,6 @@ def test_quiver_dump_spec_on_request(tmp_path, plot_fn):
         plot_fn,
         "-i",
         str(src),
-        "-o",
-        str(out),
         "--dump-spec",
         str(spec_path),
         "--kind",
@@ -1703,6 +1716,7 @@ def test_quiver_dump_spec_on_request(tmp_path, plot_fn):
         "Wind",
     )
     spec, spec_path = _assert_dumped_spec(spec_path, trace_type="quiver", title="Wind")
+    assert not out.exists()
     second = tmp_path / "quiver2.png"
     run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
     assert second.is_file() and second.stat().st_size > 0
@@ -1738,8 +1752,6 @@ def test_xy_dump_spec_on_request(tmp_path, plot_fn):
         str(y_src),
         "--pair-on",
         "year",
-        "-o",
-        str(out),
         "--dump-spec",
         str(tmp_path / "xy.plot.json"),
         "--title",
@@ -1747,6 +1759,7 @@ def test_xy_dump_spec_on_request(tmp_path, plot_fn):
     )
     spec, spec_path = _assert_dumped_spec(tmp_path / "xy.plot.json", trace_type="xy", title="IOD vs rain")
     assert spec["traces"][0]["pair_on"] == "year"
+    assert not out.exists()
     second = tmp_path / "xy2.png"
     run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
     assert second.is_file() and second.stat().st_size > 0
@@ -1762,8 +1775,6 @@ def test_layer_dump_spec_on_request(tmp_path, plot_fn):
         plot_fn,
         "--layer",
         f"heatmap:{src}",
-        "-o",
-        str(out),
         "--dump-spec",
         str(spec_path),
         "--title",
@@ -1772,6 +1783,7 @@ def test_layer_dump_spec_on_request(tmp_path, plot_fn):
     spec, spec_path = _assert_dumped_spec(spec_path, trace_type="layer", title="Layered")
     assert spec["layers"][0]["kind"] == "heatmap"
     assert spec["layers"][0]["path"].endswith("in.zarr")
+    assert not out.exists()
     second = tmp_path / "layer2.png"
     run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
     assert second.is_file() and second.stat().st_size > 0

@@ -97,8 +97,6 @@ def test_replot_from_spec(tmp_path, plot_mediogram):
         str(fc),
         "-i",
         str(mc),
-        "-o",
-        str(first),
         "--lat",
         "1.0",
         "--lon",
@@ -113,6 +111,7 @@ def test_replot_from_spec(tmp_path, plot_mediogram):
     assert data["geo"]["lat"] == pytest.approx(1.0)
     data["title"] = "Edited"
     spec_path.write_text(json.dumps(data))
+    assert not first.exists()
     second = tmp_path / "medio2.png"
     run_skill(plot_mediogram, "--spec", str(spec_path), "-o", str(second))
     assert second.is_file() and second.stat().st_size > 0
@@ -132,8 +131,6 @@ def test_patch_flag_merges_into_spec(tmp_path, plot_mediogram):
         str(fc),
         "-i",
         str(mc),
-        "-o",
-        str(out),
         "--lat",
         "1.0",
         "--lon",
@@ -146,3 +143,4 @@ def test_patch_flag_merges_into_spec(tmp_path, plot_mediogram):
     spec = json.loads((tmp_path / "medio.plot.json").read_text())
     assert spec["title"] == "Patched"
     assert "patch" not in spec
+    assert not out.exists()
