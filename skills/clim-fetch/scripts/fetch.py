@@ -46,6 +46,14 @@ _GCS_MEDIA = f"https://storage.googleapis.com/{_BUCKET}"
 # Valid --dataset ids — exactly the bucket's product prefix, no aliasing.
 _DATASETS = ("imerg_final", "era5", "chirps", "ecmwf_ifs", "oisst")
 
+# Some mirrors carry no units metadata at all (neither per-variable nor
+# dataset-level) — known source units for those variables, hardcoded here.
+_KNOWN_UNITS = {
+    "sst": "degree_Celsius",
+    "uwind10m": "m/s",
+    "vwind10m": "m/s",
+}
+
 _DEFAULT_VARIABLE = "precip"
 _DEFAULT_LEAD_DAYS = 0
 _DEFAULT_WINDOW_DAYS = 1
@@ -224,11 +232,19 @@ def fetch(dataset, start_time, end_time, variable, prediction_timedelta, window,
     clim = clim.rename(
         {"avg": mean_name, "std": std_name, lat_name: "latitude", lon_name: "longitude"}
     )
-    # use global units if available, otherwise infer from the data.
-    global_units = clim.attrs.get("units")
-    if global_units is not None:
-        for name in (mean_name, std_name):
-            clim[name].attrs.setdefault("units", global_units)
+    # Some mirrors (e.g. ecmwf_ifs) stamp units on the dataset, not per
+    # variable; others (sst, wind components) have no units anywhere at all
+    # -- fall back to the known units for those, hardcoded in _KNOWN_UNITS.
+    fallback_units = clim.attrs.get("units") or _KNOWN_UNITS.get(semantic_name)
+    for name in (mean_name, std_name):
+        if clim[name].attrs.get("units"):
+            continue
+        if fallback_units is None:
+            raise UsageError(
+                f"{name!r} has no units metadata (source has none, per-variable "
+                "or dataset-level, and none hardcoded in _KNOWN_UNITS)."
+            )
+        clim[name].attrs["units"] = fallback_units
     clim = to_standard_units(clim, variables=[mean_name, std_name])
 
     if bbox is not None:

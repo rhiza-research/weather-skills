@@ -1,6 +1,6 @@
 ---
 name: clim-fetch
-description: Fetch a precomputed daily climatology (avg + std) for a `--dataset` (imerg_final, era5, chirps, oisst, ...) from Sheerwater's public GCS mirror, select one `--prediction-timedelta` lead, optionally roll it up to a coarser `--window` in days, and expand it onto a requested `--start-time`/`--end-time` calendar window, so timestamps line up with the rest of a pipeline's data. Precipitation sources default to `--variable precip`; OISST sea-surface temperature uses `--dataset oisst --variable sst`. Optional `--bbox N/W/S/E` (compose with resolve-region) subsets before download. Use when a task needs a climatological baseline for anomalies, verification, or comparison — not live observations (use imerg-fetch, dynamical-fetch, arco-era5-fetch, oisst-fetch, etc. for those).
+description: Fetch a precomputed daily climatology (avg + std) for a `--dataset` (imerg_final, era5, chirps, ecmwf_ifs, oisst, ...) from Sheerwater's public GCS mirror, select one `--prediction-timedelta` lead, optionally roll it up to a coarser `--window` in days, and expand it onto a requested `--start-time`/`--end-time` calendar window, so timestamps line up with the rest of a pipeline's data. Precipitation sources default to `--variable precip`; OISST sea-surface temperature uses `--dataset oisst --variable sst`. Optional `--bbox N/W/S/E` (compose with resolve-region) subsets before download. Use when a task needs a climatological baseline for anomalies, verification, or comparison — not live observations (use imerg-fetch, dynamical-fetch, arco-era5-fetch, oisst-fetch, etc. for those).
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads a static climatology Zarr from the public GCS bucket sheerwater-public-datalake over anonymous HTTPS; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -58,7 +58,7 @@ variable — pass `--variable sst`.
 | `imerg_final` | IMERG final daily precipitation climatology (`--variable precip`) |
 | `era5` | ERA5 daily climatology (`--variable precip`) |
 | `chirps` | CHIRPS daily precipitation climatology (`--variable precip`) |
-| `ecmwf_ifs` | ECMWF IFS reforecast daily precipitation climatology (`--variable precip`) |
+| `ecmwf_ifs` | ECMWF IFS reforecast daily climatology — `precip`, `sst`, `uwind10m`, `vwind10m` |
 | `oisst` | NOAA OISST v2.1 daily sea-surface temperature climatology. Requires `--variable sst`. For live SST observations use `oisst-fetch`, not this skill. |
 
 More datasets are added by mirroring a new Zarr under the same bucket
@@ -128,10 +128,15 @@ calendar window (real dates, not the source's 1904 placeholder). Data
 variables are named `<variable>_avg` (climatological mean) and
 `<variable>_std` (climatological standard deviation), where `<variable>`
 comes from the cached Zarr's own `variable` global attr (e.g. `precip_avg`,
-`precip_std`, or `sst_avg` / `sst_std` for `--dataset oisst`) — both
-converted to standard display units (e.g. `mm day-1` for precip,
-`degree_Celsius` for SST). Unlike variance, std shares the mean's units and converts
-linearly, so both variables go through the same unit-conversion path safely.
+`precip_std`, or `sst_avg` / `sst_std` for `--dataset oisst`). Recognized
+kinds (currently `precip`, air `temp`) are converted to standard display
+units (e.g. `mm day-1` for precip); anything else (e.g. `sst`, `uwind10m`,
+`vwind10m`) passes through unconverted, with units from the source
+(per-variable, else dataset-level, else a small hardcoded table in
+`fetch.py` for known unitless mirrors — currently `degree_Celsius` for
+`sst`, `m/s` for `uwind10m`/`vwind10m`). Unlike variance, std shares the
+mean's units and converts linearly, so both variables go through the same
+unit-conversion path safely where one applies.
 Global attrs include `weather_skills_source=sheerwater-mirror:<dataset>`,
 `climatology_dataset`, `climatology_variable`,
 `climatology_prediction_timedelta_days`, `climatology_window_days`.
@@ -181,6 +186,21 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
   --dataset imerg_final --start-time 2020-01-01 --end-time 2020-12-31 \
   --bbox 5.5/33.9/-4.7/41.9 -o /tmp/imerg_clim_2020_kenya.zarr
+
+# ECMWF IFS sst / wind components — this mirror has no units metadata at
+# all for these; the skill falls back to its own hardcoded known units
+# (degree_Celsius for sst, m/s for wind components), no flag needed.
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
+  --dataset ecmwf_ifs --variable sst \
+  --start-time 2020-01-01 --end-time 2020-12-31 -o /tmp/ecmwf_sst_2020.zarr
+
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
+  --dataset ecmwf_ifs --variable uwind10m \
+  --start-time 2020-01-01 --end-time 2020-12-31 -o /tmp/ecmwf_uwind10m_2020.zarr
+
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
+  --dataset ecmwf_ifs --variable vwind10m \
+  --start-time 2020-01-01 --end-time 2020-12-31 -o /tmp/ecmwf_vwind10m_2020.zarr
 
 # OISST sea-surface temperature climatology. --variable sst is required;
 # the default precip key is not mirrored for this dataset. For live SST
