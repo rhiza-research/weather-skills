@@ -27,7 +27,8 @@ per-step increments via `arr[i+1] - arr[i]`, clipped at zero.
 ## When not to use
 
 - **Current fetcher outputs** (`ecmwf-fetch` `tp`, `dynamical-fetch`
-  `precipitation_surface`, `kenya-forecast-fetch` precip / precip_downscaled,
+  `precipitation_surface`, `kenya-forecast-fetch` precip / precip_downscaled /
+  precip_downscaled_daily,
   `cumulus-fetch` `tp`, `neuralgcm-fetch` `tp`) — already rates
   (`mm day-1`). The skill refuses them. For period amounts, run
   `aggregate-temporal` then `convert-to-totals`.

@@ -299,3 +299,87 @@ def test_fetch_precip_downscaled_converts_to_weekly_totals(tmp_path, fetch_mod, 
 def test_store_key_precip_downscaled_is_weekly_netcdf(fetch_mod):
     key = fetch_mod._store_key("precip_downscaled", "2026-08-30")
     assert key == "2026-08-30/data/data_weekly_Kenya_downscaled.nc"
+
+
+def test_listing_object_key_files_vs_zarr(fetch_mod):
+    assert fetch_mod._listing_object_key("2026-09-16/data/daily_downscaled_kenya.tif") == (
+        "2026-09-16/data/daily_downscaled_kenya.tif"
+    )
+    assert fetch_mod._listing_object_key("2026-08-30/data/data_weekly_Kenya_downscaled.nc") == (
+        "2026-08-30/data/data_weekly_Kenya_downscaled.nc"
+    )
+    assert (
+        fetch_mod._listing_object_key("2026-08-04/data/ECMWF_s2s_precip_2026-08-04.zarr")
+        == "2026-08-04/data/ECMWF_s2s_precip_2026-08-04.zarr/zarr.json"
+    )
+
+
+def _daily_downscaled_tif():
+    """band/y/x GeoTIFF layout matching daily_downscaled_kenya.tif."""
+    xs = np.array([33.0, 33.05, 33.10])
+    ys = np.array([2.0, 1.95, 1.90])
+    bands = np.array([1, 2, 3])
+    tp = np.full((3, 3, 3), 5.0, dtype=np.float32)
+    ds = xr.Dataset(
+        {"tp": (("band", "y", "x"), tp)},
+        coords={"band": bands, "y": ys, "x": xs},
+    )
+    ds["tp"].attrs.update(units="kg m**-2", long_name="Total Precipitation")
+    return ds
+
+
+def test_store_key_precip_downscaled_daily_is_geotiff(fetch_mod):
+    key = fetch_mod._store_key("precip_downscaled_daily", "2026-09-16")
+    assert key == "2026-09-16/data/daily_downscaled_kenya.tif"
+
+
+def test_open_remote_routes_tif_to_geotiff(fetch_mod, monkeypatch):
+    seen = {}
+
+    def fake_geotiff(url):
+        seen["url"] = url
+        return _daily_downscaled_tif()
+
+    monkeypatch.setattr(fetch_mod, "_open_remote_geotiff", fake_geotiff)
+    ds = fetch_mod._open_remote("2026-09-16/data/daily_downscaled_kenya.tif")
+    assert seen["url"].endswith("/2026-09-16/data/daily_downscaled_kenya.tif")
+    assert "tp" in ds.data_vars
+    assert "band" in ds.dims
+
+
+def test_fetch_precip_downscaled_daily_opens_tif_and_writes_daily_rates(
+    tmp_path, fetch_mod, monkeypatch
+):
+    out = tmp_path / "downscaled_daily.zarr"
+    seen = {}
+
+    monkeypatch.setattr(
+        fetch_mod,
+        "_store_exists",
+        lambda key: seen.setdefault("key", key) or True,
+    )
+    monkeypatch.setattr(fetch_mod, "_open_remote", lambda key: _daily_downscaled_tif())
+
+    run_skill(
+        fetch_mod.fetch,
+        "--dataset",
+        "precip_downscaled_daily",
+        "--date",
+        "2026-09-16",
+        "-o",
+        str(out),
+    )
+
+    assert seen["key"] == "2026-09-16/data/daily_downscaled_kenya.tif"
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert list(ds["tp"].dims) == ["step", "latitude", "longitude"]
+        assert "spatial_ref" not in ds.variables
+        assert "band" not in ds.dims
+        days = np.asarray(ds["step"].values).astype("timedelta64[D]").astype(int)
+        assert list(days) == [0, 1, 2]
+        np.testing.assert_allclose(ds["tp"].values[:, 0, 0], [5.0, 5.0, 5.0])
+        assert ds["tp"].attrs["units"] == "mm day-1"
+        assert ds["tp"].attrs.get("data_interval") == "1 day"
+        assert "aggregation_period" not in ds["tp"].attrs
+        assert np.datetime64(ds["time"].values, "D") == np.datetime64("2026-09-16")
+        assert "number" not in ds.dims

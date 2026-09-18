@@ -10,6 +10,7 @@
 #   "numpy",
 #   "pint-xarray>=0.6",
 #   "netcdf4",
+#   "rioxarray",
 # ]
 # ///
 """Fetch a Kenya forecasts archive grid and write a weather-skills standard dataset."""
@@ -46,17 +47,22 @@ _DEFAULT_DATASET = "precip"
 
 # Per-step amounts already (not cumulative-since-init). Convert by dividing
 # by the step interval; do not deaccumulate.
-_ALREADY_PERIOD_PRECIP = frozenset({"gefs", "medium_range_precip", "precip_downscaled"})
+_ALREADY_PERIOD_PRECIP = frozenset(
+    {"gefs", "medium_range_precip", "precip_downscaled", "precip_downscaled_daily"}
+)
 # Archive is already a multi-day window — stamp aggregation_period so
 # convert-to-totals can run without aggregate-temporal re-binning weeks.
 _ALREADY_WEEKLY = frozenset({"medium_range_precip", "precip_downscaled"})
 # Interval fields whose archive ticks start at +1 native period (or +1 week).
-_SHIFT_STEP_TO_ZERO = frozenset({"gefs", "daily_vars", "medium_range_precip", "precip_downscaled"})
+_SHIFT_STEP_TO_ZERO = frozenset(
+    {"gefs", "daily_vars", "medium_range_precip", "precip_downscaled", "precip_downscaled_daily"}
+)
 
 # Short ids → object key under <date>/data/ (may include date in the basename).
 _DATASETS: dict[str, str] = {
     "precip": "ECMWF_s2s_precip_{date}.zarr",
     "precip_downscaled": "data_weekly_Kenya_downscaled.nc",
+    "precip_downscaled_daily": "daily_downscaled_kenya.tif",
     "daily_vars": "ECMWF_s2s_daily_vars_{date}.zarr",
     "Tminmax": "ECMWF_s2s_Tminmax_{date}.zarr",
     "10wind": "ECMWF_s2s_10wind_{date}.zarr",
@@ -66,6 +72,8 @@ _DATASETS: dict[str, str] = {
     "gefs": "gefs/gefs_kenya.zarr",
 }
 _NETCDF_SUFFIXES = (".nc", ".nc4")
+_TIFF_SUFFIXES = (".tif", ".tiff")
+_FILE_OBJECT_SUFFIXES = _NETCDF_SUFFIXES + _TIFF_SUFFIXES
 
 
 def _get_json(url: str) -> dict:
@@ -104,9 +112,16 @@ def _store_key(dataset: str, iso: str) -> str:
     return f"{iso}/data/{template.format(date=iso)}"
 
 
+def _listing_object_key(key: str) -> str:
+    """GCS object to HEAD: the file itself, or ``zarr.json`` for a Zarr prefix."""
+    if key.lower().endswith(_FILE_OBJECT_SUFFIXES):
+        return key
+    return f"{key.rstrip('/')}/zarr.json"
+
+
 def _store_exists(key: str) -> bool:
-    """True if the Zarr root metadata object (or a NetCDF file) is present."""
-    meta_key = key if key.lower().endswith(_NETCDF_SUFFIXES) else f"{key.rstrip('/')}/zarr.json"
+    """True if the Zarr root metadata object (or a NetCDF / GeoTIFF file) is present."""
+    meta_key = _listing_object_key(key)
     url = f"{_GCS_MEDIA}/{urllib.parse.quote(meta_key, safe='/')}"
     req = urllib.request.Request(url, method="HEAD")
     try:
@@ -157,6 +172,8 @@ def _open_remote(key: str):
     try:
         if key.lower().endswith(_NETCDF_SUFFIXES):
             return _open_remote_netcdf(url)
+        if key.lower().endswith(_TIFF_SUFFIXES):
+            return _open_remote_geotiff(url)
         return xr.open_zarr(url, consolidated=True)
     except DataError:
         raise
@@ -176,12 +193,81 @@ def _open_remote_netcdf(url: str):
             return ds.load()
 
 
+def _open_remote_geotiff(url: str):
+    """Download a public GeoTIFF and return an in-memory Dataset (band, y, x)."""
+    import tempfile
+
+    import rioxarray
+
+    with tempfile.NamedTemporaryFile(suffix=".tif") as tmp:
+        urllib.request.urlretrieve(url, tmp.name)
+        da = rioxarray.open_rasterio(tmp.name, masked=True)
+        da = da.load()
+    name = da.attrs.get("GRIB_cfVarName") or da.attrs.get("GRIB_shortName") or "tp"
+    return da.to_dataset(name=str(name))
+
+
 def _prepare_downscaled(ds):
     """CHIRPS-grid weekly downscale: lon-first NetCDF → (step, lat, lon) cube."""
     drop = [name for name in ("rank", "year", "surface") if name in ds.variables]
     if drop:
         ds = ds.drop_vars(drop)
     spatial = [d for d in ("step", "number", "latitude", "longitude") if d in ds.dims]
+    others = [d for d in ds.dims if d not in spatial]
+    if spatial:
+        ds = ds.transpose(*others, *spatial)
+    return ds
+
+
+def _prepare_daily_downscaled(ds, init_iso: str):
+    """GeoTIFF bands (1-indexed lead days) → (step, latitude, longitude) cube."""
+    import numpy as np
+
+    rename = {}
+    if "band" in ds.dims:
+        rename["band"] = "step"
+    if "y" in ds.dims:
+        rename["y"] = "latitude"
+    if "x" in ds.dims:
+        rename["x"] = "longitude"
+    if rename:
+        ds = ds.rename(rename)
+    if "tp" not in ds.data_vars:
+        if len(ds.data_vars) != 1:
+            names = ", ".join(sorted(ds.data_vars)) or "(none)"
+            raise DataError(
+                f"daily downscaled GeoTIFF must have a single data variable; found: {names}."
+            )
+        (only,) = ds.data_vars
+        ds = ds.rename({only: "tp"})
+    drop = [name for name in ("spatial_ref",) if name in ds.variables or name in ds.coords]
+    if drop:
+        ds = ds.drop_vars(drop)
+    if "step" in ds.coords:
+        raw = np.asarray(ds["step"].values)
+        if raw.dtype.kind in "iu":
+            ds = ds.assign_coords(
+                step=("step", np.array([np.timedelta64(int(v), "D") for v in raw]))
+            )
+    drop_attrs = {"scale_factor", "add_offset", "AREA_OR_POINT", "grid_mapping", "band_dim_name"}
+    for name in ds.data_vars:
+        attrs = {
+            k: v
+            for k, v in ds[name].attrs.items()
+            if k not in drop_attrs and not str(k).startswith("GRIB_")
+        }
+        ds[name].attrs.clear()
+        ds[name].attrs.update(attrs)
+        ds[name].attrs.setdefault("units", "kg m-2")
+        ds[name].attrs.setdefault("long_name", "Total Precipitation")
+    ds = ds.assign_coords(time=np.datetime64(init_iso, "ns"))
+    ds["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
+    if "step" in ds.coords:
+        ds["step"].attrs.update(
+            standard_name="forecast_period",
+            long_name="time since forecast_reference_time",
+        )
+    spatial = [d for d in ("step", "latitude", "longitude") if d in ds.dims]
     others = [d for d in ds.dims if d not in spatial]
     if spatial:
         ds = ds.transpose(*others, *spatial)
@@ -236,7 +322,8 @@ def _shift_step_origin_to_zero(ds):
     choices=list(_DATASETS),
     help=(
         f"Archive product under <date>/data/ (default {_DEFAULT_DATASET}; "
-        "precip_downscaled is the CHIRPS-resolution weekly precip)."
+        "precip_downscaled is weekly CHIRPS-resolution precip; "
+        "precip_downscaled_daily is the same grid as a daily GeoTIFF)."
     ),
 )
 @weather_skill.argument("--date")
@@ -259,9 +346,10 @@ def fetch(dataset, date, bbox, variable, output, **kwargs):
     """Fetch a Kenya forecasts archive grid and write a weather-skills standard dataset.
 
     Opens a store under ``gs://kenya-forecasting-data/<date>/data/`` over HTTPS
-    (credential-free): native S2S Zarr grids, or the CHIRPS-resolution weekly
-    downscaled precip NetCDF. Optionally subsets by ``--bbox`` and ``--variable``,
-    normalizes units/CF attrs, and returns a Dataset for the decorator to write.
+    (credential-free): native S2S Zarr grids, the CHIRPS-resolution weekly
+    downscaled precip NetCDF, or the daily downscaled GeoTIFF. Optionally
+    subsets by ``--bbox`` and ``--variable``, normalizes units/CF attrs, and
+    returns a Dataset for the decorator to write.
     """
     if kwargs.get("probe_latest") is not None:
         dsid = kwargs["probe_latest"] or dataset
@@ -280,6 +368,8 @@ def fetch(dataset, date, bbox, variable, output, **kwargs):
     ds = _open_remote(key)
     if dataset == "precip_downscaled":
         ds = _prepare_downscaled(ds)
+    elif dataset == "precip_downscaled_daily":
+        ds = _prepare_daily_downscaled(ds, iso)
 
     if variable:
         missing = [v for v in variable if v not in ds.data_vars]
@@ -315,9 +405,7 @@ def fetch(dataset, date, bbox, variable, output, **kwargs):
         period = data_interval_of(ds) or _step_interval_stamp(ds)
         for name in ds.data_vars:
             ds[name].attrs[AGGREGATION_PERIOD_ATTR] = period
-            ds[name].attrs["cell_methods"] = format_cell_methods(
-                "step", "mean", interval=period
-            )
+            ds[name].attrs["cell_methods"] = format_cell_methods("step", "mean", interval=period)
     return ds
 
 
