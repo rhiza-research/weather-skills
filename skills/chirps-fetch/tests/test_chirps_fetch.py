@@ -93,6 +93,15 @@ def test_day_urls_use_chc_mirror(mod):
     assert "storage.googleapis.com" in final
 
 
+def test_pre_sat_year_uses_rnl_chc(mod):
+    day = date(1994, 8, 1)
+    url = mod._rnl_url(day)
+    assert url == (
+        "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/daily/final/rnl/"
+        "1994/chirps-v3.0.rnl.1994.08.01.tif"
+    )
+
+
 def test_fetch_bbox_subsets_space(tmp_path, mod, fetch):
     out = tmp_path / "out.zarr"
 

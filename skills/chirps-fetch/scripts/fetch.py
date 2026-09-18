@@ -34,10 +34,14 @@ _GCS_MEDIA = f"https://storage.googleapis.com/{_BUCKET}"
 _GCS_API = f"https://storage.googleapis.com/storage/v1/b/{_BUCKET}/o"
 _CHIRPS_FINAL_PREFIX = f"{_MIRROR}/products/CHIRPS/v3.0/daily/final/sat"
 _CHIRPS_PRELIM_PREFIX = f"{_MIRROR}/products/CHIRPS/v3.0/daily/prelim/sat"
-CHIRPS_FINAL_START_YEAR = 1998
+_CHC_RNL_BASE = "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/daily/final/rnl"
+CHIRPS_SAT_START_YEAR = 1998
+CHIRPS_RNL_START_YEAR = 1981
+CHIRPS_FINAL_START_YEAR = CHIRPS_RNL_START_YEAR
 CHIRPS_NODATA = -9999.0
 HTTP_TIMEOUT = 60
 DEFAULT_WORKERS = 8
+_CHIRPS_USER_AGENT = "weather-skills/chirps-fetch"
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
@@ -101,6 +105,7 @@ class _SessionPool:
         s = getattr(self._local, "session", None)
         if s is None:
             s = requests.Session()
+            s.headers["User-Agent"] = _CHIRPS_USER_AGENT
             self._local.session = s
             with self._lock:
                 self._all.append(s)
@@ -172,9 +177,30 @@ def _http_refusal_message(exc, workers: int) -> str:
     )
 
 
+def _rnl_url(day: date) -> str:
+    """CHC HTTPS URL for one CHIRPS v3.0 daily rnl TIF (1981 through sat start)."""
+    name = f"chirps-v3.0.rnl.{day.year:04d}.{day.month:02d}.{day.day:02d}.tif"
+    return f"{_CHC_RNL_BASE}/{day.year:04d}/{name}"
+
+
 def _download_day_tif(session, day: date, dest_dir: Path) -> Path:
-    """Prefer final product; fall through to prelim on any final-side failure."""
+    """Prefer final product; fall through to prelim on any final-side failure.
+
+    Years before ``CHIRPS_SAT_START_YEAR`` use the CHC ``rnl`` daily product
+    (ERA5-disaggregated pentads). The GCS sat/prelim mirror starts in 1998.
+    """
     import requests
+
+    if day.year < CHIRPS_SAT_START_YEAR:
+        name = f"chirps-v3.0.rnl.{day.year:04d}.{day.month:02d}.{day.day:02d}.tif"
+        url = _rnl_url(day)
+        body = _get_tif_body(session, url)
+        if body is _NOT_FOUND:
+            raise DayUnavailable(f"day unavailable from CHIRPS v3 rnl ({url})")
+        out = dest_dir / name
+        with open(out, "wb") as f:
+            f.write(body)
+        return out
 
     final_name = f"chirps-v3.0.sat.{day.year:04d}.{day.month:02d}.{day.day:02d}.tif"
     final_url = _object_url(f"{_CHIRPS_FINAL_PREFIX}/{day.year:04d}/{final_name}")
@@ -344,8 +370,10 @@ def fetch(start_time, end_time, workers, bbox, **kwargs):
                 )
             raise UsageError(
                 f"no days available in range {start}..{end} from the "
-                f"CHIRPS mirror (final or prelim sat product). CHIRPS v3.0 "
-                f"sat coverage runs {CHIRPS_FINAL_START_YEAR}-to-present, so a "
+                f"CHIRPS archive (final/prelim sat, or rnl before "
+                f"{CHIRPS_SAT_START_YEAR}). CHIRPS v3.0 rnl covers "
+                f"{CHIRPS_RNL_START_YEAR}-to-present and sat covers "
+                f"{CHIRPS_SAT_START_YEAR}-to-present, so a "
                 "date before that range yields nothing; otherwise this is a "
                 "data gap. The validated final product also lags, so "
                 "very recent days come from the preliminary product (published 2 "

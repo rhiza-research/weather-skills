@@ -1,6 +1,6 @@
 ---
 name: chirps-fetch
-description: Fetch CHIRPS precipitation observations for a date range and optional region from the public GCS CHC mirror — the validated final product back to 1998, with a preliminary fallback for very recent days — and write a weather-skills standard dataset Zarr. Use when a task needs CHIRPS rainfall, recent or historical, e.g. to compare against a forecast or station data, or to build a reference period. Pass --bbox N/W/S/E to slice the 0.05° grid in space.
+description: Fetch CHIRPS precipitation observations for a date range and optional region from the public GCS CHC mirror — the validated sat final product back to 1998, CHC rnl (ERA5-disaggregated) for 1981–1997, and a preliminary fallback for very recent days — and write a weather-skills standard dataset Zarr. Use when a task needs CHIRPS rainfall, recent or historical, e.g. to compare against a forecast or station data, or to build a reference period. Pass --bbox N/W/S/E to slice the 0.05° grid in space.
 license: MIT
 compatibility: Requires Python 3.12 and uv. Fetches from the public GCS CHC mirror (gs://sheerwater-public-datalake/chc-mirror); no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -13,24 +13,26 @@ metadata:
 
 # chirps-fetch
 
-Downloads CHIRPS v3.0 daily `sat` precipitation for the requested date range
-from the public GCS CHC mirror
+Downloads CHIRPS v3.0 daily precipitation for the requested date range
+and writes a weather-skills standard dataset Zarr. Days in **1998–present**
+come from the public GCS CHC mirror
 `gs://sheerwater-public-datalake/chc-mirror` (same object paths as CHC;
-credential-free HTTPS) and writes a weather-skills standard dataset Zarr.
-Each day is taken from the validated **final** product (a per-year archive
-covering 1998 to present) when available, falling back to the **preliminary**
-product for very recent days the final has not finalized yet. When both exist
-for a day, final is used.
+credential-free HTTPS): the validated **final** `sat` product when available,
+falling back to **preliminary** `sat` for very recent days the final has not
+finalized yet. Days in **1981–1997** come from CHC HTTPS `rnl` (ERA5
+disaggregation of the same pentad totals; the GCS sat archive starts in 1998
+because IMERG does). When both sat final and prelim exist for a day, final
+is used.
 
 `--bbox N/W/S/E` subsets the 0.05° grid in space after each daily TIF is
 opened (omit it for the full globe). Country bboxes come from `resolve-region`.
 
 ## When to use
 
-- A task needs CHIRPS rainfall as gridded observations — recent days, a historical period, or a reference/normal year (final coverage runs 1998 to present).
+- A task needs CHIRPS rainfall as gridded observations — recent days, a historical period, or a reference/normal year (rnl 1981–1997; sat final 1998 to present).
 - A downstream skill will clip, aggregate, or compare CHIRPS against other sources.
 
-Coverage starts in 1998 (CHIRPS v3.0 `sat`); dates before 1998 are unavailable and exit non-zero.
+Coverage starts in 1981 (CHIRPS v3.0 `rnl`). `sat` starts in 1998. Dates before 1981 are unavailable and exit non-zero.
 
 ## Usage
 
