@@ -147,13 +147,14 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
 ### Arguments
 - `--input`, `-i` — Zarr input (single-dataset mode). Mutually exclusive with `--layer`
   and with `--x` / `--y`. Optional when `--spec` already lists input paths.
-- `--spec` — plot spec JSON (file or inline). A default run of any kind
-  (including `--kind xy` / `windrose` / `quiver` and `--layer`) writes
-  `<output-stem>.plot.json` holding the values it actually resolved (traces,
-  input paths, layer KIND+path, and any `axes` knobs you set). Edit that file
-  and re-run with `--spec`, or pass `--patch` to change a value without
-  editing. CLI flags overlay the spec. Spec input paths are opened as Datasets
-  so provenance still chains from the Zarr.
+- `--spec` — plot spec JSON (file or inline). Optional. A first run can be
+  CLI flags only (`--title`, `--variable`, `--mask-geojson`, `--figsize`, …).
+  A default run of any kind (including `--kind xy` / `windrose` / `quiver`
+  and `--layer`) writes `<output-stem>.plot.json` holding the values it
+  actually resolved (traces, input paths, layer KIND+path, and any `axes`
+  knobs you set). Edit that file and re-run with `--spec`, or pass `--patch`
+  to change a value without editing. CLI flags overlay the spec. Spec input
+  paths are opened as Datasets so provenance still chains from the Zarr.
 - `--patch` — optional JSON (file or inline) deep-merged onto the spec before
   draw (`title`, `annotations`, `shapes`, `axes`, `theme.fontsize`,
   `layout.colorbar`). Values go at their canonical spec paths; a `patch` key
@@ -500,14 +501,18 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/s2s_10wind.zarr -o /tmp/10m-w
 ## Iterate on a plot (dump → edit → replot)
 
 Every kind compiles a small weather-skills JSON spec (Zarr paths and layout,
-not the raster `z` grid). A default run writes `<output-stem>.plot.json` next
-to the PNG holding the values it **resolved** (traces, input paths, and for
-maps `layout.facet` / colormap / extent). Unset knobs are omitted, so every
-line in the sidecar is something the figure actually used.
+not the raster `z` grid). The first PNG does not need `--spec`: pass
+`--title`, `--variable`, `--mask-geojson`, `--figsize`, and the rest as CLI
+flags. A default run also writes `<output-stem>.plot.json` next to the PNG
+holding the values it **resolved** (traces, input paths, and for maps
+`layout.facet` / colormap / extent). Unset knobs are omitted, so every line
+in the sidecar is something the figure actually used.
 
-1. `plot -i data.zarr -o out.png` writes `out.png` + `out.plot.json`.
-2. Read `out.plot.json`. Change facet/colormap/annotations, or add a
-   `patch` (`layout`, `annotations`, `shapes`, `axes`).
+1. `plot -i data.zarr -o out.png --title "Precip" --variable precip` writes
+   `out.png` + `out.plot.json`.
+2. Read `out.plot.json`. Change facet/colormap/annotations, or pass `--patch`
+   on the CLI (`layout`, `annotations`, `shapes`, `axes`). Do not add a
+   `patch` key inside the sidecar; that is rejected.
 3. `plot --spec out.plot.json -o out2.png` re-renders. CLI flags overlay
    the spec (`--title`, `--colormap`, `--index`). Spec input Zarrs are
    opened as Datasets so provenance chains from the Zarr, not the previous PNG.

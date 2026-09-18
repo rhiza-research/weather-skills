@@ -37,7 +37,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py --spec <out.plot.json> --ou
 ### Arguments
 - `--input`, `-i` — pass exactly twice: forecast Zarr first, m-climate Zarr second. Optional when `--spec` already lists both paths.
 - `--lat`, `--lon` — point location (nearest-neighbor selection). Optional when `--spec` has `geo.lat` / `geo.lon`.
-- `--spec` — plot spec JSON (file or inline). A default run writes
+- `--spec` — plot spec JSON (file or inline). Optional; a first run can be
+  CLI flags only. A default run writes
   `<output-stem>.plot.json` with the snapped lat/lon. Edit and re-run with
   `--spec`. CLI flags overlay the spec. Spec input paths are opened as Datasets
   so provenance chains from the Zarr.

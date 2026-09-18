@@ -40,8 +40,8 @@ shows calendar dates, not raw nanoseconds. Run `step-to-time` first if you
 need a real `time` dim for other skills (difference, plot-compare).
 
 For a single-input quick-look, use the `plot` skill with
-`--kind timeseries`, which averages across all non-time dims by default
-(no `--reduce` flags needed).
+`--kind timeseries`. Leftover non-time dims are still not averaged: pass
+`--reduce` once per dim or `--along` to fan them out.
 
 ## When to use
 
@@ -78,7 +78,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py --spec <out.plot.json> --o
 - `--input`, `-i` — input Zarr; repeat the flag for each input. Order is
   preserved and controls the legend order. Optional when `--spec` already
   lists input paths.
-- `--spec` — plot spec JSON (file or inline). A default run writes
+- `--spec` — plot spec JSON (file or inline). Optional; a first run can be
+  CLI flags only. A default run writes
   `<output-stem>.plot.json` with resolved inputs, `--reduce`/`--along`,
   `--mark`, labels, and the shared matplotlib `axes` object (limits, ticks,
   locators, spines, …). Edit `axes` and re-run with `--spec`. CLI flags

@@ -71,9 +71,11 @@ credentialed or source-specific fetcher only when it does not.
 
 `plot`, `plot-timeseries`, `plot-compare`, `plot-compare-forecasts`,
 `plot-verify`, and `plot-mediogram` all write a PNG plus a
-`<stem>.plot.json` sidecar. Edit `axes` (or annotations / artist kwargs) and
-replot with `--spec`. See [docs/plotting.md](docs/plotting.md) for the catalog,
-the shared JSON spec, and remaining limits.
+`<stem>.plot.json` sidecar. First runs use CLI flags (`--title`,
+`--variable`, `--figsize`, …). Edit `axes` (or annotations / artist kwargs)
+and replot with `--spec`; a set CLI flag still overlays the spec. See
+[docs/plotting.md](docs/plotting.md) for the catalog, the shared JSON spec,
+and remaining limits.
 
 | Skill | Use when |
 |---|---|

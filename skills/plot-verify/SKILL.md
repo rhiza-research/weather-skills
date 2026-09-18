@@ -72,7 +72,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py --spec <out.plot.json> -o <out
 - `--verify` — verify Zarr from the `verify` skill for that lead.
   **Once per `--forecast`**, same order. Optional when `--spec` lists verify
   inputs.
-- `--spec` — plot spec JSON (file or inline). A default run writes
+- `--spec` — plot spec JSON (file or inline). Optional; a first run can be
+  CLI flags only. A default run writes
   `<output-stem>.plot.json` with obs, forecast, and verify paths. Edit and
   re-run with `--spec`. CLI flags overlay the spec. Spec input paths are
   opened as Datasets so provenance chains from the Zarr.

@@ -29,9 +29,12 @@ flowchart LR
   unknown key is an error naming the canonical path, never a silent no-op.
   A default run writes `<stem>.plot.json` holding only the values that were
   actually resolved; edit it and replot with `--spec`.
-- **One flag-to-spec bridge.** `FLAG_TO_SPEC` in `plot/spec.py` is the only
-  place that knows how a CLI flag lands in the spec. Skills read values back
-  through `resolve_flags(spec, **cli)`, which is the single precedence rule:
+- **One flag-to-spec bridge.** First runs use CLI flags (`--title`,
+  `--variable`, `--mask-geojson`, `--figsize`, `--kind`, …). `--spec` is
+  dump/edit/replot, or a way to pack many knobs as JSON — not a replacement
+  for those flags. `FLAG_TO_SPEC` in `plot/spec.py` is the only place that
+  knows how a CLI flag lands in the spec. Skills read values back through
+  `resolve_flags(spec, **cli)`, which is the single precedence rule:
   a set CLI value wins, otherwise the spec's value is used.
 - **One map renderer.** `heatmap`, `contour`, `quiver` and `--layer` all
   compile through `plot.maps`: a single-input kind is just a one-layer
@@ -136,8 +139,10 @@ Key details:
   into the spec before compile — but the compiler never reads a `patch`
   object, so there is one place a title or annotation can live.
 
-Dump → edit → `--spec out.plot.json` is the intended agent loop. CLI flags
-overlay the spec. Provenance still chains from the Zarrs.
+Dump → edit → `--spec out.plot.json` is the replot loop, not the first run.
+Pass `--title` / `--variable` / `--figsize` (and the rest) as CLI flags;
+`--spec` and `--patch` are optional. CLI flags overlay the spec. Provenance
+still chains from the Zarrs.
 
 Neither `plot --kind timeseries` nor `plot-timeseries` will average a leftover
 dim — pass `--reduce` per dim or `--along` to fan it out.

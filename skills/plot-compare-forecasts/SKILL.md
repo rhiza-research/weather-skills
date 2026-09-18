@@ -64,7 +64,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py --spec <out.plot.js
   Order is the row order. Each panel's y-axis is that row's name
   (`weather_skills_source` when stamped, else `input 1`, `input 2`, …).
   Optional when `--spec` already lists input paths.
-- `--spec` — plot spec JSON (file or inline). A default run writes
+- `--spec` — plot spec JSON (file or inline). Optional; a first run can be
+  CLI flags only. A default run writes
   `<output-stem>.plot.json`. Edit and re-run with `--spec`. CLI flags overlay
   the spec. Spec input paths are opened as Datasets so provenance chains from
   the Zarr.

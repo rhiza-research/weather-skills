@@ -90,7 +90,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py --spec <out.plot.json> --outp
 
 ### Arguments
 - `--input`, `-i` — pass exactly twice. The first input is row A, the second is row B. Station-schema is allowed on either. Optional when `--spec` already lists both paths.
-- `--spec` — plot spec JSON (file or inline). A default run writes
+- `--spec` — plot spec JSON (file or inline). Optional; a first run can be
+  CLI flags only. A default run writes
   `<output-stem>.plot.json`. Edit and re-run with `--spec`. CLI flags overlay
   the spec. Spec input paths are opened as Datasets so provenance chains from
   the Zarr.

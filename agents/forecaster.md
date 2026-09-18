@@ -70,11 +70,14 @@ Prefer small steps over stuffing every filter into one call:
   `deaccumulate` is only for leftover cumulative-since-init cubes that still
   have amount units.
 - **Plotters:** `plot` is the default figure skill, including overlays
-  (`--layer heatmap:… --layer scatter:…`). Every figure skill writes
-  `<stem>.plot.json` next to the PNG. Read that spec, edit `axes` / facet /
-  colormap / annotations or add a `patch`, then `plot --spec out.plot.json -o
-  out2.png` (CLI flags overlay the spec). PNG remains the canonical stamped
-  artifact; `inspect-figure` is PNG QA; `provenance` reads lineage from the PNG.
+  (`--layer heatmap:… --layer scatter:…`). First runs use CLI flags
+  (`--title`, `--variable`, `--mask-geojson`, `--figsize`, `--kind`, …).
+  Every figure skill also writes `<stem>.plot.json` next to the PNG. Read
+  that spec, edit `axes` / facet / colormap / annotations, then
+  `plot --spec out.plot.json -o out2.png` (CLI flags overlay the spec).
+  `--spec` is dump/edit/replot, not a requirement for the first PNG.
+  PNG remains the canonical stamped artifact; `inspect-figure` is PNG QA;
+  `provenance` reads lineage from the PNG.
   Onset dates from `indicator --detect first` are ordinary `plot` maps (do not
   average `number` first). Use `plot-compare` for a two-row side-by-side,
   `plot-compare-forecasts` for an N×time grid, `plot-verify` for the
