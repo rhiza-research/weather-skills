@@ -73,7 +73,8 @@ credentialed or source-specific fetcher only when it does not.
 `plot-verify`, and `plot-mediogram` all write a PNG plus a
 `<stem>.plot.json` sidecar. First runs use CLI flags (`--title`,
 `--variable`, `--figsize`, …). Edit `axes` (or annotations / artist kwargs)
-and replot with `--spec`; a set CLI flag still overlays the spec. See
+and replot with `--spec`; a set CLI flag still overlays the spec. `--patch`
+is on every figure skill. See
 [docs/plotting.md](docs/plotting.md) for the catalog, the shared JSON spec,
 and remaining limits.
 

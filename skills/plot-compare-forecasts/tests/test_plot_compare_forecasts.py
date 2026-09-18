@@ -45,6 +45,26 @@ def test_two_forecasts_write_png_and_stamp_history(tmp_path, plot_fn):
     assert history[-1]["args"]["title"] == "Two forecasts"
 
 
+def test_patch_flag_merges_into_spec(tmp_path, plot_fn):
+    a = write_zarr(make_forecast(fill=1.0), tmp_path / "a.zarr")
+    b = write_zarr(make_forecast(fill=2.0), tmp_path / "b.zarr")
+    out = tmp_path / "grid.png"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(out),
+        "--patch",
+        '{"title": "Patched"}',
+    )
+    spec = json.loads((tmp_path / "grid.plot.json").read_text())
+    assert spec["title"] == "Patched"
+    assert "patch" not in spec
+
+
 def test_parse_figsize(plot_mod):
     import argparse
 

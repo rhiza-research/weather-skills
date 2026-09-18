@@ -123,6 +123,30 @@ def test_replot_from_spec(tmp_path, plot_fn, verify_fn):
     assert "obs.zarr" in basenames and "fc.zarr" in basenames and "bias.zarr" in basenames
 
 
+def test_patch_flag_merges_into_spec(tmp_path, plot_fn, verify_fn):
+    obs = write_zarr(_week(event_at=[(0, 0)], fill=1.0), tmp_path / "obs.zarr")
+    fc = write_zarr(_week(event_at=[(0, 0)], fill=3.0), tmp_path / "fc.zarr")
+    vpath = tmp_path / "bias.zarr"
+    _run_verify(verify_fn, fc, obs, vpath, metric="bias")
+    out = tmp_path / "verify_bias.png"
+    run_skill(
+        plot_fn,
+        "--obs",
+        str(obs),
+        "--forecast",
+        str(fc),
+        "--verify",
+        str(vpath),
+        "-o",
+        str(out),
+        "--patch",
+        '{"title": "Patched"}',
+    )
+    spec = json.loads((tmp_path / "verify_bias.plot.json").read_text())
+    assert spec["title"].startswith("Patched")
+    assert "patch" not in spec
+
+
 def test_error_scale_bias_white_at_zero():
     import numpy as np
     import xarray as xr

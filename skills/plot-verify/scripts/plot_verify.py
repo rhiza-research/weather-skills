@@ -36,11 +36,14 @@ from weather_skills_core.plot.figure import (
 )
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
+    PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
     dump_spec_dest,
     named_datasets_from_spec,
     overlay_flags,
+    overlay_spec,
+    parse_plot_patch,
     parse_plot_spec,
     resolve_flags,
     spec_get,
@@ -417,6 +420,12 @@ def _prepare(ds, variable):
     help=SPEC_ARGUMENT_HELP,
 )
 @weather_skill.argument(
+    "--patch",
+    default=None,
+    type=parse_plot_patch,
+    help=PATCH_ARGUMENT_HELP,
+)
+@weather_skill.argument(
     "--dump-spec",
     default=None,
     help=DUMP_SPEC_ARGUMENT_HELP,
@@ -436,6 +445,7 @@ def plot_verify(
     mask_geojson,
     output,
     spec=None,
+    patch=None,
     dump_spec=None,
     colormap_bounds=None,
     colormap_under=None,
@@ -446,6 +456,8 @@ def plot_verify(
 ):
     """Lead-week verification grid from obs, forecast, and pre-computed verify Zarrs."""
     spec_data = spec.to_dict() if spec is not None else {}
+    if patch:
+        spec_data = overlay_spec(spec_data, patch)
     named_spec = named_datasets_from_spec(spec) if spec is not None else {}
     if obs is None:
         obs = named_spec.get("obs")

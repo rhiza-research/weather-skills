@@ -924,3 +924,26 @@ def test_replot_from_spec(tmp_path, plot_timeseries):
     history = load_figure_history(second)
     assert history[-1]["skill"] == "plot-timeseries"
     assert history[-1]["input"]["basename"] == "in.zarr"
+
+
+def test_patch_flag_merges_into_spec(tmp_path, plot_timeseries):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "ts.png"
+    run_skill(
+        plot_timeseries,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--reduce",
+        "latitude",
+        "--reduce",
+        "longitude",
+        "--patch",
+        '{"title": "Patched", "axes": {"xticks": ["2026-08-17"]}}',
+    )
+    spec = json.loads((tmp_path / "ts.plot.json").read_text())
+    assert spec["title"] == "Patched"
+    assert spec["axes"]["xticks"] == ["2026-08-17"]
+    assert "patch" not in spec
+    assert Path(out).is_file() and out.stat().st_size > 0

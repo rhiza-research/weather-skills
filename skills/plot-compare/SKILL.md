@@ -83,7 +83,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
     [--shared-scale | --independent-scale] [--title TEXT] [--xlabel TEXT] [--fontsize N] [--figsize W,H] \
     [--panels N] [--time-dim DIM] \
     [--bbox N/W/S/E] [--mask-geojson PATH] \
-    [--spec PATH_OR_JSON] [--dump-spec PATH|-|none]
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec PATH|-|none]
 
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py --spec <out.plot.json> --output <out2.png>
 ```
@@ -95,6 +95,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py --spec <out.plot.json> --outp
   `<output-stem>.plot.json`. Edit and re-run with `--spec`. CLI flags overlay
   the spec. Spec input paths are opened as Datasets so provenance chains from
   the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto `--spec` before
+  CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a spec file
+  is rejected.
 - `--dump-spec` — where to write the resolved plot spec. Default:
   `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
 - `--label` — row label for each `--input`, in order. When omitted, labels are

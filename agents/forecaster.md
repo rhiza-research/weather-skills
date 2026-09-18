@@ -76,6 +76,7 @@ Prefer small steps over stuffing every filter into one call:
   that spec, edit `axes` / facet / colormap / annotations, then
   `plot --spec out.plot.json -o out2.png` (CLI flags overlay the spec).
   `--spec` is dump/edit/replot, not a requirement for the first PNG.
+  `--patch` is the same merge helper on every figure skill.
   PNG remains the canonical stamped artifact; `inspect-figure` is PNG QA;
   `provenance` reads lineage from the PNG.
   Onset dates from `indicator --detect first` are ordinary `plot` maps (do not

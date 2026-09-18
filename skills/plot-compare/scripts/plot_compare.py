@@ -36,11 +36,14 @@ from weather_skills_core.plot.figure import (
 )
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
+    PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
     datasets_from_cli_or_spec,
     dump_spec_dest,
     overlay_flags,
+    overlay_spec,
+    parse_plot_patch,
     parse_plot_spec,
     resolve_flags,
     spec_get,
@@ -219,6 +222,12 @@ def _ax_bounds(ds, variable):
     help=SPEC_ARGUMENT_HELP,
 )
 @weather_skill.argument(
+    "--patch",
+    default=None,
+    type=parse_plot_patch,
+    help=PATCH_ARGUMENT_HELP,
+)
+@weather_skill.argument(
     "--dump-spec",
     default=None,
     help=DUMP_SPEC_ARGUMENT_HELP,
@@ -246,6 +255,7 @@ def plot_compare(
     vmin=None,
     vmax=None,
     spec=None,
+    patch=None,
     dump_spec=None,
     colormap_bounds=None,
     colormap_under=None,
@@ -257,6 +267,8 @@ def plot_compare(
     """Side-by-side multi-panel PNG comparing two weather-skills standard dataset Zarrs."""
     ds_a, ds_b = datasets_from_cli_or_spec(ds, spec, exactly=2)
     spec_data = spec.to_dict() if spec is not None else {}
+    if patch:
+        spec_data = overlay_spec(spec_data, patch)
     flags = resolve_flags(
         spec_data,
         title=title,

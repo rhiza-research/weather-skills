@@ -135,9 +135,10 @@ Key details:
 - **`annotations` / `shapes`**: text/arrows; rect, h/v lines and spans, circle.
 - **`theme.rc`**: matplotlib rcParams after seaborn; backend keys rejected.
 - **Layer options** are snake_case (`u_variable`, `quiver_scale`).
-- **No `patch` key.** `--patch` is still a CLI convenience — it deep-merges
-  into the spec before compile — but the compiler never reads a `patch`
-  object, so there is one place a title or annotation can live.
+- **No `patch` key.** `--patch` is a CLI flag on every figure skill — it
+  deep-merges into the spec before CLI overlay — but the compiler never
+  reads a `patch` object, so there is one place a title or annotation can
+  live.
 
 Dump → edit → `--spec out.plot.json` is the replot loop, not the first run.
 Pass `--title` / `--variable` / `--figsize` (and the rest) as CLI flags;

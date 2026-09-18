@@ -40,11 +40,14 @@ from weather_skills_core.plot.figure import (
 )
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
+    PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
     datasets_from_cli_or_spec,
     dump_spec_dest,
     overlay_flags,
+    overlay_spec,
+    parse_plot_patch,
     parse_plot_spec,
     resolve_flags,
     spec_get,
@@ -454,6 +457,12 @@ def _flatten_da(da, panel_dim, lat_dim, lon_dim):
     help=SPEC_ARGUMENT_HELP,
 )
 @weather_skill.argument(
+    "--patch",
+    default=None,
+    type=parse_plot_patch,
+    help=PATCH_ARGUMENT_HELP,
+)
+@weather_skill.argument(
     "--dump-spec",
     default=None,
     help=DUMP_SPEC_ARGUMENT_HELP,
@@ -473,6 +482,7 @@ def plot_compare_forecasts(
     vmin=None,
     vmax=None,
     spec=None,
+    patch=None,
     dump_spec=None,
     colormap_bounds=None,
     colormap_under=None,
@@ -484,6 +494,8 @@ def plot_compare_forecasts(
     """Compare two or more gridded datasets as a heatmap grid PNG."""
     ds = datasets_from_cli_or_spec(ds, spec, min_count=2)
     spec_data = spec.to_dict() if spec is not None else {}
+    if patch:
+        spec_data = overlay_spec(spec_data, patch)
     flags = resolve_flags(
         spec_data,
         title=title,

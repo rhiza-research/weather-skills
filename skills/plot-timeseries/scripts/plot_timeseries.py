@@ -34,10 +34,13 @@ from weather_skills_core.plot.figure import (
 )
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
+    PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
     datasets_from_cli_or_spec,
     dump_spec_dest,
+    overlay_spec,
+    parse_plot_patch,
     parse_plot_spec,
     resolve_flags,
     spec_input_labels,
@@ -446,6 +449,12 @@ def _day_of_year_tick_label(doy: float) -> str:
     help=SPEC_ARGUMENT_HELP,
 )
 @weather_skill.argument(
+    "--patch",
+    default=None,
+    type=parse_plot_patch,
+    help=PATCH_ARGUMENT_HELP,
+)
+@weather_skill.argument(
     "--dump-spec",
     default=None,
     help=DUMP_SPEC_ARGUMENT_HELP,
@@ -471,12 +480,15 @@ def plot_timeseries(
     band=None,
     theme=None,
     spec=None,
+    patch=None,
     dump_spec=None,
     **kwargs,
 ):
     """Render a multi-input timeseries PNG from weather-skills standard dataset Zarrs."""
     datasets = datasets_from_cli_or_spec(ds, spec)
     spec_data = spec.to_dict() if spec is not None else {}
+    if patch:
+        spec_data = overlay_spec(spec_data, patch)
     flags = resolve_flags(
         spec_data,
         title=title,

@@ -118,3 +118,27 @@ def test_replot_from_spec(tmp_path, plot_mediogram):
     assert history[-1]["skill"] == "plot-mediogram"
     basenames = [item["basename"] for item in history[-1]["input"]]
     assert "fc.zarr" in basenames and "mc.zarr" in basenames
+
+
+def test_patch_flag_merges_into_spec(tmp_path, plot_mediogram):
+    fc = write_zarr(_ensemble_rate_forecast(members=5, n_step=4), tmp_path / "fc.zarr")
+    mc = write_zarr(_ensemble_rate_forecast(members=5, n_step=4, fill=0.5), tmp_path / "mc.zarr")
+    out = tmp_path / "medio.png"
+    run_skill(
+        plot_mediogram,
+        "-i",
+        str(fc),
+        "-i",
+        str(mc),
+        "-o",
+        str(out),
+        "--lat",
+        "1.0",
+        "--lon",
+        "10.0",
+        "--patch",
+        '{"title": "Patched"}',
+    )
+    spec = json.loads((tmp_path / "medio.plot.json").read_text())
+    assert spec["title"] == "Patched"
+    assert "patch" not in spec

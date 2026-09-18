@@ -69,7 +69,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> [-i <b.zarr> .
     [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H] \
     [--mark line|bar] [--subplots] [--align-day-of-year] [--band LOW,HIGH] \
     [--theme weather_skills|colorblind] [--trace SELECTOR:k=v ...] \
-    [--spec PATH_OR_JSON] [--dump-spec PATH|-|none]
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec PATH|-|none]
 
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py --spec <out.plot.json> --output <out2.png>
 ```
@@ -85,6 +85,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py --spec <out.plot.json> --o
   locators, spines, …). Edit `axes` and re-run with `--spec`. CLI flags
   overlay the spec. Spec input paths are opened as Datasets so provenance
   still chains from the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto `--spec` before
+  CLI flags overlay. Same knobs as `--spec` (`title`, `axes`, `layout`, …).
+  A `patch` key inside a spec file is rejected.
 - `--dump-spec` — where to write the resolved plot spec. Default:
   `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
 - `--label` — legend label (overlay) or subplot title (`--subplots`) for each

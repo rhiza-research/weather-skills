@@ -34,6 +34,28 @@ def test_two_gridded_inputs_write_png(tmp_path, plot_compare):
     assert out.stat().st_size > 0
 
 
+def test_patch_flag_merges_into_spec(tmp_path, plot_compare):
+    a = write_zarr(make_gridded(fill=1.0), tmp_path / "a.zarr")
+    b = write_zarr(make_gridded(fill=2.0), tmp_path / "b.zarr")
+    out = tmp_path / "cmp.png"
+    run_skill(
+        plot_compare,
+        "-i",
+        str(a),
+        "-i",
+        str(b),
+        "-o",
+        str(out),
+        "--panels",
+        "2",
+        "--patch",
+        '{"title": "Patched"}',
+    )
+    spec = json.loads((tmp_path / "cmp.plot.json").read_text())
+    assert spec["title"] == "Patched"
+    assert "patch" not in spec
+
+
 def test_parse_figsize():
     import argparse
 

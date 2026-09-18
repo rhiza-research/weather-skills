@@ -155,12 +155,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   knobs you set). Edit that file and re-run with `--spec`, or pass `--patch`
   to change a value without editing. CLI flags overlay the spec. Spec input
   paths are opened as Datasets so provenance still chains from the Zarr.
-- `--patch` — optional JSON (file or inline) deep-merged onto the spec before
-  draw (`title`, `annotations`, `shapes`, `axes`, `theme.fontsize`,
-  `layout.colorbar`). Values go at their canonical spec paths; a `patch` key
-  *inside* a spec file is rejected, naming the path to use instead.
-  Colorbar size: `{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}`
-  (`len`/`shrink` is the long-side fraction; `thickness` is pixels).
+- `--patch` — optional JSON (file or inline) deep-merged onto `--spec` before
+  CLI flags overlay. Same knobs as `--spec` (`title`, `axes`, `layout`,
+  `annotations`, `shapes`, `theme`, …). A `patch` key *inside* a spec file
+  is rejected. Colorbar size:
+  `{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}`.
   Reposition a polar windrose frequency label with
   `{"axes": {"ylabel": {"coords": [1.15, 0.5], "rotation": 0}}}`.
 - `--dump-spec` — where to write the resolved plot spec. Default:

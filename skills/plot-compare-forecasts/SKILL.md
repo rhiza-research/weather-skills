@@ -54,7 +54,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.z
     [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
     [--vmin N] [--vmax N] \
     [--bbox N/W/S/E] [--mask-geojson PATH] [--panels N] \
-    [--spec PATH_OR_JSON] [--dump-spec PATH|-|none]
+    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec PATH|-|none]
 
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py --spec <out.plot.json> --output <out2.png>
 ```
@@ -69,6 +69,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py --spec <out.plot.js
   `<output-stem>.plot.json`. Edit and re-run with `--spec`. CLI flags overlay
   the spec. Spec input paths are opened as Datasets so provenance chains from
   the Zarr.
+- `--patch` — optional JSON (file or inline) deep-merged onto `--spec` before
+  CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a spec file
+  is rejected.
 - `--dump-spec` — where to write the resolved plot spec. Default:
   `<output-stem>.plot.json`. `-` prints to stdout; `none` skips the sidecar.
 - `--label` — row label for each `--input`, in order. Overrides the default

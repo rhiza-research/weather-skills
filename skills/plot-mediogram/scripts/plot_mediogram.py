@@ -20,10 +20,13 @@ from weather_skills_core.plot.charts import compile_mediogram
 from weather_skills_core.plot.figure import DEFAULT_FONTSIZE, parse_figsize, resolve_axis_label
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
+    PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
     datasets_from_cli_or_spec,
     dump_spec_dest,
+    overlay_spec,
+    parse_plot_patch,
     parse_plot_spec,
     resolve_flags,
     spec_inputs_from_datasets,
@@ -86,6 +89,12 @@ def _select_point(da, lat, lon):
     help=SPEC_ARGUMENT_HELP,
 )
 @weather_skill.argument(
+    "--patch",
+    default=None,
+    type=parse_plot_patch,
+    help=PATCH_ARGUMENT_HELP,
+)
+@weather_skill.argument(
     "--dump-spec",
     default=None,
     help=DUMP_SPEC_ARGUMENT_HELP,
@@ -102,12 +111,15 @@ def plot_mediogram(
     figsize,
     output,
     spec=None,
+    patch=None,
     dump_spec=None,
     **kwargs,
 ):
     """ECMWF-style mediogram: forecast vs m-climate ensemble distributions at a point."""
     ds_fc, ds_mc = datasets_from_cli_or_spec(ds, spec, exactly=2)
     spec_data = spec.to_dict() if spec is not None else {}
+    if patch:
+        spec_data = overlay_spec(spec_data, patch)
     flags = resolve_flags(
         spec_data,
         title=title,

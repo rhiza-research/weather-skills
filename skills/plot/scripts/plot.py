@@ -19,7 +19,6 @@
 """Render a heatmap, timeseries, xy scatter, wind-rose, or quiver PNG from a weather-skills standard dataset Zarr."""
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -34,6 +33,7 @@ from weather_skills_core.plot.figure import (
 from weather_skills_core.plot.maps import parse_draw_boxes, parse_layer
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
+    PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     dump_spec_dest,
     named_datasets_from_spec,
@@ -41,6 +41,7 @@ from weather_skills_core.plot.spec import (
     overlay_flags,
     overlay_spec,
     parse_index,
+    parse_plot_patch,
     parse_plot_spec,
     resolve_flags,
     spec_from_flags,
@@ -80,23 +81,6 @@ _LEGEND_ALIASES = {
     "none": "none",
     "off": "none",
 }
-
-
-def parse_json_object(value):
-    """Argparse converter for a JSON object (inline or file path)."""
-    if value is None or not str(value).strip():
-        return None
-    raw = str(value).strip()
-    path = Path(raw)
-    if path.is_file():
-        raw = path.read_text(encoding="utf-8")
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise argparse.ArgumentTypeError(f"expected a JSON object: {exc}") from None
-    if not isinstance(data, dict):
-        raise argparse.ArgumentTypeError("JSON patch must be an object")
-    return data
 
 
 def parse_legend(value):
@@ -683,11 +667,8 @@ def _merged_spec(
 @weather_skill.argument(
     "--patch",
     default=None,
-    type=parse_json_object,
-    help=(
-        "Partial figure update (title/annotations/shapes/colorbar) merged after CLI overlay. "
-        'Colorbar size: {"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}.'
-    ),
+    type=parse_plot_patch,
+    help=PATCH_ARGUMENT_HELP,
 )
 @weather_skill.argument(
     "--dump-spec",
