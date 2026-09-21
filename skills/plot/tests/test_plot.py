@@ -583,6 +583,16 @@ def test_explicit_colormap_overrides_precip_default():
     assert norm is None
 
 
+def test_mixed_case_matplotlib_colormap_survives_vmin_stretch():
+    da = make_gridded(name="sst")["sst"]
+    da.attrs.update(units="degree_Celsius", standard_name="sea_surface_temperature")
+    cmap, norm = plot_maps._heatmap_scale(da, "RdBu_r", stretch=True)
+    assert cmap == "RdBu_r"
+    assert norm is None
+    cmap_lower, _ = plot_maps._heatmap_scale(da, "rdbu_r", stretch=True)
+    assert cmap_lower == "RdBu_r"
+
+
 def test_heatmap_scale_stretch_drops_precip_boundary_norm():
     from matplotlib.colors import LinearSegmentedColormap
 

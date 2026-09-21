@@ -221,10 +221,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   e.g. after `difference`), omit `--colormap` so the default `ppt_anomaly_cmap`
   applies (`[-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200,
   300, 500]` mm with under/over colors). Passing a matplotlib diverging
-  name replaces those millimetre classes. Named matplotlib colormaps are
-  lowercased before lookup, so mixed-case ColorBrewer names fail; prefer a
-  lowercase name (`coolwarm`, `seismic`, `magma`) or a comma-separated
-  color list. Percent-of-normal (`poa` / `%`) uses `ppt_poa`;
+  name replaces those millimetre classes. Matplotlib names are
+  case-insensitive (`RdBu_r`, `rdbu_r`, `YlGn`, `coolwarm`).
+  Percent-of-normal (`poa` / `%`) uses `ppt_poa`;
   SPI uses `spi`. Named aliases: `ppt_daily`, `ppt_week`, `ppt_month`,
   `ppt_season`, `ppt_total`/`chirps_total`, `ppt_short`/`chirps_short`,
   `ppt_anomaly`/`chirps_anom`, `ppt_poa`, `ppt_spp`, `spi`. Custom names

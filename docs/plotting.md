@@ -146,9 +146,8 @@ Key details:
   classes + over. Named palettes also resolve from `--theme-file` /
   `colormaps` in the user theme file. Unknown keys in that file are an error.
   When plotting rainfall anomalies, omit the name so the default `ppt_anomaly` /
-  `chirps_anom` applies. Named matplotlib ColorBrewer cmaps are lowercased
-  before `plt.get_cmap` and fail — use a lowercase matplotlib name or a
-  color list. CLI values that start with `-` need `--flag=value`
+  `chirps_anom` applies. Matplotlib names are case-insensitive (`RdBu_r`,
+  `rdbu_r`, `YlGn`). CLI values that start with `-` need `--flag=value`
   (`--colormap-bounds=-100,100`, `--vmin=-50`).
 - **`layout.colorbar.ticks` / `labels`**: explicit colorbar ticks. Labels
   need ticks and the same count. CLI: `--colormap-bounds`, `--cbar-ticks`,
