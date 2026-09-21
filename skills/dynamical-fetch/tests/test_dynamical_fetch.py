@@ -129,6 +129,32 @@ def test_imerg_quality_index_does_not_block_standard_units(tmp_path, mod, fetch)
     assert "aggregation_coverage" not in written.coords
 
 
+def test_open_dataset_falls_back_to_staging(mod, monkeypatch):
+    calls = {"list": 0, "cleared": 0}
+
+    class _Catalog:
+        @staticmethod
+        def list():
+            calls["list"] += 1
+            if calls["list"] == 1:
+                return ["nasa-imerg-analysis-late"]
+            return ["nasa-imerg-analysis-late", "ucsb-chc-chirps-analysis-final"]
+
+        @staticmethod
+        def clear_cache():
+            calls["cleared"] += 1
+
+        @staticmethod
+        def open(dataset):
+            return _imerg_like_analysis_ds()
+
+    monkeypatch.setitem(__import__("sys").modules, "dynamical_catalog", _Catalog)
+    state = mod._open_dataset({}, "ucsb-chc-chirps-analysis-final")
+    assert calls["cleared"] == 1
+    assert state["shape"] == "analysis"
+    assert "precipitation_surface" in state["ds"]
+
+
 def test_forecast_missing_date_exits_2(tmp_path, mod, fetch):
     out = tmp_path / "out.zarr"
     ds = _forecast_catalog_ds()

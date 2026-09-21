@@ -1,8 +1,8 @@
 ---
 name: chirps-fetch
-description: Fetch CHIRPS precipitation observations for a date range and optional region from the public GCS CHC mirror — the validated sat final product back to 1998, CHC rnl (ERA5-disaggregated) for 1981–1997, and a preliminary fallback for very recent days — and write a weather-skills standard dataset Zarr. Use when a task needs CHIRPS rainfall, recent or historical, e.g. to compare against a forecast or station data, or to build a reference period. Pass --bbox N/W/S/E to slice the 0.05° grid in space.
+description: Fetch CHIRPS precipitation observations for a date range and optional region from the dynamical.org catalog — the validated final product from 1981 and a preliminary fallback for very recent days — and write a weather-skills standard dataset Zarr. Use when a task needs CHIRPS rainfall, recent or historical, e.g. to compare against a forecast or station data, or to build a reference period. Pass --bbox N/W/S/E to slice the 0.05° land grid in space.
 license: MIT
-compatibility: Requires Python 3.12 and uv. Fetches from the public GCS CHC mirror (gs://sheerwater-public-datalake/chc-mirror); no credentials required.
+compatibility: Requires Python 3.12 and uv. Reads public Icechunk Zarr from the dynamical.org open catalog (`ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`); no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.2"
@@ -13,26 +13,29 @@ metadata:
 
 # chirps-fetch
 
-Downloads CHIRPS v3.0 daily precipitation for the requested date range
-and writes a weather-skills standard dataset Zarr. Days in **1998–present**
-come from the public GCS CHC mirror
-`gs://sheerwater-public-datalake/chc-mirror` (same object paths as CHC;
-credential-free HTTPS): the validated **final** `sat` product when available,
-falling back to **preliminary** `sat` for very recent days the final has not
-finalized yet. Days in **1981–1997** come from CHC HTTPS `rnl` (ERA5
-disaggregation of the same pentad totals; the GCS sat archive starts in 1998
-because IMERG does). When both sat final and prelim exist for a day, final
+Opens CHIRPS v3.0 daily precipitation from the [dynamical.org](https://dynamical.org/catalog/)
+catalog and writes a weather-skills standard dataset Zarr. The validated
+**final** product (`ucsb-chc-chirps-analysis-final`) covers **1981–present**
+(including the reanalysis-disaggregated daily archive). Days the final has
+not published yet come from **preliminary**
+(`ucsb-chc-chirps-analysis-preliminary`). When both exist for a day, final
 is used.
 
-`--bbox N/W/S/E` subsets the 0.05° grid in space after each daily TIF is
-opened (omit it for the full globe). Country bboxes come from `resolve-region`.
+`--bbox N/W/S/E` subsets the 0.05° land grid (60°S–60°N) in space before
+bytes are pulled. Omit it for the full native grid. Country bboxes come from
+`resolve-region`.
+
+To fetch one product without the final/prelim merge, use `dynamical-fetch`
+`--dataset ucsb-chc-chirps-analysis-final` (or `…-preliminary`) and
+`-v precipitation_surface`. This skill is the default CHIRPS path: it merges
+the two and writes `precip`.
 
 ## When to use
 
-- A task needs CHIRPS rainfall as gridded observations — recent days, a historical period, or a reference/normal year (rnl 1981–1997; sat final 1998 to present).
+- A task needs CHIRPS rainfall as gridded observations — recent days, a historical period, or a reference/normal year (final from 1981).
 - A downstream skill will clip, aggregate, or compare CHIRPS against other sources.
 
-Coverage starts in 1981 (CHIRPS v3.0 `rnl`). `sat` starts in 1998. Dates before 1981 are unavailable and exit non-zero.
+Coverage starts in 1981. Dates before 1981 are unavailable and exit non-zero.
 
 ## Usage
 
@@ -44,22 +47,21 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 
 ### Arguments
 - `--start-time`, `--end-time` — inclusive date range. Each value is an absolute ISO date `YYYY-MM-DD`. Calendar windows: `resolve-time last-2w`. Latest published day: `--probe-latest` (then `--as-of` on resolve-time to end a rolling window there).
-- `--bbox` — spatial subset `N/W/S/E` decimal degrees. Omit for the full global 0.05° grid. To fetch over a country, get its bbox from `resolve-region`.
-- `--probe-latest` — print the latest available `YYYY-MM-DD` on stdout and exit. No `-o`. Do not GET the daily TIFs to probe.
+- `--bbox` — spatial subset `N/W/S/E` decimal degrees. Omit for the full native 0.05° land grid (60°S–60°N). To fetch over a country, get its bbox from `resolve-region`.
+- `--probe-latest` — print the latest available `YYYY-MM-DD` on stdout and exit. No `-o`. Reads catalog time coordinates only.
 - `--output`, `-o` — output Zarr path (overwritten if it exists).
-- `--workers` — max concurrent per-day download threads (default 8). Bounds the thread pool that fetches each day's TIF.
+- `--workers` — ignored; retained so existing scripts that pass it still run.
 
 ### Output
 
-Zarr with data variable `precip` (mm/day) and dims `(time, latitude, longitude)` on the CHIRPS grid (global, or the `--bbox` slice). Stamped with `weather_skills_source=chirps` and `data_interval` `1 day` (no `aggregation_period` until `aggregate-temporal`).
+Zarr with data variable `precip` (mm/day) and dims `(time, latitude, longitude)` on the CHIRPS grid (native, or the `--bbox` slice). Stamped with `weather_skills_source=chirps` and `data_interval` `1 day` (no `aggregation_period` until `aggregate-temporal`). Catalog precip is `precipitation_surface` in `kg m-2 s-1`; this skill converts and renames.
 
 ### Memory and performance
 
-The full 0.05° global grid is ~7200×3600 cells (~104 MB/day as float32). Pass `--bbox` so each day is sliced to the region before concat — that is the memory lever. Daily TIFs are still downloaded in full from the mirror (GeoTIFF objects are not windowed); `--bbox` shrinks RAM and the written Zarr, not the HTTP payload.
-
-`--workers` is the network-concurrency speed lever and is memory-neutral: each worker transiently holds only the compressed TIF body (a few MB), not a decompressed global array — decompression happens sequentially after the download pool drains.
-
-All per-day TIFs are staged to a temp directory before writing, so a very long window is bounded by temp disk, not RAM. Keep the window short on tight-memory hosts; `clip-region` can trim further after fetch.
+The native 0.05° land grid is 7200×2400 cells. Pass `--bbox` so the catalog
+read is windowed to the region — that is the memory and network lever. Keep
+long global windows short on tight-memory hosts; `clip-region` can trim
+further after fetch.
 
 ### Production lag and partial-tail behavior
 

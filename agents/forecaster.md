@@ -33,12 +33,13 @@ Prefer small steps over stuffing every filter into one call:
 
 - **Fetchers:** Prefer `dynamical-fetch` whenever the dynamical.org catalog has
   the dataset (GFS, GEFS, ECMWF IFS-ENS, AIFS, ICON-EU, MRMS, GFS/GEFS analyses,
-  IMERG). It is credential-free and has no API queue. **IMERG default:**
+  IMERG, CHIRPS). It is credential-free and has no API queue. **IMERG default:**
   `--dataset nasa-imerg-analysis-late` (or `nasa-imerg-analysis-early`),
   `-v precipitation_surface`. Do not start with `imerg-fetch`; that is the
-  Earthdata daily Late/Final fallback only. Use `ecmwf-fetch` only for ECMWF
+  Earthdata daily Late/Final fallback only. **CHIRPS default:** `chirps-fetch`
+  (dynamical.org final + prelim, written as `precip`). Use `ecmwf-fetch` only for ECMWF
   S2S (subseasonal leads, ocean, full pressure stack — ECDS credentials,
-  2-day embargo). Use a source-specific fetcher (CHIRPS, TAHMO, OISST,
+  2-day embargo). Use a source-specific fetcher (TAHMO, OISST,
   ARCO-ERA5, CMIP6, Kenya archive, Cumulus AI, NeuralGCM S2S, PBC/StillLearning, …) only when
   the catalog does not carry that product. Use `neuralgcm-fetch` for the Tomorrow
   Now 2026 NeuralGCM ensemble at `gs://neuralgcm-s2s` (GCS credentials; default

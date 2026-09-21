@@ -140,12 +140,21 @@ def _stack_pressure_levels(ds):
     return xr.merge(pieces)
 
 
+_STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
+
+
 def _open_dataset(state, dataset) -> dict:
     """Validate the dataset id, open it, and detect its shape, at most once per run."""
     if "ds" not in state:
+        import os
+
         import dynamical_catalog
 
         catalog = dynamical_catalog.list()
+        if dataset not in catalog:
+            os.environ["DYNAMICAL_STAC_CATALOG_URL"] = _STAGING_CATALOG
+            dynamical_catalog.clear_cache()
+            catalog = dynamical_catalog.list()
         if dataset not in catalog:
             raise UsageError(
                 f"unknown dataset {dataset!r}. Available datasets:\n  " + "\n  ".join(catalog)

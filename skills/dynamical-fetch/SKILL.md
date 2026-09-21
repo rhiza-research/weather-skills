@@ -1,6 +1,6 @@
 ---
 name: dynamical-fetch
-description: Prefer this over credentialed fetchers when the dynamical.org catalog has the dataset. Default source for IMERG (`nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`); do not start with imerg-fetch. Fetch a dataset from the open weather catalog (GFS, GEFS, ECMWF IFS-ENS, AIFS, ICON-EU, MRMS, their analyses, and the IMERG precipitation analyses) and write a weather-skills standard dataset Zarr. Use when a task needs credential-free forecast or analysis grids for downstream clipping, aggregation, comparison, or plotting. IMERG precip is `precipitation_surface`; `-v precip` / `-v precipitation` / `-v tp` map to it. Pressure-level fields (`temperature_850hpa`, `geopotential_height_500hpa`) are stacked onto a `vertical` dim; `-v t` / `-v gh` select all native levels. Precip is already a rate — do not deaccumulate; aggregate-temporal then convert-to-totals for period mm.
+description: Prefer this over credentialed fetchers when the dynamical.org catalog has the dataset. Default IMERG source (`nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`); do not start with imerg-fetch. CHIRPS analyses are `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`; prefer chirps-fetch for the final+prelim merge as `precip`. Fetch a catalog dataset (GFS, GEFS, ECMWF IFS-ENS, AIFS, ICON-EU, MRMS, their analyses, IMERG, CHIRPS) and write a weather-skills standard dataset Zarr. Use for credential-free forecast or analysis grids. IMERG/CHIRPS precip is `precipitation_surface`; `-v precip` / `-v precipitation` / `-v tp` map to it. Pressure-level fields (`temperature_850hpa`, `geopotential_height_500hpa`) stack onto `vertical`; `-v t` / `-v gh` select all native levels. Precip is already a rate — do not deaccumulate; aggregate-temporal then convert-to-totals for period mm.
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -27,12 +27,17 @@ selected with `--dataset` and validated at runtime against
 
 Prefer this fetcher whenever the [dynamical.org catalog](https://dynamical.org/catalog/)
 has the dataset — GFS, GEFS, ECMWF IFS-ENS, AIFS, ICON-EU, MRMS, their analyses,
-and IMERG early/late. It is credential-free and has no API queue.
+IMERG early/late, and CHIRPS final/preliminary. It is credential-free and has
+no API queue.
 
 **IMERG:** this is the default source (`--dataset nasa-imerg-analysis-late`
 or `nasa-imerg-analysis-early`, `-v precipitation_surface`). Do not start
 with `imerg-fetch`. That skill is the Earthdata daily Late/Final fallback
 only (GES DISC granules, no bbox, credentials).
+
+**CHIRPS:** `--dataset ucsb-chc-chirps-analysis-final` (or
+`ucsb-chc-chirps-analysis-preliminary`), `-v precipitation_surface`. Prefer
+`chirps-fetch` when you want final-with-prelim-fallback written as `precip`.
 
 - A task needs a forecast ensemble, deterministic forecast, or gridded analysis
   from that catalog.
@@ -43,10 +48,11 @@ only (GES DISC granules, no bbox, credentials).
   run `deaccumulate` — fetchers already write rates.
 
 Use `ecmwf-fetch` only for ECMWF **S2S** (subseasonal, ECDS credentials, 2-day
-embargo, fuller pressure/ocean fields). Use source-specific fetchers (CHIRPS,
-TAHMO, OISST, ARCO-ERA5, CMIP6, …) when the catalog does not carry that
-product. For IMERG, use `imerg-fetch` only when you need GES DISC **daily**
-Late or Final, not as the first choice.
+embargo, fuller pressure/ocean fields). Use source-specific fetchers (TAHMO,
+OISST, ARCO-ERA5, CMIP6, …) when the catalog does not carry that product. For
+IMERG, use `imerg-fetch` only when you need GES DISC **daily** Late or Final,
+not as the first choice. For CHIRPS, `chirps-fetch` is the default (final +
+prelim merge as `precip`); this skill fetches one catalog product.
 
 ## Usage
 
@@ -78,6 +84,8 @@ The dataset shape determines which time flags apply and the output dims.
 | `noaa-mrms-conus-analysis-hourly` | analysis | CONUS | `(time, latitude, longitude)` |
 | `nasa-imerg-analysis-early` | analysis | global | `(time, latitude, longitude)` |
 | `nasa-imerg-analysis-late` | analysis | global | `(time, latitude, longitude)` |
+| `ucsb-chc-chirps-analysis-final` | analysis | global land 60°S–60°N | `(time, latitude, longitude)` |
+| `ucsb-chc-chirps-analysis-preliminary` | analysis | global land 60°S–60°N | `(time, latitude, longitude)` |
 
 Pressure-level catalog fields add a `vertical` dim (hPa). The catalog only
 publishes selected levels (IFS/AIFS: 925/850/500 hPa; GEFS: 500 hPa
@@ -100,10 +108,11 @@ Do **not** reuse names from other fetchers. ARCO-ERA5 and ECMWF S2S use
 | Pressure-level temperature | `temperature_850hpa` or `-v t` | prefix `temperature` |
 | Geopotential height | `geopotential_height_500hpa` or `-v gh` | prefix `geopotential_height` |
 
-IMERG Late/Early only publish `precipitation_surface` (plus a quality-index
-companion). `-v precip` / `-v precipitation` resolve to that field; they do
-not pull `precipitation_quality_index_surface`. Those surface names are the
-ones on GEFS, GFS, and `ecmwf-ifs-ens-forecast-15-day-0-25-degree`. Catalog
+IMERG Late/Early and CHIRPS final/preliminary publish `precipitation_surface`
+(IMERG also has a quality-index companion). `-v precip` / `-v precipitation`
+resolve to that field; they do not pull `precipitation_quality_index_surface`.
+Those surface names are the ones on GEFS, GFS, and
+`ecmwf-ifs-ens-forecast-15-day-0-25-degree`. Catalog
 fields ending in `_Nhpa` are stacked onto a `vertical` coordinate (hPa) and
 renamed to the prefix (`temperature_850hpa` + `temperature_925hpa` →
 `temperature`). Height-above-ground fields (`temperature_2m`, `wind_u_80m`)
@@ -187,6 +196,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset noaa-gfs-analysis --start-
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset nasa-imerg-analysis-late \
   --start-time 2026-07-21 --end-time 2026-08-19 --bbox 5/34/-5/42 \
   -v precipitation_surface -o /tmp/imerg.zarr
+
+# CHIRPS final only (prefer chirps-fetch for final+prelim merge as precip)
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ucsb-chc-chirps-analysis-final \
+  --start-time 2026-01-01 --end-time 2026-02-15 --bbox 5/34/-5/42 \
+  -v precipitation_surface -o /tmp/chirps_final.zarr
 ```
 
 See [references/REFERENCE.md](${CLAUDE_SKILL_DIR}/references/REFERENCE.md) for the full per-dataset

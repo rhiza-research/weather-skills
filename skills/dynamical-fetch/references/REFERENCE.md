@@ -3,7 +3,9 @@
 Default forecast/analysis fetcher when the catalog has the product. Use
 `ecmwf-fetch` only for ECMWF S2S. Default IMERG source:
 `nasa-imerg-analysis-late` / `nasa-imerg-analysis-early` — do not start
-with `imerg-fetch`.
+with `imerg-fetch`. CHIRPS daily analyses:
+`ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`.
+Prefer `chirps-fetch` for the final+prelim merge written as `precip`.
 
 ## Library
 
@@ -39,6 +41,8 @@ grid and are rejected (see below).
 | `noaa-mrms-conus-analysis-hourly` | analysis | `time, latitude, longitude` | — |
 | `nasa-imerg-analysis-early` | analysis | `time, latitude, longitude` | — |
 | `nasa-imerg-analysis-late` | analysis | `time, latitude, longitude` | — |
+| `ucsb-chc-chirps-analysis-final` | analysis | `time, latitude, longitude` | — |
+| `ucsb-chc-chirps-analysis-preliminary` | analysis | `time, latitude, longitude` | — |
 | `noaa-hrrr-forecast-48-hour` | **rejected** — projected | `init_time, lead_time, y, x` (2-D lat/lon) | — |
 | `noaa-hrrr-analysis` | **rejected** — projected | `time, y, x` (2-D lat/lon) | — |
 
@@ -82,7 +86,7 @@ separate 2-D variables, stacked here onto `vertical`:
 |---|---|
 | `ecmwf-ifs-ens-forecast-15-day-0-25-degree`, `ecmwf-aifs-ens-forecast`, `ecmwf-aifs-single-forecast` | `temperature_{850,925}hpa`, `geopotential_height_{500,850,925}hpa` |
 | `noaa-gefs-forecast-35-day`, `noaa-gefs-analysis` | `geopotential_height_500hpa` only |
-| `noaa-gfs-forecast`, `noaa-gfs-analysis`, `dwd-icon-eu-forecast-5-day`, IMERG, MRMS | none |
+| `noaa-gfs-forecast`, `noaa-gfs-analysis`, `dwd-icon-eu-forecast-5-day`, IMERG, CHIRPS, MRMS | none |
 
 `-v t` / `-v gh` (or the prefixes `temperature` / `geopotential_height`) expand
 to every `*_Nhpa` field of that prefix. `temperature_2m` is not included.
