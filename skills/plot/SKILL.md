@@ -207,7 +207,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   `{name, colors, bounds, under, over}` for a discrete class scale. Named
   matplotlib colormaps cannot contain commas, so a comma selects the custom
   list. When omitted, precipitation totals (rate or amount) use a nested
-  absolute-mm palette (CHC hues: green→blue→purple→yellow→orange→red).
+  absolute-mm palette (white, beige 1–5 mm, then CHC hues: green from 5 mm
+  →blue→purple→yellow→orange→red).
   The same millimetre class is always the same color; the colorbar is cropped
   by `aggregation_period`: 0–50 mm below 2 days (`ppt_daily`), 0–200 mm for
   2–9 days or a missing period (`ppt_week`), 0–400 mm for 10–39 days
