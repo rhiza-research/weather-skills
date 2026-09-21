@@ -85,7 +85,9 @@ Prefer small steps over stuffing every filter into one call:
   `plot-compare-forecasts` for an N×time grid, `plot-verify` for the
   obs/forecast/verification grid (run `verify` on each lead first, then pass
   `--verify` Zarrs). Prefer a short `--title` that fits on one line (e.g.
-  `S2S precip`), not a sentence.
+  `S2S precip`), not a sentence. Colorbar text (`--cbar-label` / `--label`)
+  is the variable and units (`Total precipitation [mm]`, `SST anomaly [°C]`),
+  not a valid-time or init date — panel titles already show dates.
 
 ## Working directory and output files
 

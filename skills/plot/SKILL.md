@@ -22,7 +22,9 @@ Source-agnostic visualization. Single-input kinds (`-i`) plus layered maps
   step with a shared color scale and a colorbar (right if one panel, bottom if
   several). Panel titles show calendar dates (`14 Sept '26`) or,
   for multi-day bins, inclusive ranges (`4–10 Aug '26`); forecast lead panels
-  keep `<start> until <end>`. Default layout is up to 4 columns (rows added as
+  keep `<start> until <end>`. The colorbar label is the **variable** (and
+  units), not those dates — `Total precipitation [mm]`, not `14 Sept '26`.
+  Default layout is up to 4 columns (rows added as
   needed). `--rows` and/or `--columns` override that; leftover cells stay
   blank. Ensemble members (`number` dim) are averaged. Use `--index` to
   override the default reduction for any other extra dim. Precipitation totals
@@ -179,9 +181,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
 - `--layer` — repeatable map layer `KIND:PATH` or `KIND:PATH::k=v`. Kinds:
   `heatmap`, `scatter`, `quiver`, `outline`, `mask`. Cannot mix with `-i` or
   with `--kind timeseries|xy|contour|windrose|quiver`.
-- `--label` — colorbar label for each `--layer`, in order. When omitted,
-  heatmap/scatter/quiver layers infer a short product name from provenance
-  (or `--cbar-label` if that is set); outline/mask layers ignore it.
+- `--label` — colorbar label for each `--layer`, in order. Same rule as
+  `--cbar-label`: the quantity being colored (variable + units), not a
+  date or init time. When omitted, heatmap/scatter/quiver layers use the
+  variable label (or `--cbar-label` if that is set); outline/mask layers
+  ignore it. Use this to distinguish overlays (`P(onset)` vs
+  `already occurred`), not to copy a panel date.
 - `--shared-scale` / `--independent-scale` — layered heatmap/scatter color
   scales. Default: share when the layers resolve to the same variable and
   matching units.
@@ -275,11 +280,15 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   dates (otherwise the time dim) and uses the variable label on y, `xy`
   uses each series' variable label, and windrose uses `Frequency (%)`.
   Passed text is used as-is (not re-cased).
-- `--cbar-label` — optional colorbar label. When omitted, the skill uses the
-  variable `long_name` (then GRIB name, then the variable name) plus units
-  (`Total precipitation [mm]`, `Wind speed [m/s]`, …). Layered maps: per-layer
-  `--label` wins; `--cbar-label` fills in unlabeled heatmap/scatter/quiver
-  layers. Ignored for timeseries / xy / windrose.
+- `--cbar-label` — optional colorbar label. This is the **quantity** being
+  colored — almost always the variable and units (`Total precipitation [mm]`,
+  `SST anomaly [°C]`, `P(onset)`). Do **not** put a valid-time, init date,
+  or panel date here; those belong on `--title` / `--subplot-title` (panel
+  titles already default to calendar dates). When omitted, the skill uses
+  the variable `long_name` (then GRIB name, then the variable name) plus
+  units. Layered maps: per-layer `--label` wins; `--cbar-label` fills in
+  unlabeled heatmap/scatter/quiver layers. Ignored for timeseries / xy /
+  windrose.
 - `--index` — dim selections like `step=3,number=0`. A dim may take several
   comma-separated positions, e.g. `step=0,1,2`, which keeps the dim with just
   those positions. Negative positions are accepted and count from the end,
@@ -383,8 +392,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
 
 A PNG at `--output`. The colorbar (and timeseries y-axis) label resolves
 from variable attrs: `long_name` → `GRIB_name` → bare variable name →
-`"value"`, suffixed with `[units]` when the `units` attr is present. Units
-on the figure are a short display form (`mm/day`, `°C`, `mm`, `m/s`), not the
+`"value"`, suffixed with `[units]` when the `units` attr is present. That
+label is the field, not the time coordinate — dates stay on panel titles.
+Units on the figure are a short display form (`mm/day`, `°C`, `mm`, `m/s`), not the
 on-disk CF string. A wind rose labels speed stacks in those display units and
 the radial axis as frequency percent. A quiver map colors speed and overlays
 u/v arrows; the colorbar is `Wind speed [m/s]`.

@@ -560,6 +560,7 @@ def _merged_spec(
     default=None,
     help=(
         "Override the colorbar label (heatmap, contour, quiver, layered maps). "
+        "Use the variable and units (Total precipitation [mm]), not a date. "
         "Default is the variable long_name + units. Per-layer --label wins."
     ),
 )
@@ -640,7 +641,10 @@ def _merged_spec(
     "--label",
     action="append",
     default=None,
-    help="Colorbar label for each --layer, in order. Omit to infer from metadata.",
+    help=(
+        "Colorbar label for each --layer, in order (variable/quantity, not a date). "
+        "Omit to use the variable long_name + units."
+    ),
 )
 @weather_skill.argument(
     "--shared-scale",

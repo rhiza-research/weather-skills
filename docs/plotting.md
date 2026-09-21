@@ -149,6 +149,10 @@ Key details:
   `chirps_anom` applies. Matplotlib names are case-insensitive (`RdBu_r`,
   `rdbu_r`, `YlGn`). CLI values that start with `-` need `--flag=value`
   (`--colormap-bounds=-100,100`, `--vmin=-50`).
+- **`cbar_label`**: the quantity on the color scale — the variable and
+  units (`Total precipitation [mm]`), not a date. Valid time belongs on
+  `title` / `subplot_titles` (panel titles already default to calendar
+  dates). CLI: `--cbar-label` / per-layer `--label`.
 - **`layout.colorbar.ticks` / `labels`**: explicit colorbar ticks. Labels
   need ticks and the same count. CLI: `--colormap-bounds`, `--cbar-ticks`,
   `--cbar-labels`.
