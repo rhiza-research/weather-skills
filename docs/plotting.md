@@ -95,7 +95,7 @@ key that used to be readable somewhere else. Spec version is `2`.
 | --- | --- |
 | top level | `version`, `skill`, `inputs`, `traces`, `layers`, `axes`, `annotations`, `shapes`, `title`, `subplot_titles`, `xlabel`, `ylabel`, `cbar_label`, `legend`, `vmin`, `vmax` |
 | `layout` | `figsize`, `autosize`, `dpi`, `facecolor`, `colorbar`, `shared_colorscale`, `subplots`, `bar_mode`, `facet` |
-| `layout.facet` | `rows`, `columns`, `max_columns`, `n_panels` |
+| `layout.facet` | `rows`, `columns`, `max_columns`, `n_panels`, `wspace`, `hspace` |
 | `theme` | `template`, `colormap` (name, comma list, or `{name, colors, bounds, under, over, cmap}`), `fontsize`, `rc` |
 | `layout.colorbar` | `len`/`shrink`, `thickness`, `extend`, `pad`, `location`, `ticks`, `labels`, plus matplotlib extras |
 | `geo` | `extent`, `bbox`, `cities`, `mask_geojson`, `draw_boxes`, `overlays`, `lat`, `lon` |
@@ -113,6 +113,7 @@ CLI and JSON use the same words:
 | `plot-timeseries --bar-mode` | `layout.bar_mode` (`grouped` default, `stacked`, `overlay`) |
 | `--theme` | `theme.template` (`weather_skills` / `colorblind`) |
 | `--theme-file` | user palette registry (not a spec key) |
+| `--panel-spacing` | `layout.facet.wspace` / `layout.facet.hspace` (`W` or `W,H`) |
 
 Old dumped-spec keys (`style`, `traces[].type`, `traces[].style`, …) are rejected
 with a relocation message. There is no silent rewrite.
@@ -128,6 +129,12 @@ Key details:
   (`scalar`/`log`/`percent`/`date`/`format`/`dayofyear`), spines, grid,
   legend, `twinx`/`twiny`. A dump includes only the keys you set; the full
   editable catalog is `AXES_TEMPLATE` in `plot/figure.py`.
+- **`layout.facet.wspace` / `hspace`**: inter-panel gap as a fraction of
+  panel size (matplotlib `GridSpec` semantics). CLI: `--panel-spacing W[,H]`.
+  When set, equal-aspect map facets drop compressed packing and reserve the
+  gap in the canvas so panels separate with whitespace rather than extra
+  geographic extent. `layout.wspace` and `layout.facet.horizontal_spacing`
+  relocate to these keys.
 - **`layout.bar_mode`**: how bar traces compose on a shared axis:
   `grouped` (default; offset side-by-side), `stacked` (cumulative
   `bottom`), or `overlay` (same x, overlapping). CLI:

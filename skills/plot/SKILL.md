@@ -132,7 +132,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --input <in.zarr> --output <out.png> 
     [--cities JSON_OR_PATH] [--fontsize N] [--figsize W,H] [--legend LOC] \
     [--bbox N/W/S/E] \
     [--mask-geojson PATH] [--draw-box N/W/S/E ...] \
-    [--rows N] [--columns N] \
+    [--rows N] [--columns N] [--panel-spacing W[,H]] \
     [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH] \
     [--theme-file PATH] [--theme weather_skills|colorblind]
 
@@ -335,6 +335,15 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   rows as needed (blank leftover cells allowed). Heatmap and quiver —
   `--kind timeseries` and `--kind windrose` ignore them with a stderr
   warning.
+- `--panel-spacing` — gap between faceted map panels as a fraction of
+  panel size (`W` or `W,H`, matching matplotlib `GridSpec` `wspace` /
+  `hspace`). One value sets both axes (`--panel-spacing 0.25`). Writes
+  `layout.facet.wspace` / `layout.facet.hspace`. When set, compressed
+  packing is turned off and the default canvas grows so equal-aspect
+  map panels keep the requested whitespace instead of touching. Patch
+  the same keys with `--patch '{"layout": {"facet": {"wspace": 0.25}}}'`.
+  Heatmap / contour / quiver / layered maps — timeseries, xy, and
+  windrose ignore it with a stderr warning.
 - `--bbox` — optional `N/W/S/E` decimal degrees. Slices the gridded input to the
   bbox using `da.sel(...)` and sets the heatmap extent to that bbox. This is a
   rectangular slice (geographic overlays are decoration, not a mask). To
@@ -435,7 +444,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/ecmwf_namibia.zarr -o /tmp/ec
 Six weekly maps in two rows of three (a 5-step cube on the same 2×3 grid leaves one panel blank):
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/weekly.zarr -o /tmp/weekly.png \
-    --variable tp --rows 2 --columns 3
+    --variable tp --rows 2 --columns 3 --panel-spacing 0.25
 ```
 
 Custom figure title, panel titles, axis labels, and colorbar text:
@@ -537,6 +546,8 @@ prefer stdout (`-`) then `--patch`. Either form skips the PNG.
 handy for title, annotations, shapes, axis-label position, and colorbar size.
 Shorten a colorbar with
 `--patch '{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}'`.
+Spread faceted map panels with `--panel-spacing 0.25` or
+`--patch '{"layout": {"facet": {"wspace": 0.25, "hspace": 0.15}}}'`.
 Move a windrose radial label with
 `--patch '{"axes": {"ylabel": {"coords": [1.15, 0.5], "rotation": 0}}}'`.
 
@@ -558,6 +569,7 @@ the seaborn theme, so they win. Backend / interactive keys (`backend`,
 | `traces[].fill` | `fill_between` for `--band` |
 | `traces[].mediogram` | `{width, forecast, mclimate, mean, legend}` for box colors / mean line |
 | `layout.colorbar` | `extend`, `pad`, `orientation`, `location`, plus `len`/`thickness` |
+| `layout.facet.wspace` / `hspace` | inter-panel gap as a fraction of panel size (`--panel-spacing`) |
 | `layout.facecolor`, `layout.dpi` | figure patch and DPI |
 | `theme.rc` | matplotlib rcParams, applied after the seaborn theme |
 

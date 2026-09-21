@@ -51,6 +51,7 @@ forecasts with a hits row, use `plot-verify`.
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py -i <a.zarr> -i <b.zarr> [-i <c.zarr> ...] \
     --output <out.png> [--variable NAME] [--title TEXT] [--fontsize N] [--figsize W,H] \
+    [--panel-spacing W[,H]] \
     [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
     [--vmin N] [--vmax N] \
     [--bbox N/W/S/E] [--mask-geojson PATH] [--panels N] \
@@ -99,7 +100,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py \
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `12,8`).
   When set, the PNG is that canvas at 150 dpi. When omitted, size follows
   the row/column count and crops tightly. Equal-aspect map panels are packed
-  with compressed layout.
+  tightly unless `--panel-spacing` is set.
+- `--panel-spacing` — gap between panels as a fraction of panel size (`W` or
+  `W,H`; matplotlib `GridSpec` `wspace` / `hspace`). One value sets both
+  axes. Writes `layout.facet.wspace` / `hspace`. Same keys work via `--patch`.
 - `--panels` — cap on columns, keeping the earliest N of the union. Default
   unset → every union column.
 - `--bbox` — optional `N/W/S/E` decimal degrees. Rectangular `sel` slice on

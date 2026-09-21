@@ -26,21 +26,23 @@ from weather_skills_core.display_labels import (
     resolve_input_labels,
 )
 from weather_skills_core.plot import export
-from weather_skills_core.plot.maps import extent_from_da, slice_bbox_mask
 from weather_skills_core.plot.figure import (
     DEFAULT_FONTSIZE,
     format_plot_date_range,
     parse_figsize,
     parse_label_list,
     parse_number_list,
+    parse_panel_spacing,
 )
+from weather_skills_core.plot.maps import extent_from_da, slice_bbox_mask
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
     PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
-    named_datasets_from_spec,
+    facet_with_spacing,
     maybe_emit_spec,
+    named_datasets_from_spec,
     overlay_flags,
     overlay_spec,
     parse_plot_patch,
@@ -409,6 +411,15 @@ def _prepare(ds, variable):
     help="Figure size W,H inches (e.g. 10,6 or 10x6). Default from map grid.",
 )
 @weather_skill.argument(
+    "--panel-spacing",
+    default=None,
+    type=parse_panel_spacing,
+    help=(
+        "Inter-panel gap as a fraction of panel size: W or W,H "
+        "(matplotlib GridSpec wspace/hspace). One value sets both axes."
+    ),
+)
+@weather_skill.argument(
     "--mask-geojson",
     default=None,
     help="GeoJSON polygon; gridded cells outside become NaN.",
@@ -445,6 +456,7 @@ def plot_verify(
     title,
     fontsize,
     figsize,
+    panel_spacing,
     mask_geojson,
     output,
     spec=None,
@@ -480,6 +492,7 @@ def plot_verify(
         cbar_ticks=cbar_ticks,
         cbar_labels=cbar_labels,
         figsize=figsize,
+        panel_spacing=panel_spacing,
         bbox=bbox,
         mask_geojson=mask_geojson,
         variable=variable,
@@ -494,6 +507,7 @@ def plot_verify(
         colormap_over=flags.get("colormap_over"),
         cbar_ticks=flags.get("cbar_ticks"),
         cbar_labels=flags.get("cbar_labels"),
+        panel_spacing=flags.get("panel_spacing"),
     )
     colormap = spec_get(spec_data, "colormap")
     bbox, mask_geojson, lead = flags["bbox"], flags["mask_geojson"], flags["leads"]
@@ -673,6 +687,14 @@ def plot_verify(
         bottom_row.append(heatmap_cell(verify_da, lat_dim, lon_dim, scale="verify"))
         col_titles.append(col_label)
 
+    spec_for_grid = overlay_spec(
+        {
+            "layout": {
+                "colorbar": {"location": "bottom", "thickness": 12, "pad": 0.03},
+            }
+        },
+        spec_data,
+    )
     compiled = compile_grid(
         [top_row, bottom_row],
         extent=extent,
@@ -682,7 +704,7 @@ def plot_verify(
         fontsize=fontsize,
         figsize=figsize,
         scales={"field": field_scale, "verify": verify_scale},
-        spec=spec_data,
+        spec=spec_for_grid,
     )
     named = {
         "obs": obs,
@@ -715,7 +737,7 @@ def plot_verify(
         "skill": "plot-verify",
         "inputs": inputs,
         "layout": {
-            "facet": {"rows": 2, "columns": 1 + n_leads},
+            "facet": facet_with_spacing(spec_data, rows=2, columns=1 + n_leads),
             "figsize": list(figsize) if figsize else None,
         },
         "traces": [{"kind": "grid", "metric": metric, "leads": list(leads)}],

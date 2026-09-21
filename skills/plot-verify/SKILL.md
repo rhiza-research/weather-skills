@@ -54,6 +54,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
     ... \
     -o <out.png> [--variable NAME] \
     [--lead "1-week lead" ...] [--title TEXT] [--fontsize N] [--figsize W,H] \
+    [--panel-spacing W[,H]] \
     [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
     [--bbox N/W/S/E] [--mask-geojson PATH] \
     [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
@@ -98,6 +99,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `14,8`).
   When set, the PNG is that canvas at 150 dpi. When omitted, size follows
   the map grid and crops tightly.
+- `--panel-spacing` — gap between panels as a fraction of panel size (`W` or
+  `W,H`; matplotlib `GridSpec` `wspace` / `hspace`). One value sets both
+  axes. Writes `layout.facet.wspace` / `hspace`. Same keys work via `--patch`.
 - `--colormap`, `--colormap-bounds`, `--cbar-ticks`, `--cbar-labels`,
   `--title`, `--bbox`, `--mask-geojson`, `--output` — as `plot`.
   When plotting rainfall anomalies, omit `--colormap` so the default

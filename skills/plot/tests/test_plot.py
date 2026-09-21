@@ -45,6 +45,8 @@ def test_fontsize_writes_png(tmp_path, plot_fn):
 def test_parse_figsize_and_legend():
     import argparse
 
+    assert plot_mod.parse_panel_spacing("0.25") == (0.25, 0.25)
+    assert plot_mod.parse_panel_spacing("0.4,0.2") == (0.4, 0.2)
     assert plot_mod.parse_figsize("10,6") == (10.0, 6.0)
     assert plot_mod.parse_figsize("8x5") == (8.0, 5.0)
     assert plot_mod.parse_legend("upper right") == "upper right"
@@ -1592,6 +1594,23 @@ def test_heatmap_dump_spec_on_request(tmp_path, plot_fn):
     assert not out.exists()
 
 
+def test_heatmap_panel_spacing_dump_spec(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(n_time=2), tmp_path / "in.zarr")
+    spec_path = tmp_path / "map.plot.json"
+    run_skill(
+        plot_fn,
+        "-i",
+        str(src),
+        "--dump-spec",
+        str(spec_path),
+        "--panel-spacing",
+        "0.4,0.2",
+    )
+    spec = json.loads(spec_path.read_text())
+    assert spec["layout"]["facet"]["wspace"] == 0.4
+    assert spec["layout"]["facet"]["hspace"] == 0.2
+
+
 def test_dump_spec_skips_png_even_when_output_is_set(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "map.png"
@@ -1757,7 +1776,9 @@ def test_xy_dump_spec_on_request(tmp_path, plot_fn):
         "--title",
         "IOD vs rain",
     )
-    spec, spec_path = _assert_dumped_spec(tmp_path / "xy.plot.json", trace_type="xy", title="IOD vs rain")
+    spec, spec_path = _assert_dumped_spec(
+        tmp_path / "xy.plot.json", trace_type="xy", title="IOD vs rain"
+    )
     assert spec["traces"][0]["pair_on"] == "year"
     assert not out.exists()
     second = tmp_path / "xy2.png"

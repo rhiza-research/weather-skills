@@ -20,19 +20,20 @@ from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
 from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
 from weather_skills_core.plot import export
-from weather_skills_core.plot.maps import (
-    axis_kind,
-    calendar_bin_width,
-    format_calendar_panel,
-    is_cftime_axis,
-)
 from weather_skills_core.plot.figure import (
     DEFAULT_FONTSIZE,
     axis_label,
     parse_figsize,
     parse_label_list,
     parse_number_list,
+    parse_panel_spacing,
     resolve_axis_label,
+)
+from weather_skills_core.plot.maps import (
+    axis_kind,
+    calendar_bin_width,
+    format_calendar_panel,
+    is_cftime_axis,
 )
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
@@ -40,6 +41,7 @@ from weather_skills_core.plot.spec import (
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
     datasets_from_cli_or_spec,
+    facet_with_spacing,
     maybe_emit_spec,
     overlay_flags,
     overlay_spec,
@@ -194,6 +196,15 @@ def _ax_bounds(ds, variable):
     help="Figure size W,H inches (e.g. 10,6 or 10x6). Default 22,10.",
 )
 @weather_skill.argument(
+    "--panel-spacing",
+    default=None,
+    type=parse_panel_spacing,
+    help=(
+        "Inter-panel gap as a fraction of panel size: W or W,H "
+        "(matplotlib GridSpec wspace/hspace). One value sets both axes."
+    ),
+)
+@weather_skill.argument(
     "--label",
     action="append",
     default=None,
@@ -251,6 +262,7 @@ def plot_compare(
     xlabel,
     fontsize,
     figsize,
+    panel_spacing,
     panels,
     time_dim,
     label,
@@ -286,6 +298,7 @@ def plot_compare(
         cbar_ticks=cbar_ticks,
         cbar_labels=cbar_labels,
         figsize=figsize,
+        panel_spacing=panel_spacing,
         panels=panels,
         bbox=bbox,
         mask_geojson=mask_geojson,
@@ -311,6 +324,7 @@ def plot_compare(
         colormap_over=flags.get("colormap_over"),
         cbar_ticks=flags.get("cbar_ticks"),
         cbar_labels=flags.get("cbar_labels"),
+        panel_spacing=flags.get("panel_spacing"),
     )
     colormap = spec_get(spec_data, "colormap")
     colormap_a = spec_get(spec_data, "colormap_a")
@@ -782,7 +796,7 @@ def plot_compare(
         "skill": "plot-compare",
         "inputs": inputs,
         "layout": {
-            "facet": {"rows": 2, "columns": n},
+            "facet": facet_with_spacing(spec_data, rows=2, columns=n),
             "shared_colorscale": use_shared_scale,
             "figsize": list(figsize) if figsize else None,
         },

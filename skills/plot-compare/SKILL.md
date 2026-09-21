@@ -81,7 +81,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py -i <a.zarr> -i <b.zarr> --out
     [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
     [--colormap-a NAME] [--colormap-b NAME] [--vmin N] [--vmax N] \
     [--shared-scale | --independent-scale] [--title TEXT] [--xlabel TEXT] [--fontsize N] [--figsize W,H] \
-    [--panels N] [--time-dim DIM] \
+    [--panel-spacing W[,H]] [--panels N] [--time-dim DIM] \
     [--bbox N/W/S/E] [--mask-geojson PATH] \
     [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
 
@@ -140,7 +140,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py \
   colorbars (default 16). Raise on user request (e.g. `--fontsize 18`).
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `16,8`).
   When set, the PNG is that canvas at 150 dpi. Default `22×10`, cropped tightly.
-  Equal-aspect map panels are packed with compressed layout.
+  Equal-aspect map panels are packed tightly unless `--panel-spacing` is set.
+- `--panel-spacing` — gap between panels as a fraction of panel size (`W` or
+  `W,H`; matplotlib `GridSpec` `wspace` / `hspace`). One value sets both
+  axes. Writes `layout.facet.wspace` / `hspace`. Same keys work via `--patch`.
 - `--panels` — number of panels per row (default 3).
 - `--time-dim` — override the time axis. Defaults to `time` if present, else `step`.
 - `--bbox` — optional `N/W/S/E` decimal degrees. Rectangular clipping:

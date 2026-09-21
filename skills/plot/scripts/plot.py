@@ -29,6 +29,7 @@ from weather_skills_core.plot.figure import (
     parse_figsize,
     parse_label_list,
     parse_number_list,
+    parse_panel_spacing,
 )
 from weather_skills_core.plot.maps import parse_draw_boxes, parse_layer
 from weather_skills_core.plot.spec import (
@@ -192,9 +193,7 @@ def _xy_from_spec(spec_data, spec, x_ds, y_ds, x_variable, y_variable, pair_on):
     pair_on = pair_on or trace.get("pair_on") or "time"
     inputs = [i for i in (spec_data.get("inputs") or []) if isinstance(i, dict)]
     x_variable = (
-        x_variable
-        or trace.get("x_variable")
-        or (inputs[0].get("variable") if inputs else None)
+        x_variable or trace.get("x_variable") or (inputs[0].get("variable") if inputs else None)
     )
     y_variable = (
         y_variable
@@ -251,6 +250,7 @@ def _warn(kind, **flags):
             "--draw-box": bool(flags.get("draw_boxes")),
             "--rows": flags.get("rows") is not None,
             "--columns": flags.get("columns") is not None,
+            "--panel-spacing": flags.get("panel_spacing") is not None,
             "--subplot-title": bool(flags.get("subplot_title")),
             "--bbox": flags.get("bbox") is not None,
             "--mask-geojson": bool(flags.get("mask_geojson")),
@@ -268,6 +268,7 @@ def _warn(kind, **flags):
             "--draw-box": bool(flags.get("draw_boxes")),
             "--rows": flags.get("rows") is not None,
             "--columns": flags.get("columns") is not None,
+            "--panel-spacing": flags.get("panel_spacing") is not None,
             "--subplot-title": bool(flags.get("subplot_title")),
         }
         if kind == "xy":
@@ -591,6 +592,17 @@ def _merged_spec(
     ),
 )
 @weather_skill.argument(
+    "--panel-spacing",
+    default=None,
+    type=parse_panel_spacing,
+    help=(
+        "Inter-panel gap as a fraction of panel size: W or W,H "
+        "(matplotlib GridSpec wspace/hspace). Maps only. "
+        "One value sets both axes. Disables compressed packing so equal-aspect "
+        "map panels keep the requested whitespace."
+    ),
+)
+@weather_skill.argument(
     "--mask-geojson",
     default=None,
     help="GeoJSON polygon; cells/points outside become NaN (heatmap, contour, quiver, windrose, xy).",
@@ -706,6 +718,7 @@ def plot(
     draw_box,
     rows,
     columns,
+    panel_spacing,
     u_variable,
     v_variable,
     quiver_scale,
@@ -762,6 +775,7 @@ def plot(
         along=along,
         rows=rows,
         columns=columns,
+        panel_spacing=panel_spacing,
         pair_on=pair_on,
         x_variable=x_variable,
         y_variable=y_variable,
@@ -853,6 +867,7 @@ def plot(
         draw_boxes=draw_boxes,
         rows=rows,
         columns=columns,
+        panel_spacing=panel_spacing,
         subplot_title=subplot_title,
         bbox=bbox,
         mask_geojson=mask_geojson,
@@ -913,6 +928,7 @@ def plot(
         figsize=figsize,
         rows=rows,
         columns=columns,
+        panel_spacing=panel_spacing,
         extent=extent,
         cities=cities,
         bbox=bbox,

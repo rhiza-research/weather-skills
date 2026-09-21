@@ -23,6 +23,14 @@ from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable, cf_dim
 from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
 from weather_skills_core.plot import export
+from weather_skills_core.plot.figure import (
+    DEFAULT_FONTSIZE,
+    axis_label,
+    parse_figsize,
+    parse_label_list,
+    parse_number_list,
+    parse_panel_spacing,
+)
 from weather_skills_core.plot.maps import (
     axis_kind,
     extent_from_da,
@@ -31,19 +39,13 @@ from weather_skills_core.plot.maps import (
     is_cftime_axis,
     slice_bbox_mask,
 )
-from weather_skills_core.plot.figure import (
-    DEFAULT_FONTSIZE,
-    axis_label,
-    parse_figsize,
-    parse_label_list,
-    parse_number_list,
-)
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
     PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
     datasets_from_cli_or_spec,
+    facet_with_spacing,
     maybe_emit_spec,
     overlay_flags,
     overlay_spec,
@@ -423,6 +425,15 @@ def _flatten_da(da, panel_dim, lat_dim, lon_dim):
     help="Figure size W,H inches (e.g. 10,6 or 10x6). Default from panel count.",
 )
 @weather_skill.argument(
+    "--panel-spacing",
+    default=None,
+    type=parse_panel_spacing,
+    help=(
+        "Inter-panel gap as a fraction of panel size: W or W,H "
+        "(matplotlib GridSpec wspace/hspace). One value sets both axes."
+    ),
+)
+@weather_skill.argument(
     "--panels",
     type=int,
     default=None,
@@ -479,6 +490,7 @@ def plot_compare_forecasts(
     title,
     fontsize,
     figsize,
+    panel_spacing,
     panels,
     label,
     mask_geojson,
@@ -510,6 +522,7 @@ def plot_compare_forecasts(
         cbar_ticks=cbar_ticks,
         cbar_labels=cbar_labels,
         figsize=figsize,
+        panel_spacing=panel_spacing,
         panels=panels,
         bbox=bbox,
         mask_geojson=mask_geojson,
@@ -526,6 +539,7 @@ def plot_compare_forecasts(
         colormap_over=flags.get("colormap_over"),
         cbar_ticks=flags.get("cbar_ticks"),
         cbar_labels=flags.get("cbar_labels"),
+        panel_spacing=flags.get("panel_spacing"),
     )
     colormap = spec_get(spec_data, "colormap")
     bbox, mask_geojson = flags["bbox"], flags["mask_geojson"]
@@ -718,7 +732,7 @@ def plot_compare_forecasts(
         "skill": "plot-compare-forecasts",
         "inputs": inputs,
         "layout": {
-            "facet": {"rows": nrows, "columns": ncols},
+            "facet": facet_with_spacing(spec_data, rows=nrows, columns=ncols),
             "shared_colorscale": True,
             "figsize": list(figsize) if figsize else None,
         },
