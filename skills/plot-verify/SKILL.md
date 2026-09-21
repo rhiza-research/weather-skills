@@ -119,7 +119,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
 A PNG with observation in column 0 and N lead columns of forecast +
 verify maps. Two colorbars sit **side by side at the bottom**: values
 (obs/forecast) on the left, the verify metric (hits / bias / MAE) on
-the right. Stdout echoes each column's `verify_score_summary`. Hits
+the right. Stdout also prints `plot hash` (sha256 of RGB pixels) and
+`data: not null` or `data: NULL`, then each column's `verify_score_summary`.
+Compare hashes across runs; `NULL` means inspect-zarr the inputs. Hits
 use disagree / below / hit; bias uses a diverging scale centered on
 zero; MAE uses white at zero through warm colors. The verifying week
 dates are added to the figure title when the obs time coordinate can

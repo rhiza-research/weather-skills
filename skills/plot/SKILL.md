@@ -108,8 +108,6 @@ one color scale unless `--independent-scale`.
   Fetchers write rates; figures should show period totals (`mm`).
   When plotting rainfall anomalies, omit `--colormap` so the default
   diverging millimetre classes apply.
-- If the PNG looks empty or wrong, run `inspect-figure` on it (then
-  `inspect-zarr` on the input Zarr) before regenerating.
 
 For two-dataset **side-by-side** (two-row) comparison, use `plot-compare`.
 To overlay stations on a heatmap, use `--layer` here instead. For N gridded
@@ -413,7 +411,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
 
 ### Output
 
-A PNG at `--output`. The colorbar (and timeseries y-axis) label resolves
+A PNG at `--output`. Stdout prints a pixel `plot hash` (sha256 of RGB
+pixels) and `data: not null (<var> N/M finite)` or `data: NULL`. Compare
+hashes across runs to see whether the figure changed. `NULL` means every
+plotted variable is all-NaN — run `inspect-zarr` on the input. Look at
+the PNG as well. `--dump-spec` skips the PNG and this report.
+
+The colorbar (and timeseries y-axis) label resolves
 from variable attrs: `long_name` → `GRIB_name` → bare variable name →
 `"value"`, suffixed with `[units]` when the `units` attr is present. That
 label is the field, not the time coordinate — dates stay on panel titles.

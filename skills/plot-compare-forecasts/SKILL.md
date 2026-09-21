@@ -137,7 +137,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py \
 ### Output
 
 A PNG at `--output`: `nrows = n inputs`, `ncols = union columns` (or
-`--panels`). One horizontal colorbar under the grid, labeled from the
+`--panels`). Stdout prints `plot hash` (sha256 of RGB pixels) and
+`data: not null` or `data: NULL`. Compare hashes across runs; `NULL`
+means inspect-zarr the inputs. Look at the PNG as well. `--dump-spec`
+skips the PNG and this report.
+One horizontal colorbar under the grid, labeled from the
 variable `long_name` (then `GRIB_name`, then the variable name) plus
 `[<units>]`.
 

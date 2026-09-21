@@ -181,7 +181,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
 
 ### Output
 
-A PNG at `--output`. Overlay mode is a single axes (default `figsize=(10, 6)`).
+A PNG at `--output`. Stdout prints `plot hash` (sha256 of RGB pixels) and
+`data: not null` or `data: NULL`. Compare hashes across runs; `NULL` means
+inspect-zarr the inputs. Look at the PNG as well. `--dump-spec` skips the
+PNG and this report.
+Overlay mode is a single axes (default `figsize=(10, 6)`).
 `--subplots` is one stacked panel per `--input` (taller default). Override with
 `--figsize`. One series per `--input`
 (line with markers, `--along` spaghetti, or bars; mixed `--trace mark=` overlays a line on bars), legend below the traces. The y-axis label is the variable `long_name` (then

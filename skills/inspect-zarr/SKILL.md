@@ -25,7 +25,8 @@ data samples stay capped. To look at a specific slice, `clip-region` /
 `select` first, then inspect the smaller store.
 
 Use `provenance` when you need the `weather_skills_history` lineage rather than
-the grid itself. For a generated plot PNG, use `inspect-figure`.
+the grid itself. Plot skills print a `plot hash` and `data: not null` / `NULL`
+when they write a PNG.
 
 ## When to use
 
@@ -36,7 +37,7 @@ the grid itself. For a generated plot PNG, use `inspect-figure`.
   `convert-to-totals`, and whether `data_interval` / `aggregation_period` /
   `aggregation_coverage` are present.
 - Checking whether a field is all NaN, all zero, or in a plausible range
-  (especially after `inspect-figure` reports `BLANK`).
+  (especially after a plot skill prints `data: NULL`).
 
 ## Usage
 

@@ -62,6 +62,12 @@ compiled = compile(spec, datasets)
 export(compiled, output, datasets=datasets)
 ```
 
+`export()` prints two stdout lines after the PNG is written: `plot hash:` (sha256
+of RGB pixels) and `data: not null (…) ` or `data: NULL (…)`. Compare hashes
+across runs to see whether the figure changed. `NULL` means every plotted
+variable is all-NaN — `inspect-zarr` the input. `--dump-spec -` skips the PNG
+and this report.
+
 ## Skill catalog
 
 | Skill | Job | Typical inputs | Layout |

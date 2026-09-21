@@ -64,7 +64,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py \
 ### Output
 
 A PNG at `--output`, single axes, default figsize `(10, 5)` (override with
-`--figsize`), legend below the boxes. Up to 6 forecast steps on the x-axis labeled with actual leads (`+7d`, `+10d`, …). The y-axis (and default title) use the variable `long_name`.
+`--figsize`), legend below the boxes. Stdout prints `plot hash` (sha256 of
+RGB pixels) and `data: not null` or `data: NULL`. Compare hashes across
+runs; `NULL` means inspect-zarr the inputs. Look at the PNG as well.
+`--dump-spec` skips the PNG and this report. Up to 6 forecast steps on the x-axis labeled with actual leads (`+7d`, `+10d`, …). The y-axis (and default title) use the variable `long_name`.
 
 ### Provenance
 

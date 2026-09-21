@@ -213,7 +213,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py \
 ### Output
 
 A PNG with a `(2, n)` `GridSpec` (default `figsize=(22, 10)`; override with
-`--figsize`; compressed layout packs the equal-aspect maps). Each row gets its own colorbar.
+`--figsize`; compressed layout packs the equal-aspect maps). Stdout prints
+`plot hash` (sha256 of RGB pixels) and `data: not null` or `data: NULL`.
+Compare hashes across runs; `NULL` means inspect-zarr the inputs. Look at
+the PNG as well. `--dump-spec` skips the PNG and this report.
+Each row gets its own colorbar.
 Station scatter points use `s=30`. Each panel's y-axis is the row's
 dataset name (`weather_skills_source`, else `A` / `B`). Latitude ticks
 stay on the leftmost panel of each row.
