@@ -322,6 +322,25 @@ def test_subplot_title_overrides_heatmap_panels():
     plt.close(fig)
 
 
+def test_theme_rc_axes_titlesize_sets_panel_title_size():
+    fig = _map_figure(
+        make_gridded(n_time=2),
+        fontsize=16,
+        extent=[10.0, 11.0, 1.0, 2.0],
+        theme={"colormap": "viridis", "rc": {"axes.titlesize": 10}},
+    )
+    sizes = [
+        ax.title.get_fontsize()
+        for ax in fig.axes
+        if ax.get_visible() and ax.get_title()
+    ]
+    assert sizes
+    assert all(size == 10 for size in sizes)
+    import matplotlib.pyplot as plt
+
+    plt.close(fig)
+
+
 def test_subplot_title_too_many_exits(tmp_path, plot_fn):
     src = write_zarr(make_gridded(n_time=1), tmp_path / "in.zarr")
     out = tmp_path / "map.png"

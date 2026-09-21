@@ -161,12 +161,19 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   knobs as `--spec` (`title`, `axes`, `layout`, `annotations`, `shapes`,
   `theme`, …). A `patch` key *inside* a spec object is rejected. Colorbar size:
   `{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}`.
+  Shrink panel date titles (not the figure title) with
+  `{"theme": {"rc": {"axes.titlesize": 10}}}`. Tick labels, axis labels,
+  and line width are the same object:
+  `{"theme": {"rc": {"xtick.labelsize": 8, "axes.labelsize": 12, "lines.linewidth": 2}}}`.
   Reposition a polar windrose frequency label with
   `{"axes": {"ylabel": {"coords": [1.15, 0.5], "rotation": 0}}}`.
 - `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
   PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
   stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
-  a key you cannot name from the CLI.
+  a key you cannot name from the CLI. `theme.rc` always includes the font
+  sizes `--fontsize` applied (`axes.titlesize` is panel titles;
+  `figure.titlesize` is the figure title). Patch those keys; do not invent
+  `theme.subplot_title_fontsize`. `axes` still dumps only the keys you set.
 - `--theme` — `weather_skills` (seaborn `deep` colorway, default) or
   `colorblind`. Heatmap classified precip palettes are unchanged.
   Writes `theme.template` in a dumped spec.
@@ -274,7 +281,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   titles than panels is an error. An empty string hides that panel's title.
   On a single-panel map this is the axes title under `--title`. Heatmap /
   contour / quiver / layered maps — timeseries, xy, and windrose ignore it
-  with a stderr warning (`--title` is their axes title).
+  with a stderr warning (`--title` is their axes title). This flag is the
+  text only; panel title **size** is `theme.rc.axes.titlesize` (see
+  `--fontsize`).
 - `--xlabel` / `--ylabel` — optional axis-label overrides. When omitted, maps
   use `Longitude` / `Latitude`, timeseries omits the x label when ticks are
   dates (otherwise the time dim) and uses the variable label on y, `xy`
@@ -322,7 +331,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   default.
 - `--fontsize` — base font size for titles (including panel date labels), axis
   labels, city labels, and colorbar text (default 16). Raise on user request
-  (e.g. `--fontsize 22`).
+  (e.g. `--fontsize 22`). To shrink **only** the panel titles, keep
+  `--fontsize` and `--patch '{"theme": {"rc": {"axes.titlesize": 10}}}'`
+  (`figure.titlesize` stays at `--fontsize`). Do not invent
+  `theme.subplot_title_fontsize` — that key is rejected and names this path.
 - `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `10,6`).
   When set, the PNG is that canvas at 150 dpi (legends stay inside it).
   When omitted, maps size from
@@ -542,6 +554,7 @@ flags.
 2. If a knob is not a CLI flag (or you need to see the resolved object),
    re-run the same command with `--dump-spec -` (no PNG; `-o` not required)
    and read stdout. Do this only when needed — the full JSON is token-expensive.
+   Panel title size is already in that dump as `theme.rc.axes.titlesize`.
 3. Re-run the same CLI plus `--patch '{"axes": {"xticks": [...]}}'`.
    Do not pass the full dumped spec back unless you are replaying it with
    `--spec`.
@@ -555,6 +568,10 @@ prefer stdout (`-`) then `--patch`. Either form skips the PNG.
 handy for title, annotations, shapes, axis-label position, and colorbar size.
 Shorten a colorbar with
 `--patch '{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}'`.
+Shrink map panel titles without changing `--fontsize` with
+`--patch '{"theme": {"rc": {"axes.titlesize": 10}}}'`.
+The same object takes other basic rcParams (`xtick.labelsize`,
+`axes.labelsize`, `lines.linewidth`, `axes.titleweight`, …).
 Spread faceted map panels with `--panel-spacing 0.25` or
 `--patch '{"layout": {"facet": {"wspace": 0.25, "hspace": 0.15}}}'`.
 Move a windrose radial label with
@@ -567,7 +584,38 @@ on artist/axes objects are errors. There is no `eval` and no Python callables.
 
 Put matplotlib `rcParams` in `theme.rc`. They apply after
 the seaborn theme, so they win. Backend / interactive keys (`backend`,
-`interactive`, `tk.*`, …) are rejected.
+`interactive`, `tk.*`, …) are rejected. Any other matplotlib rcParam is
+accepted; an unknown name is an error. Do not invent
+`theme.subplot_title_fontsize` / `theme.label_fontsize` — those keys are
+rejected and name the `theme.rc.*` path.
+
+`--fontsize` writes the seven size keys below. `--dump-spec` always
+includes those resolved values. Patch any of them (or the weight / pad /
+linewidth keys) without a dump:
+
+```json
+{"theme": {"rc": {"axes.titlesize": 10, "xtick.labelsize": 8, "lines.linewidth": 2}}}
+```
+
+| `theme.rc` key | What it changes |
+| --- | --- |
+| `axes.titlesize` | map panel titles (auto dates or `--subplot-title`) |
+| `figure.titlesize` | figure `--title` |
+| `axes.labelsize` | x/y axis labels |
+| `xtick.labelsize` / `ytick.labelsize` | tick labels |
+| `legend.fontsize` / `legend.title_fontsize` | legend text |
+| `font.size` | fallback size when a more specific key is unset |
+| `font.family` / `font.weight` | typeface and default weight |
+| `axes.titleweight` / `figure.titleweight` | panel / figure title weight (`bold`) |
+| `axes.titlepad` / `axes.labelpad` | gap from title or axis label to the axes |
+| `xtick.major.pad` / `ytick.major.pad` | gap from tick labels to the spines |
+| `axes.labelweight` | axis-label weight |
+| `lines.linewidth` | default line width (timeseries / xy) |
+| `axes.linewidth` | spine thickness |
+
+Use `layout.dpi` / `layout.figsize` / `layout.facecolor`, not `figure.dpi`
+/ `figure.figsize` / `figure.facecolor`. A single series' width belongs on
+`traces[].line.linewidth`, not `lines.linewidth`.
 
 | Spec key | Matplotlib surface |
 | --- | --- |
@@ -580,7 +628,7 @@ the seaborn theme, so they win. Backend / interactive keys (`backend`,
 | `layout.colorbar` | `extend`, `pad`, `orientation`, `location`, plus `len`/`thickness` |
 | `layout.facet.wspace` / `hspace` | inter-panel gap as a fraction of panel size (`--panel-spacing`) |
 | `layout.facecolor`, `layout.dpi` | figure patch and DPI |
-| `theme.rc` | matplotlib rcParams, applied after the seaborn theme |
+| `theme.rc` | matplotlib rcParams after seaborn (see the table above). `--dump-spec` always includes the `--fontsize` sizes |
 
 Every knob has exactly one home, and an unknown key is an error naming the
 canonical path, so an edit never silently does nothing. Artist kwargs live on

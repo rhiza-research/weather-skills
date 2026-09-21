@@ -158,6 +158,16 @@ Key details:
   `--cbar-labels`.
 - **`annotations` / `shapes`**: text/arrows; rect, h/v lines and spans, circle.
 - **`theme.rc`**: matplotlib rcParams after seaborn; backend keys rejected.
+  `--fontsize` writes `font.size`, `axes.titlesize`, `axes.labelsize`,
+  `xtick.labelsize`, `ytick.labelsize`, `legend.fontsize`, and
+  `figure.titlesize`. A dump always includes those resolved values. Patch
+  any of them, plus `axes.titleweight` / `figure.titleweight`,
+  `axes.titlepad` / `axes.labelpad`, `xtick.major.pad` / `ytick.major.pad`,
+  `font.family` / `font.weight`, `legend.title_fontsize`, `lines.linewidth`,
+  and `axes.linewidth`. Any other matplotlib rcParam is also accepted.
+  Invented keys (`theme.subplot_title_fontsize`, `theme.label_fontsize`,
+  `theme.tick_fontsize`, …) are rejected and name the `theme.rc.*` path.
+  Use `layout.dpi` / `layout.figsize` / `layout.facecolor`, not `figure.*`.
 - **Layer options** are snake_case (`u_variable`, `quiver_scale`).
 - **No `patch` key.** `--patch` is a CLI flag on every figure skill — it
   deep-merges into the spec before CLI overlay — but the compiler never
@@ -166,7 +176,9 @@ Key details:
 
 `--dump-spec` dumps assembled JSON and skips the PNG (`-o` is not required).
 `--dump-spec -` (only when needed) then `--patch` is the edit loop, not the
-first run. Pass `--title` / `--variable` / `--figsize` (and the rest) as CLI
+first run. The dump includes the `theme.rc` font sizes `--fontsize` applied
+(`axes.titlesize` / `figure.titlesize`); `axes` still lists only keys you
+set. Pass `--title` / `--variable` / `--figsize` (and the rest) as CLI
 flags; `--spec` and `--patch` are optional. CLI flags overlay the spec.
 Provenance still chains from the Zarrs.
 
