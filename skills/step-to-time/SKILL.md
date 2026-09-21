@@ -31,12 +31,14 @@ the init calendar date (the first 24h of rain for daily precip).
 ## Input precondition
 
 The input must have a `step` dim whose values are `timedelta64` lead times AND
-a scalar (0-d) `time` coord holding the forecast init date. The init may be a
-standard `datetime64` or, for a non-standard model calendar (`noleap`,
-`360_day`), an object-dtype `cftime` datetime. An input that already has a
-`time` dim is already on a wall-clock axis and is rejected; an input that has
-BOTH a `time` dim and a `step` dim (a multi-init/hindcast cube) is rejected with
-a message to select a single init first.
+a scalar (0-d) `time` coord holding the forecast init date. Spatial dims
+(`lat`/`lon`) are optional — a cube already reduced over space (e.g.
+`dims=['step', 'number']`) is accepted. The init may be a standard
+`datetime64` or, for a non-standard model calendar (`noleap`, `360_day`), an
+object-dtype `cftime` datetime. An input that already has a `time` dim is
+already on a wall-clock axis and is rejected; an input that has BOTH a `time`
+dim and a `step` dim (a multi-init/hindcast cube) is rejected with a message to
+select a single init first.
 
 ## Usage
 

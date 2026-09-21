@@ -43,6 +43,23 @@ def test_step_to_time_replaces_step_dim(tmp_path, step_to_time):
     assert load_history(out)[-1]["skill"] == "step-to-time"
 
 
+def test_step_to_time_accepts_spatially_reduced_cube(tmp_path, step_to_time):
+    ds = _forecast_without_precip_totals(n_step=3, init="2026-01-01", members=2)
+    ds = ds.mean(["latitude", "longitude"])
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(step_to_time, "-i", str(src), "-o", str(out))
+
+    result = xr.open_zarr(out, consolidated=True)
+    assert "step" not in result.dims
+    assert "time" in result.dims
+    assert result.sizes["time"] == 3
+    assert "number" in result.dims
+    assert "latitude" not in result.dims
+    assert "longitude" not in result.dims
+
+
 def test_step_to_time_accepts_precip_totals(tmp_path, step_to_time):
     ds = make_forecast(n_step=3, init="2026-01-01")
     ds["tp"].attrs.update(
