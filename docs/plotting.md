@@ -108,7 +108,7 @@ key that used to be readable somewhere else. Spec version is `2`.
 | `inputs[]` | `id`, `path`, `variable`, `index`, `label`, `colormap`, `role` |
 | `traces[]` | `kind`, `input`, `mark`, `x`, `y`, `path`, `along`, `along_color`, `reduce`, `align`, `band`, `pair_on`, `u_variable`, `v_variable`, `x_variable`, `y_variable`, `metric`, `leads`, plus the artist blocks |
 | `traces[]` artist blocks | `line`, `mesh`, `contour`, `scatter`, `bar`, `quiver`, `windrose`, `fill`, `box`, `mediogram` |
-| `layers[]` | `kind`, `path`, `options`, `input`, `raw` |
+| `layers[]` | `id` (default `a`, `b`, …), `kind`, `path`, `input`, `raw`, scale knobs (`variable`, `colormap`, `vmin`, `vmax`, `index`, `u_variable`, `v_variable`, `quiver_scale`, `quiver_step`), artist blocks (`mesh`, `quiver`, `scatter`, `contour`, …), plus a leftover `options` bag from older dumps |
 
 CLI and JSON use the same words:
 
@@ -189,7 +189,10 @@ Key details:
   Invented keys (`theme.subplot_title_fontsize`, `theme.label_fontsize`,
   `theme.tick_fontsize`, …) are rejected and name the `theme.rc.*` path.
   Use `layout.dpi` / `layout.figsize` / `layout.facecolor`, not `figure.*`.
-- **Layer options** are snake_case (`u_variable`, `quiver_scale`).
+- **Layer options** are snake_case (`u_variable`, `quiver_scale`). Scale
+  knobs and artist blocks live on the layer object itself; `--layer ::k=v`
+  writes those same keys. `--patch` merges `layers[]` by `id` (else index)
+  so a partial layer object cannot replace the list.
 - **No `patch` key.** `--patch` is a CLI flag on every figure skill — it
   deep-merges into the spec before CLI overlay — but the compiler never
   reads a `patch` object, so there is one place a title or annotation can

@@ -36,10 +36,13 @@ from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
     PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
+    fold_layer_options,
+    layer_item_from_parts,
     maybe_emit_spec,
+    merge_layer_lists,
     named_datasets_from_spec,
-    opened_datasets_from_spec,
     normalize_spec,
+    opened_datasets_from_spec,
     overlay_flags,
     overlay_spec,
     parse_index,
@@ -51,7 +54,7 @@ from weather_skills_core.plot.spec import (
     spec_inputs_from_datasets,
     trace_at,
 )
-from weather_skills_core.plot.theme import deep_merge, load_user_theme
+from weather_skills_core.plot.theme import load_user_theme
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
@@ -165,7 +168,7 @@ def _layers_from_spec(spec_data, spec):
         path = item.get("path")
         if not kind or not path:
             raise UsageError("spec layers[] entries need kind and path")
-        options = dict(item.get("options") or {})
+        options = fold_layer_options(item)
         raw = item.get("raw") or f"{kind}:{path}"
         layer = LayerSpec(kind, path, options, raw)
         if kind in _ZARR_LAYER_KINDS:
@@ -337,29 +340,35 @@ def _merged_spec(
     else:
         merged = spec_from_flags(kind=kind, **flags)
     if patch:
-        merged = deep_merge(merged, patch)
+        merged = overlay_spec(merged, patch)
     if layers:
         named = _layer_datasets(layers)
         merged["traces"] = [{"kind": "layer"}]
-        merged["layers"] = []
+        built = []
         inputs = []
         for i, layer in enumerate(layers):
             lid = chr(ord("a") + i)
-            entry = {
-                "kind": layer.kind,
-                "path": str(layer.path),
-                "options": dict(layer.options),
-                "raw": layer.raw,
-            }
+            input_id = lid if layer.kind in _ZARR_LAYER_KINDS else None
+            entry = layer_item_from_parts(
+                layer.kind,
+                layer.path,
+                layer.options,
+                layer_id=lid,
+                raw=layer.raw,
+                input_id=input_id,
+            )
             if layer.kind in _ZARR_LAYER_KINDS:
-                entry["input"] = lid
                 if layer.ds is not None:
                     named.setdefault(lid, layer.ds)
                 item = {"id": lid, "path": str(layer.path)}
                 if layer_labels and i < len(layer_labels) and layer_labels[i]:
                     item["label"] = layer_labels[i]
                 inputs.append(item)
-            merged["layers"].append(entry)
+            built.append(entry)
+        if spec_data and spec_data.get("layers"):
+            merged["layers"] = merge_layer_lists(built, spec_data["layers"])
+        else:
+            merged["layers"] = built
         if inputs:
             merged["inputs"] = inputs
         datasets = named or datasets

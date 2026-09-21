@@ -679,9 +679,7 @@ def test_layer_vmin_vmax_option(tmp_path, plot_fn):
 
 
 def test_layer_inherits_figure_colormap_and_vlim(tmp_path, plot_fn):
-    src = write_zarr(
-        make_gridded(name="sst", units="degree_Celsius", fill=0.4), tmp_path / "sst.zarr"
-    )
+    src = write_zarr(make_gridded(name="sst", fill=0.4), tmp_path / "sst.zarr")
     out = tmp_path / "sst.png"
     run_skill(
         plot_fn,
@@ -1854,6 +1852,7 @@ def test_layer_dump_spec_on_request(tmp_path, plot_fn):
         "Layered",
     )
     spec, spec_path = _assert_dumped_spec(spec_path, trace_type="layer", title="Layered")
+    assert spec["layers"][0]["id"] == "a"
     assert spec["layers"][0]["kind"] == "heatmap"
     assert spec["layers"][0]["path"].endswith("in.zarr")
     assert not out.exists()
@@ -1863,3 +1862,25 @@ def test_layer_dump_spec_on_request(tmp_path, plot_fn):
     history = load_figure_history(second)
     assert history[-1]["skill"] == "plot"
     assert history[-1]["input"]["basename"] == "in.zarr"
+
+
+def test_layer_patch_by_id_dump_spec(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(name="sst", fill=0.4), tmp_path / "sst.zarr")
+    spec_path = tmp_path / "patched.plot.json"
+    run_skill(
+        plot_fn,
+        "--layer",
+        f"heatmap:{src}::variable=sst",
+        "--layer",
+        f"heatmap:{src}::variable=sst",
+        "--patch",
+        '{"layers": [{"id": "a", "colormap": "RdBu_r", "vmin": -1.5}]}',
+        "--dump-spec",
+        str(spec_path),
+    )
+    spec, _ = _assert_dumped_spec(spec_path, trace_type="layer")
+    assert spec["layers"][0]["id"] == "a"
+    assert spec["layers"][0]["colormap"] == "RdBu_r"
+    assert spec["layers"][0]["vmin"] == -1.5
+    assert spec["layers"][1]["id"] == "b"
+    assert spec["layers"][1].get("colormap") is None

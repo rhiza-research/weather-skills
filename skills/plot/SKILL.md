@@ -157,7 +157,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
 - `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
   (CLI-built, or `--spec` if you passed one) before CLI flags overlay. Same
   knobs as `--spec` (`title`, `axes`, `layout`, `annotations`, `shapes`,
-  `theme`, …). A `patch` key *inside* a spec object is rejected. Colorbar
+  `theme`, …). `layers[]` merges by `id` (the letter assigned to each
+  `--layer`, `a` / `b` / …), then by index, so
+  `{"layers": [{"id": "a", "colormap": "RdBu_r", "vmin": -1.5, "mesh": {"alpha": 0.85}}]}`
+  edits one overlay without wiping the others. A `patch` key *inside* a spec
+  object is rejected. Colorbar
   size and **colorbar-only** label spacing:
   `{"layout": {"colorbar": {"len": 0.45, "thickness": 12, "labelpad": 16, "labelsize": 28, "ticksize": 15}}}`.
   `labelpad` is points between the colorbar ticks and its label; `labelsize`
