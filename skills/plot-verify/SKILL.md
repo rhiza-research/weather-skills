@@ -100,6 +100,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
   the map grid and crops tightly.
 - `--colormap`, `--colormap-bounds`, `--cbar-ticks`, `--cbar-labels`,
   `--title`, `--bbox`, `--mask-geojson`, `--output` — as `plot`.
+  When plotting rainfall anomalies, omit `--colormap` so the default
+  diverging millimetre classes apply. Negative `--colormap-bounds` /
+  `--vmin` need `--flag=value`.
   A long `--title` (or title plus verifying-week dates) wraps onto a second
   line.
 

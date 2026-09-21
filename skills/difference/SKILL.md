@@ -21,7 +21,9 @@ join on shared dims, broadcasting over dims present on only one side — so a
 
 - Anomaly vs climatology: a field minus its baseline mean (e.g. SST
   anomalies as `sst.zarr` minus a `summarize-dim --dim time --method mean`
-  baseline).
+  baseline, or CHIRPS minus `clim-fetch`). When plotting rainfall
+  anomalies, omit `--colormap` so the default diverging millimetre classes
+  apply.
 - Scenario minus historical: a change map (e.g. a CMIP6 SSP time-mean minus
   the historical time-mean = projected change by 2050).
 - Any cell-by-cell difference of two datasets on a shared grid (forecast

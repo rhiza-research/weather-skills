@@ -384,7 +384,8 @@ def _flatten_da(da, panel_dim, lat_dim, lon_dim):
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors. "
-        "Default: nested absolute-mm precip classes for precip variables, else viridis. "
+        "When plotting rainfall anomalies, omit this flag so the default "
+        "ppt_anomaly / chirps_anom classes apply. Else viridis. "
         "Discrete custom classes: pass --colormap-bounds or a spec object."
     ),
 )

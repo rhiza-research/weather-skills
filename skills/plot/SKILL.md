@@ -27,7 +27,9 @@ Source-agnostic visualization. Single-input kinds (`-i`) plus layered maps
   blank. Ensemble members (`number` dim) are averaged. Use `--index` to
   override the default reduction for any other extra dim. Precipitation totals
   default to a nested absolute-mm palette (same color = same millimetres;
-  the colorbar window follows `aggregation_period`). Dump the resolved spec
+  the colorbar window follows `aggregation_period`). When plotting rainfall
+  anomalies, omit `--colormap` so the default diverging millimetre classes
+  apply. Dump the resolved spec
   with `--dump-spec -` only when you need to inspect knobs, then `--patch`.
 - `contour` — the same map layout as `heatmap` (panels, shared color scale,
   colorbar, geo overlays, `--bbox` / `--mask-geojson` / `--extent` /
@@ -102,6 +104,8 @@ one color scale unless `--independent-scale`.
 - Producing S2S-style wind-vector maps (speed + quiver) from u/v.
 - Precipitation: only after `aggregate-temporal` and `convert-to-totals`.
   Fetchers write rates; figures should show period totals (`mm`).
+  When plotting rainfall anomalies, omit `--colormap` so the default
+  diverging millimetre classes apply.
 - If the PNG looks empty or wrong, run `inspect-figure` on it (then
   `inspect-zarr` on the input Zarr) before regenerating.
 
@@ -212,10 +216,14 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   on a wider window). The historical CHC rainbow (`ppt_total` /
   `chirps_total`, 0–2500 mm; `ppt_short` / `chirps_short`) remains as a
   named opt-in.
-  Precipitation anomalies (negatives, or `anomal` in the name — e.g. after
-  `difference`) use CHC `ppt_anomaly_cmap`
-  (`[-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200, 300, 500]`
-  mm with under/over colors). Percent-of-normal (`poa` / `%`) uses `ppt_poa`;
+  When plotting rainfall anomalies (negatives, or `anomal` in the name —
+  e.g. after `difference`), omit `--colormap` so the default `ppt_anomaly_cmap`
+  applies (`[-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200,
+  300, 500]` mm with under/over colors). Passing a matplotlib diverging
+  name replaces those millimetre classes. Named matplotlib colormaps are
+  lowercased before lookup, so mixed-case ColorBrewer names fail; prefer a
+  lowercase name (`coolwarm`, `seismic`, `magma`) or a comma-separated
+  color list. Percent-of-normal (`poa` / `%`) uses `ppt_poa`;
   SPI uses `spi`. Named aliases: `ppt_daily`, `ppt_week`, `ppt_month`,
   `ppt_season`, `ppt_total`/`chirps_total`, `ppt_short`/`chirps_short`,
   `ppt_anomaly`/`chirps_anom`, `ppt_poa`, `ppt_spp`, `spi`. Custom names
@@ -235,6 +243,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   into `theme.colormap.bounds` (a string `--colormap magma` becomes
   `{name, bounds}`). Combine with `--colormap white,green,blue` for a custom
   discrete scale, or with a matplotlib name to bin that cmap.
+  A value that starts with `-` must use the equals form
+  (`--colormap-bounds=-100,-50,0,50,100`); otherwise argparse treats
+  `-100,...` as a new flag. Same for `--vmin` (`--vmin=-50`).
 - `--colormap-under` / `--colormap-over` — colors for values below the first
   stop / above the last. Folds into `theme.colormap.under` / `.over`.
 - `--cbar-ticks` / `--cbar-labels` — colorbar tick positions and labels
@@ -406,6 +417,12 @@ Override the palette (e.g. magma):
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/ecmwf_namibia.zarr -o /tmp/ecmwf.png \
     --variable tp --kind heatmap --colormap magma --title "S2S precip"
+```
+
+Rainfall anomaly after `difference` (omit `--colormap` so the default millimetre classes apply):
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/chirps_anom.zarr -o /tmp/anom.png \
+    --variable precip --title "CHIRPS anomaly"
 ```
 
 Pin the colorbar range (stretches the scale; values outside saturate):

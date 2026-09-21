@@ -126,7 +126,8 @@ def _ax_bounds(ds, variable):
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors. "
-        "Precip default: nested absolute-mm classes (BoundaryNorm). "
+        "When plotting rainfall anomalies, omit this flag so the default "
+        "ppt_anomaly / chirps_anom classes apply. "
         "Discrete custom classes: pass --colormap-bounds or a spec object."
     ),
 )

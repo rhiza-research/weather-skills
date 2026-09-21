@@ -456,9 +456,10 @@ def _merged_spec(
     default=None,
     help=(
         "matplotlib colormap name, or comma-separated colors. "
-        "Heatmap default: CHC ppt_total / ppt_anomaly classes for precip "
-        "(aliases chirps_total, chirps_anom), else rocket. Also: ppt_poa, "
-        "ppt_spp, spi. Windrose default: blue-to-orange speed classes. "
+        "When plotting rainfall anomalies, omit this flag so the default "
+        "ppt_anomaly / chirps_anom classes apply. "
+        "Also: ppt_poa, ppt_spp, spi. Else rocket. "
+        "Windrose default: blue-to-orange speed classes. "
         "Quiver default: YlGn (ECMWF S2S 10 m / 700 hPa wind vectors)."
     ),
 )
@@ -466,7 +467,11 @@ def _merged_spec(
     "--colormap-bounds",
     default=None,
     type=parse_number_list,
-    help="Discrete colormap class edges (comma-separated). Folds into theme.colormap.bounds.",
+    help=(
+        "Discrete colormap class edges (comma-separated). "
+        "Folds into theme.colormap.bounds. "
+        "A leading minus needs --colormap-bounds=-100,100 (not a space)."
+    ),
 )
 @weather_skill.argument("--colormap-under", default=None, help="Color below the first bound.")
 @weather_skill.argument("--colormap-over", default=None, help="Color above the last bound.")

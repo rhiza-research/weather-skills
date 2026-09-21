@@ -116,7 +116,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare.py \
   `{colors, bounds}` object (also `--colormap-bounds` / `--cbar-ticks` /
   `--cbar-labels`). When omitted, precipitation totals use the nested
   absolute-mm classes (`ppt_daily` / `ppt_week` / `ppt_month` / `ppt_season`);
-  anomalies use the diverging CHIRPS classes. In independent-scale
+  anomalies use the diverging CHIRPS classes. When plotting rainfall
+  anomalies, omit `--colormap` so those classes apply. Negative `--vmin` /
+  `--colormap-bounds` need the equals form (`--vmin=-50`). In independent-scale
   mode a non-precip row falls back to `viridis`.
 - `--colormap-a` / `--colormap-b` — per-row matplotlib colormap name or
   comma-separated colors in independent-scale mode. Precedence per row:
