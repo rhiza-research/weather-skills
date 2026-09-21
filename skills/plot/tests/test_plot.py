@@ -678,6 +678,27 @@ def test_layer_vmin_vmax_option(tmp_path, plot_fn):
     assert out.stat().st_size > 0
 
 
+def test_layer_inherits_figure_colormap_and_vlim(tmp_path, plot_fn):
+    src = write_zarr(
+        make_gridded(name="sst", units="degree_Celsius", fill=0.4), tmp_path / "sst.zarr"
+    )
+    out = tmp_path / "sst.png"
+    run_skill(
+        plot_fn,
+        "--layer",
+        f"heatmap:{src}::variable=sst",
+        "--colormap",
+        "RdBu_r",
+        "--vmin=-1.5",
+        "--vmax",
+        "1.5",
+        "-o",
+        str(out),
+    )
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+
+
 def test_amount_colorbar_drops_leftover_rate_name():
     da = make_forecast()["tp"]
     da.attrs.update(
