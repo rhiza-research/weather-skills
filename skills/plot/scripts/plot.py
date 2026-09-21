@@ -39,6 +39,7 @@ from weather_skills_core.plot.spec import (
     maybe_emit_spec,
     named_datasets_from_spec,
     opened_datasets_from_spec,
+    normalize_spec,
     overlay_flags,
     overlay_spec,
     parse_index,
@@ -380,7 +381,7 @@ def _merged_spec(
     if independent_scale:
         merged.setdefault("layout", {})["shared_colorscale"] = False
     merged["skill"] = "plot"
-    return merged, datasets
+    return normalize_spec(merged), datasets
 
 
 @weather_skill(

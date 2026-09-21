@@ -97,7 +97,7 @@ key that used to be readable somewhere else. Spec version is `2`.
 | `layout` | `figsize`, `autosize`, `dpi`, `facecolor`, `colorbar`, `shared_colorscale`, `subplots`, `bar_mode`, `facet` |
 | `layout.facet` | `rows`, `columns`, `max_columns`, `n_panels`, `wspace`, `hspace` |
 | `theme` | `template`, `colormap` (name, comma list, or `{name, colors, bounds, under, over, cmap}`), `fontsize`, `rc` |
-| `layout.colorbar` | `len`/`shrink`, `thickness`, `extend`, `pad`, `location`, `ticks`, `labels`, plus matplotlib extras |
+| `layout.colorbar` | `len`/`shrink`, `thickness`, `pad` (strip gap), `labelpad` (colorbar label only), `location`, `orientation`, `extend`, `ticks`, `labels`, plus `drawedges` / `spacing` / `format` |
 | `geo` | `extent`, `bbox`, `cities`, `mask_geojson`, `draw_boxes`, `overlays`, `lat`, `lon` |
 | `inputs[]` | `id`, `path`, `variable`, `index`, `label`, `colormap`, `role` |
 | `traces[]` | `kind`, `input`, `mark`, `x`, `y`, `path`, `along`, `along_color`, `reduce`, `align`, `band`, `pair_on`, `u_variable`, `v_variable`, `x_variable`, `y_variable`, `metric`, `leads`, plus the artist blocks |
@@ -154,6 +154,15 @@ Key details:
   units (`Total precipitation [mm]`), not a date. Valid time belongs on
   `title` / `subplot_titles` (panel titles already default to calendar
   dates). CLI: `--cbar-label` / per-layer `--label`.
+- **`layout.colorbar`**: `--patch` the object (unknown keys error).
+  `labelpad` is points between the colorbar ticks and its label — colorbar
+  only. `pad` is the gap between the maps and the colorbar strip, not the
+  text. `len`/`shrink` and `thickness` size the bar. `location` /
+  `orientation` place it. `ticks` / `labels` need the same count.
+  CLI: `--cbar-ticks` / `--cbar-labels`. `labelpad` is `--patch` only.
+  `theme.rc axes.labelpad` pads **every** axis label (Longitude / Latitude
+  too) and will change the canvas; do not use it to space the colorbar
+  label. `label_pad` relocates to `labelpad`.
 - **`layout.colorbar.ticks` / `labels`**: explicit colorbar ticks. Labels
   need ticks and the same count. CLI: `--colormap-bounds`, `--cbar-ticks`,
   `--cbar-labels`.
@@ -163,7 +172,8 @@ Key details:
   `xtick.labelsize`, `ytick.labelsize`, `legend.fontsize`, and
   `figure.titlesize`. A dump always includes those resolved values. Patch
   any of them, plus `axes.titleweight` / `figure.titleweight`,
-  `axes.titlepad` / `axes.labelpad`, `xtick.major.pad` / `ytick.major.pad`,
+  `axes.titlepad` / `axes.labelpad` (figure-wide; colorbar-only pad is
+  `layout.colorbar.labelpad`), `xtick.major.pad` / `ytick.major.pad`,
   `font.family` / `font.weight`, `legend.title_fontsize`, `lines.linewidth`,
   and `axes.linewidth`. Any other matplotlib rcParam is also accepted.
   Invented keys (`theme.subplot_title_fontsize`, `theme.label_fontsize`,

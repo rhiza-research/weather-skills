@@ -159,14 +159,19 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
 - `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
   (CLI-built, or `--spec` if you passed one) before CLI flags overlay. Same
   knobs as `--spec` (`title`, `axes`, `layout`, `annotations`, `shapes`,
-  `theme`, …). A `patch` key *inside* a spec object is rejected. Colorbar size:
-  `{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}`.
+  `theme`, …). A `patch` key *inside* a spec object is rejected. Colorbar
+  size and **colorbar-only** label spacing:
+  `{"layout": {"colorbar": {"len": 0.45, "thickness": 12, "labelpad": 16}}}`.
+  `labelpad` is points between the colorbar ticks and its label. Do not use
+  `theme.rc axes.labelpad` for that — it also moves Longitude / Latitude.
+  `pad` (not `labelpad`) is the gap between the maps and the colorbar strip.
   Shrink panel date titles (not the figure title) with
   `{"theme": {"rc": {"axes.titlesize": 10}}}`. Tick labels, axis labels,
   and line width are the same object:
   `{"theme": {"rc": {"xtick.labelsize": 8, "axes.labelsize": 12, "lines.linewidth": 2}}}`.
   Reposition a polar windrose frequency label with
   `{"axes": {"ylabel": {"coords": [1.15, 0.5], "rotation": 0}}}`.
+  The full `layout.colorbar` catalog is below.
 - `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
   PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
   stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
@@ -265,6 +270,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
 - `--cbar-ticks` / `--cbar-labels` — colorbar tick positions and labels
   (`layout.colorbar.ticks` / `.labels`). Labels require ticks and the same
   count. Example: `--cbar-ticks 0,50,100 --cbar-labels dry,ok,wet`.
+  Colorbar label spacing is `--patch` only (`layout.colorbar.labelpad`).
 - `--vmin` / `--vmax` — colorbar limits for heatmap, contour, quiver, and
   scatter. Either may be omitted (the unset end uses the data min/max).
   Setting either one drops the default discrete precip classes and
@@ -567,13 +573,15 @@ passed one). A `patch` key inside a spec object is rejected.
 prefer stdout (`-`) then `--patch`. Either form skips the PNG.
 
 `--patch '{"title": "Edited"}'` sets spec values without a dump —
-handy for title, annotations, shapes, axis-label position, and colorbar size.
-Shorten a colorbar with
-`--patch '{"layout": {"colorbar": {"len": 0.45, "thickness": 12}}}'`.
+handy for title, annotations, shapes, axis-label position, and colorbar
+layout. Shorten a colorbar, or pad only its label, with
+`--patch '{"layout": {"colorbar": {"len": 0.45, "thickness": 12, "labelpad": 16}}}'`.
 Shrink map panel titles without changing `--fontsize` with
 `--patch '{"theme": {"rc": {"axes.titlesize": 10}}}'`.
 The same object takes other basic rcParams (`xtick.labelsize`,
 `axes.labelsize`, `lines.linewidth`, `axes.titleweight`, …).
+`axes.labelpad` pads **every** axis label (lon/lat and colorbar); use
+`layout.colorbar.labelpad` when only the colorbar label should move.
 Spread faceted map panels with `--panel-spacing 0.25` or
 `--patch '{"layout": {"facet": {"wspace": 0.25, "hspace": 0.15}}}'`.
 Move a windrose radial label with
@@ -609,7 +617,7 @@ linewidth keys) without a dump:
 | `font.size` | fallback size when a more specific key is unset |
 | `font.family` / `font.weight` | typeface and default weight |
 | `axes.titleweight` / `figure.titleweight` | panel / figure title weight (`bold`) |
-| `axes.titlepad` / `axes.labelpad` | gap from title or axis label to the axes |
+| `axes.titlepad` / `axes.labelpad` | gap from title or **every** axis label (lon/lat **and** colorbar) to the axes. Colorbar-only spacing is `layout.colorbar.labelpad` |
 | `xtick.major.pad` / `ytick.major.pad` | gap from tick labels to the spines |
 | `axes.labelweight` | axis-label weight |
 | `lines.linewidth` | default line width (timeseries / xy) |
@@ -627,10 +635,23 @@ Use `layout.dpi` / `layout.figsize` / `layout.facecolor`, not `figure.dpi`
 | `traces[].line` / `.mesh` / `.contour` / `.scatter` / `.bar` / `.quiver` / `.windrose` | kwargs for the matching artist (`linewidth`, `alpha`, `marker`, `shading`, `levels`, `scale`, `nsector`, …). `contour.lines: false` skips isoline overlay |
 | `traces[].fill` | `fill_between` for `--band` |
 | `traces[].mediogram` | `{width, forecast, mclimate, mean, legend}` for box colors / mean line |
-| `layout.colorbar` | `extend`, `pad`, `orientation`, `location`, plus `len`/`thickness` |
+| `layout.colorbar` | see the table below. `--patch` these; unknown keys error |
 | `layout.facet.wspace` / `hspace` | inter-panel gap as a fraction of panel size (`--panel-spacing`) |
 | `layout.facecolor`, `layout.dpi` | figure patch and DPI |
 | `theme.rc` | matplotlib rcParams after seaborn (see the table above). `--dump-spec` always includes the `--fontsize` sizes |
+
+`layout.colorbar` via `--patch '{"layout": {"colorbar": {…}}}'` (or `--cbar-*` CLI). An unknown key is an error:
+
+| `layout.colorbar` key | What it changes | CLI |
+| --- | --- | --- |
+| `labelpad` | points between colorbar ticks and the **colorbar label** (not lon/lat) | `--patch` only |
+| `pad` | gap between the map axes and the colorbar **strip** | — |
+| `len` / `shrink` | colorbar length as a fraction of the axes | — |
+| `thickness` | colorbar thickness in points (`> 1`) or a fraction (`≤ 1`) | — |
+| `location` / `orientation` | `right`, `bottom`, … | — |
+| `extend` / `extendfrac` / `extendrect` | arrows past the ends of the scale | — |
+| `ticks` / `labels` | tick positions and text (same count) | `--cbar-ticks` / `--cbar-labels` |
+| `drawedges` / `spacing` / `format` | class edges, uniform/proportional spacing, tick format | — |
 
 Every knob has exactly one home, and an unknown key is an error naming the
 canonical path, so an edit never silently does nothing. Artist kwargs live on

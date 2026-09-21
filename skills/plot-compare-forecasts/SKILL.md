@@ -72,7 +72,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py \
   provenance chains from the Zarr.
 - `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
   before CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a
-  spec object is rejected.
+  spec object is rejected. Colorbar-only label spacing:
+  `{"layout": {"colorbar": {"labelpad": 16}}}`. `pad` is the strip gap;
+  `theme.rc axes.labelpad` also moves lon/lat labels.
 - `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
   PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
   stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
