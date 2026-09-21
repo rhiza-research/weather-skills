@@ -97,7 +97,7 @@ key that used to be readable somewhere else. Spec version is `2`.
 | `layout` | `figsize`, `autosize`, `dpi`, `facecolor`, `colorbar`, `shared_colorscale`, `subplots`, `bar_mode`, `facet` |
 | `layout.facet` | `rows`, `columns`, `max_columns`, `n_panels`, `wspace`, `hspace` |
 | `theme` | `template`, `colormap` (name, comma list, or `{name, colors, bounds, under, over, cmap}`), `fontsize`, `rc` |
-| `layout.colorbar` | `len`/`shrink`, `thickness`, `pad` (strip gap), `labelpad` / `labelsize` (colorbar label only), `location`, `orientation`, `extend`, `ticks`, `labels`, plus `drawedges` / `spacing` / `format` |
+| `layout.colorbar` | `len`/`shrink`, `thickness`, `pad` (strip gap), `labelpad` / `labelsize` (colorbar label), `ticksize` (colorbar ticks), `location`, `orientation`, `extend`, `ticks`, `labels`, plus `drawedges` / `spacing` / `format` |
 | `geo` | `extent`, `bbox`, `cities`, `mask_geojson`, `draw_boxes`, `overlays`, `lat`, `lon` |
 | `inputs[]` | `id`, `path`, `variable`, `index`, `label`, `colormap`, `role` |
 | `traces[]` | `kind`, `input`, `mark`, `x`, `y`, `path`, `along`, `along_color`, `reduce`, `align`, `band`, `pair_on`, `u_variable`, `v_variable`, `x_variable`, `y_variable`, `metric`, `leads`, plus the artist blocks |
@@ -156,14 +156,16 @@ Key details:
   dates). CLI: `--cbar-label` / per-layer `--label`.
 - **`layout.colorbar`**: `--patch` the object (unknown keys error).
   `labelpad` is points between the colorbar ticks and its label; `labelsize`
-  is that label's font size — both colorbar-only. `pad` is the gap between
-  the maps and the colorbar strip, not the text. `len`/`shrink` and
-  `thickness` size the bar. `location` / `orientation` place it. `ticks` /
-  `labels` need the same count. CLI: `--cbar-ticks` / `--cbar-labels`.
-  `labelpad` / `labelsize` are `--patch` only. `theme.rc axes.labelpad` /
-  `axes.labelsize` apply to **every** axis label (Longitude / Latitude too);
-  do not use them for colorbar-only chrome. `label_pad` relocates to
-  `labelpad`; `fontsize` on the colorbar object relocates to `labelsize`.
+  is that label's font size; `ticksize` is the colorbar tick labels — all
+  colorbar-only. `pad` is the gap between the maps and the colorbar strip,
+  not the text. `len`/`shrink` and `thickness` size the bar. `location` /
+  `orientation` place it. `ticks` / `labels` need the same count. CLI:
+  `--cbar-ticks` / `--cbar-labels`. `labelpad` / `labelsize` / `ticksize`
+  are `--patch` only. `theme.rc axes.labelpad` / `axes.labelsize` /
+  `xtick.labelsize` apply to the map axes too; do not use them for
+  colorbar-only chrome. `label_pad` relocates to `labelpad`; `fontsize` on
+  the colorbar object relocates to `labelsize`; `tick_size` relocates to
+  `ticksize`.
 - **`layout.colorbar.ticks` / `labels`**: explicit colorbar ticks. Labels
   need ticks and the same count. CLI: `--colormap-bounds`, `--cbar-ticks`,
   `--cbar-labels`.

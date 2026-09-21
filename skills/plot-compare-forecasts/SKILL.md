@@ -73,7 +73,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py \
 - `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
   before CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a
   spec object is rejected. Colorbar-only label spacing:
-  `{"layout": {"colorbar": {"labelpad": 16, "labelsize": 28}}}`. `pad` is
+  `{"layout": {"colorbar": {"labelpad": 16, "labelsize": 28, "ticksize": 15}}}`. `pad` is
   the strip gap; `theme.rc axes.labelpad` / `axes.labelsize` also change
   lon/lat labels.
 - `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a

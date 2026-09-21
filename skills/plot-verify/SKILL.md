@@ -82,8 +82,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
 - `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
   before CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a
   spec object is rejected. Colorbar-only label spacing:
-  `{"layout": {"colorbar": {"labelpad": 16, "labelsize": 28}}}`. `pad` is
-  the strip gap; `theme.rc axes.labelpad` / `axes.labelsize` also change
+  `{"layout": {"colorbar": {"labelpad": 16, "labelsize": 28, "ticksize": 15}}}`.
+  `pad` is the strip gap; `theme.rc axes.labelpad` / `axes.labelsize` /
+  `xtick.labelsize` also change
   lon/lat labels.
 - `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
   PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
