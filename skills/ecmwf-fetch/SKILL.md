@@ -96,7 +96,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 |---|---|---|
 | `tp` | Total precipitation | **Default.** Written as a per-step rate (`mm day-1`). Aggregate then `convert-to-totals` for period `mm`. |
 | `t2m` | 2 m temperature | Daily mean, `degree_Celsius`. Prefer this for "how warm". |
-| `sst` | Sea-surface temperature | Daily mean, `degree_Celsius`. S2S GRIB short name `wtmp` is accepted. |
+| `sst` | Sea-surface temperature | Daily mean, `degree_Celsius`. Catalog name is `sea_surface_temperature`; this skill still writes `sst`. S2S GRIB short name `wtmp` is accepted. |
 | `d2m` | 2 m dewpoint temperature | Daily mean. |
 | `mx2t6` / `mn2t6` | Max / min 2 m temperature in the last 6 hours | ECDS only (catalog has 24 h max/min, not mapped). |
 | `u10` / `v10` | 10 m wind components | Instantaneous 00 UTC. |

@@ -16,6 +16,9 @@ Catalog precip is already a rate (`kg m-2 s-1`). 24-hour surface
 statistics are all-NaN at lead 0; this skill drops that lead and shifts
 remaining steps so `step=0` is the first 24 h.
 
+The catalog stores SST as `sea_surface_temperature` (not `sst`). This skill
+accepts `-v sst` / `wtmp` and writes the S2S short name `sst`.
+
 | `-v` | Catalog field |
 |---|---|
 | `tp` | `precipitation_surface` |

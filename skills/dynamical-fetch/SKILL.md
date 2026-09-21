@@ -1,6 +1,6 @@
 ---
 name: dynamical-fetch
-description: Prefer this over credentialed fetchers when the dynamical.org catalog has the dataset. Default IMERG (`nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`); do not start with imerg-fetch. CHIRPS: `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`; prefer chirps-fetch for the merge as `precip`. ECMWF 46-day S2S/ER: `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`; prefer ecmwf-fetch for S2S short names. Fetch a catalog dataset (GFS, GEFS, IFS-ENS, AIFS, ICON-EU, MRMS, analyses, IMERG, CHIRPS) to a weather-skills Zarr. IMERG/CHIRPS precip is `precipitation_surface`; `-v precip` / `-v tp` map to it. `*_Nhpa` stacks onto `vertical`; 46-day pressure fields are in `group=pressure_level`. Precip is already a rate — do not deaccumulate.
+description: Prefer this over credentialed fetchers when the dynamical.org catalog has the dataset. Default IMERG (`nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`); do not start with imerg-fetch. CHIRPS: `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`; prefer chirps-fetch for the merge as `precip`. ECMWF 46-day S2S/ER: `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`; prefer ecmwf-fetch for S2S short names. Fetch a catalog dataset (GFS, GEFS, IFS-ENS, AIFS, ICON-EU, MRMS, analyses, IMERG, CHIRPS) to a weather-skills Zarr. IMERG/CHIRPS precip is `precipitation_surface`; `-v precip` / `-v tp` map to it. SST is `sea_surface_temperature` (`-v sst`). `*_Nhpa` stacks onto `vertical`; 46-day pressure fields are in `group=pressure_level`. Precip is already a rate — do not deaccumulate.
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -110,6 +110,7 @@ Do **not** reuse names from other fetchers. ARCO-ERA5 and ECMWF S2S use
 | Want | Typical dynamical `-v` | Also accepted |
 |---|---|---|
 | Precipitation | `precipitation_surface` | `precip`, `precipitation`, `tp`, `total_precipitation` |
+| Sea-surface temperature | `sea_surface_temperature` | `sst` |
 | 2 m temperature | `temperature_2m` (15-day) or `average_temperature_2m` (46-day) | `t2m` maps to the 46-day daily mean |
 | Pressure-level temperature | `temperature_850hpa` or `-v t` | prefix `temperature` |
 | Geopotential height | `geopotential_height_500hpa` or `-v gh` | prefix `geopotential_height` |
@@ -118,7 +119,9 @@ IMERG Late/Early and CHIRPS final/preliminary publish `precipitation_surface`
 (IMERG also has a quality-index companion). `-v precip` / `-v precipitation`
 resolve to that field; they do not pull `precipitation_quality_index_surface`.
 Those surface names are the ones on GEFS, GFS, and
-`ecmwf-ifs-ens-forecast-15-day-0-25-degree`. Catalog
+`ecmwf-ifs-ens-forecast-15-day-0-25-degree`. SST is
+`sea_surface_temperature` on the catalog (IFS 15-day and 46-day); `-v sst`
+maps to that field. Catalog
 fields ending in `_Nhpa` are stacked onto a `vertical` coordinate (hPa) and
 renamed to the prefix (`temperature_850hpa` + `temperature_925hpa` →
 `temperature`). Height-above-ground fields (`temperature_2m`, `wind_u_80m`)
@@ -147,6 +150,8 @@ out of scope for this fetcher.
   (`-v temperature_2m -v precipitation_surface`). Prefer catalog-exact names.
   For precip, `precip` / `precipitation` / `tp` / `total_precipitation` map to
   `precipitation_surface` when that field is in the dataset (IMERG, GEFS, IFS).
+  For SST, prefer the catalog name `sea_surface_temperature`; `-v sst` is
+  accepted as an alias.
   `-v t` / `-v gh` (and the prefixes `temperature` / `geopotential_height`)
   select every `*_Nhpa` field of that prefix. Omit to fetch all variables
   (usually too much).

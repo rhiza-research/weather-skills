@@ -76,7 +76,7 @@ analysis.
 | `latitude` / `longitude` | `latitude` / `longitude` | unchanged (1-D) |
 | `time` (analysis) | `time` dim | sliced to `--start-time`/`--end-time`, kept |
 | `*_Nhpa` data variables | prefix + `vertical` dim | stacked; `vertical` is pressure in hPa (`positive=down`). Height-above-ground fields (`temperature_2m`, `wind_u_80m`) are not stacked. |
-| other data variables | data variables | known precip → `mm day-1`; known air temp → `degree_Celsius` |
+| other data variables | data variables | known precip → `mm day-1`; known air temp → `degree_Celsius`. SST stays `sea_surface_temperature` (alias `-v sst`). |
 
 Forecast `--date` selects the **00 UTC** initialization of the resolved date
 (`init_time == <date>T00:00:00`); all supported forecast datasets publish a 00
