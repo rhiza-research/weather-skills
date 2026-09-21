@@ -1,6 +1,8 @@
 """Correctness tests for ecmwf-fetch (no network; helpers + missing creds)."""
 
 import os
+from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -8,6 +10,7 @@ import pytest
 import xarray as xr
 from conftest import load_skill, run_skill
 from weather_skills_core import UsageError
+from weather_skills_core.provenance import load_history
 
 
 @pytest.fixture(scope="module")
@@ -21,6 +24,7 @@ def fetch(mod):
 
 
 def test_missing_ecmwf_env_exits_2(tmp_path, fetch):
+    """Unmapped fields still require ECDS credentials."""
     out = tmp_path / "out.zarr"
     env = {
         k: v
@@ -36,6 +40,8 @@ def test_missing_ecmwf_env_exits_2(tmp_path, fetch):
                 "2026-01-01",
                 "--bbox",
                 "3/10/0/13",
+                "-v",
+                "pv",
                 "-o",
                 str(out),
             )
@@ -276,3 +282,159 @@ def test_standardize_sst_to_celsius(mod):
     np.testing.assert_allclose(
         out["sst"].values, np.array([[290.0, 291.0], [292.0, 293.0]]) - 273.15
     )
+
+
+def _catalog_surface_ds(*, n_lead=3, with_lead0_nan=True):
+    inits = np.array([np.datetime64("2026-01-01T00:00")])
+    leads = np.arange(n_lead) * np.timedelta64(1, "D")
+    lats = [2.0, 1.0]
+    lons = [11.0, 12.0]
+    precip = np.full((1, n_lead, 2, 2, 2), 2e-6, dtype=np.float64)
+    t2m = np.full((1, n_lead, 2, 2, 2), 20.0, dtype=np.float64)
+    if with_lead0_nan:
+        precip[:, 0] = np.nan
+        t2m[:, 0] = np.nan
+    return xr.Dataset(
+        {
+            "precipitation_surface": (
+                ("init_time", "lead_time", "ensemble_member", "latitude", "longitude"),
+                precip,
+                {"units": "kg m-2 s-1", "standard_name": "precipitation_flux"},
+            ),
+            "average_temperature_2m": (
+                ("init_time", "lead_time", "ensemble_member", "latitude", "longitude"),
+                t2m,
+                {"units": "degree_Celsius"},
+            ),
+            "wind_u_10m": (
+                ("init_time", "lead_time", "ensemble_member", "latitude", "longitude"),
+                np.ones((1, n_lead, 2, 2, 2)),
+                {"units": "m s-1"},
+            ),
+        },
+        coords={
+            "init_time": inits,
+            "lead_time": leads,
+            "ensemble_member": [0, 1],
+            "latitude": lats,
+            "longitude": lons,
+        },
+    )
+
+
+def _catalog_pressure_ds(*, n_lead=3):
+    inits = np.array([np.datetime64("2026-01-01T00:00")])
+    leads = np.arange(n_lead) * np.timedelta64(1, "D")
+    return xr.Dataset(
+        {
+            "temperature": (
+                (
+                    "init_time",
+                    "lead_time",
+                    "ensemble_member",
+                    "pressure_level",
+                    "latitude",
+                    "longitude",
+                ),
+                np.full((1, n_lead, 2, 2, 2, 2), 280.0),
+                {"units": "K"},
+            )
+        },
+        coords={
+            "init_time": inits,
+            "lead_time": leads,
+            "ensemble_member": [0, 1],
+            "pressure_level": [1000.0, 850.0],
+            "latitude": [2.0, 1.0],
+            "longitude": [11.0, 12.0],
+        },
+    )
+
+
+def test_catalog_covers_mapped_fields_from_2026(mod):
+    assert mod._catalog_covers(date(2026, 1, 1), ["tp", "t2m", "t"])
+    assert not mod._catalog_covers(date(2025, 12, 31), ["tp"])
+    assert not mod._catalog_covers(date(2026, 1, 1), ["pv"])
+    assert not mod._catalog_covers(date(2026, 1, 1), ["tp", "mx2t6"])
+
+
+def test_drop_empty_lead0_shifts_when_all_nan(mod):
+    ds = _catalog_surface_ds()[["precipitation_surface"]]
+    out = mod._drop_empty_lead0(ds)
+    assert out.sizes["lead_time"] == 2
+    np.testing.assert_array_equal(
+        np.asarray(out["lead_time"].values).astype("timedelta64[D]"),
+        np.array([0, 1], dtype="timedelta64[D]"),
+    )
+
+
+def test_drop_empty_lead0_keeps_instant_fields(mod):
+    ds = _catalog_surface_ds()[["wind_u_10m"]]
+    out = mod._drop_empty_lead0(ds)
+    assert out.sizes["lead_time"] == 3
+
+
+def test_catalog_fetch_writes_tp_without_creds(tmp_path, mod, fetch):
+    out = tmp_path / "out.zarr"
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("ECMWF_DATASTORES_URL", "ECMWF_DATASTORES_KEY")
+    }
+
+    with patch.dict(os.environ, env, clear=True):
+        with patch.object(mod, "_open_catalog", return_value=_catalog_surface_ds()):
+            run_skill(
+                fetch,
+                "--date",
+                "2026-01-01",
+                "--bbox",
+                "3/10/0/13",
+                "-o",
+                str(out),
+            )
+
+    assert Path(out).exists()
+    written = xr.open_zarr(out, consolidated=True)
+    assert "tp" in written
+    assert "precipitation_surface" not in written
+    assert written.attrs.get("weather_skills_source") == "ecmwf-s2s"
+    assert written["tp"].attrs.get("units") == "mm day-1"
+    assert written.sizes["step"] == 2
+    assert "number" in written.dims
+    assert load_history(out)[-1]["skill"] == "ecmwf-fetch"
+
+
+def test_catalog_fetch_pressure_group(tmp_path, mod, fetch):
+    out = tmp_path / "out.zarr"
+
+    def open_catalog(group=None):
+        if group == "pressure_level":
+            return _catalog_pressure_ds()
+        return _catalog_surface_ds()
+
+    with patch.object(mod, "_open_catalog", side_effect=open_catalog):
+        run_skill(
+            fetch,
+            "--date",
+            "2026-01-01",
+            "--bbox",
+            "3/10/0/13",
+            "-v",
+            "t",
+            "-o",
+            str(out),
+        )
+
+    written = xr.open_zarr(out, consolidated=True)
+    assert "t" in written
+    assert "vertical" in written.dims
+    assert written.sizes["step"] == 3  # instant field keeps lead 0
+    assert written["t"].attrs.get("units") == "degree_Celsius"
+
+
+def test_probe_latest_uses_catalog_init(capsys, fetch, mod):
+    with patch.object(mod, "_open_catalog", return_value=_catalog_surface_ds()):
+        run_skill(fetch, "--probe-latest")
+    assert capsys.readouterr().out.strip() == "2026-01-01"
+

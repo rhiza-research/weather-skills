@@ -37,9 +37,9 @@ Prefer small steps over stuffing every filter into one call:
   `--dataset nasa-imerg-analysis-late` (or `nasa-imerg-analysis-early`),
   `-v precipitation_surface`. Do not start with `imerg-fetch`; that is the
   Earthdata daily Late/Final fallback only. **CHIRPS default:** `chirps-fetch`
-  (dynamical.org final + prelim, written as `precip`). Use `ecmwf-fetch` only for ECMWF
-  S2S (subseasonal leads, ocean, full pressure stack — ECDS credentials,
-  2-day embargo). Use a source-specific fetcher (TAHMO, OISST,
+  (dynamical.org final + prelim, written as `precip`). Use `ecmwf-fetch` for ECMWF
+  S2S / ER (46-day; default source is the dynamical.org catalog, ECDS fallback
+  for ocean / pre-2026 / unmapped fields, 2-day embargo). Use a source-specific fetcher (TAHMO, OISST,
   ARCO-ERA5, CMIP6, Kenya archive, Cumulus AI, NeuralGCM S2S, PBC/StillLearning, …) only when
   the catalog does not carry that product. Use `neuralgcm-fetch` for the Tomorrow
   Now 2026 NeuralGCM ensemble at `gs://neuralgcm-s2s` (GCS credentials; default
@@ -157,7 +157,7 @@ every required env var on the **first** call — do not run once, read
 
 Required names (from each skill's `metadata.openclaw.requires.env`):
 
-- `ecmwf-fetch` — `ECMWF_DATASTORES_URL`, `ECMWF_DATASTORES_KEY`
+- `ecmwf-fetch` — `ECMWF_DATASTORES_URL`, `ECMWF_DATASTORES_KEY` (ECDS fallback only)
 - `imerg-fetch` / `smap-fetch` — `EARTHDATA_USERNAME`, `EARTHDATA_PASSWORD`
 - `tahmo-fetch` — `TAHMO_API_USERNAME`, `TAHMO_API_PASSWORD`
 - `openaq-fetch` — `OPENAQ_API_KEY`

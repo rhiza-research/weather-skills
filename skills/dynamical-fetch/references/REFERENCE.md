@@ -1,7 +1,9 @@
 # dynamical-fetch reference
 
 Default forecast/analysis fetcher when the catalog has the product. Use
-`ecmwf-fetch` only for ECMWF S2S. Default IMERG source:
+`ecmwf-fetch` for ECMWF S2S / ER when you want S2S short names (`tp`);
+that skill reads `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` by default.
+Default IMERG source:
 `nasa-imerg-analysis-late` / `nasa-imerg-analysis-early` — do not start
 with `imerg-fetch`. CHIRPS daily analyses:
 `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`.
@@ -32,6 +34,8 @@ grid and are rejected (see below).
 |---|---|---|---|
 | `noaa-gefs-forecast-35-day` | ensemble forecast | `init_time, ensemble_member, lead_time, latitude, longitude` | 31 |
 | `ecmwf-ifs-ens-forecast-15-day-0-25-degree` | ensemble forecast | `init_time, lead_time, ensemble_member, latitude, longitude` | 51 |
+| `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` | ensemble forecast | `init_time, lead_time, ensemble_member, latitude, longitude` | 101 |
+| `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | ensemble forecast | `init_time, lead_time, ensemble_member, latitude, longitude` | 101 |
 | `ecmwf-aifs-ens-forecast` | ensemble forecast | `init_time, lead_time, ensemble_member, latitude, longitude` | 51 |
 | `noaa-gfs-forecast` | deterministic forecast | `init_time, lead_time, latitude, longitude` | — |
 | `ecmwf-aifs-single-forecast` | deterministic forecast | `init_time, lead_time, latitude, longitude` | — |
@@ -79,12 +83,16 @@ Forecast `--date` selects the **00 UTC** initialization of the resolved date
 UTC cycle. A date with no matching init exits 1 and prints the available init
 range.
 
-The catalog does not store a native vertical axis. Pressure-level fields are
-separate 2-D variables, stacked here onto `vertical`:
+Medium-range IFS/AIFS/GEFS stores pressure-level fields as separate 2-D
+`*_Nhpa` variables, stacked here onto `vertical`. The 46-day S2S/ER product
+keeps a native `pressure_level` dim in `group="pressure_level"`; this skill
+opens that group and renames the dim to `vertical`.
 
 | Dataset | Pressure-level fields |
 |---|---|
 | `ecmwf-ifs-ens-forecast-15-day-0-25-degree`, `ecmwf-aifs-ens-forecast`, `ecmwf-aifs-single-forecast` | `temperature_{850,925}hpa`, `geopotential_height_{500,850,925}hpa` |
+| `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` | `group=pressure_level`: `temperature`, `geopotential_height`, `wind_u`, `wind_v`, `vertical_velocity`, `specific_humidity` on 10 levels |
+| `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | none (surface only: precip, 10 m wind, 6 h max/min 2 m temperature) |
 | `noaa-gefs-forecast-35-day`, `noaa-gefs-analysis` | `geopotential_height_500hpa` only |
 | `noaa-gfs-forecast`, `noaa-gfs-analysis`, `dwd-icon-eu-forecast-5-day`, IMERG, CHIRPS, MRMS | none |
 

@@ -38,7 +38,14 @@ _DROP_COORDS = (
 # Catalog stores selected pressure-level fields as separate 2-D variables
 # (`temperature_850hpa`). Stack those onto the ontology `vertical` dim.
 _HPA_RE = re.compile(r"^(.+)_(\d+)hpa$")
-_HPA_ALIASES = {"t": "temperature", "gh": "geopotential_height"}
+_HPA_ALIASES = {
+    "t": "temperature",
+    "gh": "geopotential_height",
+    "u": "wind_u",
+    "v": "wind_v",
+    "w": "vertical_velocity",
+    "q": "specific_humidity",
+}
 # Other fetchers (TAHMO, ARCO, S2S) use these; dynamical.org stores surface precip as
 # precipitation_surface (IMERG, GEFS, IFS-ENS, …).
 _PRECIP_ALIASES = {
@@ -48,6 +55,15 @@ _PRECIP_ALIASES = {
     "total_precipitation": "precipitation_surface",
     "pr": "precipitation_surface",
 }
+# 46-day S2S/ER daily-mean surface names (and common S2S short names).
+_SURFACE_ALIASES = {
+    "t2m": "average_temperature_2m",
+    "2m_temperature": "average_temperature_2m",
+    "2_m_temperature": "average_temperature_2m",
+    "sst": "sea_surface_temperature",
+    "d2m": "average_dew_point_temperature_2m",
+}
+_PRESSURE_GROUP = "pressure_level"
 
 
 def _hpa_by_prefix(data_vars) -> dict[str, list[str]]:
@@ -64,9 +80,12 @@ def _resolve_variables(requested, data_vars, dataset: str):
 
     Catalog-exact names pass through. A prefix (`temperature`) or short alias
     (`t`, `gh`) expands to every `*_Nhpa` field of that prefix — not to
-    height-above-ground companions like `temperature_2m`. Common precip
-    nicknames (`precip`, `precipitation`, `tp`, `total_precipitation`) map to
-    `precipitation_surface` when that field exists.
+    height-above-ground companions like `temperature_2m`. When the dataset
+    stores a single `temperature` field (46-day `pressure_level` group),
+    `-v t` selects that field. Common precip nicknames
+    (`precip`, `precipitation`, `tp`, `total_precipitation`) map to
+    `precipitation_surface` when that field exists. `t2m` / `sst` map to
+    the 46-day daily-mean surface names.
     """
     if not requested:
         return None
@@ -91,7 +110,10 @@ def _resolve_variables(requested, data_vars, dataset: str):
             for kid in sorted(kids, key=lambda n: -int(_HPA_RE.match(n).group(2))):
                 _take(kid)
             continue
-        aliased = _PRECIP_ALIASES.get(token)
+        if prefix in name_set:
+            _take(prefix)
+            continue
+        aliased = _PRECIP_ALIASES.get(token) or _SURFACE_ALIASES.get(token)
         if aliased in name_set:
             _take(aliased)
             continue
@@ -138,6 +160,39 @@ def _stack_pressure_levels(ds):
         )
         pieces.append(stacked.to_dataset())
     return xr.merge(pieces)
+
+
+def _promote_pressure_dim(ds):
+    if "pressure_level" not in ds.dims:
+        return ds
+    ds = ds.rename({"pressure_level": "vertical"})
+    ds["vertical"].attrs.update(
+        units="hPa",
+        standard_name="air_pressure",
+        long_name="pressure",
+        positive="down",
+        axis="Z",
+    )
+    return ds
+
+
+def _merge_pressure_if_needed(ds, dataset, requested):
+    """Open `group=pressure_level` when `-v` tokens are not on the root store."""
+    if not requested:
+        return ds
+    try:
+        _resolve_variables(requested, ds.data_vars, dataset)
+        return ds
+    except UsageError:
+        pass
+    import dynamical_catalog
+    import xarray as xr
+
+    try:
+        pds = dynamical_catalog.open(dataset, group=_PRESSURE_GROUP, chunks=None)
+    except Exception:
+        return ds
+    return xr.merge([ds, _promote_pressure_dim(pds)], compat="override")
 
 
 _STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
@@ -229,6 +284,8 @@ def fetch(bbox, dataset, date, start_time, end_time, variable, **kwargs):
     ds = state["ds"]
     shape = state["shape"]
     is_forecast = shape in ("ensemble", "forecast")
+    if variable:
+        ds = _merge_pressure_if_needed(ds, dataset, variable)
 
     if is_forecast:
         if date is None:

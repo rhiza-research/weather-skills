@@ -219,6 +219,13 @@ def test_resolve_t_alias_expands_hpa_only(mod):
     assert mod._resolve_variables(["temperature_850hpa"], names, "ifs") == ["temperature_850hpa"]
 
 
+def test_resolve_t_alias_uses_grouped_temperature(mod):
+    names = ["average_temperature_2m", "temperature", "geopotential_height"]
+    assert mod._resolve_variables(["t"], names, "er") == ["temperature"]
+    assert mod._resolve_variables(["gh"], names, "er") == ["geopotential_height"]
+    assert mod._resolve_variables(["t2m"], names, "er") == ["average_temperature_2m"]
+
+
 def test_resolve_precip_aliases_to_surface(mod):
     names = ["precipitation_surface", "precipitation_quality_index_surface"]
     for token in ("precip", "precipitation", "tp", "total_precipitation", "pr"):
@@ -275,3 +282,50 @@ def test_fetch_stacks_pressure_levels(tmp_path, mod, fetch):
     assert "temperature_2m" not in written
     assert "vertical" in written.dims
     assert list(written["vertical"].values) == [925.0, 850.0]
+
+
+def test_merge_pressure_group_renames_vertical(mod):
+    root = xr.Dataset(
+        {
+            "precipitation_surface": (
+                ("init_time", "lead_time", "latitude", "longitude"),
+                np.ones((1, 1, 2, 2)),
+            )
+        },
+        coords={
+            "init_time": [np.datetime64("2026-01-01")],
+            "lead_time": [np.timedelta64(1, "D")],
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    pressure = xr.Dataset(
+        {
+            "temperature": (
+                ("init_time", "lead_time", "pressure_level", "latitude", "longitude"),
+                np.ones((1, 1, 2, 2, 2)) * 280.0,
+            )
+        },
+        coords={
+            "init_time": [np.datetime64("2026-01-01")],
+            "lead_time": [np.timedelta64(1, "D")],
+            "pressure_level": [1000.0, 850.0],
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+
+    class _Catalog:
+        @staticmethod
+        def open(dataset, group=None, chunks=None):
+            assert group == "pressure_level"
+            return pressure
+
+    with patch.dict("sys.modules", {"dynamical_catalog": _Catalog}):
+        merged = mod._merge_pressure_if_needed(
+            root, "ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree", ["t"]
+        )
+    assert "temperature" in merged
+    assert "vertical" in merged.dims
+    assert "pressure_level" not in merged.dims
+    assert mod._resolve_variables(["t"], merged.data_vars, "er") == ["temperature"]

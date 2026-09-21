@@ -1,6 +1,6 @@
 ---
 name: dynamical-fetch
-description: Prefer this over credentialed fetchers when the dynamical.org catalog has the dataset. Default IMERG source (`nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`); do not start with imerg-fetch. CHIRPS analyses are `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`; prefer chirps-fetch for the final+prelim merge as `precip`. Fetch a catalog dataset (GFS, GEFS, ECMWF IFS-ENS, AIFS, ICON-EU, MRMS, their analyses, IMERG, CHIRPS) and write a weather-skills standard dataset Zarr. Use for credential-free forecast or analysis grids. IMERG/CHIRPS precip is `precipitation_surface`; `-v precip` / `-v precipitation` / `-v tp` map to it. Pressure-level fields (`temperature_850hpa`, `geopotential_height_500hpa`) stack onto `vertical`; `-v t` / `-v gh` select all native levels. Precip is already a rate — do not deaccumulate; aggregate-temporal then convert-to-totals for period mm.
+description: Prefer this over credentialed fetchers when the dynamical.org catalog has the dataset. Default IMERG (`nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`); do not start with imerg-fetch. CHIRPS: `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`; prefer chirps-fetch for the merge as `precip`. ECMWF 46-day S2S/ER: `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`; prefer ecmwf-fetch for S2S short names. Fetch a catalog dataset (GFS, GEFS, IFS-ENS, AIFS, ICON-EU, MRMS, analyses, IMERG, CHIRPS) to a weather-skills Zarr. IMERG/CHIRPS precip is `precipitation_surface`; `-v precip` / `-v tp` map to it. `*_Nhpa` stacks onto `vertical`; 46-day pressure fields are in `group=pressure_level`. Precip is already a rate — do not deaccumulate.
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -26,9 +26,9 @@ selected with `--dataset` and validated at runtime against
 ## When to use
 
 Prefer this fetcher whenever the [dynamical.org catalog](https://dynamical.org/catalog/)
-has the dataset — GFS, GEFS, ECMWF IFS-ENS, AIFS, ICON-EU, MRMS, their analyses,
-IMERG early/late, and CHIRPS final/preliminary. It is credential-free and has
-no API queue.
+has the dataset — GFS, GEFS, ECMWF IFS-ENS (15-day and 46-day), AIFS, ICON-EU,
+MRMS, their analyses, IMERG early/late, and CHIRPS final/preliminary. It is
+credential-free and has no API queue.
 
 **IMERG:** this is the default source (`--dataset nasa-imerg-analysis-late`
 or `nasa-imerg-analysis-early`, `-v precipitation_surface`). Do not start
@@ -47,8 +47,9 @@ only (GES DISC granules, no bbox, credentials).
   `aggregate-temporal` and (for `mm` totals) `convert-to-totals`. Do **not**
   run `deaccumulate` — fetchers already write rates.
 
-Use `ecmwf-fetch` only for ECMWF **S2S** (subseasonal, ECDS credentials, 2-day
-embargo, fuller pressure/ocean fields). Use source-specific fetchers (TAHMO,
+Use `ecmwf-fetch` for ECMWF **S2S / ER** when you want S2S short names (`tp`,
+`t2m`) — it reads this same 46-day catalog by default and falls back to ECDS
+for unmapped fields and pre-2026 inits. Use source-specific fetchers (TAHMO,
 OISST, ARCO-ERA5, CMIP6, …) when the catalog does not carry that product. For
 IMERG, use `imerg-fetch` only when you need GES DISC **daily** Late or Final,
 not as the first choice. For CHIRPS, `chirps-fetch` is the default (final +
@@ -75,6 +76,8 @@ The dataset shape determines which time flags apply and the output dims.
 |---|---|---|---|
 | `noaa-gefs-forecast-35-day` | ensemble forecast (31) | global | `(number, step, latitude, longitude)` |
 | `ecmwf-ifs-ens-forecast-15-day-0-25-degree` | ensemble forecast (51) | global | `(number, step, latitude, longitude)` |
+| `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` | ensemble forecast (101) | global 1.5° daily | `(number, step, latitude, longitude)` |
+| `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | ensemble forecast (101) | global 1.5° 6-hourly | `(number, step, latitude, longitude)` |
 | `ecmwf-aifs-ens-forecast` | ensemble forecast (51) | global | `(number, step, latitude, longitude)` |
 | `noaa-gfs-forecast` | deterministic forecast | global | `(step, latitude, longitude)` |
 | `ecmwf-aifs-single-forecast` | deterministic forecast | global | `(step, latitude, longitude)` |
@@ -87,9 +90,12 @@ The dataset shape determines which time flags apply and the output dims.
 | `ucsb-chc-chirps-analysis-final` | analysis | global land 60°S–60°N | `(time, latitude, longitude)` |
 | `ucsb-chc-chirps-analysis-preliminary` | analysis | global land 60°S–60°N | `(time, latitude, longitude)` |
 
-Pressure-level catalog fields add a `vertical` dim (hPa). The catalog only
-publishes selected levels (IFS/AIFS: 925/850/500 hPa; GEFS: 500 hPa
-geopotential only; GFS and ICON-EU: none), not a full native stack.
+Pressure-level catalog fields add a `vertical` dim (hPa). Medium-range
+IFS/AIFS publish selected `*_Nhpa` fields at the store root (925/850/500
+hPa). The 46-day S2S/ER product stores the full 10-level stack in
+`group=pressure_level`; this skill opens that group when `-v t` / `-v gh`
+(or another pressure token) is not on the root. GFS and ICON-EU publish
+none.
 
 See <https://dynamical.org/catalog/> for each dataset's variables, resolution,
 and update cadence. `--variable`/`-v` is the catalog name for that `--dataset`
@@ -104,7 +110,7 @@ Do **not** reuse names from other fetchers. ARCO-ERA5 and ECMWF S2S use
 | Want | Typical dynamical `-v` | Also accepted |
 |---|---|---|
 | Precipitation | `precipitation_surface` | `precip`, `precipitation`, `tp`, `total_precipitation` |
-| 2 m temperature | `temperature_2m` | (catalog-exact; not `2m_temperature`) |
+| 2 m temperature | `temperature_2m` (15-day) or `average_temperature_2m` (46-day) | `t2m` maps to the 46-day daily mean |
 | Pressure-level temperature | `temperature_850hpa` or `-v t` | prefix `temperature` |
 | Geopotential height | `geopotential_height_500hpa` or `-v gh` | prefix `geopotential_height` |
 
@@ -184,6 +190,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-15-
 # IFS pressure-level temperature (850 + 925 hPa, stacked on `vertical`)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-15-day-0-25-degree --date 2026-06-01 \
   --bbox 5/34/-5/42 -v t -o /tmp/ifs_t.zarr
+
+# ECMWF 46-day S2S/ER (prefer ecmwf-fetch for S2S short names)
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree --date 2026-02-15 \
+  --bbox 5/34/-5/42 -v precipitation_surface -o /tmp/ifs_er.zarr
 
 # GFS deterministic forecast for a specific init date, full global grid
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset noaa-gfs-forecast --date 2026-06-01 -o /tmp/gfs.zarr
