@@ -563,17 +563,19 @@ def test_precip_short_period_colormap_uses_daily_window():
     assert list(norm.boundaries) == pytest.approx(daily["bounds"])
 
 
-def test_precip_anomaly_colormap_is_chirps_palette():
+def test_precip_anomaly_colormap_is_nested_week_window():
     from matplotlib.colors import BoundaryNorm, ListedColormap
+    from weather_skills_core.plot.theme import precip_nested_anomaly_palette
 
     da = make_gridded(fill=-25.0)["precip"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
     cmap, norm = plot_maps._heatmap_scale(da, None)
+    week = precip_nested_anomaly_palette("ppt_anom_week")
     assert isinstance(cmap, ListedColormap)
-    assert cmap.name == "chirps_anom"
-    assert cmap.N == 13
+    assert cmap.name == "ppt_anom_week"
+    assert cmap.N == len(week["bounds"]) - 1
     assert isinstance(norm, BoundaryNorm)
-    assert list(norm.boundaries) == pytest.approx(plot_theme.PRECIP_ANOMALY_BOUNDS)
+    assert list(norm.boundaries) == pytest.approx(week["bounds"])
 
     named = make_gridded(fill=12.0)["precip"]
     named.attrs.update(
@@ -582,7 +584,7 @@ def test_precip_anomaly_colormap_is_chirps_palette():
         long_name="rainfall anomaly",
     )
     cmap_named, norm_named = plot_maps._heatmap_scale(named, None)
-    assert cmap_named.name == "chirps_anom"
+    assert cmap_named.name == "ppt_anom_week"
     assert isinstance(norm_named, BoundaryNorm)
 
 

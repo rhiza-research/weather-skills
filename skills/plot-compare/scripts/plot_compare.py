@@ -54,9 +54,9 @@ from weather_skills_core.plot.spec import (
 )
 from weather_skills_core.plot.theme import (
     aggregation_days,
+    default_precip_window,
     is_precip,
     is_precip_anomaly,
-    widest_precip_window,
 )
 from weather_skills_core.standard_utils import (
     ensure_normalized_longitude,
@@ -129,7 +129,7 @@ def _ax_bounds(ds, variable):
     help=(
         "matplotlib colormap name, or comma-separated colors. "
         "When plotting rainfall anomalies, omit this flag so the default "
-        "ppt_anomaly / chirps_anom classes apply. "
+        "nested ±mm classes apply (cropped by aggregation_period). "
         "Discrete custom classes: pass --colormap-bounds or a spec object."
     ),
 )
@@ -704,10 +704,11 @@ def plot_compare(
     if use_shared_scale:
         cmap_name = colormap
         if colormap is None and _is_precip(da_a) and _is_precip(da_b) and not user_vlim:
-            if _is_precip_anomaly(da_a) or _is_precip_anomaly(da_b):
-                cmap_name = "chirps_anom"
-            else:
-                cmap_name = widest_precip_window(_aggregation_days(da_a), _aggregation_days(da_b))
+            cmap_name = default_precip_window(
+                _aggregation_days(da_a),
+                _aggregation_days(da_b),
+                anomaly=_is_precip_anomaly(da_a) or _is_precip_anomaly(da_b),
+            )
             scale_shared = scale_from_da(da_a, cmap_name, stretch=False)
         else:
             dmin, dmax = _finite_limits(da_a, da_b)

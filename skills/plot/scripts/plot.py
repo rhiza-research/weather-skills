@@ -458,7 +458,7 @@ def _merged_spec(
     help=(
         "matplotlib colormap name, or comma-separated colors. "
         "When plotting rainfall anomalies, omit this flag so the default "
-        "ppt_anomaly / chirps_anom classes apply. "
+        "nested ±mm classes apply (cropped by aggregation_period). "
         "Also: ppt_poa, ppt_spp, spi. Else rocket. "
         "Windrose default: blue-to-orange speed classes. "
         "Quiver default: YlGn (ECMWF S2S 10 m / 700 hPa wind vectors)."

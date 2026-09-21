@@ -107,14 +107,15 @@ def test_precip_shared_scale_is_nested_week_window():
     assert scale["bounds"] == pytest.approx(week["bounds"])
 
 
-def test_precip_anomaly_row_scale_is_chirps_palette():
-    from weather_skills_core.plot.theme import PRECIP_ANOMALY_BOUNDS, resolve_colorscale
+def test_precip_anomaly_row_scale_is_nested_week_window():
+    from weather_skills_core.plot.theme import precip_nested_anomaly_palette, resolve_colorscale
 
     da = make_gridded(fill=-40.0)["precip"]
     da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
     scale = resolve_colorscale(da, None)
-    assert scale["name"] == "chirps_anom"
-    assert scale["bounds"] == pytest.approx(PRECIP_ANOMALY_BOUNDS)
+    week = precip_nested_anomaly_palette("ppt_anom_week")
+    assert scale["name"] == "ppt_anom_week"
+    assert scale["bounds"] == pytest.approx(week["bounds"])
 
 
 def test_parse_colormap_accepts_comma_separated_colors():

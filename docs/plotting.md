@@ -145,8 +145,9 @@ Key details:
   `len(colors)` is `len(bounds) - 1`, or two extra colors packed as under +
   classes + over. Named palettes also resolve from `--theme-file` /
   `colormaps` in the user theme file. Unknown keys in that file are an error.
-  When plotting rainfall anomalies, omit the name so the default `ppt_anomaly` /
-  `chirps_anom` applies. Matplotlib names are case-insensitive (`RdBu_r`,
+  When plotting rainfall anomalies, omit the name so the default nested
+  ±mm windows apply (`ppt_anom_week` when `aggregation_period` is missing).
+  Matplotlib names are case-insensitive (`RdBu_r`,
   `rdbu_r`, `YlGn`). CLI values that start with `-` need `--flag=value`
   (`--colormap-bounds=-100,100`, `--vmin=-50`).
 - **`cbar_label`**: the quantity on the color scale — the variable and

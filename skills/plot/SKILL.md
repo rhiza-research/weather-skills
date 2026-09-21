@@ -230,15 +230,17 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   `chirps_total`, 0–2500 mm; `ppt_short` / `chirps_short`) remains as a
   named opt-in.
   When plotting rainfall anomalies (negatives, or `anomal` in the name —
-  e.g. after `difference`), omit `--colormap` so the default `ppt_anomaly_cmap`
-  applies (`[-500, -300, -200, -100, -50, -25, -10, 10, 25, 50, 100, 200,
-  300, 500]` mm with under/over colors). Passing a matplotlib diverging
-  name replaces those millimetre classes. Matplotlib names are
-  case-insensitive (`RdBu_r`, `rdbu_r`, `YlGn`, `coolwarm`).
+  e.g. after `difference`), omit `--colormap` so the default nested
+  diverging millimetre classes apply (same colour = same millimetres;
+  the colorbar window follows `aggregation_period`: ±50 mm daily,
+  ±200 mm week, ±300 mm month, ±500 mm season). Passing a
+  matplotlib diverging name replaces those millimetre classes. Matplotlib
+  names are case-insensitive (`RdBu_r`, `rdbu_r`, `YlGn`, `coolwarm`).
   Percent-of-normal (`poa` / `%`) uses `ppt_poa`;
   SPI uses `spi`. Named aliases: `ppt_daily`, `ppt_week`, `ppt_month`,
-  `ppt_season`, `ppt_total`/`chirps_total`, `ppt_short`/`chirps_short`,
-  `ppt_anomaly`/`chirps_anom`, `ppt_poa`, `ppt_spp`, `spi`. Custom names
+  `ppt_season`, `ppt_anom_daily`, `ppt_anom_week`, `ppt_anom_month`,
+  `ppt_anom_season`, `ppt_total`/`chirps_total`, `ppt_short`/`chirps_short`,
+  `ppt_poa`, `ppt_spp`, `spi`. Custom names
   resolve against `--theme-file` /
   `~/.config/weather-skills/plot.toml` `colormaps` (they used to be ignored).
   Every other variable uses `rocket`. Windrose uses a blue→orange

@@ -85,8 +85,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_compare_forecasts.py \
 - `--colormap` — matplotlib colormap name, comma-separated colors, or a
   `{colors, bounds}` object (`--colormap-bounds` / `--cbar-ticks` /
   `--cbar-labels`). When omitted, precipitation totals use the nested
-  absolute-mm classes; anomalies use the diverging CHIRPS classes. When
-  plotting rainfall anomalies, omit `--colormap` so those classes apply.
+  absolute-mm classes; anomalies use the matching nested diverging windows.
+  When plotting rainfall anomalies, omit `--colormap` so those classes apply.
   Negative `--vmin` / `--colormap-bounds` need the equals form
   (`--vmin=-50`). Every other variable uses
   `viridis`. One shared scale across all present cells.
