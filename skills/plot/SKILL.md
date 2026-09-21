@@ -161,9 +161,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   knobs as `--spec` (`title`, `axes`, `layout`, `annotations`, `shapes`,
   `theme`, …). A `patch` key *inside* a spec object is rejected. Colorbar
   size and **colorbar-only** label spacing:
-  `{"layout": {"colorbar": {"len": 0.45, "thickness": 12, "labelpad": 16}}}`.
-  `labelpad` is points between the colorbar ticks and its label. Do not use
-  `theme.rc axes.labelpad` for that — it also moves Longitude / Latitude.
+  `{"layout": {"colorbar": {"len": 0.45, "thickness": 12, "labelpad": 16, "labelsize": 28}}}`.
+  `labelpad` is points between the colorbar ticks and its label; `labelsize`
+  is the colorbar label font only. Do not use `theme.rc axes.labelpad` /
+  `axes.labelsize` for those — they also change Longitude / Latitude.
   `pad` (not `labelpad`) is the gap between the maps and the colorbar strip.
   Shrink panel date titles (not the figure title) with
   `{"theme": {"rc": {"axes.titlesize": 10}}}`. Tick labels, axis labels,
@@ -270,7 +271,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
 - `--cbar-ticks` / `--cbar-labels` — colorbar tick positions and labels
   (`layout.colorbar.ticks` / `.labels`). Labels require ticks and the same
   count. Example: `--cbar-ticks 0,50,100 --cbar-labels dry,ok,wet`.
-  Colorbar label spacing is `--patch` only (`layout.colorbar.labelpad`).
+  Colorbar label spacing and size are `--patch` only
+  (`layout.colorbar.labelpad` / `labelsize`).
 - `--vmin` / `--vmax` — colorbar limits for heatmap, contour, quiver, and
   scatter. Either may be omitted (the unset end uses the data min/max).
   Setting either one drops the default discrete precip classes and
@@ -575,13 +577,14 @@ prefer stdout (`-`) then `--patch`. Either form skips the PNG.
 `--patch '{"title": "Edited"}'` sets spec values without a dump —
 handy for title, annotations, shapes, axis-label position, and colorbar
 layout. Shorten a colorbar, or pad only its label, with
-`--patch '{"layout": {"colorbar": {"len": 0.45, "thickness": 12, "labelpad": 16}}}'`.
+`--patch '{"layout": {"colorbar": {"len": 0.45, "thickness": 12, "labelpad": 16, "labelsize": 28}}}'`.
 Shrink map panel titles without changing `--fontsize` with
 `--patch '{"theme": {"rc": {"axes.titlesize": 10}}}'`.
 The same object takes other basic rcParams (`xtick.labelsize`,
 `axes.labelsize`, `lines.linewidth`, `axes.titleweight`, …).
-`axes.labelpad` pads **every** axis label (lon/lat and colorbar); use
-`layout.colorbar.labelpad` when only the colorbar label should move.
+`axes.labelpad` / `axes.labelsize` apply to **every** axis label (lon/lat
+and colorbar); use `layout.colorbar.labelpad` / `labelsize` when only the
+colorbar label should change.
 Spread faceted map panels with `--panel-spacing 0.25` or
 `--patch '{"layout": {"facet": {"wspace": 0.25, "hspace": 0.15}}}'`.
 Move a windrose radial label with
@@ -611,13 +614,13 @@ linewidth keys) without a dump:
 | --- | --- |
 | `axes.titlesize` | map panel titles (auto dates or `--subplot-title`) |
 | `figure.titlesize` | figure `--title` |
-| `axes.labelsize` | x/y axis labels |
+| `axes.labelsize` | x/y axis labels **and** the colorbar label. Colorbar-only size is `layout.colorbar.labelsize` |
 | `xtick.labelsize` / `ytick.labelsize` | tick labels |
 | `legend.fontsize` / `legend.title_fontsize` | legend text |
 | `font.size` | fallback size when a more specific key is unset |
 | `font.family` / `font.weight` | typeface and default weight |
 | `axes.titleweight` / `figure.titleweight` | panel / figure title weight (`bold`) |
-| `axes.titlepad` / `axes.labelpad` | gap from title or **every** axis label (lon/lat **and** colorbar) to the axes. Colorbar-only spacing is `layout.colorbar.labelpad` |
+| `axes.titlepad` / `axes.labelpad` | gap from title or **every** axis label (lon/lat **and** colorbar) to the axes. Colorbar-only pad / size are `layout.colorbar.labelpad` / `labelsize` |
 | `xtick.major.pad` / `ytick.major.pad` | gap from tick labels to the spines |
 | `axes.labelweight` | axis-label weight |
 | `lines.linewidth` | default line width (timeseries / xy) |
@@ -645,6 +648,7 @@ Use `layout.dpi` / `layout.figsize` / `layout.facecolor`, not `figure.dpi`
 | `layout.colorbar` key | What it changes | CLI |
 | --- | --- | --- |
 | `labelpad` | points between colorbar ticks and the **colorbar label** (not lon/lat) | `--patch` only |
+| `labelsize` | colorbar label font size (not lon/lat, not colorbar ticks) | `--patch` only |
 | `pad` | gap between the map axes and the colorbar **strip** | — |
 | `len` / `shrink` | colorbar length as a fraction of the axes | — |
 | `thickness` | colorbar thickness in points (`> 1`) or a fraction (`≤ 1`) | — |
