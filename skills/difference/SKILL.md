@@ -97,14 +97,14 @@ One data variable per differenced variable, holding A − B on the aligned
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: an append-only array
-of per-step entries `{skill, version, args, input}` (the `version` recorded in
-this skill's own entry is the value printed by its `--help`; inherited upstream
-entries carry their own versions). Because difference takes two inputs, its entry's `input`
-is a list with one item per input (A then B), each carrying that input's full
-upstream chain, so both branches are recorded; the top-level chain is the first
-input's chain followed by the difference entry. Inspect a written output's
-lineage with the `provenance` skill.
+The output stamps a JSON-encoded `weather_skills_history` DAG. Difference is a
+join: the top-level array is this difference entry, and `input` is a list
+with one item per input (A then B), each carrying that input's full
+upstream subgraph, so both branches are recorded equally. The entry also
+records the git `commit` of the skill that ran (the `version` is the value
+printed by `--help`; inherited upstream entries carry their own versions
+and commits). Inspect a written output's lineage with the `provenance`
+skill.
 
 Re-running with identical arguments against unchanged inputs and an existing
 output is a cheap no-op — reuse the same output path. A cache hit requires the

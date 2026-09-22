@@ -127,10 +127,11 @@ answer the question.
 
 ## Inspecting how an artifact was made
 
-Every artifact a skill writes carries its `weather_skills_history`: the ordered chain of
-skills, versions, and arguments that produced it. The `provenance` skill reads
-that chain from one artifact (`--input`) and renders it as a human-readable
-lineage, raw JSON, or a runnable script that regenerates the file.
+Every artifact a skill writes carries its `weather_skills_history`: the DAG of
+skills, versions, git commits, and arguments that produced it. The `provenance`
+skill reads that graph from one artifact (`--input`) and renders it as a
+human-readable lineage, raw JSON, or a runnable script that pins each step to
+the commit that ran.
 
 Use it to understand an artifact already in the workspace before reusing it —
 what region, dates, and variable it covers, and whether it matches the task —

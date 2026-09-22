@@ -11,7 +11,7 @@ metadata:
 
 # provenance
 
-Read-only inspector for the `weather_skills_history` provenance chain that every
+Read-only inspector for the `weather_skills_history` provenance DAG that every
 zarr-writing skill stamps on its output (and that plot-writers embed in PNG
 `tEXt` chunks). It does not produce an artifact — every view prints to
 stdout, and the user redirects when they want a file.
@@ -57,12 +57,14 @@ skill prints a one-line malformed-history warning to stderr, reports
 
 ### `human`
 
-Prints the lineage oldest-first. Each step shows its skill, version, input
-basename, and args. For a two-input PNG (`plot-compare` or
-`plot-mediogram`), each input branch is printed under its own label. For a
-`concat` zarr, the concat step lists each input branch's full recorded lineage
-beneath it (labeled `a`, `b`, … by input order). If the zarr carries a
-`weather_skills_source` attr it is printed first.
+Prints the lineage oldest-first. Each step shows its skill, version, git
+commit (when recorded), input basename, and args. A single-input path is a
+flat list. Any multi-input join (`concat`, `difference`, `plot-compare`, …)
+lists each parent subgraph under its own label (`a`, `b`, …), including
+nested joins. For a two-input PNG that still stores separate tEXt keys
+(`plot-compare` or `plot-mediogram`), each input branch is printed under its
+own label. If the zarr carries a `weather_skills_source` attr it is printed
+first.
 
 ### `json`
 
@@ -73,23 +75,21 @@ branch stays identified.
 ### `script`
 
 Emits a runnable bash reproduction that regenerates the artifact. Every line
-is a full literal `uvx --from git+… forecasting-skills <skill> …` command, so
-nothing needs to be installed first — `uvx` fetches the CLI on demand.
+is a full literal `uvx --from git+<repo>@<commit> forecasting-skills <skill> …`
+command, so a skill that ran from a branch is pinned to that commit. Steps
+without a recorded commit fall back to the default `weather-skills` repo.
 
-- A single chain (a zarr, or a single-input PNG) reproduces linearly: each
-  step's output threads into the next step's `--input`; fetch steps take no
-  `--input`; intermediates write to `stepN.zarr` and the final step writes the
-  artifact's own name.
-- A two-input plot (`plot-compare`, `plot-mediogram`) or any multi-branch PNG
-  (`plot-compare-forecasts`, …) reproduces each input branch to a distinctly-named
-  file, then emits one final plot command that takes every branch's output as
-  an input (e.g. `plot-compare --input a.zarr --input b.zarr`).
-- A `concat` zarr records each input's full chain under the concat entry, so it
-  reproduces every input branch (labeled `a`, `b`, … by input order) to its own
-  `{letter}.zarr`, then emits one final `concat` command that threads every
-  branch's output via repeated `--input` plus the concat's `--dim`/`--coords`
-  args. A branch whose head is not a fetcher still emits the `<UPSTREAM>` caveat
-  so you can supply that input yourself.
+- A single-input path reproduces linearly: each step's output threads into
+  the next step's `--input`; fetch steps take no `--input`; intermediates
+  write to `stepN.zarr` and the final step writes the artifact's own name.
+- Any multi-input join (`concat`, `difference`, `plot-compare`, …) reproduces
+  each parent subgraph to a distinctly-named file, then emits one final
+  command that takes every branch as an `--input`. Nested joins recurse.
+- A two-input plot that still stores separate tEXt keys reproduces each
+  labeled branch, then emits one final plot command.
+- A branch whose head is not a fetcher still emits the `<UPSTREAM>` caveat
+  so you can supply that input yourself. A step recorded with `dirty: true`
+  gets a warning comment: the commit may not match what executed.
 
 ## `--check` (schema validation)
 
@@ -108,8 +108,11 @@ each. Each value must be a JSON array, and each entry an object with:
 - `args` — an object.
 - `input` — `null`, a `{basename, hash}` object, or an array of
   `{basename, hash}` objects (each of which may also carry a nested `history`
-  chain, which is validated recursively, so a `concat` entry's per-input
-  branches are checked too).
+  DAG, which is validated recursively, so every join's parent subgraphs are
+  checked too).
+- `commit` — optional non-empty string (git SHA of the skill that ran).
+- `repo` — optional non-empty string (clone URL of that skill checkout).
+- `dirty` — optional boolean (working tree had tracked changes).
 
 Unknown or extra keys are noted but do not fail validation. Every violation is
 reported with its location (which key, which entry index, which rule).
