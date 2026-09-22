@@ -1,6 +1,6 @@
 ---
 name: ecmwf-fetch
-description: "Prefer this for ECMWF S2S / extended-range (46-day, 1.5°). Default source is the dynamical.org catalog (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`) — no credentials. Inject ECMWF_DATASTORES_URL and ECMWF_DATASTORES_KEY only when falling back to ECDS (pre-2026 inits, ocean, 6-hour max/min, accumulated fluxes, `pv`). Prefer dynamical-fetch for medium-range IFS-ENS / AIFS. Default `-v tp`. Short names (`t2m`, `sst`, `t`), not ARCO `2m_temperature`. Real-time has a 2-day embargo. Writes `tp` as `mm day-1` and temperatures as `degree_Celsius` — do not deaccumulate. Country bbox: resolve-region first."
+description: "Do not start here. Prefer dynamical-fetch (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`) for ECMWF S2S / ER whenever the catalog has the field and init. This is the ECDS fallback for pre-2026 inits, ocean, 6-hour max/min, accumulated fluxes, and `pv`. Inject ECMWF_DATASTORES_URL and ECMWF_DATASTORES_KEY only then. Prefer dynamical-fetch for medium-range IFS-ENS / AIFS too. Default `-v tp`. Short names (`t2m`, `sst`, `t`), not ARCO `2m_temperature`. Real-time has a 2-day embargo. Writes `tp` as `mm day-1` and temperatures as `degree_Celsius` — do not deaccumulate. Country bbox: resolve-region first."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Default source is the dynamical.org catalog (no credentials). ECDS fallback requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`) and ECMWF_DATASTORES_URL / ECMWF_DATASTORES_KEY (or a `~/.ecmwfdatastoresrc` file). The URL is `https://ecds.ecmwf.int/api`; the key is the personal token from your ECDS account.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -42,16 +42,15 @@ are unchanged.
 
 ## When to use
 
-Prefer `dynamical-fetch` (`ecmwf-ifs-ens-forecast-15-day-0-25-degree` or
-`ecmwf-aifs-ens-forecast`) for medium-range ECMWF — credential-free, 0.25°,
-no embargo. This skill is **S2S / ER only**. For the 46-day catalog product
-under its native names, `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`
-also works; this skill is what Kenya / S2S scripts call (`-v tp`).
+Prefer `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`
+for ECMWF S2S / ER whenever the catalog has the field and init (2026-01-01
+onward, mapped atmosphere fields). Prefer `dynamical-fetch`
+(`ecmwf-ifs-ens-forecast-15-day-0-25-degree` or `ecmwf-aifs-ens-forecast`)
+for medium-range ECMWF. This skill is the **ECDS fallback** for unmapped
+fields and pre-2026 inits.
 
-- A task asks for an ECMWF S2S forecast for a specific init date (real-time
-  inits are embargoed for 2 days).
-- A downstream skill needs the forecast as a weather-skills standard dataset
-  Zarr with S2S short names (`tp`, `t2m`, …).
+- The catalog cannot serve the requested field or init (pre-2026, ocean,
+  6-hour max/min, accumulated fluxes, `pv`).
 
 Not for reanalysis, climatology, or deterministic HRES.
 

@@ -36,9 +36,10 @@ Prefer small steps over stuffing every filter into one call:
   `--dataset nasa-imerg-analysis-late` (or `nasa-imerg-analysis-early`),
   `-v precipitation_surface`. Do not start with `imerg-fetch`; that is the
   Earthdata daily Late/Final fallback only. **CHIRPS default:** `chirps-fetch`
-  (dynamical.org final + prelim, written as `precip`). Use `ecmwf-fetch` for ECMWF
-  S2S / ER (46-day; default source is the dynamical.org catalog, ECDS fallback
-  for ocean / pre-2026 / unmapped fields, 2-day embargo). Use a source-specific fetcher (TAHMO, OISST,
+  (dynamical.org final + prelim, written as `precip`). **ECMWF S2S / ER
+  default:** `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`
+  (`-v precipitation_surface` or `-v tp`). Use `ecmwf-fetch` only as the ECDS
+  fallback (ocean / pre-2026 / unmapped fields). Use a source-specific fetcher (TAHMO, OISST,
   ARCO-ERA5, CMIP6, Kenya archive, Cumulus AI, NeuralGCM S2S, PBC/StillLearning, …) only when
   the catalog does not carry that product. Use `neuralgcm-fetch` for the Tomorrow
   Now 2026 NeuralGCM ensemble at `gs://neuralgcm-s2s` (GCS credentials; default
@@ -57,8 +58,9 @@ Prefer small steps over stuffing every filter into one call:
 - **Variables / dims:** Use `select` (and fetcher `--variable` when the source
   API requires it) before transforms that operate on a single variable or
   slice. Do not expect every transform to re-accept date/region/variable filters.
-- **Zonal moisture transport / IVT:** `ecmwf-fetch -v q -v u` writes pressure-level
-  specific humidity and zonal wind. Pipe that Zarr to `zonal-moisture-transport`
+- **Zonal moisture transport / IVT:** `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`
+  with pressure-level `q` and `u` (or `ecmwf-fetch -v q -v u` if the catalog
+  cannot serve them). Pipe that Zarr to `zonal-moisture-transport`
   for column eastward IVT (`viwve`). Use `--no-integrate` after `select` on one
   pressure level.
 - **Precip accumulations vs rates:** Fetchers write precip as rates

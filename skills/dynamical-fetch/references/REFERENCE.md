@@ -1,8 +1,9 @@
 # dynamical-fetch reference
 
-Default forecast/analysis fetcher when the catalog has the product. Use
-`ecmwf-fetch` for ECMWF S2S / ER when you want S2S short names (`tp`);
-that skill reads `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` by default.
+Default forecast/analysis fetcher when the catalog has the product, including
+ECMWF S2S / ER (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`). Use
+`ecmwf-fetch` only when the catalog cannot serve the request (pre-2026,
+ocean, unmapped fields).
 Default IMERG source:
 `nasa-imerg-analysis-late` / `nasa-imerg-analysis-early` — do not start
 with `imerg-fetch`. CHIRPS daily analyses:

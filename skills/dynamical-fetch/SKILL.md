@@ -1,6 +1,6 @@
 ---
 name: dynamical-fetch
-description: Prefer this over credentialed fetchers when the dynamical.org catalog has the dataset. Default IMERG (`nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`); do not start with imerg-fetch. CHIRPS: `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`; prefer chirps-fetch for the merge as `precip`. ECMWF 46-day S2S/ER: `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`; prefer ecmwf-fetch for S2S short names. Fetch a catalog dataset (GFS, GEFS, IFS-ENS, AIFS, ICON-EU, MRMS, analyses, IMERG, CHIRPS) to a weather-skills Zarr. IMERG/CHIRPS precip is `precipitation_surface`; `-v precip` / `-v tp` map to it. SST is `sea_surface_temperature` (`-v sst`). `*_Nhpa` stacks onto `vertical`; 46-day pressure fields are in `group=pressure_level`. Precip is already a rate — do not deaccumulate.
+description: Prefer this over credentialed fetchers when the dynamical.org catalog has the dataset. Default IMERG (`nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`); do not start with imerg-fetch. CHIRPS: `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`; prefer chirps-fetch for the merge as `precip`. ECMWF 46-day S2S/ER: `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`; do not start with ecmwf-fetch. Fetch a catalog dataset (GFS, GEFS, IFS-ENS, AIFS, ICON-EU, MRMS, analyses, IMERG, CHIRPS) to a weather-skills Zarr. IMERG/CHIRPS precip is `precipitation_surface`; `-v precip` / `-v tp` map to it. SST is `sea_surface_temperature` (`-v sst`). `*_Nhpa` stacks onto `vertical`; 46-day pressure fields are in `group=pressure_level`. Precip is already a rate — do not deaccumulate.
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -47,9 +47,11 @@ only (GES DISC granules, no bbox, credentials).
   `aggregate-temporal` and (for `mm` totals) `convert-to-totals`. Do **not**
   run `deaccumulate` — fetchers already write rates.
 
-Use `ecmwf-fetch` for ECMWF **S2S / ER** when you want S2S short names (`tp`,
-`t2m`) — it reads this same 46-day catalog by default and falls back to ECDS
-for unmapped fields and pre-2026 inits. Use source-specific fetchers (TAHMO,
+This is the default for ECMWF **S2S / ER**
+(`--dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`). `-v tp` maps
+to `precipitation_surface`. Use `ecmwf-fetch` only when the catalog cannot
+serve the request (pre-2026 inits, ocean, 6-hour max/min, accumulated
+fluxes, `pv`). Use source-specific fetchers (TAHMO,
 OISST, ARCO-ERA5, CMIP6, …) when the catalog does not carry that product. For
 IMERG, use `imerg-fetch` only when you need GES DISC **daily** Late or Final,
 not as the first choice. For CHIRPS, `chirps-fetch` is the default (final +
@@ -196,7 +198,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-15-
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-15-day-0-25-degree --date 2026-06-01 \
   --bbox 5/34/-5/42 -v t -o /tmp/ifs_t.zarr
 
-# ECMWF 46-day S2S/ER (prefer ecmwf-fetch for S2S short names)
+# ECMWF 46-day S2S/ER (default; ecmwf-fetch is ECDS fallback only)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree --date 2026-02-15 \
   --bbox 5/34/-5/42 -v precipitation_surface -o /tmp/ifs_er.zarr
 

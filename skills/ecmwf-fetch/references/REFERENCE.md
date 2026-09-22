@@ -1,9 +1,9 @@
 # ecmwf-fetch reference
 
-Prefer `dynamical-fetch` (`ecmwf-ifs-ens-forecast-15-day-0-25-degree` or
-`ecmwf-aifs-ens-forecast`) for medium-range ECMWF. This skill is S2S /
-extended-range. Default source is the dynamical.org catalog
-(`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`); ECDS is the fallback.
+Prefer `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`
+for ECMWF S2S / ER. This skill is the ECDS fallback for unmapped fields and
+pre-2026 inits. Prefer `dynamical-fetch` (`ecmwf-ifs-ens-forecast-15-day-0-25-degree`
+or `ecmwf-aifs-ens-forecast`) for medium-range ECMWF.
 
 ## dynamical.org catalog (default)
 

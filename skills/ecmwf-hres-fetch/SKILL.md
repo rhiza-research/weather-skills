@@ -47,9 +47,9 @@ bbox, and writes a consolidated Zarr store. Default field is `tp`.
   **ensemble** is acceptable — same underlying model, same free access, and
   its control member (`number=0`) is close to HRES but not identical
   (different post-processing pipeline).
-- Prefer `ecmwf-fetch` for ECMWF **S2S / ER** (subseasonal, 46-day,
-  dynamical.org catalog by default, 2-day embargo) — this skill does not
-  reach that archive.
+- Prefer `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`
+  for ECMWF **S2S / ER** (subseasonal, 46-day). `ecmwf-fetch` is the ECDS
+  fallback only. This skill does not reach that archive.
 
 Not for reanalysis, climatology, or ensembles. It retrieves the single
 deterministic HRES member only.

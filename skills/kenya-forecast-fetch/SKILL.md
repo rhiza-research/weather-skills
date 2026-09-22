@@ -49,11 +49,12 @@ archive's pre-rendered product PNGs, use `kenya-forecast-png`.
   weekly precip (`--dataset precip_downscaled`) or the daily disaggregation
   of that downscale (`--dataset precip_downscaled_daily`) for the same init.
 
-Prefer `dynamical-fetch` when you need a live global GEFS / IFS / GFS fetch.
-Use this skill for Kenya-region grids already published in the pilot archive
-(no ECDS queue). Prefer `ecmwf-fetch` only for S2S, or when an init date's
-`data/` folder only has legacy GRIB/NetCDF (no `.zarr` / downscaled weekly or
-daily file).
+Prefer `dynamical-fetch` when you need a live global GEFS / IFS / GFS / S2S
+fetch (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` for ER). Use this
+skill for Kenya-region grids already published in the pilot archive (no
+catalog or ECDS queue). Use `ecmwf-fetch` only when the catalog cannot serve
+the request, or when an init date's `data/` folder only has legacy
+GRIB/NetCDF (no `.zarr` / downscaled weekly or daily file).
 
 ## Usage
 
