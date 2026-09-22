@@ -472,7 +472,7 @@ def _stamp_attrs(out, dim, agg_period, method, interval, *, data_interval=None):
     cm = format_cell_methods(dim, cf_method, interval=interval)
     for name in out.data_vars:
         attrs = {**out[name].attrs, AGGREGATION_PERIOD_ATTR: agg_period, "cell_methods": cm}
-        native = attrs.get(DATA_INTERVAL_ATTR) or data_interval
+        native = data_interval or attrs.get(DATA_INTERVAL_ATTR)
         if native:
             attrs[DATA_INTERVAL_ATTR] = native
         out[name].attrs = attrs
@@ -667,7 +667,7 @@ def aggregate(
     else:
         out = _aggregate_time_resample(ds, dim, spec, method)
 
-    return _stamp_attrs(out, dim, spec["agg"], method, interval, data_interval=native_interval)
+    return _stamp_attrs(out, dim, spec["agg"], method, interval, data_interval=spec["agg"])
 
 
 if __name__ == "__main__":
