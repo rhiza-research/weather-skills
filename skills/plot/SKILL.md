@@ -1,6 +1,6 @@
 ---
 name: plot
-description: Render a 2D heatmap, filled-contour map, 1D time series, xy scatter, wind-rose, u/v quiver, or layered map PNG from weather-skills standard dataset Zarrs. Name files with -i, --x/--y, or repeatable --layer KIND:PATH. Set every other parameter in --spec (kind, variable, title, colormap, bbox, fontsize). --dump-spec prints the merged spec. Heatmaps overlay coastlines, borders, lakes, and admin-1 boundaries. For precipitation, run aggregate-temporal then convert-to-totals first. For a lead-week verification grid, use plot-verify.
+description: Render a 2D heatmap, filled-contour map, 1D time series, xy scatter, wind-rose, u/v quiver, or layered map PNG from weather-skills standard dataset Zarrs. Side-by-side maps on different grids (CHIRPS 0.05° next to ECMWF 1.5°) are two heatmap traces in --spec, one panel each — do not coarsen them onto one grid. --layer stacks inputs on a single map and does not make a panel per dataset. Name files with -i, --x/--y, or repeatable --layer KIND:PATH. Set every other parameter in --spec. For precipitation, run aggregate-temporal then convert-to-totals first. For a lead-week verification grid, use plot-verify.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py *)
@@ -13,7 +13,19 @@ metadata:
 
 Name the files on the command line. Put every drawing choice in `--spec`.
 
-These are not flags: `--kind`, `--variable`, `--title`, `--colormap`, `--bbox`, `--rows`, `--columns`, `--index`, `--reduce`, `--fontsize`, `--patch`, and the rest of the old plot CLI. Passing one fails, and the error names the `--spec` path. A `::k=v` suffix on `--layer` also fails. A `patch` key inside the JSON is rejected.
+Kind, variable, titles, colormap, map window, panel layout, index, reduce, and font size are spec keys: `traces[0].kind`, `inputs[0].variable`, `title`, `theme.colormap`, `geo.bbox`, `layout.facet.rows` / `columns`, `inputs[0].index`, `traces[0].reduce`, `theme.fontsize`. `--layer` is `KIND:PATH` only; options for that layer go on the matching `layers[]` entry. A `patch` key inside the JSON is rejected.
+
+## Side by side, or one map
+
+| Goal | How |
+| --- | --- |
+| Two datasets in one PNG, each on its own lat/lon (0.05° beside 1.5°) | Two `inputs` and two `traces` with `"kind": "heatmap"`. Point each trace at an input id. `layout.facet` is `{"rows": 1, "columns": 2}`. `subplot_titles` names the panels. `vmin`, `vmax`, and `layout.shared_colorscale` apply to both. |
+| Those same datasets drawn on top of each other | `--layer`. One axes. This does not make a panel per dataset. `layers[].panel` is not a key. |
+| Several times or forecast steps of one dataset | One heatmap trace. `layout.facet.rows` and `columns` tile those slices. |
+
+Different spacing is expected. Do not `coarsen` or `downscale` just to draw the figure. A shared lat/lon grid is only for `difference` and `verify`, which subtract cell by cell.
+
+Each side-by-side trace has to already be one map. A `time` or `step` longer than one value is an error — aggregate it first (`aggregate-temporal`, then `convert-to-totals` for precipitation).
 
 ## Command line
 
@@ -45,24 +57,25 @@ Unset `traces[0].kind` stays `heatmap`. Unset `theme.fontsize` stays 16.
 
 Set `traces[0].kind` in `--spec`.
 
-- `heatmap` — lon/lat `pcolormesh` with coastlines, country borders, filled lakes, and (on country-scale views) admin-1 boundaries. One panel per `step` or `time`, shared color scale, colorbar on the right for one panel and on the bottom for several. Panel titles are calendar dates (`14 Sept '26`) or inclusive ranges (`4–10 Aug '26`); forecast leads keep `<start> until <end>`. The colorbar label is the variable and units (`Total precipitation [mm]`), not the date. Default grid is up to 4 columns. Set `layout.facet.rows` and `layout.facet.columns` to override; leftover cells stay blank. Ensemble `number` is averaged. `inputs[0].index` overrides the reduction for any other extra dim. Precipitation totals use a nested absolute-mm palette (same color = same millimetres; the window follows `aggregation_period`). For rainfall anomalies, omit `theme.colormap` so the diverging millimetre classes apply. A single-input heatmap and `--layer heatmap:<path>` draw the same picture.
+- `heatmap` — lon/lat `pcolormesh` with coastlines, country borders, filled lakes, and (on country-scale views) admin-1 boundaries. One trace is one panel per `step` or `time`. Two traces are two panels on two grids; see **Side by side, or one map**. Shared color scale, colorbar on the right for one panel and on the bottom for several. Panel titles are calendar dates (`14 Sept '26`) or inclusive ranges (`4–10 Aug '26`); forecast leads keep `<start> until <end>`. The colorbar label is the variable and units (`Total precipitation [mm]`), not the date. Default grid is up to 4 columns. Set `layout.facet.rows` and `layout.facet.columns` to override; leftover cells stay blank. Ensemble `number` is averaged. `inputs[0].index` overrides the reduction for any other extra dim. Precipitation totals use a nested absolute-mm palette (same color = same millimetres; the window follows `aggregation_period`). For rainfall anomalies, omit `theme.colormap` so the diverging millimetre classes apply. A single-input heatmap and `--layer heatmap:<path>` draw the same picture.
 - `contour` — the same map as `heatmap`, drawn with `contourf` and thin black isolines. Values are interpolated between grid points. Cannot be combined with `--layer`.
 - `timeseries` — one line plus a marker at each time. Leftover non-time dims are not averaged: set `traces[0].reduce` to a list of dim names, or `traces[0].along` to draw one line per value of that dim. A forecast (`step` plus a scalar init `time`) is plotted against valid time (`init + step`). An analysis or obs cube is plotted against its `time` axis. For several series as stacked panels, use `plot-timeseries`.
 - `xy` — scatter one 1D series against another. Pass `--x` and `--y`, or one `-i` with `traces[0].x_variable` and `traces[0].y_variable`. Each series is reduced like `timeseries` (`geo.bbox` / `geo.mask_geojson` subset first when lat/lon remain). `traces[0].pair_on` is `time` (default, inner-join on time or valid time), `year` (calendar year), or `index` (position; lengths must match). Duplicate keys are an error — aggregate or select first. Points are labeled when `pair_on` is `year`, or when it is `time` and there are 25 points or fewer. This is not `--layer scatter`, which draws stations on a map.
 - `windrose` — one polar rose of meteorological-from direction (0° = N, 90° = E, clockwise), stacked by speed. Converts eastward `u` and northward `v`. Auto-detects `u10`/`v10` and CF `eastward_wind` / `northward_wind`, or set `traces[0].u_variable` and `traces[0].v_variable`. Remaining space, time, and ensemble dims become samples; the ensemble is not averaged. `geo.bbox`, `geo.mask_geojson`, and `inputs[0].index` subset samples first. 16 sectors; speed classes 0–2, 2–4, …, ≥12 m/s, with empty high bins dropped. `theme.colormap` colors the stacks (default blue→orange).
-- `quiver` — wind-speed `pcolormesh` (default `YlGn`) with `u`/`v` arrows on the native grid. Arrow length is auto-scaled so a typical wind is about 1.5× the subsampled spacing. Set `traces[0].quiver_step` to stride. Same panels and geo overlays as `heatmap`. Ensemble `number` is averaged. Finer grids auto-thin to about 1.5° unless `quiver_step` is set. Colorbar is `Wind speed [m/s]` (or `Wind speed anomaly` when the u field name says so), with arrow keys at 5 and 10 m/s. With `--layer`, use `--layer quiver:PATH` instead of kind `quiver`.
+- `quiver` — wind-speed `pcolormesh` (default `YlGn`) with `u`/`v` arrows on the native grid. Arrow length is auto-scaled so a typical wind is about 1.5× the subsampled spacing. Set `traces[0].quiver.step` to stride and `traces[0].quiver.scale` to override arrow length. A `--layer quiver:` entry uses the same keys on `layers[].quiver`. Same panels and geo overlays as `heatmap`. Ensemble `number` is averaged. Finer grids auto-thin to about 1.5° unless `quiver.step` is set. Colorbar is `Wind speed [m/s]` (or `Wind speed anomaly` when the u field name says so), with arrow keys at 5 and 10 m/s. With `--layer`, use `--layer quiver:PATH` instead of kind `quiver`.
 
 ## Layers
 
-`--layer` draws several inputs on the **same** axes. Each heatmap uses that Zarr's own lat/lon, so a 1.5° forecast and a 0.05° CHIRPS field share a map without `coarsen`. There is no per-layer panel: `layers[].panel` is not a key. `layout.facet.rows` and `columns` only tile time or `step` slices of that one map.
+`--layer` draws several inputs on the **same** axes. It is not the side-by-side layout above. There is no per-layer panel: `layers[].panel` is not a key.
 
-`heatmap`, `scatter` (`station_id` / `point_id`), and `quiver` read Zarrs. `outline` draws GeoJSON edges. `mask` is a GeoJSON NaN mask, the same idea as `geo.mask_geojson`. A layer inherits figure-level `variable`, `theme.colormap`, `inputs[].index`, `vmin`, and `vmax` when its own `layers[]` entry omits them. A forecast `step` axis still panels one map per lead; a static layer (outline, cities, a single-time field) repeats on every panel. Another data layer on the same axis kind is intersected on labels. Overlaying calendar `time` on a raw `step` forecast is an error — run `step-to-time` first. Same-variable heatmap and scatter layers share one color scale unless `layout.shared_colorscale` is `false`.
+`heatmap`, `scatter` (`station_id` / `point_id`), and `quiver` read Zarrs. `outline` draws GeoJSON edges. `mask` is a GeoJSON NaN mask, the same idea as `geo.mask_geojson`. A layer inherits `inputs[].variable`, `theme.colormap`, `inputs[].index`, `vmin`, and `vmax` when its own `layers[]` entry omits them. A forecast `step` axis still panels one map per lead; a static layer (outline, cities, a single-time field) repeats on every panel. Another data layer on the same axis kind is intersected on labels. Overlaying calendar `time` on a raw `step` forecast is an error — run `step-to-time` first. Same-variable heatmap and scatter layers share one color scale unless `layout.shared_colorscale` is `false`.
 
 `--layer` cannot be combined with kind `timeseries`, `xy`, `windrose`, or `contour`.
 
 ## When to use
 
-- Stations or a GeoJSON outline on a forecast or obs heatmap.
+- CHIRPS next to a forecast, each at its own resolution, in one PNG. Two heatmap traces. Do not coarsen the forecast onto the obs grid for this.
+- Stations or a GeoJSON outline on a forecast or obs heatmap. Use `--layer` for that overlay.
 - A quick-look map or a time/step profile.
 - One index against another (IOD vs rainfall, or two variables in one Zarr).
 - A wind rose or an S2S-style wind-vector map from u/v.
@@ -81,6 +94,23 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/ecmwf_namibia.zarr -o /tmp/ec
 
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/weekly.zarr -o /tmp/weekly.png \
     --spec '{"inputs":[{"variable":"tp"}],"layout":{"facet":{"rows":2,"columns":3,"wspace":0.25,"hspace":0.25}}}'
+
+# Side by side. Each Zarr keeps its own lat/lon. This is not --layer.
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -o /tmp/chirps_vs_ecmwf.png --spec '{
+  "inputs": [
+    {"id": "a", "path": "/tmp/chirps.zarr", "variable": "precip"},
+    {"id": "b", "path": "/tmp/ecmwf.zarr", "variable": "tp"}
+  ],
+  "traces": [
+    {"kind": "heatmap", "input": "a"},
+    {"kind": "heatmap", "input": "b"}
+  ],
+  "layout": {"shared_colorscale": true, "facet": {"rows": 1, "columns": 2}},
+  "subplot_titles": ["CHIRPS 0.05°", "ECMWF 1.5°"],
+  "geo": {"bbox": [11.3, -3.5, 4.5, 1.3]},
+  "vmin": 0,
+  "vmax": 350
+}'
 
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -o /tmp/imerg_vs_tahmo.png \
     --layer heatmap:/tmp/imerg.zarr --layer scatter:/tmp/tahmo.zarr \
@@ -116,10 +146,10 @@ Values are JSON. Unknown keys on artist or axes objects are errors. There is no 
 | Color limits | `vmin`, `vmax` |
 | Colormap and font | `theme.colormap`, `theme.fontsize`, `theme.template` (`weather_skills` or `colorblind`), `theme.rc` |
 | Map window | `geo.bbox` as `[N, W, S, E]`, `geo.extent`, `geo.mask_geojson`, `geo.cities`, `geo.draw_boxes` |
-| Panels | `layout.figsize` as `[W, H]`, `layout.facet.rows` / `columns` / `wspace` / `hspace`, `layout.dpi`, `layout.facecolor` |
-| Shared layer scale | `layout.shared_colorscale` (`false` = each layer scales alone) |
+| Panels | `layout.figsize` as `[W, H]`, `layout.dpi`, `layout.facecolor`, `layout.facet.rows` / `columns` / `wspace` / `hspace`. One heatmap trace: rows and columns tile `time` or `step`. Several heatmap traces: one panel per trace. |
+| Shared color scale | `layout.shared_colorscale` (`false` = each panel or layer scales alone), plus figure-level `vmin` / `vmax` |
 | Extra-dim reduction | `inputs[0].index`, `traces[0].reduce`, `traces[0].along` |
-| xy / wind | `traces[0].pair_on`, `x_variable`, `y_variable`, `u_variable`, `v_variable`, `quiver_step` |
+| xy / wind | `traces[0].pair_on`, `x_variable`, `y_variable`, `u_variable`, `v_variable`, `quiver.step`, `quiver.scale` |
 | One layer's options | `layers[]` entry with that layer's `id` |
 
 `theme.rc` applies after the seaborn theme, so it wins. Backend and interactive keys (`backend`, `interactive`, `tk.*`, …) are rejected. Do not invent `theme.subplot_title_fontsize` or `theme.label_fontsize`. `theme.fontsize` fills the seven size keys below; `--dump-spec` includes the resolved values.

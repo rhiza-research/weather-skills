@@ -42,7 +42,9 @@ flowchart LR
 - **One map renderer.** `heatmap`, `contour`, `quiver` and `--layer` all
   compile through `plot.maps`: a single-input kind is just a one-layer
   figure. A heatmap kind and `--layer heatmap:<path>` render the same
-  picture. Overlays (coastlines, borders, filled lakes, admin-1) pick a
+  picture. Several heatmap traces are separate panels, one per dataset,
+  each on that Zarr's lat/lon. `--layer` still stacks every input on one
+  axes. Overlays (coastlines, borders, filled lakes, admin-1) pick a
   Natural Earth resolution from the map span and skip a layer with a
   warning if it cannot be fetched.
 - **Recipes stay Python** (verify grid, mediogram boxes). There is no
@@ -72,20 +74,23 @@ and this report.
 
 | Skill | Job | Typical inputs | Layout |
 | --- | --- | --- | --- |
-| [`plot`](../skills/plot/SKILL.md) | One dataset (or stacked `--layer` maps) | `-i` or `--layer KIND:PATH` | heatmap / contour / timeseries / xy / windrose / quiver |
+| [`plot`](../skills/plot/SKILL.md) | One dataset, several heatmap panels, or stacked `--layer` maps | `-i`, paths in `--spec`, or `--layer KIND:PATH` | heatmap / contour / timeseries / xy / windrose / quiver |
 | [`plot-timeseries`](../skills/plot-timeseries/SKILL.md) | Several 1D series | repeatable `-i` | overlay or `layout.subplots`; `traces[].along` spaghetti |
 | [`plot-verify`](../skills/plot-verify/SKILL.md) | Lead-week obs / fc / metric | `--obs` + `--forecast` + verify Zarrs | 2-row metric grid; data must already be one time |
 | [`plot-mediogram`](../skills/plot-mediogram/SKILL.md) | Ensemble vs m-climate at a point | forecast + m-climate Zarrs + `geo.lat` / `geo.lon` | grouped boxplots + mean line |
 
-**Decision rule:** `plot` = one product or overlays on the same axes.
-`plot-timeseries` = many traces. `plot-verify` and `plot-mediogram` are
-specialized recipes.
+**Decision rule.** `plot-timeseries` is many 1D traces. `plot-verify` and
+`plot-mediogram` are specialized recipes. Inside `plot`, pick the layout
+from the table. Different lat/lon spacing is not a reason to coarsen.
 
-**Spatial grids.** A heatmap uses the lat/lon on that Zarr. `plot --layer`
-overlays each mesh on one axes. `layout.facet.rows` / `columns` tile time
-or `step`, not datasets. There is no `layers[].panel` key. A shared
-lat/lon grid is required only by `difference` and `verify`, which subtract
-cell by cell. Do not `coarsen` or `downscale` solely to plot.
+| Goal | Call |
+| --- | --- |
+| Two maps in one PNG, each on its own grid (0.05° beside 1.5°) | Two `inputs` and two `traces` with `kind: heatmap`, one `input` id each. `layout.facet` is `{rows: 1, columns: 2}`. `subplot_titles` names the panels. `vmin`, `vmax`, and `layout.shared_colorscale` are shared. Each trace must already be a single map. |
+| Same datasets drawn on top of each other | `--layer`. One axes. `layers[].panel` is not a key. |
+| Several times or steps of one dataset | One heatmap trace. `layout.facet.rows` / `columns` tile those slices. |
+
+A shared lat/lon grid is required only by `difference` and `verify`, which
+subtract cell by cell. Do not `coarsen` or `downscale` solely to plot.
 
 Precip figures still expect **totals (`mm`)**, not rates:
 `aggregate-temporal` then `convert-to-totals` first.
@@ -112,7 +117,7 @@ key that used to be readable somewhere else. Spec version is `2`.
 | `inputs[]` | `id`, `path`, `variable`, `index`, `label`, `colormap`, `role` |
 | `traces[]` | `kind`, `input`, `mark`, `x`, `y`, `path`, `along`, `along_color`, `reduce`, `align`, `band`, `pair_on`, `time_dim`, `u_variable`, `v_variable`, `x_variable`, `y_variable`, `metric`, `leads`, plus the artist blocks |
 | `traces[]` artist blocks | `line`, `mesh`, `contour`, `scatter`, `bar`, `quiver`, `windrose`, `fill`, `box`, `mediogram` |
-| `layers[]` | `id` (default `a`, `b`, …), `kind`, `path`, `input`, `raw`, scale knobs (`variable`, `colormap`, `vmin`, `vmax`, `index`, `u_variable`, `v_variable`, `quiver_scale`, `quiver_step`), artist blocks (`mesh`, `quiver`, `scatter`, `contour`, …), plus a leftover `options` bag from older dumps |
+| `layers[]` | `id` (default `a`, `b`, …), `kind`, `path`, `input`, `raw`, scale knobs (`variable`, `colormap`, `vmin`, `vmax`, `index`, `u_variable`, `v_variable`), artist blocks (`mesh`, `quiver`, `scatter`, `contour`, …). Quiver stride and arrow length are `quiver.step` and `quiver.scale` on the trace or the layer. A leftover `options` bag from older dumps is still accepted |
 
 Where a knob lives:
 

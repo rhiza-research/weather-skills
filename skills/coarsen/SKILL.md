@@ -1,6 +1,6 @@
 ---
 name: coarsen
-description: Coarsen or align a weather-skills standard dataset Zarr by linearly interpolating it onto a target grid. Prefer --reference-grid PATH to copy another Zarr's exact lat/lon (avoids float mismatch on difference/verify). Or pass --target-resolution and --offset for a synthetic grid (points at offset + k*resolution). Equal or near-equal resolution is a lateral realign (same spacing, different offset — including a half-cell shift). Geometry-only — changes spacing/alignment, adds no information. Use before difference or verify, which subtract cell by cell. Do not coarsen just to plot: `plot` draws each dataset on its own lat/lon grid.
+description: Coarsen or align a weather-skills standard dataset Zarr by linearly interpolating it onto a target grid. Prefer --reference-grid PATH to copy another Zarr's exact lat/lon (avoids float mismatch on difference/verify). Or pass --target-resolution and --offset for a synthetic grid (points at offset + k*resolution). Equal or near-equal resolution is a lateral realign (same spacing, different offset — including a half-cell shift). Geometry-only — changes spacing/alignment, adds no information. Use before difference or verify, which subtract cell by cell. Do not coarsen just to plot: `plot` draws two heatmap traces as two panels, each on its own lat/lon grid.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/coarsen.py *)
@@ -42,7 +42,7 @@ often lands *near* IMERG/CHIRPS/ECMWF points without matching them exactly.
 - Coarsening to a larger spacing before ensemble aggregation.
 - Producing output on a named sheerwater grid via `(resolution, offset)`.
 
-Not for: `plot`. It draws each dataset on its own lat/lon grid. Not for making a grid finer / adding
+Not for: `plot`. Two heatmap traces are two panels, each on its own lat/lon. Not for making a grid finer / adding
 information — that is the `downscale` skill. Not for choosing a non-linear
 method (nearest, cubic, conservative, most_common); this skill is linear-only.
 
