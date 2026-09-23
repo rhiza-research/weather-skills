@@ -20,15 +20,14 @@ from weather_skills_core.plot.charts import compile_mediogram
 from weather_skills_core.plot.figure import DEFAULT_FONTSIZE, parse_figsize, resolve_axis_label
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
-    PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
     datasets_from_cli_or_spec,
     maybe_emit_spec,
+    normalize_spec,
     overlay_spec,
-    parse_plot_patch,
+    params_from_spec,
     parse_plot_spec,
-    resolve_flags,
     spec_inputs_from_datasets,
 )
 from weather_skills_core.units import (
@@ -56,43 +55,11 @@ def _select_point(da, lat, lon):
     version=_SKILL_VERSION,
 )
 @weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=False)
-@weather_skill.argument("--variable", "-v")
-@weather_skill.argument("--lat", type=float, default=None, help="Point latitude.")
-@weather_skill.argument("--lon", type=float, default=None, help="Point longitude.")
-@weather_skill.argument("--title", default=None, help="Optional plot title.")
-@weather_skill.argument(
-    "--xlabel",
-    default=None,
-    help="Override the x-axis label (default: Forecast step).",
-)
-@weather_skill.argument(
-    "--ylabel",
-    default=None,
-    help="Override the y-axis label (default: from variable metadata).",
-)
-@weather_skill.argument(
-    "--fontsize",
-    type=int,
-    default=DEFAULT_FONTSIZE,
-    help="Base font size for titles, axis labels, ticks, and legend (default 16).",
-)
-@weather_skill.argument(
-    "--figsize",
-    default=None,
-    type=parse_figsize,
-    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default 10,5.",
-)
 @weather_skill.argument(
     "--spec",
     default=None,
     type=parse_plot_spec,
     help=SPEC_ARGUMENT_HELP,
-)
-@weather_skill.argument(
-    "--patch",
-    default=None,
-    type=parse_plot_patch,
-    help=PATCH_ARGUMENT_HELP,
 )
 @weather_skill.argument(
     "--dump-spec",
@@ -104,58 +71,36 @@ def _select_point(da, lat, lon):
 )
 def plot_mediogram(
     ds,
-    variable,
-    lat,
-    lon,
-    title,
-    xlabel,
-    ylabel,
-    fontsize,
-    figsize,
     output,
     spec=None,
-    patch=None,
     dump_spec=None,
     **kwargs,
 ):
     """ECMWF-style mediogram: forecast vs m-climate ensemble distributions at a point."""
     ds_fc, ds_mc = datasets_from_cli_or_spec(ds, spec, exactly=2)
-    spec_data = spec.to_dict() if spec is not None else {}
-    if patch:
-        spec_data = overlay_spec(spec_data, patch)
-    flags = resolve_flags(
-        spec_data,
-        title=title,
-        xlabel=xlabel,
-        ylabel=ylabel,
-        figsize=figsize,
-        lat=lat,
-        lon=lon,
-        variable=variable,
-    )
-    title, xlabel, ylabel = flags["title"], flags["xlabel"], flags["ylabel"]
-    lat, lon, variable = flags["lat"], flags["lon"], flags["variable"]
-    figsize = tuple(flags["figsize"]) if flags["figsize"] else None
+    user = spec.to_dict() if spec is not None else {}
+    named = {"forecast": ds_fc, "mclimate": ds_mc}
+    internal = {
+        "version": SPEC_VERSION,
+        "skill": "plot-mediogram",
+        "inputs": spec_inputs_from_datasets(named),
+        "traces": [{"kind": "mediogram", "input": "forecast"}],
+        "theme": {"template": "weather_skills"},
+        "layout": {},
+        "geo": {},
+    }
+    spec_data = normalize_spec(overlay_spec(internal, user))
+    params = params_from_spec(spec_data)
+    title, xlabel, ylabel = params["title"], params["xlabel"], params["ylabel"]
+    lat, lon, variable = params["lat"], params["lon"], params["variable"]
+    figsize = tuple(params["figsize"]) if params["figsize"] else None
+    fontsize = (spec_data.get("theme") or {}).get("fontsize") or DEFAULT_FONTSIZE
     if lat is None or lon is None:
-        raise UsageError("pass --lat and --lon, or --spec with geo.lat/geo.lon")
+        raise UsageError("pass geo.lat and geo.lon in --spec")
     lat = float(lat)
     lon = float(lon)
-    named = {"forecast": ds_fc, "mclimate": ds_mc}
-    assembled = overlay_spec(
-        spec_data,
-        {
-            "version": SPEC_VERSION,
-            "skill": "plot-mediogram",
-            "traces": [{"kind": "mediogram"}],
-            "theme": {"template": "weather_skills", "fontsize": fontsize},
-            "layout": {"figsize": list(figsize) if figsize else None},
-            "geo": {"lat": lat, "lon": lon},
-            "title": title,
-            "xlabel": xlabel,
-            "ylabel": ylabel,
-        },
-    )
-    if maybe_emit_spec(assembled, dump_spec, datasets=named):
+
+    if maybe_emit_spec(spec_data, dump_spec, datasets=named):
         return None
     if output is None:
         raise UsageError("--output is required unless --dump-spec is set")

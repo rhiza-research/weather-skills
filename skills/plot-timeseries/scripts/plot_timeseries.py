@@ -21,31 +21,29 @@ from pathlib import Path
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable
-from weather_skills_core.display_labels import dataset_display_label, resolve_input_labels
+from weather_skills_core.display_labels import dataset_display_label
 from weather_skills_core.plot import export
 from weather_skills_core.plot.charts import compile_lines, leftover_dims
 from weather_skills_core.plot.figure import (
     DEFAULT_FONTSIZE,
     format_plot_date,
     is_datetime_axis,
-    parse_figsize,
+    parse_figsize,  # noqa: F401 — tests call this via the skill module
     resolve_axis_label,
     resolve_time_axis_label,
 )
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
-    PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
     datasets_from_cli_or_spec,
     maybe_emit_spec,
-    overlay_flags,
+    normalize_spec,
     overlay_spec,
-    parse_plot_patch,
+    params_from_spec,
     parse_plot_spec,
-    resolve_flags,
-    spec_input_labels,
     spec_inputs_from_datasets,
+    trace_at,
 )
 from weather_skills_core.plot.theme import (
     along_dim,
@@ -329,137 +327,32 @@ def _day_of_year_tick_label(doy: float) -> str:
     return format_plot_date(date, year=False)
 
 
+def _styles_from_traces(traces, n):
+    """Per-series style from ``traces[].line`` / ``bar`` / ``mark``."""
+    styles = []
+    for i in range(n):
+        tr = traces[i] if i < len(traces) and isinstance(traces[i], dict) else {}
+        block = {}
+        for key in ("line", "bar"):
+            artist = tr.get(key)
+            if isinstance(artist, dict):
+                block.update(artist)
+        if tr.get("mark"):
+            block["mark"] = tr["mark"]
+        styles.append(block)
+    return styles
+
+
 @weather_skill(
     name="plot-timeseries",
     version=_SKILL_VERSION,
 )
 @weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=False)
-@weather_skill.argument("--variable", "-v")
-@weather_skill.argument(
-    "--time-dim",
-    default=None,
-    help="Time-like dim; default time, then step, then CF time.",
-)
-@weather_skill.argument(
-    "--reduce",
-    action="append",
-    default=None,
-    help="Non-time dim to mean-reduce before plotting. Repeatable.",
-)
-@weather_skill.argument(
-    "--along",
-    default=None,
-    help=(
-        "Non-time dim to fan into traces (e.g. number/member). One input, "
-        "many lines. Default: shared color and one legend entry. "
-        "Pass --along-color cycle for a distinct color per value."
-    ),
-)
-@weather_skill.argument(
-    "--along-color",
-    default=None,
-    choices=["same", "cycle"],
-    help=(
-        "When --along fans a dim: same (default) paints every member one color "
-        "with one legend entry; cycle gives each value its own color and legend entry."
-    ),
-)
-@weather_skill.argument("--title", default=None, help="Optional figure title.")
-@weather_skill.argument(
-    "--xlabel",
-    default=None,
-    help="Override the x-axis label (default: omitted on datetime ticks; else Calendar day / Step).",
-)
-@weather_skill.argument(
-    "--ylabel",
-    default=None,
-    help="Override the y-axis label (default: from variable metadata).",
-)
-@weather_skill.argument(
-    "--fontsize",
-    type=int,
-    default=DEFAULT_FONTSIZE,
-    help="Base font size for titles, axis labels, ticks, and legend (default 16).",
-)
-@weather_skill.argument(
-    "--figsize",
-    default=None,
-    type=parse_figsize,
-    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default 10,6.",
-)
-@weather_skill.argument(
-    "--mark",
-    choices=["line", "bar"],
-    default=None,
-    help="line (default) or bar (see --bar-mode).",
-)
-@weather_skill.argument(
-    "--bar-mode",
-    choices=["grouped", "stacked", "overlay"],
-    default=None,
-    help="How bar traces compose: grouped (default), stacked, or overlay. Spec: layout.bar_mode.",
-)
-@weather_skill.argument(
-    "--align-day-of-year",
-    action="store_true",
-    help="Plot against day-of-year (1-366) instead of absolute date.",
-)
-@weather_skill.argument(
-    "--band",
-    default=None,
-    help=(
-        "Ensemble envelope along --along: two percentiles, e.g. 10,90 (default when "
-        "the flag is passed as --band with no value: 10,90). Draws a filled range plus "
-        "the mean instead of spaghetti members."
-    ),
-)
-@weather_skill.argument(
-    "--theme",
-    default=None,
-    choices=["weather_skills", "colorblind"],
-    help="Seaborn colorway: weather_skills (deep) or colorblind.",
-)
-@weather_skill.argument(
-    "--label",
-    action="append",
-    default=None,
-    help=(
-        "Legend label (overlay) or subplot title (--subplots) for each --input, "
-        "in order. Omit to infer from metadata."
-    ),
-)
-@weather_skill.argument(
-    "--trace",
-    action="append",
-    default=[],
-    type=parse_trace,
-    help=(
-        "Per-series style SELECTOR:k=v. Repeatable. Selector is a 1-based "
-        "--input index (1..N), legend label, unique token in the label "
-        "(e.g. 2026), or * for all. Keys: color, linewidth, linestyle, "
-        "marker, markersize, alpha, zorder, mark (line|bar, overrides "
-        "global --mark for that series)."
-    ),
-)
-@weather_skill.argument(
-    "--subplots",
-    action="store_true",
-    help=(
-        "One stacked subplot per --input (shared time axis, independent y-scales) "
-        "instead of overlaying traces on a single axes."
-    ),
-)
 @weather_skill.argument(
     "--spec",
     default=None,
     type=parse_plot_spec,
     help=SPEC_ARGUMENT_HELP,
-)
-@weather_skill.argument(
-    "--patch",
-    default=None,
-    type=parse_plot_patch,
-    help=PATCH_ARGUMENT_HELP,
 )
 @weather_skill.argument(
     "--dump-spec",
@@ -471,104 +364,59 @@ def _day_of_year_tick_label(doy: float) -> str:
 )
 def plot_timeseries(
     ds,
-    variable,
-    time_dim,
-    reduce,
-    along,
-    along_color,
-    title,
-    xlabel,
-    ylabel,
-    fontsize,
-    figsize,
-    mark,
-    align_day_of_year,
-    label,
-    trace,
     output,
-    subplots=False,
-    band=None,
-    theme=None,
     spec=None,
-    patch=None,
     dump_spec=None,
-    bar_mode=None,
     **kwargs,
 ):
     """Render a multi-input timeseries PNG from weather-skills standard dataset Zarrs."""
     datasets = datasets_from_cli_or_spec(ds, spec)
-    spec_data = spec.to_dict() if spec is not None else {}
-    if patch:
-        spec_data = overlay_spec(spec_data, patch)
-    flags = resolve_flags(
-        spec_data,
-        title=title,
-        xlabel=xlabel,
-        ylabel=ylabel,
-        figsize=figsize,
-        variable=variable,
-        reduce=reduce,
-        along=along,
-        along_color=along_color,
-        mark=mark,
-        bar_mode=bar_mode,
-        subplots=subplots,
-        align_day_of_year=True if align_day_of_year else None,
-        band=band,
-        template=theme,
-    )
-    title, xlabel, ylabel = flags["title"], flags["xlabel"], flags["ylabel"]
-    variable, reduce, along = flags["variable"], flags["reduce"] or [], flags["along"]
-    along_color = parse_along_color(flags["along_color"])
-    figsize = tuple(flags["figsize"]) if flags["figsize"] else None
-    mark = flags["mark"] or "line"
-    subplots = bool(flags["subplots"])
-    align_day_of_year = flags["align_day_of_year"] in (
+    user = spec.to_dict() if spec is not None else {}
+    if len(datasets) > 26:
+        raise UsageError(f"--input must be passed at most 26 times; got {len(datasets)}.")
+    named = {chr(ord("a") + i): d for i, d in enumerate(datasets)}
+    internal = {
+        "version": SPEC_VERSION,
+        "skill": "plot-timeseries",
+        "inputs": spec_inputs_from_datasets(named),
+        "traces": [
+            {"kind": "timeseries", "input": key, "mark": "line"} for key in named
+        ],
+        "layout": {"bar_mode": "grouped"},
+        "axes": {},
+        "theme": {"template": "weather_skills"},
+    }
+    spec_data = normalize_spec(overlay_spec(internal, user))
+    trace0 = trace_at(spec_data)
+    params = params_from_spec(spec_data)
+    title, xlabel, ylabel = params["title"], params["xlabel"], params["ylabel"]
+    variable = params["variable"]
+    reduce = list(trace0.get("reduce") or [])
+    along = trace0.get("along")
+    along_color = parse_along_color(trace0.get("along_color"))
+    figsize = tuple(params["figsize"]) if params["figsize"] else None
+    mark = trace0.get("mark") or "line"
+    subplots = bool((spec_data.get("layout") or {}).get("subplots"))
+    align_day_of_year = trace0.get("align") in (
         True,
         "dayofyear",
         "day-of-year",
         "day_of_year",
     )
-    band = flags["band"]
-    theme = flags["template"] or "weather_skills"
-    bar_mode = flags["bar_mode"]
-    spec_data = overlay_flags(spec_data, bar_mode=bar_mode, mark=mark)
-    if not label:
-        label = spec_input_labels(spec_data)
-    if len(datasets) > 26:
-        raise UsageError(f"--input must be passed at most 26 times; got {len(datasets)}.")
-    label_slots = resolve_input_labels(label, len(datasets))
-    named = {chr(ord("a") + i): d for i, d in enumerate(datasets)}
-    traces = []
-    for key in named:
-        item = {"kind": "timeseries", "input": key, "mark": mark}
-        if along:
-            item["along"] = along
-            item["along_color"] = along_color
-        if reduce:
-            item["reduce"] = list(reduce)
-        if align_day_of_year:
-            item["align"] = "dayofyear"
-        if band is not None:
-            item["band"] = list(band) if not isinstance(band, str) else band
-        traces.append(item)
-    layout = {"subplots": subplots, "figsize": list(figsize) if figsize else None}
-    if bar_mode or mark == "bar":
-        layout["bar_mode"] = bar_mode or "grouped"
-    assembled = overlay_spec(
-        spec_data,
-        {
-            "version": SPEC_VERSION,
-            "skill": "plot-timeseries",
-            "layout": layout,
-            "traces": traces,
-            "theme": {"template": theme, "fontsize": fontsize},
-            "title": title,
-            "xlabel": xlabel,
-            "ylabel": ylabel,
-        },
-    )
-    if maybe_emit_spec(assembled, dump_spec, datasets=named):
+    band = trace0.get("band")
+    theme = (spec_data.get("theme") or {}).get("template") or "weather_skills"
+    bar_mode = (spec_data.get("layout") or {}).get("bar_mode")
+    fontsize = (spec_data.get("theme") or {}).get("fontsize") or DEFAULT_FONTSIZE
+    time_dim = trace0.get("time_dim")
+    label_slots = [
+        (item.get("label") if isinstance(item, dict) else None)
+        for item in (spec_data.get("inputs") or [])
+    ]
+    while len(label_slots) < len(datasets):
+        label_slots.append(None)
+    label = label_slots
+
+    if maybe_emit_spec(spec_data, dump_spec, datasets=named):
         return None
     if output is None:
         raise UsageError("--output is required unless --dump-spec is set")
@@ -615,7 +463,7 @@ def plot_timeseries(
     band_q = parse_band(band)
     if band_q is not None and not along:
         raise UsageError("--band requires --along (percentiles are taken over that dim).")
-    if flags["along_color"] and not along:
+    if trace0.get("along_color") and not along:
         raise UsageError("--along-color requires --along.")
     if along_color == "cycle" and band_q is not None:
         raise UsageError("--along-color cycle cannot be combined with --band.")
@@ -699,7 +547,7 @@ def plot_timeseries(
         if axis_label is None:
             axis_label = series_xlabel
 
-    styles = resolve_trace_styles([lab for _, _, lab in series], trace)
+    styles = _styles_from_traces(spec_data.get("traces") or [], len(series))
     _validate_trace_colors(styles)
     for series_style, (_, yvals, _), member_labels in zip(
         styles, series, along_labels_by_series, strict=True
@@ -747,42 +595,8 @@ def plot_timeseries(
         template=template,
         spec=spec_data,
     )
-    named = {chr(ord("a") + i): ds for i, ds in enumerate(datasets)}
-    traces = []
-    for key in named:
-        item = {"kind": "timeseries", "input": key, "mark": mark}
-        if along:
-            item["along"] = along
-            item["along_color"] = along_color
-        if reduce:
-            item["reduce"] = list(reduce)
-        if align_day_of_year:
-            item["align"] = "dayofyear"
-        if band_q is not None:
-            item["band"] = list(band_q)
-        traces.append(item)
-    inputs = spec_inputs_from_datasets(named)
-    for i, item in enumerate(inputs):
-        if variable:
-            item["variable"] = variable
-        if label_slots and i < len(label_slots) and label_slots[i]:
-            item["label"] = label_slots[i]
-    compiled.spec = {
-        "version": SPEC_VERSION,
-        "skill": "plot-timeseries",
-        "inputs": inputs,
-        "layout": {
-            "subplots": subplots,
-            "figsize": list(figsize) if figsize else None,
-            **({"bar_mode": bar_mode or "grouped"} if bar_mode or mark == "bar" else {}),
-        },
-        "traces": traces,
-        "theme": {"template": template, "fontsize": fontsize},
-        "title": title,
-        "xlabel": resolved_xlabel,
-        "ylabel": ylabel,
-        "axes": spec_data.get("axes") or {},
-    }
+    spec_data["xlabel"] = resolved_xlabel
+    compiled.spec = spec_data
     return export(
         compiled,
         output,

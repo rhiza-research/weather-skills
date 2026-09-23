@@ -27,7 +27,10 @@ join on shared dims, broadcasting over dims present on only one side — so a
 - Scenario minus historical: a change map (e.g. a CMIP6 SSP time-mean minus
   the historical time-mean = projected change by 2050).
 - Any cell-by-cell difference of two datasets on a shared grid (forecast
-  minus observations, model A minus model B).
+  minus observations, model A minus model B). If the lat/lon coordinates
+  differ, `coarsen` or `downscale` first so the inner join hits the same
+  points. That alignment is for this subtraction. `plot --layer` can draw
+  the two inputs on one map without that alignment.
 
 ## Usage
 

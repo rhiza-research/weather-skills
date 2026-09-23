@@ -1,8 +1,6 @@
 """Correctness tests for plot."""
-
 import json
 from pathlib import Path
-
 import numpy as np
 import pytest
 from conftest import load_skill, make_forecast, make_gridded, make_point_obs, run_skill, write_zarr
@@ -13,111 +11,76 @@ from weather_skills_core.plot import spec as ws_spec
 from weather_skills_core.plot import theme as plot_theme
 from weather_skills_core.provenance import load_figure_history
 from weather_skills_core.units import precip_for_display
+plot_mod = load_skill('plot', 'plot')
 
-plot_mod = load_skill("plot", "plot")
-
-
-@pytest.fixture(scope="module")
+@pytest.fixture(scope='module')
 def plot_fn():
     return plot_mod.plot
 
-
 def test_heatmap_writes_png(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "map.png"
-
-    run_skill(plot_fn, "-i", str(src), "-o", str(out))
-
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'map.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out))
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def test_fontsize_writes_png(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "map.png"
-
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--fontsize", "22", "--title", "Large")
-
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'map.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"theme":{"fontsize":22},"title":"Large"}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def test_parse_figsize_and_legend():
     import argparse
-
-    assert plot_mod.parse_panel_spacing("0.25") == (0.25, 0.25)
-    assert plot_mod.parse_panel_spacing("0.4,0.2") == (0.4, 0.2)
-    assert plot_mod.parse_figsize("10,6") == (10.0, 6.0)
-    assert plot_mod.parse_figsize("8x5") == (8.0, 5.0)
-    assert plot_mod.parse_legend("upper right") == "upper right"
-    assert plot_mod.parse_legend("outside") == "outside right"
-    assert plot_mod.parse_legend("bottom") == "below"
-    assert plot_mod.parse_legend("off") == "none"
-    with pytest.raises(argparse.ArgumentTypeError, match="W,H"):
-        plot_mod.parse_figsize("wide")
-    with pytest.raises(argparse.ArgumentTypeError, match="placement"):
-        plot_mod.parse_legend("northwest")
-
+    assert plot_mod.parse_panel_spacing('0.25') == (0.25, 0.25)
+    assert plot_mod.parse_panel_spacing('0.4,0.2') == (0.4, 0.2)
+    assert plot_mod.parse_figsize('10,6') == (10.0, 6.0)
+    assert plot_mod.parse_figsize('8x5') == (8.0, 5.0)
+    assert plot_mod.parse_legend('upper right') == 'upper right'
+    assert plot_mod.parse_legend('outside') == 'outside right'
+    assert plot_mod.parse_legend('bottom') == 'below'
+    assert plot_mod.parse_legend('off') == 'none'
+    with pytest.raises(argparse.ArgumentTypeError, match='W,H'):
+        plot_mod.parse_figsize('wide')
+    with pytest.raises(argparse.ArgumentTypeError, match='placement'):
+        plot_mod.parse_legend('northwest')
 
 def test_help_formats(capsys, plot_fn):
     with pytest.raises(SystemExit) as exc:
-        run_skill(plot_fn, "--help")
+        run_skill(plot_fn, '--help')
     assert exc.value.code == 0
-    assert "Frequency (%)" in capsys.readouterr().out
-
+    text = capsys.readouterr().out
+    assert '--spec' in text
+    assert '--kind' not in text
 
 def test_figsize_writes_png(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "map.png"
-
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--figsize", "7,5", "--title", "Small")
-
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'map.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"layout":{"figsize":[7.0,5.0]},"title":"Small"}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
     import matplotlib.image as mpimg
-
     img = mpimg.imread(out)
     assert img.shape[1] == 7 * 150
     assert img.shape[0] == 5 * 150
     history = load_figure_history(out)
-    assert history[-1]["args"]["figsize"] == [7.0, 5.0]
-
+    assert history[-1]['args']['spec']['layout']['figsize'] == [7.0, 5.0]
 
 def test_timeseries_legend_writes_png(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "ts.png"
-
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--kind",
-        "timeseries",
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--legend",
-        "upper right",
-        "--figsize",
-        "9x4",
-    )
-
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'ts.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"timeseries","reduce":["latitude","longitude"]}],"legend":"upper right","layout":{"figsize":[9.0,4.0]}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
-
 def test_place_legend_below_stays_on_canvas():
     import matplotlib
-
-    matplotlib.use("Agg")
+    matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-
-    fig, ax = plt.subplots(figsize=(9, 4), layout="constrained")
-    ax.plot([1, 2], [1, 2], label="series")
-    legend = plot_charts._place_legend(ax, "below")
+    fig, ax = plt.subplots(figsize=(9, 4), layout='constrained')
+    ax.plot([1, 2], [1, 2], label='series')
+    legend = plot_charts._place_legend(ax, 'below')
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
     box = legend.get_window_extent(renderer)
@@ -127,16 +90,12 @@ def test_place_legend_below_stays_on_canvas():
     assert box.y1 < ax.get_window_extent(renderer).y0
     plt.close(fig)
 
-
 def test_heatmap_ignores_legend(tmp_path, plot_fn, capsys):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "map.png"
-
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--legend", "best")
-
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'map.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"legend":"best"}')
     assert Path(out).exists()
-    assert "ignored for --kind heatmap" in capsys.readouterr().err
-
+    assert 'ignored for --kind heatmap' in capsys.readouterr().err
 
 def test_contour_levels_span_and_pad_constant():
     levels = plot_maps._contour_levels(0.0, 10.0, n=10)
@@ -147,644 +106,409 @@ def test_contour_levels_span_and_pad_constant():
     assert constant[0] < 5.0 < constant[-1]
     assert len(constant) == 11
 
-
 def test_contour_writes_png(tmp_path, plot_fn):
     ds = make_gridded()
-    ds["precip"] = ds["precip"] + ds["latitude"] + 0.01 * ds["longitude"]
-    ds["precip"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    out = tmp_path / "contour.png"
-
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--kind", "contour")
-
+    ds['precip'] = ds['precip'] + ds['latitude'] + 0.01 * ds['longitude']
+    ds['precip'].attrs.update(units='mm day-1', standard_name='lwe_precipitation_rate')
+    src = write_zarr(ds, tmp_path / 'in.zarr')
+    out = tmp_path / 'contour.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"contour"}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
-
 def test_contour_stamps_history(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "contour.png"
-
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--kind", "contour", "--title", "Isolines")
-
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'contour.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"contour"}],"title":"Isolines"}')
     history = load_figure_history(out)
     assert history is not None
-    assert history[-1]["skill"] == "plot"
-    assert history[-1]["args"]["kind"] == "contour"
-    assert history[-1]["args"]["title"] == "Isolines"
-
+    assert history[-1]['skill'] == 'plot'
+    assert history[-1]['args']['spec']['traces'][0]['kind'] == 'contour'
+    assert history[-1]['args']['spec']['title'] == 'Isolines'
 
 def test_heatmap_stamps_history(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "map.png"
-
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--title", "Precip")
-
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'map.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"title":"Precip"}')
     history = load_figure_history(out)
     assert history is not None
-    assert history[-1]["skill"] == "plot"
-    assert history[-1]["args"]["title"] == "Precip"
-
+    assert history[-1]['skill'] == 'plot'
+    assert history[-1]['args']['spec']['title'] == 'Precip'
 
 def test_timeseries_forecast_axis_is_valid_time(plot_fn):
-    da = make_forecast(init="2026-01-01")["tp"]
-    xvals, xlabel = plot_maps.timeseries_axis(da, "step")
-    assert xlabel == "Valid time"
-    assert np.datetime_as_string(xvals[0], unit="D") == "2026-01-01"
-    assert np.datetime_as_string(xvals[-1], unit="D") == "2026-01-03"
-
+    da = make_forecast(init='2026-01-01')['tp']
+    xvals, xlabel = plot_maps.timeseries_axis(da, 'step')
+    assert xlabel == 'Valid time'
+    assert np.datetime_as_string(xvals[0], unit='D') == '2026-01-01'
+    assert np.datetime_as_string(xvals[-1], unit='D') == '2026-01-03'
 
 def test_axis_label_capitalizes():
-    assert ws_figure.axis_label("lon") == "Longitude"
-    assert ws_figure.axis_label("valid time") == "Valid time"
-    assert ws_figure.axis_label("total precipitation [mm]") == "Total precipitation [mm]"
-    assert ws_figure.axis_label("Latitude") == "Latitude"
-
+    assert ws_figure.axis_label('lon') == 'Longitude'
+    assert ws_figure.axis_label('valid time') == 'Valid time'
+    assert ws_figure.axis_label('total precipitation [mm]') == 'Total precipitation [mm]'
+    assert ws_figure.axis_label('Latitude') == 'Latitude'
 
 def _map_figure(ds, *, fontsize=16, **spec_extra):
     """Compile a map the way the CLI does — one spec through the one renderer."""
     import matplotlib
-
-    matplotlib.use("Agg")
-    spec = {
-        "version": 2,
-        "inputs": [{"id": "a", "variable": next(iter(ds.data_vars))}],
-        "traces": [{"kind": "heatmap", "input": "a"}],
-        "layout": {"facet": {}},
-        "theme": {"colormap": "viridis"},
-        "geo": {},
-    }
+    matplotlib.use('Agg')
+    spec = {'version': 2, 'inputs': [{'id': 'a', 'variable': next(iter(ds.data_vars))}], 'traces': [{'kind': 'heatmap', 'input': 'a'}], 'layout': {'facet': {}}, 'theme': {'colormap': 'viridis'}, 'geo': {}}
     for key, value in spec_extra.items():
-        if key in ("extent", "cities"):
-            spec["geo"][key] = value
+        if key in ('extent', 'cities'):
+            spec['geo'][key] = value
         else:
             spec[key] = value
-    fig, _drawn = plot_maps.compile_map_figure(spec, {"a": ds}, fontsize=fontsize)
+    fig, _drawn = plot_maps.compile_map_figure(spec, {'a': ds}, fontsize=fontsize)
     return fig
-
 
 def test_heatmap_colorbar_sits_below_maps():
     import matplotlib.pyplot as plt
-
     ds = make_gridded(n_time=1, lats=(-4.0, 0.0, 4.0), lons=(35.0, 37.0, 39.0))
-    fig = _map_figure(ds, extent=[34.0, 42.0, -5.0, 5.0], title="S2S precip")
+    fig = _map_figure(ds, extent=[34.0, 42.0, -5.0, 5.0], title='S2S precip')
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
-    maps = [ax for ax in fig.axes if ax.get_visible() and getattr(ax, "projection", None)]
+    maps = [ax for ax in fig.axes if ax.get_visible() and getattr(ax, 'projection', None)]
     if not maps:
         maps = [ax for ax in fig.axes[:-1] if ax.get_visible()]
     cbar = fig.axes[-1]
     cbar_box = cbar.get_tightbbox(renderer)
-    maps_bottom = min(ax.get_tightbbox(renderer).ymin for ax in maps)
-    maps_right = max(ax.get_tightbbox(renderer).xmax for ax in maps)
+    maps_bottom = min((ax.get_tightbbox(renderer).ymin for ax in maps))
+    maps_right = max((ax.get_tightbbox(renderer).xmax for ax in maps))
     below = cbar_box.ymax <= maps_bottom + 2.0
     to_the_right = cbar_box.xmin >= maps_right - 2.0
     assert below or to_the_right
     st = fig._suptitle
     assert st is not None
-    maps_top = max(ax.get_tightbbox(renderer).ymax for ax in maps)
+    maps_top = max((ax.get_tightbbox(renderer).ymax for ax in maps))
     title_bottom = st.get_window_extent(renderer).ymin
     assert title_bottom >= maps_top - 2.0
     plt.close(fig)
 
-
 def test_layout_suptitle_y_raises_the_figure_title():
     import matplotlib.pyplot as plt
-
     ds = make_gridded(n_time=1, lats=(-4.0, 0.0, 4.0), lons=(35.0, 37.0, 39.0))
-    fig = _map_figure(
-        ds,
-        title="S2S precip",
-        layout={"facet": {}, "suptitle": {"y": 1.06}},
-    )
+    fig = _map_figure(ds, title='S2S precip', layout={'facet': {}, 'suptitle': {'y': 1.06}})
     fig.canvas.draw()
     assert fig._suptitle.get_position()[1] == pytest.approx(1.06)
     plt.close(fig)
 
-
 def test_long_title_still_renders():
     import matplotlib.pyplot as plt
-
-    fig = _map_figure(
-        make_gridded(n_time=1),
-        extent=[10.0, 11.0, 1.0, 2.0],
-        title="Kenya GEFS vs CHIRPS 5 mm event verification · 2026-08-04 to 2026-08-10",
-    )
+    fig = _map_figure(make_gridded(n_time=1), extent=[10.0, 11.0, 1.0, 2.0], title='Kenya GEFS vs CHIRPS 5 mm event verification · 2026-08-04 to 2026-08-10')
     fig.canvas.draw()
     assert fig._suptitle is not None
-    assert "Kenya GEFS" in fig._suptitle.get_text()
+    assert 'Kenya GEFS' in fig._suptitle.get_text()
     plt.close(fig)
-
 
 def test_resolve_axis_label_override_is_verbatim():
-    assert ws_figure.resolve_axis_label("lon (E)", "Longitude") == "lon (E)"
-    assert ws_figure.resolve_axis_label(None, "lon") == "Longitude"
-    assert ws_figure.resolve_axis_label("", "Latitude") == "Latitude"
-
+    assert ws_figure.resolve_axis_label('lon (E)', 'Longitude') == 'lon (E)'
+    assert ws_figure.resolve_axis_label(None, 'lon') == 'Longitude'
+    assert ws_figure.resolve_axis_label('', 'Latitude') == 'Latitude'
 
 def test_datetime_axis_omits_default_time_label():
-    times = np.array(["2026-01-01", "2026-01-02"], dtype="datetime64[ns]")
+    times = np.array(['2026-01-01', '2026-01-02'], dtype='datetime64[ns]')
     assert ws_figure.is_datetime_axis(times)
-    assert ws_figure.resolve_time_axis_label(None, "Valid time", times) == ""
-    assert ws_figure.resolve_time_axis_label("Lead time", "Valid time", times) == "Lead time"
+    assert ws_figure.resolve_time_axis_label(None, 'Valid time', times) == ''
+    assert ws_figure.resolve_time_axis_label('Lead time', 'Valid time', times) == 'Lead time'
     assert not ws_figure.is_datetime_axis(np.array([1.0, 2.0, 3.0]))
-    assert ws_figure.resolve_time_axis_label(None, "step", np.array([1, 2, 3])) == "Step"
-
+    assert ws_figure.resolve_time_axis_label(None, 'step', np.array([1, 2, 3])) == 'Step'
 
 def test_heatmap_axis_label_overrides(tmp_path, plot_fn):
-    fig = _map_figure(
-        make_gridded(n_time=1),
-        fontsize=14,
-        extent=[10.0, 11.0, 1.0, 2.0],
-        xlabel="Eastings",
-        ylabel="Northings",
-    )
-    axes = [ax for ax in fig.axes if hasattr(ax, "get_xlabel") and ax.get_visible()]
-    assert any(ax.get_xlabel() == "Eastings" for ax in axes)
-    assert any(ax.get_ylabel() == "Northings" for ax in axes)
+    fig = _map_figure(make_gridded(n_time=1), fontsize=14, extent=[10.0, 11.0, 1.0, 2.0], xlabel='Eastings', ylabel='Northings')
+    axes = [ax for ax in fig.axes if hasattr(ax, 'get_xlabel') and ax.get_visible()]
+    assert any((ax.get_xlabel() == 'Eastings' for ax in axes))
+    assert any((ax.get_ylabel() == 'Northings' for ax in axes))
     import matplotlib.pyplot as plt
-
     plt.close(fig)
-
 
 def test_resolve_subplot_titles_count():
     from weather_skills_core import UsageError
-
     assert plot_maps._resolve_subplot_titles(None, 3) == []
-    assert plot_maps._resolve_subplot_titles(["Week 1"], 3) == ["Week 1"]
-    with pytest.raises(UsageError, match="3 panel"):
-        plot_maps._resolve_subplot_titles(["a", "b", "c", "d"], 3)
-
+    assert plot_maps._resolve_subplot_titles(['Week 1'], 3) == ['Week 1']
+    with pytest.raises(UsageError, match='3 panel'):
+        plot_maps._resolve_subplot_titles(['a', 'b', 'c', 'd'], 3)
 
 def test_subplot_title_overrides_heatmap_panels():
-    fig = _map_figure(
-        make_gridded(n_time=2),
-        fontsize=14,
-        extent=[10.0, 11.0, 1.0, 2.0],
-        title="Season",
-        subplot_titles=["Week 1", "Week 2"],
-        cbar_label="Rain (mm)",
-    )
-    titles = [ax.get_title() for ax in fig.axes if ax.get_visible() and hasattr(ax, "get_title")]
-    assert "Week 1" in titles
-    assert "Week 2" in titles
-    cbars = [ax for ax in fig.axes if ax.get_label() == "<colorbar>"]
+    fig = _map_figure(make_gridded(n_time=2), fontsize=14, extent=[10.0, 11.0, 1.0, 2.0], title='Season', subplot_titles=['Week 1', 'Week 2'], cbar_label='Rain (mm)')
+    titles = [ax.get_title() for ax in fig.axes if ax.get_visible() and hasattr(ax, 'get_title')]
+    assert 'Week 1' in titles
+    assert 'Week 2' in titles
+    cbars = [ax for ax in fig.axes if ax.get_label() == '<colorbar>']
     assert cbars
-    assert cbars[0].get_ylabel() == "Rain (mm)" or cbars[0].get_xlabel() == "Rain (mm)"
+    assert cbars[0].get_ylabel() == 'Rain (mm)' or cbars[0].get_xlabel() == 'Rain (mm)'
     import matplotlib.pyplot as plt
-
     plt.close(fig)
-
 
 def test_theme_rc_axes_titlesize_sets_panel_title_size():
-    fig = _map_figure(
-        make_gridded(n_time=2),
-        fontsize=16,
-        extent=[10.0, 11.0, 1.0, 2.0],
-        theme={"colormap": "viridis", "rc": {"axes.titlesize": 10}},
-    )
-    sizes = [
-        ax.title.get_fontsize()
-        for ax in fig.axes
-        if ax.get_visible() and ax.get_title()
-    ]
+    fig = _map_figure(make_gridded(n_time=2), fontsize=16, extent=[10.0, 11.0, 1.0, 2.0], theme={'colormap': 'viridis', 'rc': {'axes.titlesize': 10}})
+    sizes = [ax.title.get_fontsize() for ax in fig.axes if ax.get_visible() and ax.get_title()]
     assert sizes
-    assert all(size == 10 for size in sizes)
+    assert all((size == 10 for size in sizes))
     import matplotlib.pyplot as plt
-
     plt.close(fig)
 
-
 def test_subplot_title_too_many_exits(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(n_time=1), tmp_path / "in.zarr")
-    out = tmp_path / "map.png"
+    src = write_zarr(make_gridded(n_time=1), tmp_path / 'in.zarr')
+    out = tmp_path / 'map.png'
     with pytest.raises(SystemExit) as exc:
-        run_skill(
-            plot_fn,
-            "-i",
-            str(src),
-            "-o",
-            str(out),
-            "--subplot-title",
-            "A",
-            "--subplot-title",
-            "B",
-        )
+        run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"subplot_titles":["A","B"]}')
     assert exc.value.code == 2
 
-
 def test_cbar_label_writes_png(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(n_time=1), tmp_path / "in.zarr")
-    out = tmp_path / "map.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--title",
-        "Kenya rainfall",
-        "--subplot-title",
-        "Latest day",
-        "--xlabel",
-        "Lon",
-        "--ylabel",
-        "Lat",
-        "--cbar-label",
-        "Rain (mm)",
-    )
+    src = write_zarr(make_gridded(n_time=1), tmp_path / 'in.zarr')
+    out = tmp_path / 'map.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"title":"Kenya rainfall","subplot_titles":["Latest day"],"xlabel":"Lon","ylabel":"Lat","cbar_label":"Rain (mm)"}')
     assert Path(out).exists()
     history = load_figure_history(out)
-    assert history[-1]["args"]["title"] == "Kenya rainfall"
-    assert history[-1]["args"]["subplot_title"] == ["Latest day"]
-    assert history[-1]["args"]["cbar_label"] == "Rain (mm)"
-
+    assert history[-1]['args']['spec']['title'] == 'Kenya rainfall'
+    assert history[-1]['args']['spec']['subplot_titles'] == ['Latest day']
+    assert history[-1]['args']['spec']['cbar_label'] == 'Rain (mm)'
 
 def test_panel_title_lead_zero_is_first_24h(plot_fn):
-    da = make_forecast(init="2025-01-01", n_step=3)["tp"]
-    da.attrs["data_interval"] = "1 day"
-    title = plot_maps.panel_title(da, "step", da["step"].values[0], da["step"].values)
+    da = make_forecast(init='2025-01-01', n_step=3)['tp']
+    da.attrs['data_interval'] = '1 day'
+    title = plot_maps.panel_title(da, 'step', da['step'].values[0], da['step'].values)
     assert title.startswith("1 Jan '25")
     assert "until 2 Jan '25" in title
-
 
 def test_panel_title_calendar_weekly_range(plot_fn):
     import numpy as np
     import xarray as xr
-
-    times = np.arange("2026-08-04", "2026-09-01", dtype="datetime64[D]")[::7]
-    da = xr.DataArray(
-        np.zeros((len(times), 2, 2)),
-        dims=("time", "latitude", "longitude"),
-        coords={
-            "time": times,
-            "latitude": [0.0, 1.0],
-            "longitude": [36.0, 37.0],
-        },
-        name="precip",
-    )
-    da.attrs["aggregation_period"] = "7 day"
-    title = plot_maps.panel_title(da, "time", times[0], times)
+    times = np.arange('2026-08-04', '2026-09-01', dtype='datetime64[D]')[::7]
+    da = xr.DataArray(np.zeros((len(times), 2, 2)), dims=('time', 'latitude', 'longitude'), coords={'time': times, 'latitude': [0.0, 1.0], 'longitude': [36.0, 37.0]}, name='precip')
+    da.attrs['aggregation_period'] = '7 day'
+    title = plot_maps.panel_title(da, 'time', times[0], times)
     assert title == "4–10 Aug '26"
-
 
 def test_panel_title_calendar_daily_is_single_date(plot_fn):
     import numpy as np
     import xarray as xr
-
-    times = np.arange("2026-08-04", "2026-08-08", dtype="datetime64[D]")
-    da = xr.DataArray(
-        np.zeros((len(times), 2, 2)),
-        dims=("time", "latitude", "longitude"),
-        coords={
-            "time": times,
-            "latitude": [0.0, 1.0],
-            "longitude": [36.0, 37.0],
-        },
-        name="precip",
-    )
-    da.attrs["aggregation_period"] = "1 day"
-    title = plot_maps.panel_title(da, "time", times[0], times)
+    times = np.arange('2026-08-04', '2026-08-08', dtype='datetime64[D]')
+    da = xr.DataArray(np.zeros((len(times), 2, 2)), dims=('time', 'latitude', 'longitude'), coords={'time': times, 'latitude': [0.0, 1.0], 'longitude': [36.0, 37.0]}, name='precip')
+    da.attrs['aggregation_period'] = '1 day'
+    title = plot_maps.panel_title(da, 'time', times[0], times)
     assert title == "4 Aug '26"
-    assert "time=" not in title
-
+    assert 'time=' not in title
 
 def test_format_date_drops_midnight_time():
     import datetime as dt
-
     import numpy as np
-
-    assert ws_figure.format_plot_date(np.datetime64("2026-01-01T00:00:00")) == "1 Jan '26"
+    assert ws_figure.format_plot_date(np.datetime64('2026-01-01T00:00:00')) == "1 Jan '26"
     assert ws_figure.format_plot_date(dt.datetime(2026, 1, 1, 0, 0, 0)) == "1 Jan '26"
-    assert plot_maps.format_step(np.datetime64("2026-01-01T00:00:00")) == "1 Jan '26"
-
+    assert plot_maps.format_step(np.datetime64('2026-01-01T00:00:00')) == "1 Jan '26"
 
 def test_date_ticks_are_calendar_dates_not_timestamps():
     import matplotlib
-
-    matplotlib.use("Agg")
+    matplotlib.use('Agg')
     import matplotlib.dates as mdates
     import matplotlib.pyplot as plt
     import numpy as np
-
     fig, ax = plt.subplots()
-    days = mdates.date2num(np.arange("2026-08-05", "2026-09-10", dtype="datetime64[D]"))
+    days = mdates.date2num(np.arange('2026-08-05', '2026-09-10', dtype='datetime64[D]'))
     ax.plot(days, np.arange(len(days)))
     ws_figure.apply_date_ticks(ax)
     fig.canvas.draw()
     labels = [tick.get_text() for tick in ax.get_xticklabels() if tick.get_text()]
     assert labels
-    assert all("00:00" not in label for label in labels)
-    assert all("'" in label and any(ch.isalpha() for ch in label) for label in labels)
+    assert all(('00:00' not in label for label in labels))
+    assert all(("'" in label and any((ch.isalpha() for ch in label)) for label in labels))
     plt.close(fig)
-
 
 def test_timeseries_forecast_writes_png(tmp_path, plot_fn):
     ds = make_forecast()
-    ds["tp"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    out = tmp_path / "ts.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--kind",
-        "timeseries",
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-    )
+    ds['tp'].attrs.update(units='mm day-1', standard_name='lwe_precipitation_rate')
+    src = write_zarr(ds, tmp_path / 'in.zarr')
+    out = tmp_path / 'ts.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"timeseries","reduce":["latitude","longitude"]}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
-
 def test_timeseries_refuses_to_average_leftover_dims(tmp_path, plot_fn, capsys):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
     with pytest.raises(SystemExit):
-        run_skill(plot_fn, "-i", str(src), "-o", str(tmp_path / "ts.png"), "--kind", "timeseries")
+        run_skill(plot_fn, '-i', str(src), '-o', str(tmp_path / 'ts.png'), '--spec', '{"traces":[{"kind":"timeseries"}]}')
     err = capsys.readouterr().err
-    assert "--reduce" in err and "--along" in err
-
+    assert '--reduce' in err and '--along' in err
 
 def test_timeseries_along_draws_one_line_per_member(tmp_path, plot_fn):
     ds = make_forecast(members=4)
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    out = tmp_path / "ts.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--kind",
-        "timeseries",
-        "--reduce",
-        "latitude",
-        "--reduce",
-        "longitude",
-        "--along",
-        "number",
-    )
+    src = write_zarr(ds, tmp_path / 'in.zarr')
+    out = tmp_path / 'ts.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"timeseries","reduce":["latitude","longitude"],"along":"number"}]}')
     assert Path(out).exists() and out.stat().st_size > 0
-
 
 def test_precip_default_colormap_is_nested_window():
     from matplotlib.colors import BoundaryNorm, ListedColormap
     from weather_skills_core.plot.theme import precip_nested_palette
-
-    da = make_forecast()["tp"]
-    da.attrs.update(
-        units="mm",
-        standard_name="lwe_thickness_of_precipitation_amount",
-        aggregation_period="10 day",
-    )
+    da = make_forecast()['tp']
+    da.attrs.update(units='mm', standard_name='lwe_thickness_of_precipitation_amount', aggregation_period='10 day')
     cmap, norm = plot_maps._heatmap_scale(da, None)
-    month = precip_nested_palette("ppt_month")
+    month = precip_nested_palette('ppt_month')
     assert isinstance(cmap, ListedColormap)
-    assert cmap.name == "ppt_month"
-    assert cmap.N == len(month["bounds"]) - 1
+    assert cmap.name == 'ppt_month'
+    assert cmap.N == len(month['bounds']) - 1
     assert isinstance(norm, BoundaryNorm)
-    assert list(norm.boundaries) == pytest.approx(month["bounds"])
-
-    rate = make_gridded()["precip"]
-    rate.attrs["aggregation_period"] = "7 day"
+    assert list(norm.boundaries) == pytest.approx(month['bounds'])
+    rate = make_gridded()['precip']
+    rate.attrs['aggregation_period'] = '7 day'
     cmap_rate, norm_rate = plot_maps._heatmap_scale(rate, None)
-    week = precip_nested_palette("ppt_week")
+    week = precip_nested_palette('ppt_week')
     assert isinstance(cmap_rate, ListedColormap)
-    assert cmap_rate.name == "ppt_week"
+    assert cmap_rate.name == 'ppt_week'
     assert isinstance(norm_rate, BoundaryNorm)
-    assert list(norm_rate.boundaries) == pytest.approx(week["bounds"])
-
+    assert list(norm_rate.boundaries) == pytest.approx(week['bounds'])
 
 def test_precip_short_period_colormap_uses_daily_window():
     from matplotlib.colors import BoundaryNorm, ListedColormap
     from weather_skills_core.plot.theme import precip_nested_palette
-
-    da = make_gridded(fill=3.0)["precip"]
-    da.attrs.update(
-        units="mm",
-        standard_name="lwe_thickness_of_precipitation_amount",
-        aggregation_period="1 day",
-    )
+    da = make_gridded(fill=3.0)['precip']
+    da.attrs.update(units='mm', standard_name='lwe_thickness_of_precipitation_amount', aggregation_period='1 day')
     cmap, norm = plot_maps._heatmap_scale(da, None)
-    daily = precip_nested_palette("ppt_daily")
+    daily = precip_nested_palette('ppt_daily')
     assert isinstance(cmap, ListedColormap)
-    assert cmap.name == "ppt_daily"
+    assert cmap.name == 'ppt_daily'
     assert isinstance(norm, BoundaryNorm)
-    assert list(norm.boundaries) == pytest.approx(daily["bounds"])
-
+    assert list(norm.boundaries) == pytest.approx(daily['bounds'])
 
 def test_precip_anomaly_colormap_is_nested_week_window():
     from matplotlib.colors import BoundaryNorm, ListedColormap
     from weather_skills_core.plot.theme import precip_nested_anomaly_palette
-
-    da = make_gridded(fill=-25.0)["precip"]
-    da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
+    da = make_gridded(fill=-25.0)['precip']
+    da.attrs.update(units='mm', standard_name='lwe_thickness_of_precipitation_amount')
     cmap, norm = plot_maps._heatmap_scale(da, None)
-    week = precip_nested_anomaly_palette("ppt_anom_week")
+    week = precip_nested_anomaly_palette('ppt_anom_week')
     assert isinstance(cmap, ListedColormap)
-    assert cmap.name == "ppt_anom_week"
-    assert cmap.N == len(week["bounds"]) - 1
+    assert cmap.name == 'ppt_anom_week'
+    assert cmap.N == len(week['bounds']) - 1
     assert isinstance(norm, BoundaryNorm)
-    assert list(norm.boundaries) == pytest.approx(week["bounds"])
-
-    named = make_gridded(fill=12.0)["precip"]
-    named.attrs.update(
-        units="mm",
-        standard_name="lwe_thickness_of_precipitation_amount",
-        long_name="rainfall anomaly",
-    )
+    assert list(norm.boundaries) == pytest.approx(week['bounds'])
+    named = make_gridded(fill=12.0)['precip']
+    named.attrs.update(units='mm', standard_name='lwe_thickness_of_precipitation_amount', long_name='rainfall anomaly')
     cmap_named, norm_named = plot_maps._heatmap_scale(named, None)
-    assert cmap_named.name == "ppt_anom_week"
+    assert cmap_named.name == 'ppt_anom_week'
     assert isinstance(norm_named, BoundaryNorm)
 
-
 def test_non_precip_default_colormap_is_rocket():
-    da = make_gridded(name="t2m")["t2m"]
-    da.attrs.update(units="degree_Celsius", standard_name="air_temperature")
+    da = make_gridded(name='t2m')['t2m']
+    da.attrs.update(units='degree_Celsius', standard_name='air_temperature')
     cmap, norm = plot_maps._heatmap_scale(da, None)
-    assert cmap == "rocket"
+    assert cmap == 'rocket'
     assert norm is None
-
 
 def test_explicit_colormap_overrides_precip_default():
-    da = make_forecast()["tp"]
-    da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
-    cmap, norm = plot_maps._heatmap_scale(da, "magma")
-    assert cmap == "magma"
+    da = make_forecast()['tp']
+    da.attrs.update(units='mm', standard_name='lwe_thickness_of_precipitation_amount')
+    cmap, norm = plot_maps._heatmap_scale(da, 'magma')
+    assert cmap == 'magma'
     assert norm is None
-
 
 def test_mixed_case_matplotlib_colormap_survives_vmin_stretch():
-    da = make_gridded(name="sst")["sst"]
-    da.attrs.update(units="degree_Celsius", standard_name="sea_surface_temperature")
-    cmap, norm = plot_maps._heatmap_scale(da, "RdBu_r", stretch=True)
-    assert cmap == "RdBu_r"
+    da = make_gridded(name='sst')['sst']
+    da.attrs.update(units='degree_Celsius', standard_name='sea_surface_temperature')
+    cmap, norm = plot_maps._heatmap_scale(da, 'RdBu_r', stretch=True)
+    assert cmap == 'RdBu_r'
     assert norm is None
-    cmap_lower, _ = plot_maps._heatmap_scale(da, "rdbu_r", stretch=True)
-    assert cmap_lower == "RdBu_r"
-
+    cmap_lower, _ = plot_maps._heatmap_scale(da, 'rdbu_r', stretch=True)
+    assert cmap_lower == 'RdBu_r'
 
 def test_heatmap_scale_stretch_drops_precip_boundary_norm():
     from matplotlib.colors import LinearSegmentedColormap
-
-    da = make_forecast()["tp"]
-    da.attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
+    da = make_forecast()['tp']
+    da.attrs.update(units='mm', standard_name='lwe_thickness_of_precipitation_amount')
     cmap, norm = plot_maps._heatmap_scale(da, None, stretch=True)
     assert isinstance(cmap, LinearSegmentedColormap)
     assert norm is None
 
-
 def test_resolve_color_limits_user_and_auto():
     from weather_skills_core import UsageError
-
-    da = make_gridded(fill=12.0)["precip"]
+    da = make_gridded(fill=12.0)['precip']
     lo, hi, norm = plot_maps._resolve_color_limits(da, 0.0, 50.0)
     assert (lo, hi, norm) == (0.0, 50.0, None)
     lo, hi, norm = plot_maps._resolve_color_limits(da, None, 40.0)
     assert lo == 12.0
     assert hi == 40.0
     assert norm is None
-    with pytest.raises(UsageError, match="greater than"):
+    with pytest.raises(UsageError, match='greater than'):
         plot_maps._resolve_color_limits(da, 10.0, 1.0)
 
-
 def test_vmin_vmax_writes_png_and_stamps_history(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(fill=8.0), tmp_path / "in.zarr")
-    out = tmp_path / "vlim.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--vmin",
-        "0",
-        "--vmax",
-        "20",
-        "--title",
-        "Pinned",
-    )
+    src = write_zarr(make_gridded(fill=8.0), tmp_path / 'in.zarr')
+    out = tmp_path / 'vlim.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"vmin":0.0,"vmax":20.0,"title":"Pinned"}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
     history = load_figure_history(out)
-    assert history[-1]["args"]["vmin"] == 0.0
-    assert history[-1]["args"]["vmax"] == 20.0
-
+    assert history[-1]['args']['spec']['vmin'] == 0.0
+    assert history[-1]['args']['spec']['vmax'] == 20.0
 
 def test_layer_vmin_vmax_option(tmp_path, plot_fn):
-    spec = plot_mod.parse_layer("heatmap:/tmp/a.zarr::vmin=0,vmax=25")
-    assert spec.options["vmin"] == "0"
-    assert spec.options["vmax"] == "25"
-    src = write_zarr(make_gridded(fill=8.0), tmp_path / "in.zarr")
-    out = tmp_path / "layer_vlim.png"
-    run_skill(
-        plot_fn,
-        "--layer",
-        f"heatmap:{src}::vmin=0,vmax=15",
-        "-o",
-        str(out),
-    )
+    import argparse
+    with pytest.raises(argparse.ArgumentTypeError, match="layers\\[\\]"):
+        plot_mod.parse_layer('heatmap:/tmp/a.zarr::vmin=0,vmax=25')
+    src = write_zarr(make_gridded(fill=8.0), tmp_path / 'in.zarr')
+    out = tmp_path / 'layer_vlim.png'
+    run_skill(plot_fn, '--layer', f'heatmap:{src}', '-o', str(out), '--spec', '{"layers":[{"id":"a","vmin":0.0,"vmax":15.0}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def test_layer_inherits_figure_colormap_and_vlim(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(name="sst", fill=0.4), tmp_path / "sst.zarr")
-    out = tmp_path / "sst.png"
-    run_skill(
-        plot_fn,
-        "--layer",
-        f"heatmap:{src}::variable=sst",
-        "--colormap",
-        "RdBu_r",
-        "--vmin=-1.5",
-        "--vmax",
-        "1.5",
-        "-o",
-        str(out),
-    )
+    src = write_zarr(make_gridded(name='sst', fill=0.4), tmp_path / 'sst.zarr')
+    out = tmp_path / 'sst.png'
+    run_skill(plot_fn, '--layer', f'heatmap:{src}', '-o', str(out), '--spec', '{"theme":{"colormap":"RdBu_r"},"layers":[{"id":"a","variable":"sst","vmin":-1.5,"vmax":1.5}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
-
 def test_amount_colorbar_drops_leftover_rate_name():
-    da = make_forecast()["tp"]
-    da.attrs.update(
-        units="mm",
-        standard_name="lwe_thickness_of_precipitation_amount",
-        long_name="precipitation rate",
-        GRIB_name="Precipitation rate",
-    )
-    assert plot_maps._variable_label(da) == "Total precipitation [mm]"
-
-    da.attrs["long_name"] = "Total precipitation"
-    da.attrs["GRIB_name"] = "Precipitation rate"
-    assert plot_maps._variable_label(da) == "Total precipitation [mm]"
-
-    rate = make_gridded()["precip"]
-    rate.attrs["long_name"] = "precipitation rate"
-    assert plot_maps._variable_label(rate) == "precipitation rate [mm/day]"
-
+    da = make_forecast()['tp']
+    da.attrs.update(units='mm', standard_name='lwe_thickness_of_precipitation_amount', long_name='precipitation rate', GRIB_name='Precipitation rate')
+    assert plot_maps._variable_label(da) == 'Total precipitation [mm]'
+    da.attrs['long_name'] = 'Total precipitation'
+    da.attrs['GRIB_name'] = 'Precipitation rate'
+    assert plot_maps._variable_label(da) == 'Total precipitation [mm]'
+    rate = make_gridded()['precip']
+    rate.attrs['long_name'] = 'precipitation rate'
+    assert plot_maps._variable_label(rate) == 'precipitation rate [mm/day]'
     quantified = rate.pint.quantify()
-    assert plot_maps._variable_label(quantified) == "precipitation rate [mm/day]"
-
+    assert plot_maps._variable_label(quantified) == 'precipitation rate [mm/day]'
 
 def test_plot_converts_aggregated_precip_rate_to_totals():
     ds = make_gridded()
-    ds["precip"].attrs["aggregation_period"] = "1 day"
-    out = precip_for_display(ds, "precip")
-    assert out["precip"].attrs["units"] == "mm"
-    assert "Total precipitation" in plot_maps._variable_label(out["precip"])
-
+    ds['precip'].attrs['aggregation_period'] = '1 day'
+    out = precip_for_display(ds, 'precip')
+    assert out['precip'].attrs['units'] == 'mm'
+    assert 'Total precipitation' in plot_maps._variable_label(out['precip'])
 
 def test_parse_draw_boxes():
     from weather_skills_core import UsageError
-
-    boxes = plot_maps.parse_draw_boxes(["10/50/-10/70", "0/90/-10/110"])
+    boxes = plot_maps.parse_draw_boxes(['10/50/-10/70', '0/90/-10/110'])
     assert boxes == [(10.0, 50.0, -10.0, 70.0), (0.0, 90.0, -10.0, 110.0)]
     assert plot_maps.parse_draw_boxes(None) == []
     with pytest.raises(UsageError):
-        plot_maps.parse_draw_boxes(["not-a-box"])
-
+        plot_maps.parse_draw_boxes(['not-a-box'])
 
 def test_boundary_layers_country_scale_includes_admin1():
-    # Kenya-sized view (~8° × 10°)
     spec = plot_maps.boundary_layers((33.9, 41.9, -4.7, 5.0))
-    assert spec == {"scale": "10m", "admin1": True}
-
+    assert spec == {'scale': '10m', 'admin1': True}
 
 def test_boundary_layers_regional_excludes_admin1():
-    # East Africa-sized view (~30°) is multi-country, not country-scale
     spec = plot_maps.boundary_layers((22.0, 52.0, -12.0, 18.0))
-    assert spec == {"scale": "10m", "admin1": False}
-
+    assert spec == {'scale': '10m', 'admin1': False}
 
 def test_boundary_layers_continental_excludes_admin1():
-    # Africa-sized view
     spec = plot_maps.boundary_layers((-17.5, 51.5, -35.0, 37.5))
-    assert spec == {"scale": "50m", "admin1": False}
-
+    assert spec == {'scale': '50m', 'admin1': False}
 
 def test_boundary_layers_global_is_coarse():
     spec = plot_maps.boundary_layers((-180.0, 180.0, -90.0, 90.0))
-    assert spec == {"scale": "110m", "admin1": False}
-
+    assert spec == {'scale': '110m', 'admin1': False}
 
 def test_extent_clip_geom_splits_unwrapped_antimeridian():
     clip = plot_maps.extent_clip_geom((170.0, 190.0, -10.0, 10.0))
     assert clip.intersects(plot_maps.extent_clip_geom((175.0, 179.0, -1.0, 1.0)))
-    # The +190 unwrapped piece lives at lon -170 in Natural Earth coords.
     west = plot_maps.extent_clip_geom((-172.0, -168.0, -1.0, 1.0))
     assert clip.intersects(west)
 
-
 def test_pad_cell_extent_wrapped_global_is_full_globe():
-    # GFS-like 0–360 wrap → [-180, 180−Δ]. Half-cell padding is a 360° span
-    # whose endpoints are the same meridian; Cartopy then draws a ~9° sliver.
     lon = np.arange(0.0, 360.0, 10.0)
     lat = np.arange(-20.0, 21.0, 10.0)
     wrapped = np.sort((lon + 180.0) % 360.0 - 180.0)
@@ -792,7 +516,6 @@ def test_pad_cell_extent_wrapped_global_is_full_globe():
     assert ext[0] == -180.0
     assert ext[1] == 180.0
     assert ext[3] - ext[2] == pytest.approx(50.0)
-
 
 def test_pad_cell_extent_indian_ocean_keeps_basin():
     lon = np.arange(40.0, 121.0, 10.0)
@@ -803,62 +526,40 @@ def test_pad_cell_extent_indian_ocean_keeps_basin():
     assert ext[2] == pytest.approx(-25.0)
     assert ext[3] == pytest.approx(25.0)
 
-
 def test_lakes_overlay_is_filled_grey():
-    assert plot_maps.LAKES_STYLE["facecolor"] == plot_maps.LAKE_FACECOLOR
-    assert plot_maps.LAKE_FACECOLOR == "#708090"
-
+    assert plot_maps.LAKES_STYLE['facecolor'] == plot_maps.LAKE_FACECOLOR
+    assert plot_maps.LAKE_FACECOLOR == '#708090'
 
 def test_load_geo_overlays_skips_on_download_failure(monkeypatch, capsys):
     import cartopy.io.shapereader as shpreader
 
     def _boom(**_kwargs):
-        raise OSError("offline")
-
-    monkeypatch.setattr(shpreader, "natural_earth", _boom)
+        raise OSError('offline')
+    monkeypatch.setattr(shpreader, 'natural_earth', _boom)
     overlays = plot_maps.load_geo_overlays((33.9, 41.9, -4.7, 5.0))
     assert overlays == []
     err = capsys.readouterr().err
-    assert "overlay unavailable" in err
-
+    assert 'overlay unavailable' in err
 
 def test_heatmap_draw_box_writes_png(tmp_path, plot_fn):
-    # Wider lon range so IOD-style boxes are on-map.
     ds = make_gridded(lats=(-15.0, 0.0, 15.0), lons=(40.0, 70.0, 100.0, 120.0))
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    out = tmp_path / "boxes.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--draw-box",
-        "10/50/-10/70",
-        "--draw-box",
-        "0/90/-10/110",
-    )
+    src = write_zarr(ds, tmp_path / 'in.zarr')
+    out = tmp_path / 'boxes.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"geo":{"draw_boxes":[[10.0,50.0,-10.0,70.0],[0.0,90.0,-10.0,110.0]]}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def test_flag_field_heatmap_writes_png(tmp_path, plot_fn):
-    ds = make_gridded(n_time=1, fill=0.0, name="event_hit")
-    ds["event_hit"].values[0, 0, 0] = 1
-    ds["event_hit"].values[0, 0, 1] = -1
-    ds["event_hit"].attrs.update(
-        units="1",
-        long_name="Event verification",
-        flag_values=np.array([-1, 0, 1], dtype=np.int8),
-        flag_meanings="disagree below hit",
-    )
-    ds["event_hit"].attrs.pop("standard_name", None)
-    src = write_zarr(ds, tmp_path / "hits.zarr")
-    out = tmp_path / "hits.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out))
+    ds = make_gridded(n_time=1, fill=0.0, name='event_hit')
+    ds['event_hit'].values[0, 0, 0] = 1
+    ds['event_hit'].values[0, 0, 1] = -1
+    ds['event_hit'].attrs.update(units='1', long_name='Event verification', flag_values=np.array([-1, 0, 1], dtype=np.int8), flag_meanings='disagree below hit')
+    ds['event_hit'].attrs.pop('standard_name', None)
+    src = write_zarr(ds, tmp_path / 'hits.zarr')
+    out = tmp_path / 'hits.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out))
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def test_panel_shape_default_caps_columns_at_four():
     assert ws_spec.panel_shape(1) == (1, 1)
@@ -867,10 +568,8 @@ def test_panel_shape_default_caps_columns_at_four():
     assert ws_spec.panel_shape(5) == (2, 4)
     assert ws_spec.panel_shape(8) == (2, 4)
 
-
 def test_panel_shape_rows_and_columns_allow_blank_cells():
     from weather_skills_core import UsageError
-
     assert ws_spec.panel_shape(6, rows=2, columns=3) == (2, 3)
     assert ws_spec.panel_shape(6, columns=3) == (2, 3)
     assert ws_spec.panel_shape(6, rows=2) == (2, 3)
@@ -878,74 +577,47 @@ def test_panel_shape_rows_and_columns_allow_blank_cells():
     assert ws_spec.panel_shape(5, columns=3) == (2, 3)
     assert ws_spec.panel_shape(5, rows=2) == (2, 3)
     assert ws_spec.panel_shape(6, rows=2, columns=4) == (2, 4)
-    with pytest.raises(UsageError, match="must hold at least"):
+    with pytest.raises(UsageError, match='must hold at least'):
         ws_spec.panel_shape(7, rows=2, columns=3)
-    with pytest.raises(UsageError, match="positive integer"):
+    with pytest.raises(UsageError, match='positive integer'):
         ws_spec.panel_shape(3, rows=0)
 
-
 def test_heatmap_rows_columns_writes_png(tmp_path, plot_fn):
-    src = write_zarr(make_forecast(n_step=6), tmp_path / "in.zarr")
-    out = tmp_path / "grid.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--rows", "2", "--columns", "3")
+    src = write_zarr(make_forecast(n_step=6), tmp_path / 'in.zarr')
+    out = tmp_path / 'grid.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"layout":{"facet":{"rows":2,"columns":3}}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def test_heatmap_rows_columns_blank_panel_writes_png(tmp_path, plot_fn):
-    src = write_zarr(make_forecast(n_step=5), tmp_path / "in.zarr")
-    out = tmp_path / "grid.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--rows", "2", "--columns", "3")
+    src = write_zarr(make_forecast(n_step=5), tmp_path / 'in.zarr')
+    out = tmp_path / 'grid.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"layout":{"facet":{"rows":2,"columns":3}}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
-
 def test_heatmap_rows_columns_too_small_exits(tmp_path, plot_fn, capsys):
-    src = write_zarr(make_forecast(n_step=7), tmp_path / "in.zarr")
-    out = tmp_path / "bad.png"
+    src = write_zarr(make_forecast(n_step=7), tmp_path / 'in.zarr')
+    out = tmp_path / 'bad.png'
     with pytest.raises(SystemExit):
-        run_skill(
-            plot_fn,
-            "-i",
-            str(src),
-            "-o",
-            str(out),
-            "--rows",
-            "2",
-            "--columns",
-            "3",
-        )
-    assert "must hold at least" in capsys.readouterr().err
+        run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"layout":{"facet":{"rows":2,"columns":3}}}')
+    assert 'must hold at least' in capsys.readouterr().err
 
-
-def _make_wind(
-    u=0.0,
-    v=-5.0,
-    name_u="u10",
-    name_v="v10",
-    *,
-    forecast=False,
-    **kwargs,
-):
+def _make_wind(u=0.0, v=-5.0, name_u='u10', name_v='v10', *, forecast=False, **kwargs):
     """Gridded eastward/northward pair. Default is a uniform northerly wind."""
     factory = make_forecast if forecast else make_gridded
     ds = factory(name=name_u, fill=float(u), **kwargs)
     ds[name_u].attrs.clear()
-    ds[name_u].attrs.update(units="m s-1", standard_name="eastward_wind")
+    ds[name_u].attrs.update(units='m s-1', standard_name='eastward_wind')
     ds[name_v] = ds[name_u].copy(deep=True)
     ds[name_v].values[:] = float(v)
-    ds[name_v].attrs.update(units="m s-1", standard_name="northward_wind")
+    ds[name_v].attrs.update(units='m s-1', standard_name='northward_wind')
     return ds
 
-
 def test_uv_to_speed_fromdir_cardinals():
-    speed, fromdir = plot_charts._uv_to_speed_fromdir(
-        [0.0, -5.0, 0.0, 5.0],
-        [-5.0, 0.0, 5.0, 0.0],
-    )
+    speed, fromdir = plot_charts._uv_to_speed_fromdir([0.0, -5.0, 0.0, 5.0], [-5.0, 0.0, 5.0, 0.0])
     assert speed == pytest.approx([5.0, 5.0, 5.0, 5.0])
     assert fromdir == pytest.approx([0.0, 90.0, 180.0, 270.0])
-
 
 def test_wind_rose_hist_north_is_sector_zero():
     speed = np.full(20, 5.0)
@@ -955,218 +627,119 @@ def test_wind_rose_hist_north_is_sector_zero():
     assert hist.shape == (16, 4)
     assert hist[0].sum() == 20
     assert hist[1:].sum() == 0
-    assert hist[0, 2] == 20  # 4–6 m/s bin
-
+    assert hist[0, 2] == 20
 
 def test_resolve_uv_from_standard_names():
-    ds = _make_wind(name_u="eastward_component", name_v="northward_component")
-    assert plot_maps._resolve_uv(ds, None, None) == (
-        "eastward_component",
-        "northward_component",
-    )
-
+    ds = _make_wind(name_u='eastward_component', name_v='northward_component')
+    assert plot_maps._resolve_uv(ds, None, None) == ('eastward_component', 'northward_component')
 
 def test_resolve_uv_from_u10_v10_names():
     ds = _make_wind()
-    ds["u10"].attrs.pop("standard_name")
-    ds["v10"].attrs.pop("standard_name")
-    assert plot_maps._resolve_uv(ds, None, None) == ("u10", "v10")
-
+    ds['u10'].attrs.pop('standard_name')
+    ds['v10'].attrs.pop('standard_name')
+    assert plot_maps._resolve_uv(ds, None, None) == ('u10', 'v10')
 
 def test_resolve_uv_explicit_infers_partner():
     ds = _make_wind()
-    assert plot_maps._resolve_uv(ds, "u10", None) == ("u10", "v10")
-    assert plot_maps._resolve_uv(ds, None, "v10") == ("u10", "v10")
-
+    assert plot_maps._resolve_uv(ds, 'u10', None) == ('u10', 'v10')
+    assert plot_maps._resolve_uv(ds, None, 'v10') == ('u10', 'v10')
 
 def test_resolve_uv_missing_pair_errors():
     from weather_skills_core import UsageError
-
     ds = make_gridded()
-    with pytest.raises(UsageError, match="eastward"):
+    with pytest.raises(UsageError, match='eastward'):
         plot_maps._resolve_uv(ds, None, None)
 
-
 def test_windrose_writes_png(tmp_path, plot_fn):
-    src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
-    out = tmp_path / "rose.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--kind", "windrose")
+    src = write_zarr(_make_wind(), tmp_path / 'wind.zarr')
+    out = tmp_path / 'rose.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"windrose"}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def test_windrose_legend_below_writes_png(tmp_path, plot_fn):
-    src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
-    out = tmp_path / "rose.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--kind",
-        "windrose",
-        "--legend",
-        "below",
-        "--figsize",
-        "6,6",
-    )
+    src = write_zarr(_make_wind(), tmp_path / 'wind.zarr')
+    out = tmp_path / 'rose.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"windrose"}],"legend":"below","layout":{"figsize":[6.0,6.0]}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def test_windrose_stamps_history(tmp_path, plot_fn):
-    src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
-    out = tmp_path / "rose.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--kind",
-        "windrose",
-        "--title",
-        "10 m wind",
-    )
+    src = write_zarr(_make_wind(), tmp_path / 'wind.zarr')
+    out = tmp_path / 'rose.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"windrose"}],"title":"10 m wind"}')
     history = load_figure_history(out)
     assert history is not None
-    assert history[-1]["skill"] == "plot"
-    assert history[-1]["args"]["kind"] == "windrose"
-    assert history[-1]["args"]["title"] == "10 m wind"
-
+    assert history[-1]['skill'] == 'plot'
+    assert history[-1]['args']['spec']['traces'][0]['kind'] == 'windrose'
+    assert history[-1]['args']['spec']['title'] == '10 m wind'
 
 def test_windrose_forecast_and_explicit_vars(tmp_path, plot_fn):
-    src = write_zarr(_make_wind(forecast=True, members=2), tmp_path / "fc.zarr")
-    out = tmp_path / "rose.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--kind",
-        "windrose",
-        "--u-variable",
-        "u10",
-        "--v-variable",
-        "v10",
-        "--index",
-        "step=0",
-    )
+    src = write_zarr(_make_wind(forecast=True, members=2), tmp_path / 'fc.zarr')
+    out = tmp_path / 'rose.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"windrose","u_variable":"u10","v_variable":"v10"}],"inputs":[{"index":"step=0"}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def test_windrose_bbox_writes_png(tmp_path, plot_fn):
     ds = _make_wind(lats=(-5.0, 0.0, 5.0), lons=(30.0, 35.0, 40.0, 45.0))
-    src = write_zarr(ds, tmp_path / "wind.zarr")
-    out = tmp_path / "rose.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--kind",
-        "windrose",
-        "--bbox",
-        "3/32/-3/42",
-    )
+    src = write_zarr(ds, tmp_path / 'wind.zarr')
+    out = tmp_path / 'rose.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"windrose"}],"geo":{"bbox":[3.0,32.0,-3.0,42.0]}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
-
 def test_windrose_missing_uv_exits(tmp_path, plot_fn, capsys):
-    src = write_zarr(make_gridded(), tmp_path / "precip.zarr")
-    out = tmp_path / "rose.png"
+    src = write_zarr(make_gridded(), tmp_path / 'precip.zarr')
+    out = tmp_path / 'rose.png'
     with pytest.raises(SystemExit):
-        run_skill(plot_fn, "-i", str(src), "-o", str(out), "--kind", "windrose")
-    assert "eastward" in capsys.readouterr().err
-
+        run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"windrose"}]}')
+    assert 'eastward' in capsys.readouterr().err
 
 def test_heatmap_ignores_uv_flags(tmp_path, plot_fn, capsys):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "map.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--u-variable",
-        "u10",
-    )
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'map.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"u_variable":"u10"}]}')
     err = capsys.readouterr().err
-    assert "only used with --kind windrose or --kind quiver" in err
+    assert 'only used with --kind windrose or --kind quiver' in err
     assert Path(out).exists()
-
 
 def test_wind_speed_da_is_hypot():
     ds = _make_wind(u=3.0, v=4.0)
-    speed = plot_maps._wind_speed_da(ds["u10"], ds["v10"])
+    speed = plot_maps._wind_speed_da(ds['u10'], ds['v10'])
     assert float(speed.mean()) == pytest.approx(5.0)
-    assert speed.attrs["long_name"] == "Wind speed"
-
+    assert speed.attrs['long_name'] == 'Wind speed'
 
 def test_quiver_writes_png(tmp_path, plot_fn):
-    src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
-    out = tmp_path / "quiver.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--kind", "quiver")
+    src = write_zarr(_make_wind(), tmp_path / 'wind.zarr')
+    out = tmp_path / 'quiver.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"quiver"}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def test_quiver_stamps_history(tmp_path, plot_fn):
-    src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
-    out = tmp_path / "quiver.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--kind",
-        "quiver",
-        "--title",
-        "10 m wind",
-    )
+    src = write_zarr(_make_wind(), tmp_path / 'wind.zarr')
+    out = tmp_path / 'quiver.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"quiver"}],"title":"10 m wind"}')
     history = load_figure_history(out)
     assert history is not None
-    assert history[-1]["skill"] == "plot"
-    assert history[-1]["args"]["kind"] == "quiver"
-    assert history[-1]["args"]["title"] == "10 m wind"
-
+    assert history[-1]['skill'] == 'plot'
+    assert history[-1]['args']['spec']['traces'][0]['kind'] == 'quiver'
+    assert history[-1]['args']['spec']['title'] == '10 m wind'
 
 def test_quiver_forecast_panels(tmp_path, plot_fn):
-    src = write_zarr(_make_wind(forecast=True, members=2, u=3.0, v=-4.0), tmp_path / "fc.zarr")
-    out = tmp_path / "quiver.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--kind",
-        "quiver",
-        "--u-variable",
-        "u10",
-        "--v-variable",
-        "v10",
-        "--quiver-scale",
-        "40",
-    )
+    src = write_zarr(_make_wind(forecast=True, members=2, u=3.0, v=-4.0), tmp_path / 'fc.zarr')
+    out = tmp_path / 'quiver.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"quiver","u_variable":"u10","v_variable":"v10","quiver":{"scale":40.0}}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
-
 def test_quiver_missing_uv_exits(tmp_path, plot_fn, capsys):
-    src = write_zarr(make_gridded(), tmp_path / "precip.zarr")
-    out = tmp_path / "quiver.png"
+    src = write_zarr(make_gridded(), tmp_path / 'precip.zarr')
+    out = tmp_path / 'quiver.png'
     with pytest.raises(SystemExit):
-        run_skill(plot_fn, "-i", str(src), "-o", str(out), "--kind", "quiver")
-    assert "eastward" in capsys.readouterr().err
-
+        run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"quiver"}]}')
+    assert 'eastward' in capsys.readouterr().err
 
 def test_quiver_step_s2s_grid_is_one():
     lat = np.arange(-20.0, 20.0, 1.5)
@@ -1174,37 +747,29 @@ def test_quiver_step_s2s_grid_is_one():
     assert plot_maps._quiver_step(lat, lon) == 1
     assert plot_maps._quiver_step(lat, lon, requested=3) == 3
 
-
 def test_quiver_step_auto_thins_quarter_degree():
     lat = np.arange(-10.0, 10.0, 0.25)
     lon = np.arange(40.0, 80.0, 0.25)
     assert plot_maps._quiver_step(lat, lon) == 6
 
-
 def test_quiver_step_rejects_zero():
     from weather_skills_core import UsageError
-
-    with pytest.raises(UsageError, match=">= 1"):
+    with pytest.raises(UsageError, match='>= 1'):
         plot_maps._quiver_step([0.0, 1.0], [10.0, 11.0], requested=0)
-
 
 def test_auto_quiver_scale_uses_requested():
     assert plot_maps._auto_quiver_scale([10.0], [0.0], 60.0, 1.5, requested=100) == 100.0
 
-
 def test_auto_quiver_scale_rejects_nonpositive():
     from weather_skills_core import UsageError
-
-    with pytest.raises(UsageError, match="> 0"):
+    with pytest.raises(UsageError, match='> 0'):
         plot_maps._auto_quiver_scale([10.0], [0.0], 60.0, 1.5, requested=0)
-
 
 def test_auto_quiver_scale_fits_typical_wind_to_spacing():
     u = np.full((8, 8), 10.0)
     v = np.zeros((8, 8))
     scale = plot_maps._auto_quiver_scale(u, v, 60.0, 1.5)
     assert scale == pytest.approx(10.0 * 60.0 / (plot_maps.QUIVER_ARROW_LEN_SPACING * 1.5))
-
 
 def test_auto_quiver_scale_grows_with_map_width():
     u = np.ones((4, 4))
@@ -1213,13 +778,11 @@ def test_auto_quiver_scale_grows_with_map_width():
     wide = plot_maps._auto_quiver_scale(u, v, 80.0, 1.5)
     assert wide > narrow
 
-
 def test_auto_quiver_scale_full_wind_exceeds_s2s_anomaly_default():
     """10 m/s on a 60° basin needs a larger matplotlib scale than S2S's 100."""
     u = np.full((6, 6), 10.0)
     v = np.zeros((6, 6))
     assert plot_maps._auto_quiver_scale(u, v, 60.0, 1.5) > plot_maps.QUIVER_SCALE
-
 
 def test_subsample_quiver_stride():
     lon = np.array([0.0, 1.0, 2.0, 3.0])
@@ -1232,669 +795,347 @@ def test_subsample_quiver_stride():
     np.testing.assert_array_equal(u_q, u[::2, ::2])
     np.testing.assert_array_equal(v_q, v[::2, ::2])
 
-
 def test_quiver_step_flag_writes_png(tmp_path, plot_fn):
-    src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
-    out = tmp_path / "quiver.png"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--kind",
-        "quiver",
-        "--quiver-step",
-        "1",
-        "--quiver-scale",
-        "100",
-    )
+    src = write_zarr(_make_wind(), tmp_path / 'wind.zarr')
+    out = tmp_path / 'quiver.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"quiver","quiver_step":1,"quiver":{"scale":100.0}}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def _write_box_geojson(path, lon_min=9.5, lon_max=13.5, lat_min=0.5, lat_max=3.5):
     import json
-
-    path.write_text(
-        json.dumps(
-            {
-                "type": "FeatureCollection",
-                "features": [
-                    {
-                        "type": "Feature",
-                        "properties": {},
-                        "geometry": {
-                            "type": "Polygon",
-                            "coordinates": [
-                                [
-                                    [lon_min, lat_min],
-                                    [lon_max, lat_min],
-                                    [lon_max, lat_max],
-                                    [lon_min, lat_max],
-                                    [lon_min, lat_min],
-                                ]
-                            ],
-                        },
-                    }
-                ],
-            }
-        )
-    )
+    path.write_text(json.dumps({'type': 'FeatureCollection', 'features': [{'type': 'Feature', 'properties': {}, 'geometry': {'type': 'Polygon', 'coordinates': [[[lon_min, lat_min], [lon_max, lat_min], [lon_max, lat_max], [lon_min, lat_max], [lon_min, lat_min]]]}}]}))
     return path
 
-
 def test_parse_layer_kind_path_and_options():
-    spec = plot_mod.parse_layer("heatmap:/tmp/a.zarr")
-    assert spec.kind == "heatmap"
-    assert spec.path.as_posix() == "/tmp/a.zarr"
+    import argparse
+    spec = plot_mod.parse_layer('heatmap:/tmp/a.zarr')
+    assert spec.kind == 'heatmap'
+    assert spec.path.as_posix() == '/tmp/a.zarr'
     assert spec.options == {}
-    spec = plot_mod.parse_layer(
-        "scatter:/tmp/b.zarr::variable=precip,index=step=0,1,2,colormap=magma"
-    )
-    assert spec.kind == "scatter"
-    assert spec.options["variable"] == "precip"
-    assert spec.options["index"] == "step=0,1,2"
-    assert spec.options["colormap"] == "magma"
-    spec = plot_mod.parse_layer("outline:/tmp/kenya.geojson")
-    assert spec.kind == "outline"
+    with pytest.raises(argparse.ArgumentTypeError, match="layers\\[\\]"):
+        plot_mod.parse_layer('scatter:/tmp/b.zarr::variable=precip,index=step=0,1,2,colormap=magma')
+    spec = plot_mod.parse_layer('outline:/tmp/kenya.geojson')
+    assert spec.kind == 'outline'
     assert spec.zarr_paths() == []
-    spec = plot_mod.parse_layer("heatmap:/tmp/a.zarr")
-    assert spec.zarr_paths()[0].as_posix() == "/tmp/a.zarr"
-
+    spec = plot_mod.parse_layer('heatmap:/tmp/a.zarr')
+    assert spec.zarr_paths()[0].as_posix() == '/tmp/a.zarr'
 
 def test_parse_layer_rejects_unknown_kind():
     import argparse
-
-    with pytest.raises(argparse.ArgumentTypeError, match="unknown --layer kind"):
-        plot_mod.parse_layer("contour:/tmp/a.zarr")
-
+    with pytest.raises(argparse.ArgumentTypeError, match='unknown --layer kind'):
+        plot_mod.parse_layer('contour:/tmp/a.zarr')
 
 def test_layer_heatmap_writes_png(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "map.png"
-    run_skill(plot_fn, "--layer", f"heatmap:{src}", "-o", str(out))
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'map.png'
+    run_skill(plot_fn, '--layer', f'heatmap:{src}', '-o', str(out))
     assert Path(out).exists()
     assert out.stat().st_size > 0
     history = load_figure_history(out)
-    assert history[-1]["skill"] == "plot"
-    assert history[-1]["input"]["basename"] == "in.zarr"
-
+    assert history[-1]['skill'] == 'plot'
+    assert history[-1]['input']['basename'] == 'in.zarr'
 
 def test_heatmap_and_layer_heatmap_are_pixel_identical(tmp_path, plot_fn):
     import matplotlib.image as mpimg
-
-    src = write_zarr(make_gridded(n_time=1), tmp_path / "in.zarr")
-    heatmap = tmp_path / "heatmap.png"
-    layer = tmp_path / "layer.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(heatmap), "--kind", "heatmap")
-    run_skill(plot_fn, "--layer", f"heatmap:{src}", "-o", str(layer))
+    src = write_zarr(make_gridded(n_time=1), tmp_path / 'in.zarr')
+    heatmap = tmp_path / 'heatmap.png'
+    layer = tmp_path / 'layer.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(heatmap), '--spec', '{"traces":[{"kind":"heatmap"}]}')
+    run_skill(plot_fn, '--layer', f'heatmap:{src}', '-o', str(layer))
     np.testing.assert_array_equal(mpimg.imread(heatmap), mpimg.imread(layer))
 
-
 def test_layer_heatmap_and_scatter_overlay(tmp_path, plot_fn):
-    grid = write_zarr(make_gridded(), tmp_path / "grid.zarr")
-    pts = write_zarr(make_point_obs(n_time=2), tmp_path / "pts.zarr")
-    out = tmp_path / "overlay.png"
-    run_skill(
-        plot_fn,
-        "--layer",
-        f"heatmap:{grid}",
-        "--layer",
-        f"scatter:{pts}",
-        "-o",
-        str(out),
-        "--title",
-        "grid vs stations",
-    )
+    grid = write_zarr(make_gridded(), tmp_path / 'grid.zarr')
+    pts = write_zarr(make_point_obs(n_time=2), tmp_path / 'pts.zarr')
+    out = tmp_path / 'overlay.png'
+    run_skill(plot_fn, '--layer', f'heatmap:{grid}', '--layer', f'scatter:{pts}', '-o', str(out), '--spec', '{"title":"grid vs stations"}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
     history = load_figure_history(out)
-    inp = history[-1]["input"]
+    inp = history[-1]['input']
     assert isinstance(inp, list)
-    names = {item["basename"] for item in inp}
-    assert names == {"grid.zarr", "pts.zarr"}
-
+    names = {item['basename'] for item in inp}
+    assert names == {'grid.zarr', 'pts.zarr'}
 
 def test_layer_heatmap_and_outline(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    geo = _write_box_geojson(tmp_path / "box.geojson")
-    out = tmp_path / "outline.png"
-    run_skill(
-        plot_fn,
-        "--layer",
-        f"heatmap:{src}",
-        "--layer",
-        f"outline:{geo}",
-        "-o",
-        str(out),
-    )
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    geo = _write_box_geojson(tmp_path / 'box.geojson')
+    out = tmp_path / 'outline.png'
+    run_skill(plot_fn, '--layer', f'heatmap:{src}', '--layer', f'outline:{geo}', '-o', str(out))
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def test_layer_heatmap_scatter_outline(tmp_path, plot_fn):
-    grid = write_zarr(make_gridded(), tmp_path / "grid.zarr")
-    pts = write_zarr(make_point_obs(n_time=2), tmp_path / "pts.zarr")
-    geo = _write_box_geojson(tmp_path / "box.geojson")
-    out = tmp_path / "all.png"
-    run_skill(
-        plot_fn,
-        "--layer",
-        f"heatmap:{grid}",
-        "--layer",
-        f"scatter:{pts}",
-        "--layer",
-        f"outline:{geo}",
-        "-o",
-        str(out),
-    )
+    grid = write_zarr(make_gridded(), tmp_path / 'grid.zarr')
+    pts = write_zarr(make_point_obs(n_time=2), tmp_path / 'pts.zarr')
+    geo = _write_box_geojson(tmp_path / 'box.geojson')
+    out = tmp_path / 'all.png'
+    run_skill(plot_fn, '--layer', f'heatmap:{grid}', '--layer', f'scatter:{pts}', '--layer', f'outline:{geo}', '-o', str(out))
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def test_layer_forecast_panels_with_outline(tmp_path, plot_fn):
-    src = write_zarr(make_forecast(n_step=3), tmp_path / "fc.zarr")
-    geo = _write_box_geojson(tmp_path / "box.geojson")
-    out = tmp_path / "leads.png"
-    run_skill(
-        plot_fn,
-        "--layer",
-        f"heatmap:{src}",
-        "--layer",
-        f"outline:{geo}",
-        "-o",
-        str(out),
-    )
+    src = write_zarr(make_forecast(n_step=3), tmp_path / 'fc.zarr')
+    geo = _write_box_geojson(tmp_path / 'box.geojson')
+    out = tmp_path / 'leads.png'
+    run_skill(plot_fn, '--layer', f'heatmap:{src}', '--layer', f'outline:{geo}', '-o', str(out))
     assert Path(out).exists()
     assert out.stat().st_size > 0
-
 
 def test_layer_forecast_heatmap_and_same_step_quiver(tmp_path, plot_fn):
-    precip = write_zarr(make_forecast(n_step=3), tmp_path / "tp.zarr")
-    wind = write_zarr(_make_wind(forecast=True, n_step=3), tmp_path / "wind.zarr")
-    out = tmp_path / "tp_wind.png"
-    run_skill(
-        plot_fn,
-        "--layer",
-        f"heatmap:{precip}",
-        "--layer",
-        f"quiver:{wind}",
-        "-o",
-        str(out),
-    )
+    precip = write_zarr(make_forecast(n_step=3), tmp_path / 'tp.zarr')
+    wind = write_zarr(_make_wind(forecast=True, n_step=3), tmp_path / 'wind.zarr')
+    out = tmp_path / 'tp_wind.png'
+    run_skill(plot_fn, '--layer', f'heatmap:{precip}', '--layer', f'quiver:{wind}', '-o', str(out))
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
-
 def test_layer_forecast_step_vs_obs_time_errors(tmp_path, plot_fn):
-    fc = write_zarr(make_forecast(n_step=3), tmp_path / "fc.zarr")
-    obs = write_zarr(make_point_obs(n_time=3), tmp_path / "obs.zarr")
-    out = tmp_path / "bad.png"
+    fc = write_zarr(make_forecast(n_step=3), tmp_path / 'fc.zarr')
+    obs = write_zarr(make_point_obs(n_time=3), tmp_path / 'obs.zarr')
+    out = tmp_path / 'bad.png'
     with pytest.raises(SystemExit):
-        run_skill(
-            plot_fn,
-            "--layer",
-            f"heatmap:{fc}",
-            "--layer",
-            f"scatter:{obs}",
-            "-o",
-            str(out),
-        )
-
+        run_skill(plot_fn, '--layer', f'heatmap:{fc}', '--layer', f'scatter:{obs}', '-o', str(out))
 
 def test_layer_time_mismatch_no_overlap(tmp_path, plot_fn):
-    a = write_zarr(make_gridded(start="2026-01-01"), tmp_path / "a.zarr")
-    b = write_zarr(make_point_obs(n_time=2, start="2026-06-01"), tmp_path / "b.zarr")
-    out = tmp_path / "bad.png"
+    a = write_zarr(make_gridded(start='2026-01-01'), tmp_path / 'a.zarr')
+    b = write_zarr(make_point_obs(n_time=2, start='2026-06-01'), tmp_path / 'b.zarr')
+    out = tmp_path / 'bad.png'
     with pytest.raises(SystemExit):
-        run_skill(
-            plot_fn,
-            "--layer",
-            f"heatmap:{a}",
-            "--layer",
-            f"scatter:{b}",
-            "-o",
-            str(out),
-        )
-
+        run_skill(plot_fn, '--layer', f'heatmap:{a}', '--layer', f'scatter:{b}', '-o', str(out))
 
 def test_layer_rejects_input_flag(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "bad.png"
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'bad.png'
     with pytest.raises(SystemExit):
-        run_skill(
-            plot_fn,
-            "-i",
-            str(src),
-            "--layer",
-            f"heatmap:{src}",
-            "-o",
-            str(out),
-        )
-
+        run_skill(plot_fn, '-i', str(src), '--layer', f'heatmap:{src}', '-o', str(out))
 
 def test_layer_rejects_timeseries_style(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "bad.png"
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'bad.png'
     with pytest.raises(SystemExit):
-        run_skill(
-            plot_fn,
-            "--layer",
-            f"heatmap:{src}",
-            "--kind",
-            "timeseries",
-            "-o",
-            str(out),
-        )
-
+        run_skill(plot_fn, '--layer', f'heatmap:{src}', '-o', str(out), '--spec', '{"traces":[{"kind":"timeseries"}]}')
 
 def test_calendar_year_and_pair_key():
-    assert plot_charts._calendar_year(np.datetime64("2024-09-15")) == 2024
-    assert plot_charts._pair_key(np.datetime64("2024-09-15"), "year") == 2024
-    assert plot_charts._pair_key(np.datetime64("2024-09-15T06:00"), "time") == "2024-09-15"
-
+    assert plot_charts._calendar_year(np.datetime64('2024-09-15')) == 2024
+    assert plot_charts._pair_key(np.datetime64('2024-09-15'), 'year') == 2024
+    assert plot_charts._pair_key(np.datetime64('2024-09-15T06:00'), 'time') == '2024-09-15'
 
 def test_pair_xy_year_joins_offset_months():
-    x_axis = np.array(["2024-09-01", "2025-09-01"], dtype="datetime64[ns]")
-    y_axis = np.array(["2024-10-01", "2025-10-01"], dtype="datetime64[ns]")
-    x_out, y_out, keys = plot_charts._pair_xy(x_axis, [0.2, 0.8], y_axis, [10.0, 40.0], "year")
+    x_axis = np.array(['2024-09-01', '2025-09-01'], dtype='datetime64[ns]')
+    y_axis = np.array(['2024-10-01', '2025-10-01'], dtype='datetime64[ns]')
+    x_out, y_out, keys = plot_charts._pair_xy(x_axis, [0.2, 0.8], y_axis, [10.0, 40.0], 'year')
     assert list(keys) == [2024, 2025]
     assert list(x_out) == pytest.approx([0.2, 0.8])
     assert list(y_out) == pytest.approx([10.0, 40.0])
 
-
 def test_pair_xy_time_requires_same_day():
-    x_axis = np.array(["2024-09-01"], dtype="datetime64[ns]")
-    y_axis = np.array(["2024-10-01"], dtype="datetime64[ns]")
-    with pytest.raises(Exception, match="no matching samples"):
-        plot_charts._pair_xy(x_axis, [0.2], y_axis, [10.0], "time")
-
+    x_axis = np.array(['2024-09-01'], dtype='datetime64[ns]')
+    y_axis = np.array(['2024-10-01'], dtype='datetime64[ns]')
+    with pytest.raises(Exception, match='no matching samples'):
+        plot_charts._pair_xy(x_axis, [0.2], y_axis, [10.0], 'time')
 
 def test_pair_xy_duplicate_year_errors():
-    x_axis = np.array(["2024-09-01", "2024-09-08"], dtype="datetime64[ns]")
-    y_axis = np.array(["2024-10-01"], dtype="datetime64[ns]")
-    with pytest.raises(Exception, match="duplicate"):
-        plot_charts._pair_xy(x_axis, [0.2, 0.3], y_axis, [10.0], "year")
-
+    x_axis = np.array(['2024-09-01', '2024-09-08'], dtype='datetime64[ns]')
+    y_axis = np.array(['2024-10-01'], dtype='datetime64[ns]')
+    with pytest.raises(Exception, match='duplicate'):
+        plot_charts._pair_xy(x_axis, [0.2, 0.3], y_axis, [10.0], 'year')
 
 def test_xy_writes_png_pair_on_year(tmp_path, plot_fn):
-    iod = make_gridded(n_time=2, start="2024-09-01", name="iod_mode_index", fill=0.4)
-    iod = iod.assign_coords(time=np.array(["2024-09-01", "2025-09-01"], dtype="datetime64[ns]"))
-    iod["iod_mode_index"].attrs.update(
-        units="degree_Celsius",
-        long_name="IOD",
-        standard_name="sea_surface_temperature_anomaly",
-    )
-    rain = make_gridded(n_time=2, start="2024-10-01", name="precip", fill=12.0)
-    rain = rain.assign_coords(time=np.array(["2024-10-01", "2025-10-01"], dtype="datetime64[ns]"))
-    rain["precip"].attrs.update(
-        units="mm",
-        long_name="October rainfall",
-        standard_name="lwe_thickness_of_precipitation_amount",
-    )
-    x_src = write_zarr(iod, tmp_path / "iod.zarr")
-    y_src = write_zarr(rain, tmp_path / "rain.zarr")
-    out = tmp_path / "xy.png"
-    run_skill(
-        plot_fn,
-        "--kind",
-        "xy",
-        "--x",
-        str(x_src),
-        "--y",
-        str(y_src),
-        "--pair-on",
-        "year",
-        "-o",
-        str(out),
-    )
+    iod = make_gridded(n_time=2, start='2024-09-01', name='iod_mode_index', fill=0.4)
+    iod = iod.assign_coords(time=np.array(['2024-09-01', '2025-09-01'], dtype='datetime64[ns]'))
+    iod['iod_mode_index'].attrs.update(units='degree_Celsius', long_name='IOD', standard_name='sea_surface_temperature_anomaly')
+    rain = make_gridded(n_time=2, start='2024-10-01', name='precip', fill=12.0)
+    rain = rain.assign_coords(time=np.array(['2024-10-01', '2025-10-01'], dtype='datetime64[ns]'))
+    rain['precip'].attrs.update(units='mm', long_name='October rainfall', standard_name='lwe_thickness_of_precipitation_amount')
+    x_src = write_zarr(iod, tmp_path / 'iod.zarr')
+    y_src = write_zarr(rain, tmp_path / 'rain.zarr')
+    out = tmp_path / 'xy.png'
+    run_skill(plot_fn, '--x', str(x_src), '--y', str(y_src), '-o', str(out), '--spec', '{"traces":[{"kind":"xy","pair_on":"year"}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
     history = load_figure_history(out)
-    assert history[-1]["skill"] == "plot"
-    assert history[-1]["args"]["kind"] == "xy"
-
+    assert history[-1]['skill'] == 'plot'
+    assert history[-1]['args']['spec']['traces'][0]['kind'] == 'xy'
 
 def test_xy_same_input_two_variables(tmp_path, plot_fn):
-    ds = make_gridded(n_time=3, name="precip")
-    ds["iod_mode_index"] = ds["precip"] * 0.1
-    ds["iod_mode_index"].attrs.update(
-        units="degree_Celsius",
-        long_name="IOD",
-        standard_name="sea_surface_temperature_anomaly",
-    )
-    src = write_zarr(ds, tmp_path / "both.zarr")
-    out = tmp_path / "xy.png"
-    run_skill(
-        plot_fn,
-        "--kind",
-        "xy",
-        "-i",
-        str(src),
-        "--x-variable",
-        "iod_mode_index",
-        "--y-variable",
-        "precip",
-        "-o",
-        str(out),
-    )
+    ds = make_gridded(n_time=3, name='precip')
+    ds['iod_mode_index'] = ds['precip'] * 0.1
+    ds['iod_mode_index'].attrs.update(units='degree_Celsius', long_name='IOD', standard_name='sea_surface_temperature_anomaly')
+    src = write_zarr(ds, tmp_path / 'both.zarr')
+    out = tmp_path / 'xy.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"xy","x_variable":"iod_mode_index","y_variable":"precip"}]}')
     assert Path(out).exists()
 
-
 def test_xy_requires_both_x_and_y(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
     with pytest.raises(SystemExit):
-        run_skill(
-            plot_fn,
-            "--kind",
-            "xy",
-            "--x",
-            str(src),
-            "-o",
-            str(tmp_path / "out.png"),
-        )
-
+        run_skill(plot_fn, '--x', str(src), '-o', str(tmp_path / 'out.png'), '--spec', '{"traces":[{"kind":"xy"}]}')
 
 def test_xy_rejects_layer(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
     with pytest.raises(SystemExit):
-        run_skill(
-            plot_fn,
-            "--kind",
-            "xy",
-            "--layer",
-            f"heatmap:{src}",
-            "-o",
-            str(tmp_path / "out.png"),
-        )
-
+        run_skill(plot_fn, '--layer', f'heatmap:{src}', '-o', str(tmp_path / 'out.png'), '--spec', '{"traces":[{"kind":"xy"}]}')
 
 def test_layer_independent_scale(tmp_path, plot_fn):
-    grid = write_zarr(make_gridded(), tmp_path / "grid.zarr")
-    t2m = make_gridded(name="t2m")
-    t2m["t2m"].attrs.update(units="degree_Celsius", standard_name="air_temperature")
-    other = write_zarr(t2m, tmp_path / "t2m.zarr")
-    out = tmp_path / "indep.png"
-    run_skill(
-        plot_fn,
-        "--layer",
-        f"heatmap:{grid}::variable=precip",
-        "--layer",
-        f"heatmap:{other}::variable=t2m",
-        "--independent-scale",
-        "-o",
-        str(out),
-    )
+    grid = write_zarr(make_gridded(), tmp_path / 'grid.zarr')
+    t2m = make_gridded(name='t2m')
+    t2m['t2m'].attrs.update(units='degree_Celsius', standard_name='air_temperature')
+    other = write_zarr(t2m, tmp_path / 't2m.zarr')
+    out = tmp_path / 'indep.png'
+    run_skill(plot_fn, '--layer', f'heatmap:{grid}', '--layer', f'heatmap:{other}', '-o', str(out), '--spec', '{"layers":[{"id":"a","variable":"precip"},{"id":"b","variable":"t2m"}],"layout":{"shared_colorscale":false}}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
-
 def test_default_heatmap_does_not_write_spec_file(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "map.png"
-    run_skill(plot_fn, "-i", str(src), "-o", str(out), "--title", "Precip")
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'map.png'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"title":"Precip"}')
     assert out.is_file() and out.stat().st_size > 0
-    assert not (tmp_path / "map.plot.json").exists()
-
+    assert not (tmp_path / 'map.plot.json').exists()
 
 def test_heatmap_dump_spec_on_request(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "map.png"
-    spec_path = tmp_path / "map.plot.json"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "--dump-spec",
-        str(spec_path),
-        "--title",
-        "Precip",
-    )
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'map.png'
+    spec_path = tmp_path / 'map.plot.json'
+    run_skill(plot_fn, '-i', str(src), '--dump-spec', str(spec_path), '--spec', '{"title":"Precip"}')
     spec = json.loads(spec_path.read_text())
-    assert spec["title"] == "Precip"
-    assert spec["traces"][0]["kind"] == "heatmap"
-    assert spec["inputs"][0]["path"].endswith("in.zarr")
+    assert spec['title'] == 'Precip'
+    assert spec['traces'][0]['kind'] == 'heatmap'
+    assert spec['inputs'][0]['path'].endswith('in.zarr')
     assert not out.exists()
-
 
 def test_heatmap_panel_spacing_dump_spec(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(n_time=2), tmp_path / "in.zarr")
-    spec_path = tmp_path / "map.plot.json"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "--dump-spec",
-        str(spec_path),
-        "--panel-spacing",
-        "0.4,0.2",
-    )
+    src = write_zarr(make_gridded(n_time=2), tmp_path / 'in.zarr')
+    spec_path = tmp_path / 'map.plot.json'
+    run_skill(plot_fn, '-i', str(src), '--dump-spec', str(spec_path), '--spec', '{"layout":{"facet":{"wspace":0.4,"hspace":0.2}}}')
     spec = json.loads(spec_path.read_text())
-    assert spec["layout"]["facet"]["wspace"] == 0.4
-    assert spec["layout"]["facet"]["hspace"] == 0.2
-
+    assert spec['layout']['facet']['wspace'] == 0.4
+    assert spec['layout']['facet']['hspace'] == 0.2
 
 def test_dump_spec_skips_png_even_when_output_is_set(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "map.png"
-    spec_path = tmp_path / "map.plot.json"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "-o",
-        str(out),
-        "--dump-spec",
-        str(spec_path),
-        "--title",
-        "Precip",
-    )
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'map.png'
+    spec_path = tmp_path / 'map.plot.json'
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--dump-spec', str(spec_path), '--spec', '{"title":"Precip"}')
     assert spec_path.is_file()
-    assert json.loads(spec_path.read_text())["title"] == "Precip"
+    assert json.loads(spec_path.read_text())['title'] == 'Precip'
     assert not out.exists()
-
 
 def test_replot_from_spec(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    first = tmp_path / "map.png"
-    spec_path = tmp_path / "map.plot.json"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "--dump-spec",
-        str(spec_path),
-        "--title",
-        "Original",
-    )
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    first = tmp_path / 'map.png'
+    spec_path = tmp_path / 'map.plot.json'
+    run_skill(plot_fn, '-i', str(src), '--dump-spec', str(spec_path), '--spec', '{"title":"Original"}')
     assert not first.exists()
     data = json.loads(spec_path.read_text())
-    data["title"] = "Edited"
+    data['title'] = 'Edited'
     spec_path.write_text(json.dumps(data))
-    second = tmp_path / "map2.png"
-    run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
+    second = tmp_path / 'map2.png'
+    run_skill(plot_fn, '--spec', str(spec_path), '-o', str(second))
     assert second.is_file() and second.stat().st_size > 0
     history = load_figure_history(second)
-    assert history[-1]["skill"] == "plot"
-    assert history[-1]["input"]["basename"] == "in.zarr"
-
+    assert history[-1]['skill'] == 'plot'
+    assert history[-1]['input']['basename'] == 'in.zarr'
 
 def test_patch_flag_merges_into_spec_and_spec_patch_key_is_refused(tmp_path, plot_fn, capsys):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "map.png"
-    spec_path = tmp_path / "map.plot.json"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "--dump-spec",
-        str(spec_path),
-        "--patch",
-        '{"title": "Patched"}',
-    )
-    spec, spec_path = _assert_dumped_spec(spec_path, trace_type="heatmap", title="Patched")
-    assert "patch" not in spec
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'map.png'
+    spec_path = tmp_path / 'map.plot.json'
+    run_skill(plot_fn, '-i', str(src), '--dump-spec', str(spec_path), '--spec', '{"title":"Patched"}')
+    spec, spec_path = _assert_dumped_spec(spec_path, trace_type='heatmap', title='Patched')
+    assert 'patch' not in spec
     assert not out.exists()
-
-    # The old second home for these edits now names where they belong.
     data = json.loads(spec_path.read_text())
-    data["patch"] = {"title": "Edited"}
+    data['patch'] = {'title': 'Edited'}
     spec_path.write_text(json.dumps(data))
     with pytest.raises(SystemExit):
-        run_skill(plot_fn, "--spec", str(spec_path), "-o", str(tmp_path / "map2.png"))
-    assert "patch" in capsys.readouterr().err
-
+        run_skill(plot_fn, '--spec', str(spec_path), '-o', str(tmp_path / 'map2.png'))
+    assert 'patch' in capsys.readouterr().err
 
 def _assert_dumped_spec(spec_path, *, trace_type, title=None):
     spec_path = Path(spec_path)
     assert spec_path.is_file()
     spec = json.loads(spec_path.read_text())
-    assert spec["traces"][0]["kind"] == trace_type
-    assert "axes" in spec
+    assert spec['traces'][0]['kind'] == trace_type
+    assert 'axes' in spec
     if title is not None:
-        assert spec["title"] == title
-    return spec, spec_path
-
+        assert spec['title'] == title
+    return (spec, spec_path)
 
 def test_windrose_dump_spec_on_request(tmp_path, plot_fn):
-    src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
-    out = tmp_path / "rose.png"
-    spec_path = tmp_path / "rose.plot.json"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "--dump-spec",
-        str(spec_path),
-        "--kind",
-        "windrose",
-        "--title",
-        "Rose",
-    )
-    spec, spec_path = _assert_dumped_spec(spec_path, trace_type="windrose", title="Rose")
-    assert spec["inputs"][0]["path"].endswith("wind.zarr")
+    src = write_zarr(_make_wind(), tmp_path / 'wind.zarr')
+    out = tmp_path / 'rose.png'
+    spec_path = tmp_path / 'rose.plot.json'
+    run_skill(plot_fn, '-i', str(src), '--dump-spec', str(spec_path), '--spec', '{"traces":[{"kind":"windrose"}],"title":"Rose"}')
+    spec, spec_path = _assert_dumped_spec(spec_path, trace_type='windrose', title='Rose')
+    assert spec['inputs'][0]['path'].endswith('wind.zarr')
     assert not out.exists()
-    second = tmp_path / "rose2.png"
-    run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
+    second = tmp_path / 'rose2.png'
+    run_skill(plot_fn, '--spec', str(spec_path), '-o', str(second))
     assert second.is_file() and second.stat().st_size > 0
     history = load_figure_history(second)
-    assert history[-1]["skill"] == "plot"
-    assert history[-1]["input"]["basename"] == "wind.zarr"
-
+    assert history[-1]['skill'] == 'plot'
+    assert history[-1]['input']['basename'] == 'wind.zarr'
 
 def test_quiver_dump_spec_on_request(tmp_path, plot_fn):
-    src = write_zarr(_make_wind(), tmp_path / "wind.zarr")
-    out = tmp_path / "quiver.png"
-    spec_path = tmp_path / "quiver.plot.json"
-    run_skill(
-        plot_fn,
-        "-i",
-        str(src),
-        "--dump-spec",
-        str(spec_path),
-        "--kind",
-        "quiver",
-        "--title",
-        "Wind",
-    )
-    spec, spec_path = _assert_dumped_spec(spec_path, trace_type="quiver", title="Wind")
+    src = write_zarr(_make_wind(), tmp_path / 'wind.zarr')
+    out = tmp_path / 'quiver.png'
+    spec_path = tmp_path / 'quiver.plot.json'
+    run_skill(plot_fn, '-i', str(src), '--dump-spec', str(spec_path), '--spec', '{"traces":[{"kind":"quiver"}],"title":"Wind"}')
+    spec, spec_path = _assert_dumped_spec(spec_path, trace_type='quiver', title='Wind')
     assert not out.exists()
-    second = tmp_path / "quiver2.png"
-    run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
+    second = tmp_path / 'quiver2.png'
+    run_skill(plot_fn, '--spec', str(spec_path), '-o', str(second))
     assert second.is_file() and second.stat().st_size > 0
     history = load_figure_history(second)
-    assert history[-1]["skill"] == "plot"
-
+    assert history[-1]['skill'] == 'plot'
 
 def test_xy_dump_spec_on_request(tmp_path, plot_fn):
-    iod = make_gridded(n_time=2, start="2024-09-01", name="iod_mode_index", fill=0.4)
-    iod = iod.assign_coords(time=np.array(["2024-09-01", "2025-09-01"], dtype="datetime64[ns]"))
-    iod["iod_mode_index"].attrs.update(
-        units="degree_Celsius",
-        long_name="IOD",
-        standard_name="sea_surface_temperature_anomaly",
-    )
-    rain = make_gridded(n_time=2, start="2024-10-01", name="precip", fill=12.0)
-    rain = rain.assign_coords(time=np.array(["2024-10-01", "2025-10-01"], dtype="datetime64[ns]"))
-    rain["precip"].attrs.update(
-        units="mm",
-        long_name="October rainfall",
-        standard_name="lwe_thickness_of_precipitation_amount",
-    )
-    x_src = write_zarr(iod, tmp_path / "iod.zarr")
-    y_src = write_zarr(rain, tmp_path / "rain.zarr")
-    out = tmp_path / "xy.png"
-    run_skill(
-        plot_fn,
-        "--kind",
-        "xy",
-        "--x",
-        str(x_src),
-        "--y",
-        str(y_src),
-        "--pair-on",
-        "year",
-        "--dump-spec",
-        str(tmp_path / "xy.plot.json"),
-        "--title",
-        "IOD vs rain",
-    )
-    spec, spec_path = _assert_dumped_spec(
-        tmp_path / "xy.plot.json", trace_type="xy", title="IOD vs rain"
-    )
-    assert spec["traces"][0]["pair_on"] == "year"
+    iod = make_gridded(n_time=2, start='2024-09-01', name='iod_mode_index', fill=0.4)
+    iod = iod.assign_coords(time=np.array(['2024-09-01', '2025-09-01'], dtype='datetime64[ns]'))
+    iod['iod_mode_index'].attrs.update(units='degree_Celsius', long_name='IOD', standard_name='sea_surface_temperature_anomaly')
+    rain = make_gridded(n_time=2, start='2024-10-01', name='precip', fill=12.0)
+    rain = rain.assign_coords(time=np.array(['2024-10-01', '2025-10-01'], dtype='datetime64[ns]'))
+    rain['precip'].attrs.update(units='mm', long_name='October rainfall', standard_name='lwe_thickness_of_precipitation_amount')
+    x_src = write_zarr(iod, tmp_path / 'iod.zarr')
+    y_src = write_zarr(rain, tmp_path / 'rain.zarr')
+    out = tmp_path / 'xy.png'
+    run_skill(plot_fn, '--x', str(x_src), '--y', str(y_src), '--dump-spec', str(tmp_path / 'xy.plot.json'), '--spec', '{"traces":[{"kind":"xy","pair_on":"year"}],"title":"IOD vs rain"}')
+    spec, spec_path = _assert_dumped_spec(tmp_path / 'xy.plot.json', trace_type='xy', title='IOD vs rain')
+    assert spec['traces'][0]['pair_on'] == 'year'
     assert not out.exists()
-    second = tmp_path / "xy2.png"
-    run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
+    second = tmp_path / 'xy2.png'
+    run_skill(plot_fn, '--spec', str(spec_path), '-o', str(second))
     assert second.is_file() and second.stat().st_size > 0
     history = load_figure_history(second)
-    assert history[-1]["skill"] == "plot"
-
+    assert history[-1]['skill'] == 'plot'
 
 def test_layer_dump_spec_on_request(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    out = tmp_path / "layer.png"
-    spec_path = tmp_path / "layer.plot.json"
-    run_skill(
-        plot_fn,
-        "--layer",
-        f"heatmap:{src}",
-        "--dump-spec",
-        str(spec_path),
-        "--title",
-        "Layered",
-    )
-    spec, spec_path = _assert_dumped_spec(spec_path, trace_type="layer", title="Layered")
-    assert spec["layers"][0]["id"] == "a"
-    assert spec["layers"][0]["kind"] == "heatmap"
-    assert spec["layers"][0]["path"].endswith("in.zarr")
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'layer.png'
+    spec_path = tmp_path / 'layer.plot.json'
+    run_skill(plot_fn, '--layer', f'heatmap:{src}', '--dump-spec', str(spec_path), '--spec', '{"title":"Layered"}')
+    spec, spec_path = _assert_dumped_spec(spec_path, trace_type='layer', title='Layered')
+    assert spec['layers'][0]['id'] == 'a'
+    assert spec['layers'][0]['kind'] == 'heatmap'
+    assert spec['layers'][0]['path'].endswith('in.zarr')
     assert not out.exists()
-    second = tmp_path / "layer2.png"
-    run_skill(plot_fn, "--spec", str(spec_path), "-o", str(second))
+    second = tmp_path / 'layer2.png'
+    run_skill(plot_fn, '--spec', str(spec_path), '-o', str(second))
     assert second.is_file() and second.stat().st_size > 0
     history = load_figure_history(second)
-    assert history[-1]["skill"] == "plot"
-    assert history[-1]["input"]["basename"] == "in.zarr"
-
+    assert history[-1]['skill'] == 'plot'
+    assert history[-1]['input']['basename'] == 'in.zarr'
 
 def test_layer_patch_by_id_dump_spec(tmp_path, plot_fn):
-    src = write_zarr(make_gridded(name="sst", fill=0.4), tmp_path / "sst.zarr")
-    spec_path = tmp_path / "patched.plot.json"
-    run_skill(
-        plot_fn,
-        "--layer",
-        f"heatmap:{src}::variable=sst",
-        "--layer",
-        f"heatmap:{src}::variable=sst",
-        "--patch",
-        '{"layers": [{"id": "a", "colormap": "RdBu_r", "vmin": -1.5}]}',
-        "--dump-spec",
-        str(spec_path),
-    )
-    spec, _ = _assert_dumped_spec(spec_path, trace_type="layer")
-    assert spec["layers"][0]["id"] == "a"
-    assert spec["layers"][0]["colormap"] == "RdBu_r"
-    assert spec["layers"][0]["vmin"] == -1.5
-    assert spec["layers"][1]["id"] == "b"
-    assert spec["layers"][1].get("colormap") is None
+    src = write_zarr(make_gridded(name='sst', fill=0.4), tmp_path / 'sst.zarr')
+    spec_path = tmp_path / 'patched.plot.json'
+    run_skill(plot_fn, '--layer', f'heatmap:{src}', '--layer', f'heatmap:{src}', '--dump-spec', str(spec_path), '--spec', '{"layers":[{"id":"a","variable":"sst","colormap":"RdBu_r","vmin":-1.5},{"id":"b","variable":"sst"}]}')
+    spec, _ = _assert_dumped_spec(spec_path, trace_type='layer')
+    assert spec['layers'][0]['id'] == 'a'
+    assert spec['layers'][0]['colormap'] == 'RdBu_r'
+    assert spec['layers'][0]['vmin'] == -1.5
+    assert spec['layers'][1]['id'] == 'b'
+    assert spec['layers'][1].get('colormap') is None

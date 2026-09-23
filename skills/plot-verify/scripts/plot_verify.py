@@ -28,29 +28,24 @@ from weather_skills_core.display_labels import (
 from weather_skills_core.plot import export
 from weather_skills_core.plot.figure import (
     DEFAULT_FONTSIZE,
+    parse_figsize,  # noqa: F401 — tests call this via the skill module
     format_plot_date_range,
-    parse_figsize,
-    parse_label_list,
-    parse_number_list,
-    parse_panel_spacing,
 )
 from weather_skills_core.plot.maps import extent_from_da, slice_bbox_mask
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
-    PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     SPEC_VERSION,
     facet_with_spacing,
     maybe_emit_spec,
     named_datasets_from_spec,
-    overlay_flags,
+    normalize_spec,
     overlay_spec,
-    parse_plot_patch,
+    params_from_spec,
     parse_plot_spec,
-    resolve_flags,
-    spec_get,
     spec_inputs_from_datasets,
     spec_role_datasets,
+    trace_at,
 )
 from weather_skills_core.plot.theme import (
     aggregation_days,
@@ -348,93 +343,11 @@ def _prepare(ds, variable):
     required=False,
     help="Verify Zarr from the verify skill, once per --forecast (same order).",
 )
-@weather_skill.argument("--bbox")
-@weather_skill.argument("--variable", "-v")
-@weather_skill.argument(
-    "--lead",
-    action="append",
-    default=None,
-    help=(
-        "Column label, once per --forecast. Default: 1-week lead … N-week lead "
-        "(week-1 first). Labels that name a week are sorted week-1 → week-N."
-    ),
-)
-@weather_skill.argument(
-    "--colormap",
-    default=None,
-    help=(
-        "matplotlib colormap name, or comma-separated colors, for obs/forecast rows. "
-        "Default: nested absolute-mm precip classes for precip, else viridis. "
-        "Discrete custom classes: pass --colormap-bounds or a spec object."
-    ),
-)
-@weather_skill.argument(
-    "--colormap-bounds",
-    default=None,
-    type=parse_number_list,
-    help="Comma-separated class stops; folds into style.colormap.bounds.",
-)
-@weather_skill.argument("--colormap-under", default=None, help="Color below the first class stop.")
-@weather_skill.argument("--colormap-over", default=None, help="Color above the last class stop.")
-@weather_skill.argument(
-    "--cbar-ticks",
-    default=None,
-    type=parse_number_list,
-    help="Comma-separated colorbar tick positions.",
-)
-@weather_skill.argument(
-    "--cbar-labels",
-    default=None,
-    type=parse_label_list,
-    help="Comma-separated colorbar tick labels. Requires --cbar-ticks.",
-)
-@weather_skill.argument(
-    "--label",
-    action="append",
-    default=None,
-    help=(
-        "Display label for row titles. Pass once for --obs, then once per --forecast "
-        "(same order). Omit to infer from provenance or weather_skills_source."
-    ),
-)
-@weather_skill.argument("--title", default=None, help="Optional figure title.")
-@weather_skill.argument(
-    "--fontsize",
-    type=int,
-    default=DEFAULT_FONTSIZE,
-    help="Base font size for column/row labels, ticks, and colorbars (default 16).",
-)
-@weather_skill.argument(
-    "--figsize",
-    default=None,
-    type=parse_figsize,
-    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default from map grid.",
-)
-@weather_skill.argument(
-    "--panel-spacing",
-    default=None,
-    type=parse_panel_spacing,
-    help=(
-        "Inter-panel gap as a fraction of panel size: W or W,H "
-        "(matplotlib GridSpec wspace/hspace). One value sets both axes."
-    ),
-)
-@weather_skill.argument(
-    "--mask-geojson",
-    default=None,
-    help="GeoJSON polygon; gridded cells outside become NaN.",
-)
 @weather_skill.argument(
     "--spec",
     default=None,
     type=parse_plot_spec,
     help=SPEC_ARGUMENT_HELP,
-)
-@weather_skill.argument(
-    "--patch",
-    default=None,
-    type=parse_plot_patch,
-    help=PATCH_ARGUMENT_HELP,
 )
 @weather_skill.argument(
     "--dump-spec",
@@ -448,31 +361,13 @@ def plot_verify(
     obs,
     forecast,
     verify,
-    bbox,
-    variable,
-    lead,
-    colormap,
-    label,
-    title,
-    fontsize,
-    figsize,
-    panel_spacing,
-    mask_geojson,
     output,
     spec=None,
-    patch=None,
     dump_spec=None,
-    colormap_bounds=None,
-    colormap_under=None,
-    colormap_over=None,
-    cbar_ticks=None,
-    cbar_labels=None,
     **kwargs,
 ):
     """Lead-week verification grid from obs, forecast, and pre-computed verify Zarrs."""
-    spec_data = spec.to_dict() if spec is not None else {}
-    if patch:
-        spec_data = overlay_spec(spec_data, patch)
+    user = spec.to_dict() if spec is not None else {}
     named_spec = named_datasets_from_spec(spec) if spec is not None else {}
     if obs is None:
         obs = named_spec.get("obs")
@@ -482,44 +377,6 @@ def plot_verify(
     verify_sets = _as_list(verify)
     if not verify_sets:
         verify_sets = spec_role_datasets(named_spec, "verify")
-    flags = resolve_flags(
-        spec_data,
-        title=title,
-        colormap=colormap,
-        colormap_bounds=colormap_bounds,
-        colormap_under=colormap_under,
-        colormap_over=colormap_over,
-        cbar_ticks=cbar_ticks,
-        cbar_labels=cbar_labels,
-        figsize=figsize,
-        panel_spacing=panel_spacing,
-        bbox=bbox,
-        mask_geojson=mask_geojson,
-        variable=variable,
-        leads=lead,
-    )
-    title, colormap, variable = flags["title"], flags["colormap"], flags["variable"]
-    spec_data = overlay_flags(
-        spec_data,
-        colormap=colormap,
-        colormap_bounds=flags.get("colormap_bounds"),
-        colormap_under=flags.get("colormap_under"),
-        colormap_over=flags.get("colormap_over"),
-        cbar_ticks=flags.get("cbar_ticks"),
-        cbar_labels=flags.get("cbar_labels"),
-        panel_spacing=flags.get("panel_spacing"),
-    )
-    colormap = spec_get(spec_data, "colormap")
-    bbox, mask_geojson, lead = flags["bbox"], flags["mask_geojson"], flags["leads"]
-    figsize = tuple(flags["figsize"]) if flags["figsize"] else None
-    if not label:
-        label = [
-            item.get("label")
-            for item in spec_data.get("inputs") or []
-            if isinstance(item, dict) and not str(item.get("id", "")).startswith("verify")
-        ]
-        if not any(label):
-            label = None
     if obs is None:
         raise UsageError("pass --obs, or --spec with an obs input.")
     if not forecasts:
@@ -529,50 +386,63 @@ def plot_verify(
             f"--verify was passed {len(verify_sets)} time(s) but --forecast was passed "
             f"{len(forecasts)} time(s); pass one --verify per --forecast."
         )
-    leads = _as_list(lead)
-    if leads and len(leads) != len(forecasts):
-        raise UsageError(
-            f"--lead was passed {len(leads)} time(s) but --forecast was passed "
-            f"{len(forecasts)} time(s); pass one --lead per --forecast."
-        )
-    if not leads:
-        leads = [f"{i}-week lead" for i in range(1, len(forecasts) + 1)]
-    labels = _as_list(label) or None
-    leads, forecasts, verify_sets, labels = _order_week1_first(
-        leads, forecasts, verify_sets, labels
-    )
-
-    metrics = [_metric_from_verify(ds, f"--verify {i + 1}") for i, ds in enumerate(verify_sets)]
-    if len(set(metrics)) != 1:
-        raise UsageError(f"all --verify inputs must share the same verify_metric; got {metrics}.")
-    metric = metrics[0]
-    row_labels = _row_labels(obs, forecasts, metric, labels=labels)
     named = {
         "obs": obs,
         **{f"forecast{i}": fc for i, fc in enumerate(forecasts, start=1)},
         **{f"verify{i}": ds for i, ds in enumerate(verify_sets, start=1)},
     }
-    geo_out = {}
-    if bbox is not None:
-        geo_out["bbox"] = list(bbox) if not isinstance(bbox, str) else bbox
-    if mask_geojson:
-        geo_out["mask_geojson"] = str(mask_geojson)
-    assembled = overlay_spec(
-        spec_data,
-        {
-            "version": SPEC_VERSION,
-            "skill": "plot-verify",
-            "layout": {
-                "facet": {"rows": 2, "columns": 1 + len(forecasts)},
-                "figsize": list(figsize) if figsize else None,
-            },
-            "traces": [{"kind": "grid", "metric": metric, "leads": list(leads)}],
-            "theme": {"template": "weather_skills", "fontsize": fontsize},
-            "title": title,
-            "geo": geo_out,
-        },
+    internal_inputs = spec_inputs_from_datasets(named)
+    internal = {
+        "version": SPEC_VERSION,
+        "skill": "plot-verify",
+        "inputs": internal_inputs,
+        "traces": [{"kind": "grid", "input": "obs"}],
+        "layout": {"facet": {"rows": 2, "columns": 1 + len(forecasts)}},
+        "theme": {"template": "weather_skills"},
+    }
+    spec_data = normalize_spec(overlay_spec(internal, user))
+    params = params_from_spec(spec_data)
+    trace0 = trace_at(spec_data)
+    title, colormap, variable = params["title"], params["colormap"], params["variable"]
+    bbox, mask_geojson = params["bbox"], params["mask_geojson"]
+    if isinstance(bbox, list):
+        bbox = tuple(bbox)
+    figsize = tuple(params["figsize"]) if params["figsize"] else None
+    fontsize = (spec_data.get("theme") or {}).get("fontsize") or DEFAULT_FONTSIZE
+    leads = list(trace0.get("leads") or [])
+    if leads and len(leads) != len(forecasts):
+        raise UsageError(
+            f"traces[].leads has {len(leads)} entries but --forecast was passed "
+            f"{len(forecasts)} time(s); pass one lead per forecast."
+        )
+    if not leads:
+        leads = [f"{i}-week lead" for i in range(1, len(forecasts) + 1)]
+    label = [
+        item.get("label")
+        for item in spec_data.get("inputs") or []
+        if isinstance(item, dict) and not str(item.get("id", "")).startswith("verify")
+    ]
+    if not any(label):
+        label = None
+    labels = _as_list(label) or None
+    leads, forecasts, verify_sets, labels = _order_week1_first(
+        leads, forecasts, verify_sets, labels
     )
-    if maybe_emit_spec(assembled, dump_spec, datasets=named):
+    named = {
+        "obs": obs,
+        **{f"forecast{i}": fc for i, fc in enumerate(forecasts, start=1)},
+        **{f"verify{i}": ds for i, ds in enumerate(verify_sets, start=1)},
+    }
+    metrics = [_metric_from_verify(ds, f"--verify {i + 1}") for i, ds in enumerate(verify_sets)]
+    if len(set(metrics)) != 1:
+        raise UsageError(f"all --verify inputs must share the same verify_metric; got {metrics}.")
+    metric = metrics[0]
+    row_labels = _row_labels(obs, forecasts, metric, labels=labels)
+    trace0 = spec_data["traces"][0]
+    trace0["metric"] = metric
+    trace0["leads"] = list(leads)
+
+    if maybe_emit_spec(spec_data, dump_spec, datasets=named):
         return None
     if output is None:
         raise UsageError("--output is required unless --dump-spec is set")

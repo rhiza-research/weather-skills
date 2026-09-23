@@ -24,33 +24,25 @@ from pathlib import Path
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.plot import compile, export
-from weather_skills_core.plot.figure import (
-    DEFAULT_FONTSIZE,
+from weather_skills_core.plot.figure import (  # noqa: F401 — tests call these via the skill module
     parse_figsize,
-    parse_label_list,
-    parse_number_list,
     parse_panel_spacing,
 )
 from weather_skills_core.plot.maps import parse_draw_boxes, parse_layer
 from weather_skills_core.plot.spec import (
     DUMP_SPEC_ARGUMENT_HELP,
-    PATCH_ARGUMENT_HELP,
     SPEC_ARGUMENT_HELP,
     fold_layer_options,
     layer_item_from_parts,
     maybe_emit_spec,
-    merge_layer_lists,
     named_datasets_from_spec,
     normalize_spec,
     opened_datasets_from_spec,
-    overlay_flags,
     overlay_spec,
+    params_from_spec,
     parse_index,
-    parse_plot_patch,
     parse_plot_spec,
-    resolve_flags,
     spec_from_flags,
-    spec_get,
     spec_inputs_from_datasets,
     trace_at,
 )
@@ -116,17 +108,6 @@ def _spec_data(spec):
     if hasattr(spec, "to_dict"):
         return spec.to_dict()
     return dict(spec) if isinstance(spec, dict) else {}
-
-
-def _overlay_cli_from_spec(spec_data, **cli):
-    """Fill omitted CLI flags from a dumped spec. CLI values win when set."""
-    out = resolve_flags(spec_data, **{k: v for k, v in cli.items() if k != "draw_box"})
-    out["draw_box"] = cli.get("draw_box") or spec_get(spec_data, "draw_boxes")
-    if out.get("bbox") is not None:
-        out["bbox"] = tuple(out["bbox"])
-    if out.get("figsize") is not None:
-        out["figsize"] = tuple(out["figsize"])
-    return out
 
 
 def _kind_from_spec(spec_data):
@@ -312,38 +293,19 @@ def _warn(kind, **flags):
                 )
 
 
-def _merged_spec(
-    spec_data,
-    *,
-    kind,
-    datasets,
-    user_theme,
-    patch,
-    layers=None,
-    **flags,
-):
-    template = flags.pop("template", None) or user_theme.get("template")
-    flags["template"] = template
-    shared_scale = flags.pop("shared_scale", False)
-    independent_scale = flags.pop("independent_scale", False)
-    layer_labels = flags.pop("layer_labels", None)
-    if flags.get("colormap") is None and user_theme.get("colormap"):
-        flags["colormap"] = user_theme.get("colormap")
-    if flags.get("fontsize") is None and user_theme.get("fontsize") is not None:
-        flags["fontsize"] = user_theme.get("fontsize")
-    if spec_data:
-        merged = overlay_flags(spec_data, kind=kind, **flags)
-        if not merged.get("traces"):
-            merged["traces"] = [{"kind": kind, "input": "a"}]
-        elif kind:
-            merged["traces"][0]["kind"] = kind
-    else:
-        merged = spec_from_flags(kind=kind, **flags)
-    if patch:
-        merged = overlay_spec(merged, patch)
+def _internal_from_files(*, kind, datasets, user_theme, layers=None):
+    """Skeleton spec from opened files. ``--spec`` is merged on afterwards."""
+    flags = {}
+    if user_theme.get("template"):
+        flags["template"] = user_theme["template"]
+    if user_theme.get("colormap"):
+        flags["colormap"] = user_theme["colormap"]
+    if user_theme.get("fontsize") is not None:
+        flags["fontsize"] = user_theme["fontsize"]
+    merged = spec_from_flags(kind=kind or "heatmap", **flags)
     if layers:
         named = _layer_datasets(layers)
-        merged["traces"] = [{"kind": "layer"}]
+        merged["traces"] = [{"kind": "layer", "input": "a"}]
         built = []
         inputs = []
         for i, layer in enumerate(layers):
@@ -360,37 +322,20 @@ def _merged_spec(
             if layer.kind in _ZARR_LAYER_KINDS:
                 if layer.ds is not None:
                     named.setdefault(lid, layer.ds)
-                item = {"id": lid, "path": str(layer.path)}
-                if layer_labels and i < len(layer_labels) and layer_labels[i]:
-                    item["label"] = layer_labels[i]
-                inputs.append(item)
+                inputs.append({"id": lid, "path": str(layer.path)})
             built.append(entry)
-        if spec_data and spec_data.get("layers"):
-            merged["layers"] = merge_layer_lists(built, spec_data["layers"])
-        else:
-            merged["layers"] = built
+        merged["layers"] = built
         if inputs:
             merged["inputs"] = inputs
         datasets = named or datasets
     elif datasets:
         merged["inputs"] = spec_inputs_from_datasets(datasets)
-        if kind == "xy" and merged["inputs"]:
-            if flags.get("x_variable"):
-                merged["inputs"][0]["variable"] = flags["x_variable"]
-            if flags.get("y_variable") and len(merged["inputs"]) > 1:
-                merged["inputs"][1]["variable"] = flags["y_variable"]
-    if flags.get("figsize") is not None:
-        merged.setdefault("layout", {})["autosize"] = False
-    if user_theme.get("max_columns") and not (flags.get("rows") or flags.get("columns")):
+    if user_theme.get("max_columns"):
         merged.setdefault("layout", {}).setdefault("facet", {}).setdefault(
             "max_columns", user_theme["max_columns"]
         )
-    if shared_scale:
-        merged.setdefault("layout", {})["shared_colorscale"] = True
-    if independent_scale:
-        merged.setdefault("layout", {})["shared_colorscale"] = False
     merged["skill"] = "plot"
-    return normalize_spec(merged), datasets
+    return merged, datasets
 
 
 @weather_skill(
@@ -404,7 +349,7 @@ def _merged_spec(
     type=Dataset("any"),
     required=False,
     default=None,
-    help="X-axis Zarr for --kind xy. Mutually exclusive with -i/--input.",
+    help="X-axis Zarr for kind xy. Mutually exclusive with -i/--input and --layer.",
 )
 @weather_skill.argument(
     "--y",
@@ -412,7 +357,7 @@ def _merged_spec(
     type=Dataset("any"),
     required=False,
     default=None,
-    help="Y-axis Zarr for --kind xy. Mutually exclusive with -i/--input.",
+    help="Y-axis Zarr for kind xy. Mutually exclusive with -i/--input and --layer.",
 )
 @weather_skill.argument(
     "--layer",
@@ -420,263 +365,11 @@ def _merged_spec(
     default=None,
     type=parse_layer,
     help=(
-        "Map layer KIND:PATH or KIND:PATH::k=v. Repeat for overlays. "
+        "Map layer KIND:PATH. Repeat for overlays. "
         "Kinds: heatmap, scatter, quiver, outline, mask. "
-        "Options: variable, colormap, index, u_variable, v_variable, "
-        "quiver_scale, quiver_step, vmin, vmax. Mutually exclusive with -i/--input."
+        "Set variable, colormap, vmin, and other layer keys on layers[] in --spec. "
+        "Mutually exclusive with -i/--input."
     ),
-)
-@weather_skill.argument("--bbox")
-@weather_skill.argument("--variable", "-v")
-@weather_skill.argument(
-    "--x-variable",
-    default=None,
-    help="X-axis variable for --kind xy. Defaults to the first data variable of --x (or -i).",
-)
-@weather_skill.argument(
-    "--y-variable",
-    default=None,
-    help="Y-axis variable for --kind xy. Defaults to the first data variable of --y (or -i).",
-)
-@weather_skill.argument(
-    "--pair-on",
-    choices=["time", "year", "index"],
-    default=None,
-    help=(
-        "How --kind xy matches --x to --y samples: shared time (default), "
-        "calendar year (e.g. September IOD vs October rain), or position."
-    ),
-)
-@weather_skill.argument(
-    "--kind",
-    choices=["heatmap", "contour", "timeseries", "xy", "windrose", "quiver"],
-    default=None,
-)
-@weather_skill.argument(
-    "--u-variable",
-    default=None,
-    help="Eastward wind variable (windrose/quiver). Auto-detected when omitted.",
-)
-@weather_skill.argument(
-    "--v-variable",
-    default=None,
-    help="Northward wind variable (windrose/quiver). Auto-detected when omitted.",
-)
-@weather_skill.argument(
-    "--colormap",
-    default=None,
-    help=(
-        "matplotlib colormap name, or comma-separated colors. "
-        "When plotting rainfall anomalies, omit this flag so the default "
-        "nested ±mm classes apply (cropped by aggregation_period). "
-        "Also: ppt_poa, ppt_spp, spi. Else rocket. "
-        "Windrose default: blue-to-orange speed classes. "
-        "Quiver default: YlGn (ECMWF S2S 10 m / 700 hPa wind vectors)."
-    ),
-)
-@weather_skill.argument(
-    "--colormap-bounds",
-    default=None,
-    type=parse_number_list,
-    help=(
-        "Discrete colormap class edges (comma-separated). "
-        "Folds into theme.colormap.bounds. "
-        "A leading minus needs --colormap-bounds=-100,100 (not a space)."
-    ),
-)
-@weather_skill.argument("--colormap-under", default=None, help="Color below the first bound.")
-@weather_skill.argument("--colormap-over", default=None, help="Color above the last bound.")
-@weather_skill.argument(
-    "--index",
-    default=None,
-    help=(
-        "Slice like 'step=3,number=0' (heatmap, contour, quiver, and windrose). "
-        "Heatmap/contour/quiver lists keep the dim as panels; windrose lists keep samples."
-    ),
-)
-@weather_skill.argument(
-    "--reduce",
-    action="append",
-    default=None,
-    help=(
-        "Average over this dim for --kind timeseries. Repeat once per leftover "
-        "non-time dim (e.g. --reduce latitude --reduce longitude). No dim is "
-        "averaged unless you say so."
-    ),
-)
-@weather_skill.argument(
-    "--along",
-    default=None,
-    help=(
-        "Draw one --kind timeseries line per value of this dim (e.g. --along number "
-        "for ensemble members) instead of reducing it."
-    ),
-)
-@weather_skill.argument(
-    "--extent",
-    default=None,
-    help="Map extent 'lon_min,lon_max,lat_min,lat_max' (heatmap, contour, and quiver).",
-)
-@weather_skill.argument(
-    "--cities",
-    default=None,
-    help='City overlay JSON (heatmap, contour, and quiver). Inline {"name": [lat, lon]} or file path.',
-)
-@weather_skill.argument(
-    "--fontsize",
-    type=int,
-    default=DEFAULT_FONTSIZE,
-    help="Base font size for titles, axis labels, and colorbar text (default 16).",
-)
-@weather_skill.argument(
-    "--figsize",
-    default=None,
-    type=parse_figsize,
-    help="Figure size W,H inches (e.g. 10,6 or 10x6). Default is kind-specific.",
-)
-@weather_skill.argument(
-    "--legend",
-    default=None,
-    type=parse_legend,
-    help=(
-        "Legend placement: matplotlib loc (best, upper right, …), "
-        "'outside right', 'below', or 'none'. Windrose default: outside right. "
-        "Timeseries draws a legend only when this is set."
-    ),
-)
-@weather_skill.argument("--title", default=None, help="Optional figure title (above all panels).")
-@weather_skill.argument(
-    "--subplot-title",
-    action="append",
-    default=None,
-    help=(
-        "Override one map panel title, in panel order. Repeat for each panel. "
-        "Fewer than the panel count keeps auto date/lead titles for the rest; "
-        "more than the panel count is an error. Maps only."
-    ),
-)
-@weather_skill.argument(
-    "--xlabel",
-    default=None,
-    help="Override the x-axis label (default: Longitude; omitted on datetime ticks).",
-)
-@weather_skill.argument(
-    "--ylabel",
-    default=None,
-    help="Override the y-axis label (default: Latitude / variable label / Frequency (%%)).",
-)
-@weather_skill.argument(
-    "--cbar-label",
-    default=None,
-    help=(
-        "Override the colorbar label (heatmap, contour, quiver, layered maps). "
-        "Use the variable and units (Total precipitation [mm]), not a date. "
-        "Default is the variable long_name + units. Per-layer --label wins."
-    ),
-)
-@weather_skill.argument(
-    "--cbar-ticks",
-    default=None,
-    type=parse_number_list,
-    help="Explicit colorbar tick values (comma-separated).",
-)
-@weather_skill.argument(
-    "--cbar-labels",
-    default=None,
-    type=parse_label_list,
-    help="Explicit colorbar tick labels (comma-separated; requires --cbar-ticks).",
-)
-@weather_skill.argument(
-    "--rows",
-    type=int,
-    default=None,
-    help=(
-        "Heatmap/contour/quiver panel rows. Extra cells stay blank when the grid is larger than the data."
-    ),
-)
-@weather_skill.argument(
-    "--columns",
-    type=int,
-    default=None,
-    help=(
-        "Heatmap/contour/quiver panel columns. Extra cells stay blank when the grid is larger than the data."
-    ),
-)
-@weather_skill.argument(
-    "--panel-spacing",
-    default=None,
-    type=parse_panel_spacing,
-    help=(
-        "Inter-panel gap as a fraction of panel size: W or W,H "
-        "(matplotlib GridSpec wspace/hspace). Maps only. "
-        "One value sets both axes. Disables compressed packing so equal-aspect "
-        "map panels keep the requested whitespace."
-    ),
-)
-@weather_skill.argument(
-    "--mask-geojson",
-    default=None,
-    help="GeoJSON polygon; cells/points outside become NaN (heatmap, contour, quiver, windrose, xy).",
-)
-@weather_skill.argument(
-    "--draw-box",
-    action="append",
-    default=None,
-    help=(
-        "Draw a black outline box on the map as N/W/S/E decimal degrees "
-        "(same form as --bbox). Repeat for multiple boxes. Heatmap and quiver."
-    ),
-)
-@weather_skill.argument(
-    "--quiver-scale",
-    type=float,
-    default=None,
-    help=(
-        "Matplotlib quiver scale (larger → shorter arrows). "
-        "Default sizes a typical wind to ~1.5× the subsampled grid spacing. "
-        "Quiver-only."
-    ),
-)
-@weather_skill.argument(
-    "--quiver-step",
-    type=int,
-    default=None,
-    help=(
-        "Plot every Nth grid point for --kind quiver "
-        "(S2S plot_wind_and_sst_anomaly quiver_step). "
-        "Default: 1 on ~1.5° grids; finer grids auto-thin to ~1.5°. Quiver-only."
-    ),
-)
-@weather_skill.argument(
-    "--label",
-    action="append",
-    default=None,
-    help=(
-        "Colorbar label for each --layer, in order (variable/quantity, not a date). "
-        "Omit to use the variable long_name + units."
-    ),
-)
-@weather_skill.argument(
-    "--shared-scale",
-    action="store_true",
-    help="Force one shared color scale across heatmap/scatter layers.",
-)
-@weather_skill.argument(
-    "--independent-scale",
-    action="store_true",
-    help="Force a separate color scale per heatmap/scatter layer.",
-)
-@weather_skill.argument(
-    "--vmin",
-    type=float,
-    default=None,
-    help="Colorbar lower limit (heatmap, contour, quiver, scatter). Unset = data min.",
-)
-@weather_skill.argument(
-    "--vmax",
-    type=float,
-    default=None,
-    help="Colorbar upper limit (heatmap, contour, quiver, scatter). Unset = data max.",
 )
 @weather_skill.argument(
     "--spec",
@@ -690,18 +383,6 @@ def _merged_spec(
     help="User plot theme TOML/JSON (colormap, fontsize, template). Overrides ~/.config/weather-skills/theme.toml.",
 )
 @weather_skill.argument(
-    "--theme",
-    default=None,
-    choices=["weather_skills", "colorblind"],
-    help="Seaborn colorway: weather_skills (deep) or colorblind. Default weather_skills.",
-)
-@weather_skill.argument(
-    "--patch",
-    default=None,
-    type=parse_plot_patch,
-    help=PATCH_ARGUMENT_HELP,
-)
-@weather_skill.argument(
     "--dump-spec",
     nargs="?",
     const="-",
@@ -711,121 +392,23 @@ def _merged_spec(
 )
 def plot(
     ds,
-    bbox,
-    variable,
-    kind,
-    colormap,
-    title,
-    subplot_title,
-    xlabel,
-    ylabel,
-    cbar_label,
-    index,
-    reduce,
-    along,
-    extent,
-    cities,
-    fontsize,
-    figsize,
-    legend,
-    mask_geojson,
-    draw_box,
-    rows,
-    columns,
-    panel_spacing,
-    u_variable,
-    v_variable,
-    quiver_scale,
-    quiver_step,
     output,
     layer=None,
-    label=None,
-    shared_scale=False,
-    independent_scale=False,
     x_ds=None,
     y_ds=None,
-    x_variable=None,
-    y_variable=None,
-    pair_on=None,
-    vmin=None,
-    vmax=None,
     spec=None,
     theme_file=None,
-    theme=None,
-    patch=None,
     dump_spec=None,
-    colormap_bounds=None,
-    colormap_under=None,
-    colormap_over=None,
-    cbar_ticks=None,
-    cbar_labels=None,
     **kwargs,
 ):
     """Render a heatmap, contour, timeseries, xy scatter, wind-rose, quiver, or layered map PNG from weather-skills Zarrs."""
-    spec_data = _spec_data(spec)
-    if patch:
-        spec_data = overlay_spec(spec_data, patch)
-    filled = _overlay_cli_from_spec(
-        spec_data,
-        title=title,
-        xlabel=xlabel,
-        ylabel=ylabel,
-        cbar_label=cbar_label,
-        colormap=colormap,
-        legend=legend,
-        index=index,
-        u_variable=u_variable,
-        v_variable=v_variable,
-        variable=variable,
-        bbox=bbox,
-        mask_geojson=mask_geojson,
-        extent=extent,
-        cities=cities,
-        draw_box=draw_box,
-        figsize=figsize,
-        vmin=vmin,
-        vmax=vmax,
-        reduce=reduce,
-        along=along,
-        rows=rows,
-        columns=columns,
-        panel_spacing=panel_spacing,
-        pair_on=pair_on,
-        x_variable=x_variable,
-        y_variable=y_variable,
-        quiver_scale=quiver_scale,
-        quiver_step=quiver_step,
-        colormap_bounds=colormap_bounds,
-        colormap_under=colormap_under,
-        colormap_over=colormap_over,
-        cbar_ticks=cbar_ticks,
-        cbar_labels=cbar_labels,
-        kind=kind,
-    )
-    title = filled["title"]
-    xlabel = filled["xlabel"]
-    ylabel = filled["ylabel"]
-    cbar_label = filled["cbar_label"]
-    colormap = filled["colormap"]
-    legend = filled["legend"]
-    index = filled["index"]
-    u_variable = filled["u_variable"]
-    v_variable = filled["v_variable"]
-    variable = filled["variable"]
-    bbox = filled["bbox"]
-    mask_geojson = filled["mask_geojson"]
-    extent = filled["extent"]
-    cities = filled["cities"]
-    draw_box = filled["draw_box"]
-    figsize = filled["figsize"]
-    vmin = filled["vmin"]
-    vmax = filled["vmax"]
-    kind = filled.get("kind") or kind
+    user = _spec_data(spec)
     layers = list(layer or [])
     if not layers:
-        layers = _layers_from_spec(spec_data, spec)
+        layers = _layers_from_spec(user, spec)
+    kind = _kind_from_spec(user)
     if kind is None and not layers:
-        kind = _kind_from_spec(spec_data) or "heatmap"
+        kind = "heatmap"
     if spec is not None and ds is None and not layers and kind != "xy":
         ds = spec.ds if spec.ds is not None else None
         if ds is None and spec.datasets:
@@ -837,62 +420,30 @@ def plot(
     if ds is not None and (x_ds is not None or y_ds is not None):
         raise UsageError("pass either -i/--input or --x/--y, not both")
     if kind == "xy":
-        x_ds, y_ds, x_variable, y_variable, pair_on = _xy_from_spec(
-            spec_data, spec, x_ds, y_ds, x_variable, y_variable, pair_on
+        x_ds, y_ds, _x_variable, _y_variable, _pair_on = _xy_from_spec(
+            user, spec, x_ds, y_ds, None, None, None
         )
         if layers:
-            raise UsageError("--layer cannot be used with --kind xy")
+            raise UsageError("--layer cannot be used with kind xy")
         if x_ds is None and y_ds is None:
             if ds is None:
-                raise UsageError(
-                    "--kind xy needs --x and --y, or -i with --x-variable and --y-variable"
-                )
+                raise UsageError("kind xy needs --x and --y, or -i with x_variable and y_variable in --spec")
+            trace = (user.get("traces") or [{}])[0] if isinstance((user.get("traces") or [{}])[0], dict) else {}
+            inputs = [i for i in (user.get("inputs") or []) if isinstance(i, dict)]
+            x_variable = trace.get("x_variable") or (inputs[0].get("variable") if inputs else None)
+            y_variable = trace.get("y_variable") or (inputs[1].get("variable") if len(inputs) > 1 else None)
             if not x_variable or not y_variable:
-                raise UsageError(
-                    "with a single -i, --kind xy needs both --x-variable and --y-variable"
-                )
+                raise UsageError("with a single -i, kind xy needs x_variable and y_variable in --spec")
             x_ds = ds
             y_ds = ds
         elif x_ds is None or y_ds is None:
-            raise UsageError("--kind xy needs both --x and --y")
+            raise UsageError("kind xy needs both --x and --y")
     elif not layers and ds is None:
         raise UsageError("pass -i/--input, a --spec with inputs, or at least one --layer")
     if layers and kind in ("timeseries", "xy", "windrose", "contour"):
-        raise UsageError(f"--layer cannot be used with --kind {kind}")
+        raise UsageError(f"--layer cannot be used with kind {kind}")
     if layers and kind == "quiver":
-        raise UsageError(
-            "with --layer, draw wind vectors as --layer quiver:PATH instead of --kind quiver"
-        )
-    if layers and legend is not None and legend != "none":
-        print(
-            "Warning: --legend is ignored for layered maps (they use colorbars).",
-            file=sys.stderr,
-        )
-
-    parse_index(index)
-    draw_boxes = parse_draw_boxes(draw_box)
-    _warn(
-        "layer" if layers else kind,
-        legend=legend,
-        u_variable=u_variable,
-        v_variable=v_variable,
-        extent=extent,
-        cities=cities,
-        draw_boxes=draw_boxes,
-        rows=rows,
-        columns=columns,
-        panel_spacing=panel_spacing,
-        subplot_title=subplot_title,
-        bbox=bbox,
-        mask_geojson=mask_geojson,
-        index=index,
-        quiver_scale=quiver_scale,
-        quiver_step=quiver_step,
-        vmin=vmin,
-        vmax=vmax,
-        cbar_label=cbar_label,
-        variable=variable,
-    )
+        raise UsageError("with --layer, draw wind vectors as --layer quiver:PATH instead of kind quiver")
 
     user_theme = load_user_theme(theme_file)
     if kind == "xy":
@@ -911,65 +462,45 @@ def plot(
                 datasets[key or f"i{i}"] = extra
             datasets["a"] = ds
 
-    merged, datasets = _merged_spec(
-        spec_data,
-        kind=kind if not layers else "layer",
+    internal, datasets = _internal_from_files(
+        kind="layer" if layers else kind,
         datasets=datasets,
         user_theme=user_theme,
-        patch=None,
         layers=layers or None,
-        input_path=_input_path_of(ds) or _input_path_of(x_ds),
-        variable=variable,
-        index=index,
-        reduce=reduce,
-        along=along,
-        title=title,
-        subplot_titles=list(subplot_title) if subplot_title else None,
-        xlabel=xlabel,
-        ylabel=ylabel,
-        cbar_label=cbar_label,
-        legend=legend,
-        vmin=vmin,
-        vmax=vmax,
-        colormap=colormap,
-        colormap_bounds=colormap_bounds or filled.get("colormap_bounds"),
-        colormap_under=colormap_under or filled.get("colormap_under"),
-        colormap_over=colormap_over or filled.get("colormap_over"),
-        cbar_ticks=cbar_ticks or filled.get("cbar_ticks"),
-        cbar_labels=cbar_labels or filled.get("cbar_labels"),
-        fontsize=fontsize,
-        template=theme,
-        figsize=figsize,
-        rows=rows,
-        columns=columns,
-        panel_spacing=panel_spacing,
-        extent=extent,
-        cities=cities,
-        bbox=bbox,
-        mask_geojson=mask_geojson,
+    )
+    merged = normalize_spec(overlay_spec(internal, user))
+    filled = params_from_spec(merged)
+    kind_now = "layer" if merged.get("layers") else (trace_at(merged).get("kind") or kind)
+    parse_index(filled.get("index"))
+    draw_boxes = parse_draw_boxes(filled.get("draw_boxes"))
+    _warn(
+        kind_now,
+        legend=filled.get("legend"),
+        u_variable=filled.get("u_variable"),
+        v_variable=filled.get("v_variable"),
+        extent=filled.get("extent"),
+        cities=filled.get("cities"),
         draw_boxes=draw_boxes,
-        pair_on=pair_on if kind == "xy" else None,
-        x_variable=x_variable if kind == "xy" else None,
-        y_variable=y_variable if kind == "xy" else None,
-        u_variable=u_variable,
-        v_variable=v_variable,
-        quiver_scale=quiver_scale,
-        quiver_step=quiver_step,
-        shared_scale=shared_scale,
-        independent_scale=independent_scale,
-        layer_labels=label,
+        rows=filled.get("rows"),
+        columns=filled.get("columns"),
+        panel_spacing=filled.get("panel_spacing"),
+        subplot_title=filled.get("subplot_titles"),
+        bbox=filled.get("bbox"),
+        mask_geojson=filled.get("mask_geojson"),
+        index=filled.get("index"),
+        quiver_scale=filled.get("quiver_scale"),
+        quiver_step=filled.get("quiver_step"),
+        vmin=filled.get("vmin"),
+        vmax=filled.get("vmax"),
+        cbar_label=filled.get("cbar_label"),
+        variable=filled.get("variable"),
     )
     if maybe_emit_spec(merged, dump_spec, datasets=datasets):
         return None
     if output is None:
         raise UsageError("--output is required unless --dump-spec is set")
     compiled = compile(merged, datasets, theme_registry=user_theme)
-    return export(
-        compiled,
-        output,
-        datasets=datasets,
-        spec=merged,
-    )
+    return export(compiled, output, datasets=datasets, spec=merged)
 
 
 if __name__ == "__main__":

@@ -8,12 +8,12 @@ compiler.
 
 ```mermaid
 flowchart LR
-  CLI[CLI flags] --> Flags[FLAG_TO_SPEC]
-  Flags --> Spec[spec.py]
-  Dump["--dump-spec -"] --> Spec
-  Patch["--patch"] --> Spec
-  Zarrs["Decorator-opened Zarrs"] --> Compile
-  Spec --> Compile["plot.compile"]
+  Files["-i / --layer / --x / --y"] --> Internal[Internal spec]
+  SpecFlag["--spec"] --> Merge[overlay_spec]
+  Internal --> Merge
+  Merge --> Read[Read knobs from merged spec]
+  Read --> Compile["plot.compile"]
+  Merge --> Dump["--dump-spec"]
   Compile --> Maps[maps.py]
   Compile --> Charts[charts.py]
   Maps --> Figure[figure.py]
@@ -24,31 +24,31 @@ flowchart LR
 ```
 
 - **Data** comes only from decorator-opened Zarrs (`-i`, `--layer`,
-  `--obs`/`--forecast`, or paths listed in `--spec`). The formatting spec
-  must not open files itself.
+  `--x`/`--y`, `--obs`/`--forecast`/`--verify`, or paths listed in
+  `--spec` when no file flag was passed). The formatting spec must not
+  open files itself.
 - **Layout** is JSON with **one home per knob** (see the table below). An
   unknown key is an error naming the canonical path, never a silent no-op.
-  A default run writes only the PNG. `--dump-spec` dumps the assembled spec
-  as JSON and skips drawing a PNG (`-o` is not required). `--dump-spec -`
-  prints to stdout when you need to inspect knobs; `--patch` submits edits.
-  There is no `*.plot.json` sidecar.
-- **One flag-to-spec bridge.** First runs use CLI flags (`--title`,
-  `--variable`, `--mask-geojson`, `--figsize`, `--kind`, …). `--spec` is
-  an optional full JSON object (replay a dump, or pack many knobs) — not a
-  replacement for those flags. `FLAG_TO_SPEC` in `plot/spec.py` is the only
-  place that knows how a CLI flag lands in the spec. Skills read values
-  back through `resolve_flags(spec, **cli)`, which is the single
-  precedence rule: a set CLI value wins, otherwise the spec's value is used.
+  A default run writes only the PNG. The skill builds an internal spec from
+  the opened files, then deep-merges `--spec` onto it. User values win.
+  `--dump-spec` writes that merged spec and skips the PNG (`-o` is not
+  required). There is no `--patch` and no `*.plot.json` sidecar.
+- **Files on the command line, parameters in `--spec`.** `-i`, `--layer
+  KIND:PATH`, `--x`, and `--y` name the datasets. Kind, variable, titles,
+  colormap, bbox, and the rest of the old flag set are spec keys. Passing
+  one of those flags errors and names the JSON path. `inputs[]` merges by
+  id, `traces[]` by `input` (else id), `layers[]` by id (else index), so a
+  partial object does not wipe the figure.
 - **One map renderer.** `heatmap`, `contour`, `quiver` and `--layer` all
   compile through `plot.maps`: a single-input kind is just a one-layer
-  figure. `plot --kind heatmap x.zarr` and `plot --layer heatmap:x.zarr`
-  render pixel-identical output. Overlays (coastlines, borders, filled lakes,
-  admin-1) pick a Natural Earth resolution from the map span and skip a layer
-  with a warning if it cannot be fetched.
-- **Recipes stay Python** (compare grid, verify grid, mediogram boxes).
-  There is no generic mosaic DSL. Those skills still call
-  `maps.compile_grid` / `charts.compile_lines` / `charts.compile_mediogram`
-  and go through `export`.
+  figure. A heatmap kind and `--layer heatmap:<path>` render the same
+  picture. Overlays (coastlines, borders, filled lakes, admin-1) pick a
+  Natural Earth resolution from the map span and skip a layer with a
+  warning if it cannot be fetched.
+- **Recipes stay Python** (verify grid, mediogram boxes). There is no
+  generic mosaic DSL. Those skills still call `maps.compile_grid` /
+  `charts.compile_lines` / `charts.compile_mediogram` and go through
+  `export`.
 - **Theme** is seaborn (`weather_skills` / `colorblind`) then optional
   `theme.rc`. The renderer applies its own chart theme, so a caller cannot
   hand a map the line-chart style. PNG via matplotlib Agg.
@@ -73,16 +73,19 @@ and this report.
 | Skill | Job | Typical inputs | Layout |
 | --- | --- | --- | --- |
 | [`plot`](../skills/plot/SKILL.md) | One dataset (or stacked `--layer` maps) | `-i` or `--layer KIND:PATH` | heatmap / contour / timeseries / xy / windrose / quiver |
-| [`plot-timeseries`](../skills/plot-timeseries/SKILL.md) | Several 1D series | repeatable `-i` | overlay or `--subplots`; `--along` spaghetti; `--band`; `--trace` styling |
-| [`plot-compare`](../skills/plot-compare/SKILL.md) | Exactly two datasets, two rows | `-i` twice | union of times as columns; station vs grid as separate rows |
-| [`plot-compare-forecasts`](../skills/plot-compare-forecasts/SKILL.md) | N grids vs shared valid times | `-i` N times | one row per input; blank `n/a` if a time is missing |
+| [`plot-timeseries`](../skills/plot-timeseries/SKILL.md) | Several 1D series | repeatable `-i` | overlay or `layout.subplots`; `traces[].along` spaghetti |
 | [`plot-verify`](../skills/plot-verify/SKILL.md) | Lead-week obs / fc / metric | `--obs` + `--forecast` + verify Zarrs | 2-row metric grid; data must already be one time |
-| [`plot-mediogram`](../skills/plot-mediogram/SKILL.md) | Ensemble vs m-climate at a point | forecast + m-climate Zarrs + lat/lon | grouped boxplots + mean line |
+| [`plot-mediogram`](../skills/plot-mediogram/SKILL.md) | Ensemble vs m-climate at a point | forecast + m-climate Zarrs + `geo.lat` / `geo.lon` | grouped boxplots + mean line |
 
 **Decision rule:** `plot` = one product or overlays on the same axes.
-`plot-timeseries` = many traces. `plot-compare` = two products, two rows.
-`plot-compare-forecasts` = N products, aligned times. `plot-verify` /
-`plot-mediogram` = specialized recipes.
+`plot-timeseries` = many traces. `plot-verify` and `plot-mediogram` are
+specialized recipes.
+
+**Spatial grids.** A heatmap uses the lat/lon on that Zarr. `plot --layer`
+overlays each mesh on one axes. `layout.facet.rows` / `columns` tile time
+or `step`, not datasets. There is no `layers[].panel` key. A shared
+lat/lon grid is required only by `difference` and `verify`, which subtract
+cell by cell. Do not `coarsen` or `downscale` solely to plot.
 
 Precip figures still expect **totals (`mm`)**, not rates:
 `aggregate-temporal` then `convert-to-totals` first.
@@ -104,126 +107,47 @@ key that used to be readable somewhere else. Spec version is `2`.
 | `layout.facet` | `rows`, `columns`, `max_columns`, `n_panels`, `wspace`, `hspace` |
 | `theme` | `template`, `colormap` (name, comma list, or `{name, colors, bounds, under, over, cmap}`), `fontsize`, `rc` |
 | `layout.colorbar` | `len`/`shrink`, `thickness`, `pad` (strip gap), `labelpad` / `labelsize` (colorbar label), `ticksize` (colorbar ticks), `location`, `orientation`, `extend`, `ticks`, `labels`, plus `drawedges` / `spacing` / `format` |
-| `layout.suptitle` | `y` — figure-title height as a figure fraction (default 0.98; larger moves `--title` up). Panel titles stay on `theme.rc.axes.titlepad`. A string at `layout.title` is still the title text and belongs on top-level `title` |
+| `layout.suptitle` | `y` — figure-title height as a figure fraction (default 0.98; larger moves `title` up). Panel titles stay on `theme.rc.axes.titlepad`. A string at `layout.title` is still the title text and belongs on top-level `title` |
 | `geo` | `extent`, `bbox`, `cities`, `mask_geojson`, `draw_boxes`, `overlays`, `lat`, `lon` |
 | `inputs[]` | `id`, `path`, `variable`, `index`, `label`, `colormap`, `role` |
-| `traces[]` | `kind`, `input`, `mark`, `x`, `y`, `path`, `along`, `along_color`, `reduce`, `align`, `band`, `pair_on`, `u_variable`, `v_variable`, `x_variable`, `y_variable`, `metric`, `leads`, plus the artist blocks |
+| `traces[]` | `kind`, `input`, `mark`, `x`, `y`, `path`, `along`, `along_color`, `reduce`, `align`, `band`, `pair_on`, `time_dim`, `u_variable`, `v_variable`, `x_variable`, `y_variable`, `metric`, `leads`, plus the artist blocks |
 | `traces[]` artist blocks | `line`, `mesh`, `contour`, `scatter`, `bar`, `quiver`, `windrose`, `fill`, `box`, `mediogram` |
 | `layers[]` | `id` (default `a`, `b`, …), `kind`, `path`, `input`, `raw`, scale knobs (`variable`, `colormap`, `vmin`, `vmax`, `index`, `u_variable`, `v_variable`, `quiver_scale`, `quiver_step`), artist blocks (`mesh`, `quiver`, `scatter`, `contour`, …), plus a leftover `options` bag from older dumps |
 
-CLI and JSON use the same words:
+Where a knob lives:
 
-| CLI | Spec |
+| Knob | Spec |
 | --- | --- |
-| `plot --kind` | `traces[0].kind` (`heatmap`, `contour`, `quiver`, `layer`, `timeseries`, `xy`, `windrose`, `grid`, `mediogram`) |
-| `plot-timeseries --mark` | `traces[].mark` (`line` or `bar`) |
-| `plot-timeseries --bar-mode` | `layout.bar_mode` (`grouped` default, `stacked`, `overlay`) |
-| `--theme` | `theme.template` (`weather_skills` / `colorblind`) |
-| `--theme-file` | user palette registry (not a spec key) |
-| `--panel-spacing` | `layout.facet.wspace` / `layout.facet.hspace` (`W` or `W,H`) |
+| kind | `traces[0].kind` (`heatmap`, `contour`, `quiver`, `layer`, `timeseries`, `xy`, `windrose`, `grid`, `mediogram`) |
+| mark | `traces[].mark` (`line` or `bar`) |
+| bar mode | `layout.bar_mode` (`grouped` default, `stacked`, `overlay`) |
+| theme | `theme.template` (`weather_skills` / `colorblind`) |
+| theme file | `--theme-file` (not a spec key) |
+| panel spacing | `layout.facet.wspace` / `layout.facet.hspace` |
 
 Old dumped-spec keys (`style`, `traces[].type`, `traces[].style`, …) are rejected
 with a relocation message. There is no silent rewrite.
 
 Key details:
 
-- **`traces[].along_color`**: with `along`, `same` (default) paints every
-  member one color; `cycle` gives each along-value its own color and legend
-  entry. CLI: `--along-color`. `cycle` cannot combine with `band`.
-- **`axes`** applies **after** the data are drawn: `xscale`/`yscale`,
-  `xlim`/`ylim`, labels, `xticks`/`yticks` (list or `{values, labels}`),
-  `tick_params`, locators (`auto`/`log`/`maxn`/`null`/`multiple`), formatters
-  (`scalar`/`log`/`percent`/`date`/`format`/`dayofyear`), spines, grid,
-  legend, `twinx`/`twiny`. A dump includes only the keys you set; the full
-  editable catalog is `AXES_TEMPLATE` in `plot/figure.py`.
-- **`layout.facet.wspace` / `hspace`**: inter-panel gap as a fraction of
-  panel size (matplotlib `GridSpec` semantics). CLI: `--panel-spacing W[,H]`.
-  Figures are built with seaborn `FacetGrid`, which passes the gap through
-  `gridspec_kws` and lays out titles with `tight_layout`. The gap is applied
-  again after that layout so the requested fraction survives. `layout.wspace`
-  and `layout.facet.horizontal_spacing` relocate to these keys.
-- **`layout.bar_mode`**: how bar traces compose on a shared axis:
-  `grouped` (default; offset side-by-side), `stacked` (cumulative
-  `bottom`), or `overlay` (same x, overlapping). CLI:
-  `plot-timeseries --bar-mode`. Per-trace `traces[].bar.mode` is an alias
-  when `layout.bar_mode` is unset. Along traces stay lines.
-- **`theme.colormap`**: a matplotlib name, a comma-separated color list, or
-  `{colors, bounds, under, over}` for a discrete `BoundaryNorm` scale.
-  `len(colors)` is `len(bounds) - 1`, or two extra colors packed as under +
-  classes + over. Named palettes also resolve from `--theme-file` /
-  `colormaps` in the user theme file. Unknown keys in that file are an error.
-  When plotting rainfall anomalies, omit the name so the default nested
-  ±mm windows apply (`ppt_anom_week` when `aggregation_period` is missing).
-  Matplotlib names are case-insensitive (`RdBu_r`,
-  `rdbu_r`, `YlGn`). CLI values that start with `-` need `--flag=value`
-  (`--colormap-bounds=-100,100`, `--vmin=-50`).
-- **`cbar_label`**: the quantity on the color scale — the variable and
-  units (`Total precipitation [mm]`), not a date. Valid time belongs on
-  `title` / `subplot_titles` (panel titles already default to calendar
-  dates). CLI: `--cbar-label` / per-layer `--label`.
-- **`layout.colorbar`**: `--patch` the object (unknown keys error).
-  `labelpad` is points between the colorbar ticks and its label; `labelsize`
-  is that label's font size; `ticksize` is the colorbar tick labels — all
-  colorbar-only. `pad` is the gap between the maps and the colorbar strip,
-  not the text. `len`/`shrink` and `thickness` size the bar. `location` /
-  `orientation` place it. `ticks` / `labels` need the same count. CLI:
-  `--cbar-ticks` / `--cbar-labels`. `labelpad` / `labelsize` / `ticksize`
-  are `--patch` only. `theme.rc axes.labelpad` / `axes.labelsize` /
-  `xtick.labelsize` apply to the map axes too; do not use them for
-  colorbar-only chrome. `label_pad` relocates to `labelpad`; `fontsize` on
-  the colorbar object relocates to `labelsize`; `tick_size` relocates to
-  `ticksize`.
-- **`layout.suptitle`**: vertical position of the figure `--title`. `y` is a
-  figure fraction; Matplotlib's default is `0.98`, and a larger value moves
-  the title up. Tight cropping keeps that gap. This does not move panel
-  titles (`theme.rc.axes.titlepad`) or an `xy` chart's axes title.
-  `--patch '{"layout": {"suptitle": {"y": 1.04}}}'`. `layout.title` is not
-  this knob — a title string still belongs on top-level `title`.
-- **`layout.colorbar.ticks` / `labels`**: explicit colorbar ticks. Labels
-  need ticks and the same count. CLI: `--colormap-bounds`, `--cbar-ticks`,
-  `--cbar-labels`.
-- **`annotations` / `shapes`**: text/arrows; rect, h/v lines and spans, circle.
-- **`theme.rc`**: matplotlib rcParams after seaborn; backend keys rejected.
-  `--fontsize` writes `font.size`, `axes.titlesize`, `axes.labelsize`,
-  `xtick.labelsize`, `ytick.labelsize`, `legend.fontsize`, and
-  `figure.titlesize`. A dump always includes those resolved values. Patch
-  any of them, plus `axes.titleweight` / `figure.titleweight`,
-  `axes.titlepad` / `axes.labelpad` (figure-wide; colorbar-only pad / size
-  are `layout.colorbar.labelpad` / `labelsize`), `xtick.major.pad` /
-  `ytick.major.pad`,
-  `font.family` / `font.weight`, `legend.title_fontsize`, `lines.linewidth`,
-  and `axes.linewidth`. Any other matplotlib rcParam is also accepted.
-  Invented keys (`theme.subplot_title_fontsize`, `theme.label_fontsize`,
-  `theme.tick_fontsize`, …) are rejected and name the `theme.rc.*` path.
-  Use `layout.dpi` / `layout.figsize` / `layout.facecolor`, not `figure.*`.
-- **Layer options** are snake_case (`u_variable`, `quiver_scale`). Scale
-  knobs and artist blocks live on the layer object itself; `--layer ::k=v`
-  writes those same keys. `--patch` merges `layers[]` by `id` (else index)
-  so a partial layer object cannot replace the list.
-- **No `patch` key.** `--patch` is a CLI flag on every figure skill — it
-  deep-merges into the spec before CLI overlay — but the compiler never
-  reads a `patch` object, so there is one place a title or annotation can
-  live.
+- **`traces[].along_color`**: with `along`, `same` (default) paints every member one color; `cycle` gives each along-value its own color and legend entry. `cycle` cannot combine with `band`.
+- **`axes`** applies after the data are drawn. A dump includes only the keys you set; the catalog is `AXES_TEMPLATE` in `plot/figure.py`.
+- **`layout.facet.wspace` / `hspace`**: inter-panel gap as a fraction of panel size. Figures are built with seaborn `FacetGrid`, which passes the gap through `gridspec_kws` and lays out titles with `tight_layout`. The gap is applied again after that layout so the requested fraction survives.
+- **`layout.bar_mode`**: `grouped` (default), `stacked`, or `overlay`. Per-trace `traces[].bar.mode` is an alias when `layout.bar_mode` is unset.
+- **`theme.colormap`**: a matplotlib name, a comma-separated color list, or `{colors, bounds, under, over}`. Named palettes also resolve from `--theme-file`. When plotting rainfall anomalies, omit the name so the default nested millimetre windows apply.
+- **`cbar_label`**: the quantity on the color scale, not a date. Valid time belongs on `title` / `subplot_titles`.
+- **`layout.colorbar`**: set the object in `--spec`. `labelpad`, `labelsize`, and `ticksize` are colorbar-only. `pad` is the gap between the maps and the strip. `ticks` and `labels` need the same count.
+- **`layout.suptitle.y`**: figure-title height as a figure fraction (default 0.98). `--spec '{"layout": {"suptitle": {"y": 1.04}}}'`. A title string belongs on top-level `title`.
+- **`theme.fontsize`**: writes the title, label, tick, and legend sizes. Stays 16 when absent.
+- **Layer options** live on `layers[]` (snake_case). `--layer` is `KIND:PATH` only. A partial `layers[]` merges by id and does not replace the list.
+- **No `patch` key.** Merge edits into `--spec`. The compiler does not read a `patch` object.
 
-`--dump-spec` dumps assembled JSON and skips the PNG (`-o` is not required).
-`--dump-spec -` (only when needed) then `--patch` is the edit loop, not the
-first run. The dump includes the `theme.rc` font sizes `--fontsize` applied
-(`axes.titlesize` / `figure.titlesize`); `axes` still lists only keys you
-set. Pass `--title` / `--variable` / `--figsize` (and the rest) as CLI
-flags; `--spec` and `--patch` are optional. CLI flags overlay the spec.
-Provenance still chains from the Zarrs.
+`--dump-spec` writes the merged spec and skips the PNG. Pass that JSON back as `--spec` to replay it; file flags still choose the datasets when they are present.
 
-Neither `plot --kind timeseries` nor `plot-timeseries` will average a leftover
-dim — pass `--reduce` per dim or `--along` to fan it out.
-`plot-timeseries` remains the one for several inputs, `--subplots`,
-`--band`, and `--trace` styling.
+Neither `plot` nor `plot-timeseries` averages a leftover dim. Set `traces[].reduce` or `traces[].along`.
 
 ## Suggested evaluation path
 
-1. One heatmap: `plot -i … -o out.png`. If you need a knob that is not a
-   CLI flag, re-run with `--dump-spec -`, then the same CLI plus `--patch`
-   (`axes.spines`, `layout.colorbar`, …).
-2. Analog-year spaghetti: `plot-timeseries --along` / `--band` /
-   `--align-day-of-year` → `--patch` `axes.xticks` and `line`.
-3. Two-row compare, a mediogram, and a windrose or `--layer` map: confirm
-   `--patch` changes ticks/legend without re-passing `--kind` / `--layer`.
+1. One heatmap: `plot -i … -o out.png --spec '{"title":"Precip","inputs":[{"variable":"precip"}]}'`. Re-run with `--dump-spec -` to see the merge.
+2. Ensemble spaghetti: `plot-timeseries -i … -o out.png --spec '{"traces":[{"along":"number","band":[10,90]}]}'`.
+3. A mediogram, a windrose, or a `--layer` map: change ticks or legend in `--spec` without repeating the file flags.

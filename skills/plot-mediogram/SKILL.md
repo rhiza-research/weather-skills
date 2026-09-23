@@ -1,6 +1,6 @@
 ---
 name: plot-mediogram
-description: Render an ECMWF-style mediogram PNG comparing a forecast ensemble against an m-climate (historical) ensemble at a single lat/lon. Grouped box plots per step (forecast cyan, m-climate red) plus the forecast mean line. For precipitation, run convert-to-totals after aggregate-temporal before plotting. Use --fontsize to enlarge titles, axis labels, ticks, and legend (default 16).
+description: Render an ECMWF-style mediogram PNG comparing a forecast ensemble against an m-climate ensemble at one point. Pass the forecast Zarr then the m-climate Zarr with -i. Set geo.lat, geo.lon, and any other parameters in --spec. Grouped box plots per step (forecast cyan, m-climate red) plus the forecast mean line. For precipitation, run convert-to-totals after aggregate-temporal before plotting.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py *)
@@ -26,45 +26,28 @@ Lat/lon selection is nearest-neighbor.
 ## Usage
 
 ```
-uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py -i <forecast.zarr> -i <mclimate.zarr> \
-    --lat <lat> --lon <lon> --output <out.png> \
-    [--variable NAME] [--title TEXT] [--xlabel TEXT] [--ylabel TEXT] [--fontsize N] [--figsize W,H] \
-    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
-
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py \
-    -i <forecast.zarr> -i <mclimate.zarr> --lat <lat> --lon <lon> \
-    -o <out.png> --patch '{"title": "Edited"}'
+    -i <forecast.zarr> -i <mclimate.zarr> -o <out.png> \
+    --spec '{"geo":{"lat":-1.3,"lon":36.8},"inputs":[{"variable":"tp"}],"title":"Nairobi"}'
 ```
 
 ### Arguments
-- `--input`, `-i` — pass exactly twice: forecast Zarr first, m-climate Zarr second. Optional when `--spec` already lists both paths.
-- `--lat`, `--lon` — point location (nearest-neighbor selection). Optional when `--spec` has `geo.lat` / `geo.lon`.
-- `--spec` — optional full plot spec JSON (file or inline). First runs are
-  CLI flags only. Prefer `--patch` for edits. Pass `--spec` only when
-  replaying a dumped object. Spec input paths are opened as Datasets so
-  provenance chains from the Zarr.
-- `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
-  before CLI flags overlay. Same knobs as `--spec` (`title`, `axes`, `layout`,
-  …). A `patch` key inside a spec object is rejected.
-- `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
-  PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
-  stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
-  a key you cannot name from the CLI.
-- `--output`, `-o` — PNG output path.
-- `--variable`, `-v` — variable name. Defaults to the first data variable in the forecast input.
-- `--title` — optional plot title. Long titles wrap onto a second line.
-- `--xlabel` / `--ylabel` — optional axis-label overrides (defaults: `Forecast step`
-  and the variable label). Passed text is used as-is.
-- `--fontsize` — base font size for titles, axis labels, ticks, and legend
-  (default 16). Raise on user request (e.g. `--fontsize 22`).
-- `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `12,6`).
-  When set, the PNG is that canvas at 150 dpi (the legend stays inside it).
-  Default `10×5`, cropped tightly.
+
+- `--input`, `-i` — pass exactly twice: forecast Zarr first, m-climate Zarr second. Optional when `--spec` lists both paths.
+- `--output`, `-o` — PNG path.
+- `--spec` — JSON object or path, always deep-merged onto the spec built from the opened files. Your values win. `geo.lat` and `geo.lon` are required. A `patch` key inside the object is rejected.
+- `--dump-spec` — write the merged spec as JSON and skip the PNG. Bare `--dump-spec` or `-` prints to stdout.
+
+### Parameters (`--spec`)
+
+- `geo.lat`, `geo.lon` — point, nearest-neighbor.
+- `inputs[0].variable`, `title`, `xlabel`, `ylabel`.
+- `theme.fontsize` (default 16), `layout.figsize` as `[W, H]` (default about 10×5).
 
 ### Output
 
 A PNG at `--output`, single axes, default figsize `(10, 5)` (override with
-`--figsize`), legend below the boxes. Stdout prints `plot hash` (sha256 of
+`layout.figsize`), legend below the boxes. Stdout prints `plot hash` (sha256 of
 RGB pixels) and `data: not null` or `data: NULL`. Compare hashes across
 runs; `NULL` means inspect-zarr the inputs. Look at the PNG as well.
 `--dump-spec` skips the PNG and this report. Up to 6 forecast steps on the x-axis labeled with actual leads (`+7d`, `+10d`, …). The y-axis (and default title) use the variable `long_name`.
@@ -90,7 +73,6 @@ exiftool out.png
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py \
     -i /tmp/ecmwf_forecast.zarr \
     -i /tmp/ecmwf_mclimate.zarr \
-    --lat -1.3 --lon 36.8 \
-    --variable tp \
-    --output /tmp/mediogram_nairobi.png
+    -o /tmp/mediogram_nairobi.png \
+    --spec '{"geo":{"lat":-1.3,"lon":36.8},"inputs":[{"variable":"tp"}]}'
 ```

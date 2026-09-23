@@ -39,7 +39,9 @@ scores are read from each verify Zarr's `verify_score_summary` attr.
 
 1. Prepare obs and each lead's forecast: aggregate, `step-to-time` if
    needed, **`select` the verifying week**, coarsen obs onto the forecast
-   grid.
+   grid. This figure plots those already-aligned fields. It does not draw
+   a native-resolution observation next to a coarser forecast. `plot --layer`
+   draws each dataset on its own grid.
 2. For each lead, run `verify`.
 3. Pass single-time obs, then forecasts week-1 … week-4, with matching
    `--verify` Zarrs.
@@ -51,68 +53,26 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
     --obs <obs.zarr> \
     --forecast <week1.zarr> --verify <verify_w1.zarr> \
     --forecast <week2.zarr> --verify <verify_w2.zarr> \
-    ... \
-    -o <out.png> [--variable NAME] \
-    [--lead "1-week lead" ...] [--title TEXT] [--fontsize N] [--figsize W,H] \
-    [--panel-spacing W[,H]] \
-    [--colormap NAME] [--colormap-bounds 0,10,50] [--cbar-ticks N,...] [--cbar-labels TEXT,...] \
-    [--bbox N/W/S/E] [--mask-geojson PATH] \
-    [--spec PATH_OR_JSON] [--patch PATH_OR_JSON] [--dump-spec -|PATH]
-
-uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
-    --obs <obs.zarr> --forecast <week1.zarr> --verify <verify_w1.zarr> \
-    -o <out.png> --patch '{"title": "Edited"}'
+    -o <out.png> \
+    --spec '{"inputs":[{"id":"obs","variable":"precip"}],"title":"Kenya weekly precip verification","geo":{"bbox":[5,34,-5,42]}}'
 ```
 
 ### Arguments
 
-- `--obs` — observation Zarr for the verifying week. Must already be one
-  time. Optional when `--spec` already lists an obs input.
-- `--forecast` — forecast Zarr for that same week at one lead. Pass
-  **week-1 first**, then week-2, week-3, week-4. Repeat with matching
-  `--verify`. Must already be one time. Optional when `--spec` lists forecast
-  inputs.
-- `--verify` — verify Zarr from the `verify` skill for that lead.
-  **Once per `--forecast`**, same order. Optional when `--spec` lists verify
-  inputs.
-- `--spec` — optional full plot spec JSON (file or inline). First runs are
-  CLI flags only. Prefer `--patch` for edits. Pass `--spec` only when
-  replaying a dumped object. Spec input paths are opened as Datasets so
-  provenance chains from the Zarr.
-- `--patch` — optional JSON (file or inline) deep-merged onto this run's spec
-  before CLI flags overlay. Same knobs as `--spec`. A `patch` key inside a
-  spec object is rejected. Colorbar-only label spacing:
-  `{"layout": {"colorbar": {"labelpad": 16, "labelsize": 28, "ticksize": 15}}}`.
-  `pad` is the strip gap; `theme.rc axes.labelpad` / `axes.labelsize` /
-  `xtick.labelsize` also change
-  lon/lat labels.
-- `--dump-spec` — dump the assembled plot spec as JSON and skip drawing a
-  PNG. `--output` is not required. Bare `--dump-spec` (or `-`) prints to
-  stdout; a path writes a file. Token-expensive; omit unless `--patch` needs
-  a key you cannot name from the CLI.
-- `--variable`, `-v` — obs/forecast data variable (verify Zarrs carry
-  their own verification variable).
-- `--lead` — column title, once per `--forecast`. Default: `1-week lead`
-  … `N-week lead`. Titles that name a week (`Week 4`, `1-week lead`) are
-  sorted so week-1 is left of week-4.
-- `--label` — pass once for `--obs`, then once per `--forecast`. The obs
-  value titles the observation column; the verify row uses the metric
-  name (Hits, Bias, MAE). When omitted, labels are inferred from provenance.
-- `--fontsize` — base font size (default 16). Title is larger than column
-  headers; lat/lon ticks stay smaller.
-- `--figsize` — figure size in inches as `W,H` or `WxH` (e.g. `14,8`).
-  When set, the PNG is that canvas at 150 dpi. When omitted, size follows
-  the map grid and crops tightly.
-- `--panel-spacing` — gap between panels as a fraction of panel size (`W` or
-  `W,H`; matplotlib `GridSpec` `wspace` / `hspace`). One value sets both
-  axes. Writes `layout.facet.wspace` / `hspace`. Same keys work via `--patch`.
-- `--colormap`, `--colormap-bounds`, `--cbar-ticks`, `--cbar-labels`,
-  `--title`, `--bbox`, `--mask-geojson`, `--output` — as `plot`.
-  When plotting rainfall anomalies, omit `--colormap` so the default
-  diverging millimetre classes apply. Negative `--colormap-bounds` /
-  `--vmin` need `--flag=value`.
-  A long `--title` (or title plus verifying-week dates) wraps onto a second
-  line.
+- `--obs` — observation Zarr for the verifying week. Must already be one time. Optional when `--spec` lists an obs input.
+- `--forecast` — forecast Zarr for that same week at one lead. Pass **week-1 first**. Repeat with a matching `--verify`. Must already be one time.
+- `--verify` — verify Zarr for that lead, once per `--forecast`, same order.
+- `--output`, `-o` — PNG path.
+- `--spec` — JSON object or path, always deep-merged onto the spec built from the opened files. Your values win. A `patch` key inside the object is rejected.
+- `--dump-spec` — write the merged spec as JSON and skip the PNG. Bare `--dump-spec` or `-` prints to stdout.
+
+### Parameters (`--spec`)
+
+- `inputs[]` — `variable` on the obs input; `label` on obs and each forecast.
+- `title`, `theme.fontsize` (default 16), `theme.colormap`, `vmin`, `vmax`.
+- `traces[0].leads` — column titles. Default `1-week lead` … `N-week lead`. Titles that name a week are sorted so week-1 sits next to the observation.
+- `geo.bbox` as `[N, W, S, E]`, `geo.mask_geojson`.
+- `layout.figsize` as `[W, H]`, `layout.facet.wspace` / `hspace`.
 
 ### Output
 
@@ -130,19 +90,12 @@ be read.
 ## Example
 
 ```bash
-for w in 1 2 3 4; do
-  uv run skills/verify/scripts/verify.py \
-    --forecast /tmp/s2s_week${w}.zarr --obs /tmp/chirps_week.zarr \
-    --metric hits --threshold 1 -o /tmp/verify_w${w}.zarr
-done
-
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
     --obs /tmp/chirps_week.zarr \
     --forecast /tmp/s2s_week1.zarr --verify /tmp/verify_w1.zarr \
     --forecast /tmp/s2s_week2.zarr --verify /tmp/verify_w2.zarr \
     --forecast /tmp/s2s_week3.zarr --verify /tmp/verify_w3.zarr \
     --forecast /tmp/s2s_week4.zarr --verify /tmp/verify_w4.zarr \
-    --variable precip --bbox 5/34/-5/42 \
-    --title "Kenya weekly precip verification" \
-    -o /tmp/verify_week.png
+    -o /tmp/verify_week.png \
+    --spec '{"inputs":[{"id":"obs","variable":"precip"}],"title":"Kenya weekly precip verification","geo":{"bbox":[5,34,-5,42]}}'
 ```
