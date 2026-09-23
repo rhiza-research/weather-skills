@@ -1,6 +1,6 @@
 ---
 name: plot
-description: Render a 2D heatmap, filled-contour map, 1D time series, xy scatter, wind-rose, u/v quiver, or layered map PNG from weather-skills standard dataset Zarrs. Side-by-side maps on different grids (CHIRPS 0.05° next to ECMWF 1.5°) are two heatmap traces in --spec, one panel each — do not coarsen them onto one grid. --layer stacks inputs on a single map and does not make a panel per dataset. Name files with -i, --x/--y, or repeatable --layer KIND:PATH. Set every other parameter in --spec. For precipitation, run aggregate-temporal then convert-to-totals first. For a lead-week verification grid, use plot-verify.
+description: Render a 2D heatmap, filled-contour map, 1D time series, xy scatter, wind-rose, u/v quiver, or layered map PNG from weather-skills standard dataset Zarrs. Side-by-side maps on different grids (CHIRPS 0.05° next to ECMWF 1.5°) are one repeated -i per file: each file is its own heatmap panel on its own lat/lon. Do not coarsen them onto one grid. --layer stacks inputs on a single map and does not make a panel per dataset. Name files with repeatable -i, --x/--y, or repeatable --layer KIND:PATH. Set every other parameter in --spec. For precipitation, run aggregate-temporal then convert-to-totals first. For a lead-week verification grid, use plot-verify.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py *)
@@ -19,7 +19,7 @@ Kind, variable, titles, colormap, map window, panel layout, index, reduce, and f
 
 | Goal | How |
 | --- | --- |
-| Two datasets in one PNG, each on its own lat/lon (0.05° beside 1.5°) | Two `inputs` and two `traces` with `"kind": "heatmap"`. Point each trace at an input id. `layout.facet` is `{"rows": 1, "columns": 2}`. `subplot_titles` names the panels. `vmin`, `vmax`, and `layout.shared_colorscale` apply to both. |
+| Two datasets in one PNG, each on its own lat/lon (0.05° beside 1.5°) | Pass `-i` once per file. Each file becomes an input and a heatmap trace, one panel on that file's lat/lon. `layout.facet` is `{"rows": 1, "columns": 2}`. `subplot_titles` names the panels; if omitted, the panel title is `inputs[].label` or the file name. `vmin`, `vmax`, and `layout.shared_colorscale` apply to both. |
 | Those same datasets drawn on top of each other | `--layer`. One axes. This does not make a panel per dataset. `layers[].panel` is not a key. |
 | Several times or forecast steps of one dataset | One heatmap trace. `layout.facet.rows` and `columns` tile those slices. |
 
@@ -43,7 +43,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --x <x.zarr> --y <y.zarr> -o <out.png
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i <in.zarr> --dump-spec -
 ```
 
-- `-i`, `--input` — one Zarr. Mutually exclusive with `--layer` and with `--x` / `--y`. Optional when `--spec` already lists paths and no dataset flag was passed.
+- `-i`, `--input` — repeatable Zarr. One file is one heatmap, contour, or quiver panel. `timeseries` and `windrose` take a single `-i`. Mutually exclusive with `--layer` and with `--x` / `--y`. Optional when `--spec` already lists paths and no dataset flag was passed.
 - `--x` / `--y` — the two Zarrs for `traces[0].kind` `xy`.
 - `--layer` — repeatable `KIND:PATH` only (`heatmap`, `scatter`, `quiver`, `outline`, `mask`). Layer ids are `a`, `b`, `c`, … in this order. Options go on `layers[]` in `--spec`, matched by that id.
 - `-o`, `--output` — PNG path. Required unless `--dump-spec` is set.
@@ -57,7 +57,7 @@ Unset `traces[0].kind` stays `heatmap`. Unset `theme.fontsize` stays 16.
 
 Set `traces[0].kind` in `--spec`.
 
-- `heatmap` — lon/lat `pcolormesh` with coastlines, country borders, filled lakes, and (on country-scale views) admin-1 boundaries. One trace is one panel per `step` or `time`. Two traces are two panels on two grids; see **Side by side, or one map**. Shared color scale, colorbar on the right for one panel and on the bottom for several. Panel titles are calendar dates (`14 Sept '26`) or inclusive ranges (`4–10 Aug '26`); forecast leads keep `<start> until <end>`. The colorbar label is the variable and units (`Total precipitation [mm]`), not the date. Default grid is up to 4 columns. Set `layout.facet.rows` and `layout.facet.columns` to override; leftover cells stay blank. Ensemble `number` is averaged. `inputs[0].index` overrides the reduction for any other extra dim. Precipitation totals use a nested absolute-mm palette (same color = same millimetres; the window follows `aggregation_period`). For rainfall anomalies, omit `theme.colormap` so the diverging millimetre classes apply. A single-input heatmap and `--layer heatmap:<path>` draw the same picture.
+- `heatmap` — lon/lat `pcolormesh` with coastlines, country borders, filled lakes, and (on country-scale views) admin-1 boundaries. One `-i` is one panel per `step` or `time`. Each extra `-i` adds a panel on that file's own lat/lon; see **Side by side, or one map**. Shared color scale, colorbar on the right for one panel and on the bottom for several. A single file's panel titles are calendar dates (`14 Sept '26`) or inclusive ranges (`4–10 Aug '26`); forecast leads keep `<start> until <end>`. Several files use `subplot_titles`, then `inputs[].label`, then the file name. The colorbar label is the variable and units (`Total precipitation [mm]`), not the date. Default grid is up to 4 columns. Set `layout.facet.rows` and `layout.facet.columns` to override; leftover cells stay blank. Ensemble `number` is averaged. `inputs[0].index` overrides the reduction for any other extra dim. Precipitation totals use a nested absolute-mm palette (same color = same millimetres; the window follows `aggregation_period`). For rainfall anomalies, omit `theme.colormap` so the diverging millimetre classes apply. A single-input heatmap and `--layer heatmap:<path>` draw the same picture.
 - `contour` — the same map as `heatmap`, drawn with `contourf` and thin black isolines. Values are interpolated between grid points. Cannot be combined with `--layer`.
 - `timeseries` — one line plus a marker at each time. Leftover non-time dims are not averaged: set `traces[0].reduce` to a list of dim names, or `traces[0].along` to draw one line per value of that dim. A forecast (`step` plus a scalar init `time`) is plotted against valid time (`init + step`). An analysis or obs cube is plotted against its `time` axis. For several series as stacked panels, use `plot-timeseries`.
 - `xy` — scatter one 1D series against another. Pass `--x` and `--y`, or one `-i` with `traces[0].x_variable` and `traces[0].y_variable`. Each series is reduced like `timeseries` (`geo.bbox` / `geo.mask_geojson` subset first when lat/lon remain). `traces[0].pair_on` is `time` (default, inner-join on time or valid time), `year` (calendar year), or `index` (position; lengths must match). Duplicate keys are an error — aggregate or select first. Points are labeled when `pair_on` is `year`, or when it is `time` and there are 25 points or fewer. This is not `--layer scatter`, which draws stations on a map.
@@ -95,15 +95,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/ecmwf_namibia.zarr -o /tmp/ec
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/weekly.zarr -o /tmp/weekly.png \
     --spec '{"inputs":[{"variable":"tp"}],"layout":{"facet":{"rows":2,"columns":3,"wspace":0.25,"hspace":0.25}}}'
 
-# Side by side. Each Zarr keeps its own lat/lon. This is not --layer.
-uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -o /tmp/chirps_vs_ecmwf.png --spec '{
+# Side by side. Each -i keeps its own lat/lon. This is not --layer.
+uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py \
+    -i /tmp/chirps.zarr -i /tmp/ecmwf.zarr -o /tmp/chirps_vs_ecmwf.png --spec '{
   "inputs": [
-    {"id": "a", "path": "/tmp/chirps.zarr", "variable": "precip"},
-    {"id": "b", "path": "/tmp/ecmwf.zarr", "variable": "tp"}
-  ],
-  "traces": [
-    {"kind": "heatmap", "input": "a"},
-    {"kind": "heatmap", "input": "b"}
+    {"variable": "precip"},
+    {"variable": "tp"}
   ],
   "layout": {"shared_colorscale": true, "facet": {"rows": 1, "columns": 2}},
   "subplot_titles": ["CHIRPS 0.05°", "ECMWF 1.5°"],

@@ -328,7 +328,7 @@ def test_timeseries_refuses_to_average_leftover_dims(tmp_path, plot_fn, capsys):
     with pytest.raises(SystemExit):
         run_skill(plot_fn, '-i', str(src), '-o', str(tmp_path / 'ts.png'), '--spec', '{"traces":[{"kind":"timeseries"}]}')
     err = capsys.readouterr().err
-    assert '--reduce' in err and '--along' in err
+    assert 'traces[].reduce' in err and 'traces[].along' in err
 
 def test_timeseries_along_draws_one_line_per_member(tmp_path, plot_fn):
     ds = make_forecast(members=4)
@@ -994,6 +994,55 @@ def test_default_heatmap_does_not_write_spec_file(tmp_path, plot_fn):
     run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"title":"Precip"}')
     assert out.is_file() and out.stat().st_size > 0
     assert not (tmp_path / 'map.plot.json').exists()
+
+def test_repeat_input_is_one_heatmap_panel_per_file(tmp_path, plot_fn):
+    fine = write_zarr(
+        make_gridded(n_time=1, lats=(1.0, 2.0), lons=(10.0, 11.0), name='precip'),
+        tmp_path / 'chirps.zarr',
+    )
+    coarse = write_zarr(
+        make_gridded(n_time=1, lats=(1.5,), lons=(10.5,), name='tp', fill=4.0),
+        tmp_path / 'ecmwf.zarr',
+    )
+    out = tmp_path / 'side.png'
+    run_skill(
+        plot_fn,
+        '-i', str(fine),
+        '-i', str(coarse),
+        '-o', str(out),
+        '--spec',
+        '{"inputs":[{"label":"CHIRPS"},{"label":"ECMWF"}],'
+        '"layout":{"facet":{"rows":1,"columns":2}}}',
+    )
+    assert out.is_file() and out.stat().st_size > 0
+    spec_path = tmp_path / 'side.plot.json'
+    run_skill(
+        plot_fn,
+        '-i', str(fine),
+        '-i', str(coarse),
+        '--dump-spec', str(spec_path),
+        '--spec',
+        '{"inputs":[{"label":"CHIRPS"},{"label":"ECMWF"}],'
+        '"layout":{"facet":{"rows":1,"columns":2}}}',
+    )
+    spec = json.loads(spec_path.read_text())
+    assert [item['path'].rsplit('/', 1)[-1] for item in spec['inputs']] == ['chirps.zarr', 'ecmwf.zarr']
+    assert [(trace['input'], trace['kind']) for trace in spec['traces']] == [('a', 'heatmap'), ('b', 'heatmap')]
+    assert spec['subplot_titles'] == ['CHIRPS', 'ECMWF']
+
+def test_repeat_input_refuses_timeseries(tmp_path, plot_fn, capsys):
+    first = write_zarr(make_gridded(n_time=1), tmp_path / 'a.zarr')
+    second = write_zarr(make_gridded(n_time=1, name='t2m'), tmp_path / 'b.zarr')
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            plot_fn,
+            '-i', str(first),
+            '-i', str(second),
+            '-o', str(tmp_path / 'ts.png'),
+            '--spec', '{"traces":[{"kind":"timeseries","reduce":["latitude","longitude"]}]}',
+        )
+    assert exc.value.code == 2
+    assert 'kind timeseries takes one -i' in capsys.readouterr().err
 
 def test_heatmap_dump_spec_on_request(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / 'in.zarr')

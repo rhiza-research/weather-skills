@@ -102,6 +102,49 @@ def _input_path_of(ds):
     return ds.attrs.get(INPUT_PATH_ATTR)
 
 
+def _dataset_list(ds):
+    """One Dataset, a list from repeatable ``-i``, or nothing."""
+    if ds is None:
+        return []
+    if isinstance(ds, (list, tuple)):
+        return [item for item in ds if item is not None]
+    return [ds]
+
+
+def _letter_datasets(datasets):
+    """``a``, ``b``, ``c``, … in the order ``-i`` was passed."""
+    named = {}
+    for i, item in enumerate(datasets):
+        key = chr(ord("a") + i) if i < 26 else f"i{i}"
+        named[key] = item
+    return named
+
+
+def _fill_side_by_side_titles(spec):
+    """Name each panel when several map traces share one figure.
+
+    ``subplot_titles`` wins. Otherwise a panel uses ``inputs[].label``, then
+    the file name. One-trace figures keep the calendar-date title.
+    """
+    if spec.get("layers") or spec.get("subplot_titles"):
+        return
+    traces = [t for t in (spec.get("traces") or []) if isinstance(t, dict)]
+    if len(traces) < 2 or any(t.get("kind") not in _MAP_KINDS for t in traces):
+        return
+    inputs = [i for i in (spec.get("inputs") or []) if isinstance(i, dict)]
+    if len(inputs) != len(traces):
+        return
+    titles = []
+    for item in inputs:
+        if item.get("label"):
+            titles.append(str(item["label"]))
+        elif item.get("path"):
+            titles.append(Path(item["path"]).stem)
+        else:
+            return
+    spec["subplot_titles"] = titles
+
+
 def _spec_data(spec):
     if spec is None:
         return {}
@@ -331,6 +374,11 @@ def _internal_from_files(*, kind, datasets, user_theme, layers=None):
         datasets = named or datasets
     elif datasets:
         merged["inputs"] = spec_inputs_from_datasets(datasets)
+        keys = list(datasets)
+        if kind in _MAP_KINDS and len(keys) > 1:
+            merged["traces"] = [{"kind": kind, "input": key} for key in keys]
+        elif keys and merged.get("traces"):
+            merged["traces"][0]["input"] = keys[0]
     if user_theme.get("max_columns"):
         merged.setdefault("layout", {}).setdefault("facet", {}).setdefault(
             "max_columns", user_theme["max_columns"]
@@ -343,7 +391,17 @@ def _internal_from_files(*, kind, datasets, user_theme, layers=None):
     name="plot",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("any"), required=False, default=None)
+@weather_skill.argument(
+    "-i",
+    "--input",
+    type=Dataset("any"),
+    action="append",
+    required=False,
+    help=(
+        "Input Zarr. Repeat for one map panel per file "
+        "(heatmap, contour, or quiver). Mutually exclusive with --layer and with --x/--y."
+    ),
+)
 @weather_skill.argument(
     "--x",
     dest="x_ds",
@@ -410,15 +468,14 @@ def plot(
     kind = _kind_from_spec(user)
     if kind is None and not layers:
         kind = "heatmap"
-    if spec is not None and ds is None and not layers and kind != "xy":
-        ds = spec.ds if spec.ds is not None else None
-        if ds is None and spec.datasets:
-            ds = spec.datasets[0]
-    if layers and ds is not None:
+    files = _dataset_list(ds)
+    if not files and spec is not None and not layers and kind != "xy":
+        files = opened_datasets_from_spec(spec)
+    if layers and files:
         raise UsageError("pass either -i/--input or --layer, not both")
     if layers and (x_ds is not None or y_ds is not None):
         raise UsageError("pass either --layer or --x/--y, not both")
-    if ds is not None and (x_ds is not None or y_ds is not None):
+    if files and (x_ds is not None or y_ds is not None):
         raise UsageError("pass either -i/--input or --x/--y, not both")
     if kind == "xy":
         x_ds, y_ds, _x_variable, _y_variable, _pair_on = _xy_from_spec(
@@ -427,20 +484,26 @@ def plot(
         if layers:
             raise UsageError("--layer cannot be used with kind xy")
         if x_ds is None and y_ds is None:
-            if ds is None:
-                raise UsageError("kind xy needs --x and --y, or -i with x_variable and y_variable in --spec")
+            if len(files) != 1:
+                raise UsageError(
+                    "kind xy needs --x and --y, or one -i with x_variable and y_variable in --spec"
+                )
             trace = (user.get("traces") or [{}])[0] if isinstance((user.get("traces") or [{}])[0], dict) else {}
             inputs = [i for i in (user.get("inputs") or []) if isinstance(i, dict)]
             x_variable = trace.get("x_variable") or (inputs[0].get("variable") if inputs else None)
             y_variable = trace.get("y_variable") or (inputs[1].get("variable") if len(inputs) > 1 else None)
             if not x_variable or not y_variable:
                 raise UsageError("with a single -i, kind xy needs x_variable and y_variable in --spec")
-            x_ds = ds
-            y_ds = ds
+            x_ds = files[0]
+            y_ds = files[0]
         elif x_ds is None or y_ds is None:
             raise UsageError("kind xy needs both --x and --y")
-    elif not layers and ds is None:
+    elif not layers and not files:
         raise UsageError("pass -i/--input, a --spec with inputs, or at least one --layer")
+    if not layers and kind in {"timeseries", "windrose"} and len(files) > 1:
+        raise UsageError(
+            f"kind {kind} takes one -i; repeat -i for a side-by-side heatmap, contour, or quiver"
+        )
     if layers and kind in ("timeseries", "xy", "windrose", "contour"):
         raise UsageError(f"--layer cannot be used with kind {kind}")
     if layers and kind == "quiver":
@@ -451,17 +514,10 @@ def plot(
         datasets = {"a": x_ds} if x_ds is y_ds else {"x": x_ds, "y": y_ds}
     elif layers:
         datasets = {}
+    elif not _dataset_list(ds) and spec is not None:
+        datasets = named_datasets_from_spec(spec) or _letter_datasets(files)
     else:
-        datasets = {"a": ds}
-        if spec is not None and spec.datasets:
-            for i, extra in enumerate(spec.datasets):
-                key = (
-                    (spec.data.get("inputs") or [{}])[i].get("id")
-                    if spec.data.get("inputs")
-                    else None
-                )
-                datasets[key or f"i{i}"] = extra
-            datasets["a"] = ds
+        datasets = _letter_datasets(files)
 
     internal, datasets = _internal_from_files(
         kind="layer" if layers else kind,
@@ -470,6 +526,7 @@ def plot(
         layers=layers or None,
     )
     merged = normalize_spec(overlay_spec(internal, user))
+    _fill_side_by_side_titles(merged)
     filled = params_from_spec(merged)
     kind_now = "layer" if merged.get("layers") else (trace_at(merged).get("kind") or kind)
     parse_index(filled.get("index"))
