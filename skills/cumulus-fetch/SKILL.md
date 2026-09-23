@@ -1,8 +1,8 @@
 ---
 name: cumulus-fetch
-description: Fetch a Cumulus AI operational ensemble precipitation forecast from gs://sheerwater-datalake/cumulus-data (v0.0.1-op perturbed members, 24h IMERG-trained total precipitation) and write a weather-skills standard dataset Zarr. Use when a task needs the Cumulus forecast grid for clipping, aggregation, comparison, or plotting. Requires Google Cloud Application Default Credentials. Default `-v tp`. Fetch writes `tp` as a per-step rate (`mm day-1`) — do not run deaccumulate after this skill.
+description: On the first call (including --probe-latest), inject secret AZURE_STORAGE_SAS_TOKEN as an environment variable — do not run once without it and retry. Fetch a Cumulus AI operational ensemble precipitation forecast from Azure Blob italynorthdata/data/live_forecasts/global_model/aurora_s2s/supposed-ballism-0bc54f084fee4 (perturbed members, 24h IMERG-trained total precipitation) and write a weather-skills standard dataset Zarr. Use when a task needs the Cumulus forecast grid for clipping, aggregation, comparison, or plotting. Default `-v tp`. Fetch writes `tp` as a per-step rate (`mm day-1`) — do not run deaccumulate after this skill.
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads private NetCDF from gs://sheerwater-datalake/cumulus-data/v0.0.1-op/pf/total_precipitation_24h_acc_imerg/data via gcsfs. Requires Google Cloud Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS or `gcloud auth application-default login`).
+compatibility: Requires Python 3.12 and uv. Reads private NetCDF from Azure Blob italynorthdata/data/live_forecasts/global_model/aurora_s2s/supposed-ballism-0bc54f084fee4/pf/total_precipitation_24h_acc_imerg/data via adlfs. Requires AZURE_STORAGE_SAS_TOKEN (a read SAS with list and read, sp=rl).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
@@ -12,23 +12,23 @@ metadata:
   openclaw:
     requires:
       env:
-        - GOOGLE_APPLICATION_CREDENTIALS
-    primaryEnv: GOOGLE_APPLICATION_CREDENTIALS
+        - AZURE_STORAGE_SAS_TOKEN
+    primaryEnv: AZURE_STORAGE_SAS_TOKEN
     envVars:
-      - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON with access to gs://sheerwater-datalake
+      - name: AZURE_STORAGE_SAS_TOKEN
+        description: Read SAS (list and read, sp=rl) for Azure container italynorthdata/data
 ---
 
 # cumulus-fetch
 
-Opens the Cumulus AI operational ensemble from the private Sheerwater
-datalake, concatenates one NetCDF per 24h lead, maps it onto the
-weather-skills standard dataset, and writes a local Zarr.
+Opens the Cumulus AI operational ensemble from Azure Blob Storage,
+concatenates one NetCDF per 24h lead, maps it onto the weather-skills
+standard dataset, and writes a local Zarr.
 
 Layout:
 
 ```
-gs://sheerwater-datalake/cumulus-data/v0.0.1-op/pf/
+az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/supposed-ballism-0bc54f084fee4/pf/
   total_precipitation_24h_acc_imerg/data/YYYY-MM-DD-00-LLLL.nc
 ```
 
@@ -41,7 +41,7 @@ pin an init.
 ## When to use
 
 - A task needs the Cumulus AI operational precipitation ensemble (IMERG-trained
-  24h totals) already published in `sheerwater-datalake`.
+  24h totals) published under the Aurora S2S run on `italynorthdata`.
 - A downstream skill will clip, aggregate, compare, or plot the result as a
   weather-skills standard dataset Zarr.
 
@@ -51,12 +51,12 @@ Prefer `dynamical-fetch` for GFS / GEFS / IFS-ENS / IMERG observations, and
 
 ## Credentials
 
-The bucket is private. On the **first** invocation, including `--probe-latest`,
-inject `GOOGLE_APPLICATION_CREDENTIALS` (path to a service-account JSON with
-access to `gs://sheerwater-datalake`), or rely on Application Default
-Credentials from `gcloud auth application-default login`. Do not call the
-skill once to discover they are missing, then retry. Never print, log, or
-echo the values.
+The container is private. On the **first** invocation, including
+`--probe-latest`, inject `AZURE_STORAGE_SAS_TOKEN` (a SAS query string for
+`italynorthdata` / `data`, with list and read — `sp=rl`). A leading `?` or a
+full blob URL is accepted; only the query string is used. Do not call the
+skill once to discover the token is missing, then retry. Never print, log, or
+echo the value.
 
 ## Usage
 
@@ -67,7 +67,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 
 ### Arguments
 
-- `--dataset` — product folder under `v0.0.1-op/pf/` (default `precip`, alias
+- `--dataset` — product folder under `pf/` (default `precip`, alias
   for `total_precipitation_24h_acc_imerg`).
 - `--date` — forecast init date `YYYY-MM-DD`. Default: latest published init.
   Calendar day: `resolve-time latest`. Latest published init: `--probe-latest`.

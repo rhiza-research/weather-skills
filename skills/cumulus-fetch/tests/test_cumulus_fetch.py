@@ -50,8 +50,12 @@ def test_fetch_writes_zarr_and_stamps_history(tmp_path, fetch_mod, monkeypatch):
     out = tmp_path / "cumulus.zarr"
     remote = _native_forecast()
 
-    monkeypatch.setattr(fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-07", "2026-09-18"])
-    monkeypatch.setattr(fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True))
+    monkeypatch.setattr(
+        fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-07", "2026-09-18"]
+    )
+    monkeypatch.setattr(
+        fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True)
+    )
 
     run_skill(fetch_mod.fetch, "-o", str(out))
 
@@ -76,7 +80,9 @@ def test_fetch_does_not_deaccumulate_period_totals(tmp_path, fetch_mod, monkeypa
         remote["total_precipitation_24h_acc_imerg"].values[:, i, :, :] = val
 
     monkeypatch.setattr(fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-18"])
-    monkeypatch.setattr(fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True))
+    monkeypatch.setattr(
+        fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True)
+    )
 
     run_skill(fetch_mod.fetch, "--date", "2026-09-18", "-o", str(out))
 
@@ -90,7 +96,9 @@ def test_fetch_clips_negatives(tmp_path, fetch_mod, monkeypatch):
     remote = _native_forecast(negatives=True)
 
     monkeypatch.setattr(fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-18"])
-    monkeypatch.setattr(fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True))
+    monkeypatch.setattr(
+        fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True)
+    )
 
     run_skill(fetch_mod.fetch, "--date", "2026-09-18", "-o", str(out))
 
@@ -136,7 +144,9 @@ def test_fetch_honors_date_variable_and_bbox(tmp_path, fetch_mod, monkeypatch):
 
 
 def test_probe_latest(capsys, fetch_mod, monkeypatch):
-    monkeypatch.setattr(fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-07", "2026-09-18"])
+    monkeypatch.setattr(
+        fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-07", "2026-09-18"]
+    )
     run_skill(fetch_mod.fetch, "--probe-latest")
     assert capsys.readouterr().out.strip() == "2026-09-18"
 
@@ -144,7 +154,9 @@ def test_probe_latest(capsys, fetch_mod, monkeypatch):
 def test_unknown_variable_exits_2(tmp_path, fetch_mod, monkeypatch):
     remote = _native_forecast()
     monkeypatch.setattr(fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-18"])
-    monkeypatch.setattr(fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True))
+    monkeypatch.setattr(
+        fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True)
+    )
     with pytest.raises(SystemExit) as exc:
         run_skill(
             fetch_mod.fetch,
@@ -155,6 +167,34 @@ def test_unknown_variable_exits_2(tmp_path, fetch_mod, monkeypatch):
             "-o",
             str(tmp_path / "out.zarr"),
         )
+    assert exc.value.code == 2
+
+
+def test_normalize_sas(fetch_mod):
+    assert fetch_mod._normalize_sas("?sv=1&sig=abc") == "sv=1&sig=abc"
+    assert fetch_mod._normalize_sas("  sv=1&sig=abc  ") == "sv=1&sig=abc"
+    url = "https://italynorthdata.blob.core.windows.net/data/x?sv=1&sig=abc"
+    assert fetch_mod._normalize_sas(url) == "sv=1&sig=abc"
+
+
+def test_redact_sas(fetch_mod):
+    text = "403 https://x.blob.core.windows.net/data/a?sv=1&sig=SECRET&se=2"
+    redacted = fetch_mod._redact(text)
+    assert "SECRET" not in redacted
+    assert "sig=REDACTED" in redacted
+
+
+def test_missing_sas_exits_2(fetch_mod, monkeypatch):
+    monkeypatch.delenv("AZURE_STORAGE_SAS_TOKEN", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--probe-latest")
+    assert exc.value.code == 2
+
+
+def test_malformed_sas_exits_2(fetch_mod, monkeypatch):
+    monkeypatch.setenv("AZURE_STORAGE_SAS_TOKEN", "not-a-sas")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--probe-latest")
     assert exc.value.code == 2
 
 
