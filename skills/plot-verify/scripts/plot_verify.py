@@ -19,7 +19,7 @@ from __future__ import annotations
 import sys
 
 from weather_skills_core import Dataset, UsageError, weather_skill
-from weather_skills_core.cf import auto_variable, cf_dim
+from weather_skills_core.cf import cf_dim, resolve_input_variable
 from weather_skills_core.display_labels import (
     combine_display_labels,
     dataset_display_label,
@@ -314,8 +314,10 @@ def _squeeze_map(da, role):
     return da
 
 
-def _pick_variable(ds, variable, role):
-    name = variable or auto_variable(ds)
+def _pick_variable(ds, inputs, input_id, role):
+    """This dataset's own ``inputs[].variable`` (by id), else ``inputs[0].variable``,
+    else auto-detect — never a name borrowed from a *different* dataset's field."""
+    name = resolve_input_variable(inputs, ds, id=input_id)
     if not name or name not in ds:
         raise UsageError(f"variable {name!r} missing from {role}. Available: {list(ds.data_vars)}")
     return name
@@ -403,7 +405,7 @@ def plot_verify(
     spec_data = normalize_spec(overlay_spec(internal, user))
     params = params_from_spec(spec_data)
     trace0 = trace_at(spec_data)
-    title, colormap, variable = params["title"], params["colormap"], params["variable"]
+    title, colormap = params["title"], params["colormap"]
     bbox, mask_geojson = params["bbox"], params["mask_geojson"]
     if isinstance(bbox, list):
         bbox = tuple(bbox)
@@ -450,9 +452,11 @@ def plot_verify(
     import cf_xarray  # noqa: F401 — registers the .cf accessor
     import numpy as np
 
-    obs_name = _pick_variable(obs, variable, "--obs")
+    inputs_spec = spec_data.get("inputs")
+    obs_name = _pick_variable(obs, inputs_spec, "obs", "--obs")
     fc_names = [
-        _pick_variable(fc, variable, f"--forecast {i + 1}") for i, fc in enumerate(forecasts)
+        _pick_variable(fc, inputs_spec, f"forecast{i + 1}", f"--forecast {i + 1}")
+        for i, fc in enumerate(forecasts)
     ]
     obs_ds = _prepare(obs, obs_name)
     fc_datasets = [_prepare(fc, name) for fc, name in zip(forecasts, fc_names, strict=True)]
@@ -582,6 +586,7 @@ def plot_verify(
         **{f"verify{i}": ds for i, ds in enumerate(verify_sets, start=1)},
     }
     inputs = spec_inputs_from_datasets(named)
+    name_by_id = {"obs": obs_name, **{f"forecast{i}": n for i, n in enumerate(fc_names, start=1)}}
     for item in inputs:
         key = str(item["id"])
         if key.startswith("forecast"):
@@ -590,8 +595,9 @@ def plot_verify(
             item["role"] = "verify"
         else:
             item["role"] = "obs"
-        if variable or obs_name:
-            item["variable"] = variable or obs_name
+        resolved_name = name_by_id.get(key, obs_name)
+        if resolved_name:
+            item["variable"] = resolved_name
     if labels:
         obs_and_fc = [item for item in inputs if item["role"] != "verify"]
         for i, item in enumerate(obs_and_fc):

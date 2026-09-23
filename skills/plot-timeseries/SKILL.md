@@ -41,6 +41,17 @@ For a single-input quick-look, use the `plot` skill with
 `traces[0].kind` `timeseries`. Leftover non-time dims are still not averaged: set
 `traces[].reduce` once per dim or `along` to fan them out.
 
+## Before guessing a flag or a key
+
+Every drawing choice besides `-i`/`-o` is a JSON key under `--spec` (see
+**Parameters** below); an unknown or misplaced key is a hard error listing
+every valid key at that level, not a silent no-op. If you don't already
+know the shape of `--spec`, run `--dump-spec -` with your `-i` files and no
+`--spec` at all to see the whole resolved schema in one call, rather than
+guessing keys one at a time. And render once and look at the PNG before
+trying another variation — the `plot hash` printed after a render only
+tells you the pixels changed, never what changed or how it looks.
+
 ## When to use
 
 - Comparing the same variable across two or more datasets (forecast vs
@@ -71,7 +82,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> --dump-spec -
 - `--input`, `-i` — input Zarr; repeat the flag for each series. Order is the legend order. Optional when `--spec` lists input paths.
 - `--output`, `-o` — PNG path.
 - `--spec` — JSON object or path, always deep-merged onto the spec built from the opened files. Your values win. `inputs[]` merges by id, `traces[]` by `input` (else id). A `patch` key inside the object is rejected.
-- `--dump-spec` — write the merged spec as JSON and skip the PNG. Bare `--dump-spec` or `-` prints to stdout.
+- `--dump-spec` — write the merged spec as JSON and skip the PNG. Bare `--dump-spec` or `-` prints to stdout. Run it with just `-i` and no `--spec` to see the full default schema before writing one.
 
 ### Parameters (`--spec`)
 
@@ -88,9 +99,11 @@ One internal trace per input, kind `timeseries`, mark `line`. `layout.bar_mode` 
 ### Output
 
 A PNG at `--output`. Stdout prints `plot hash` (sha256 of RGB pixels) and
-`data: not null` or `data: NULL`. Compare hashes across runs; `NULL` means
-inspect-zarr the inputs. Look at the PNG as well. `--dump-spec` skips the
-PNG and this report.
+`data: not null` or `data: NULL`. `NULL` means inspect-zarr the inputs. A
+changed hash only proves the pixels differ, not what changed or whether it
+looks right — never use hash comparisons to answer a layout or appearance
+question; always look at the PNG. `--dump-spec` skips the PNG and this
+report.
 Overlay mode is a single axes (default `figsize=(10, 6)`).
 `layout.facet.per_trace` is one stacked panel per input. Override the canvas with
 `layout.figsize`. One series per input

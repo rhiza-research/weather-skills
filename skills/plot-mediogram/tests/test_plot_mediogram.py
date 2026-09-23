@@ -23,6 +23,26 @@ def test_ensemble_forecast_vs_mclimate(tmp_path, plot_mediogram):
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
+def test_mclimate_variable_name_can_differ_from_forecast(tmp_path, plot_mediogram):
+    """inputs[].variable is per-input; the forecast's name must not leak onto mclimate."""
+    fc = write_zarr(_ensemble_rate_forecast(members=5, n_step=4), tmp_path / 'fc.zarr')
+    mc = write_zarr(
+        make_forecast(name='precipitation_amount', members=5, n_step=4, fill=0.5), tmp_path / 'mc.zarr'
+    )
+    out = tmp_path / 'medio.png'
+    run_skill(
+        plot_mediogram, '-i', str(fc), '-i', str(mc), '-o', str(out), '--spec',
+        json.dumps({
+            'geo': {'lat': 1.0, 'lon': 10.0},
+            'inputs': [
+                {'id': 'forecast', 'variable': 'precip'},
+                {'id': 'mclimate', 'variable': 'precipitation_amount'},
+            ],
+        }),
+    )
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+
 def test_parse_figsize():
     import argparse
     plot_mod = load_skill('plot-mediogram', 'plot_mediogram')

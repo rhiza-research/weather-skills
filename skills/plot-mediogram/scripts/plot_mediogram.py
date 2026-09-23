@@ -14,7 +14,7 @@
 """ECMWF-style mediogram: forecast vs m-climate ensemble distributions at a point."""
 
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
-from weather_skills_core.cf import auto_variable, cf_dim
+from weather_skills_core.cf import cf_dim, resolve_input_variable
 from weather_skills_core.plot import export
 from weather_skills_core.plot.charts import compile_mediogram
 from weather_skills_core.plot.figure import DEFAULT_FONTSIZE, parse_figsize, resolve_axis_label
@@ -92,7 +92,7 @@ def plot_mediogram(
     spec_data = normalize_spec(overlay_spec(internal, user))
     params = params_from_spec(spec_data)
     title, xlabel, ylabel = params["title"], params["xlabel"], params["ylabel"]
-    lat, lon, variable = params["lat"], params["lon"], params["variable"]
+    lat, lon = params["lat"], params["lon"]
     figsize = tuple(params["figsize"]) if params["figsize"] else None
     fontsize = (spec_data.get("theme") or {}).get("fontsize") or DEFAULT_FONTSIZE
     if lat is None or lon is None:
@@ -107,17 +107,22 @@ def plot_mediogram(
     import cf_xarray  # noqa: F401 — registers the .cf accessor
     import numpy as np
 
-    variable = variable or auto_variable(ds_fc)
-    if variable is None or variable not in ds_fc or variable not in ds_mc:
+    inputs_spec = spec_data.get("inputs")
+    fc_variable = resolve_input_variable(inputs_spec, ds_fc, id="forecast")
+    mc_variable = resolve_input_variable(inputs_spec, ds_mc, id="mclimate")
+    if fc_variable is None or fc_variable not in ds_fc:
         raise UsageError(
-            f"variable '{variable}' must exist in both inputs. "
-            f"forecast: {list(ds_fc.data_vars)}  mclimate: {list(ds_mc.data_vars)}"
+            f"variable {fc_variable!r} missing from forecast. Available: {list(ds_fc.data_vars)}"
+        )
+    if mc_variable is None or mc_variable not in ds_mc:
+        raise UsageError(
+            f"variable {mc_variable!r} missing from mclimate. Available: {list(ds_mc.data_vars)}"
         )
 
-    ds_fc = precip_for_display(to_standard_units(ds_fc, variables=[variable]), variable)
-    ds_mc = precip_for_display(to_standard_units(ds_mc, variables=[variable]), variable)
-    da_fc = ds_fc[variable]
-    da_mc = ds_mc[variable]
+    ds_fc = precip_for_display(to_standard_units(ds_fc, variables=[fc_variable]), fc_variable)
+    ds_mc = precip_for_display(to_standard_units(ds_mc, variables=[mc_variable]), mc_variable)
+    da_fc = ds_fc[fc_variable]
+    da_mc = ds_mc[mc_variable]
 
     for label, da in (("forecast", da_fc), ("mclimate", da_mc)):
         if "number" not in da.dims or "step" not in da.dims:
@@ -159,23 +164,25 @@ def plot_mediogram(
                 )
         else:
             tick_labels.append(str(value))
-    qty = variable_label_for_display(pt_fc, fallback=variable, include_units=False)
+    qty = variable_label_for_display(pt_fc, fallback=fc_variable, include_units=False)
     compiled = compile_mediogram(
         fc,
         mc,
         tick_labels,
         title=title or f"Mediogram: {qty} at lat={snapped_lat:g}, lon={snapped_lon:g}",
         xlabel=_resolve_axis_label(xlabel, "Forecast step"),
-        ylabel=_resolve_axis_label(ylabel, variable_label_for_display(pt_fc, fallback=variable)),
+        ylabel=_resolve_axis_label(ylabel, variable_label_for_display(pt_fc, fallback=fc_variable)),
         fontsize=fontsize,
         figsize=figsize,
         spec=spec_data,
     )
     named = {"forecast": ds_fc, "mclimate": ds_mc}
     inputs = spec_inputs_from_datasets(named)
-    if variable:
-        for item in inputs:
-            item["variable"] = variable
+    name_by_id = {"forecast": fc_variable, "mclimate": mc_variable}
+    for item in inputs:
+        resolved_name = name_by_id.get(str(item.get("id")))
+        if resolved_name:
+            item["variable"] = resolved_name
     compiled.spec = {
         "version": SPEC_VERSION,
         "skill": "plot-mediogram",

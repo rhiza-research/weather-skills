@@ -16,6 +16,18 @@ Lead-week **verification figure** for **one observation week**. This skill
 time. Run `select` so every cube is one verifying week, run `verify` on
 each forecast/obs pair, then pass those Zarrs here.
 
+## Before guessing a flag or a key
+
+Every drawing choice besides `--obs`/`--forecast`/`--verify`/`--output` is a
+JSON key under `--spec` (see **Parameters** below); an unknown or misplaced
+key is a hard error listing every valid key at that level, not a silent
+no-op. If you don't already know the shape of `--spec`, run `--dump-spec -`
+with your `--obs`/`--forecast`/`--verify` files and no `--spec` at all to
+see the whole resolved schema in one call, rather than guessing keys one at
+a time. And render once and look at the PNG (or run `inspect-figure` on it)
+before trying another variation — the `plot hash` printed after a render
+only tells you the pixels changed, never what changed or how it looks.
+
 **`--obs` and each `--forecast` must have a single time (size 1).** If you
 see `has time size N; select the verifying week`, run `select` first
 (`--dim time --value <week start>`). A leftover `step` axis needs
@@ -65,11 +77,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py \
 - `--verify` — verify Zarr for that lead, once per `--forecast`, same order.
 - `--output`, `-o` — PNG path.
 - `--spec` — JSON object or path, always deep-merged onto the spec built from the opened files. Your values win. A `patch` key inside the object is rejected.
-- `--dump-spec` — write the merged spec as JSON and skip the PNG. Bare `--dump-spec` or `-` prints to stdout.
+- `--dump-spec` — write the merged spec as JSON and skip the PNG. Bare `--dump-spec` or `-` prints to stdout. Run it with just the dataset flags and no `--spec` to see the full default schema before writing one.
 
 ### Parameters (`--spec`)
 
-- `inputs[]` — `variable` on the obs input; `label` on obs and each forecast.
+- `inputs[]` — `variable` per input (`obs`, `forecast1`, `forecast2`, …); an input that omits it uses `inputs[0].variable` (the obs input), then auto-detects. Obs and a forecast may name the field differently (e.g. `precip` vs `precipitation_surface`) — set each one's own `variable`. `label` on obs and each forecast.
 - `title`, `theme.fontsize` (default 16), `theme.colormap`, `vmin`, `vmax`.
 - `traces[0].leads` — column titles. Default `1-week lead` … `N-week lead`. Titles that name a week are sorted so week-1 sits next to the observation.
 - `geo.bbox` as `[N, W, S, E]`, `geo.mask_geojson`.
@@ -82,7 +94,10 @@ verify maps. Two colorbars sit **side by side at the bottom**: values
 (obs/forecast) on the left, the verify metric (hits / bias / MAE) on
 the right. Stdout also prints `plot hash` (sha256 of RGB pixels) and
 `data: not null` or `data: NULL`, then each column's `verify_score_summary`.
-Compare hashes across runs; `NULL` means inspect-zarr the inputs. Hits
+A changed hash only proves the pixels differ, not what changed or whether
+it looks right — never use hash comparisons to answer a layout or
+appearance question; always look at the PNG. `NULL` means inspect-zarr the
+inputs. Hits
 use disagree / below / hit; bias uses a diverging scale centered on
 zero; MAE uses white at zero through warm colors. The verifying week
 dates are added to the figure title when the obs time coordinate can

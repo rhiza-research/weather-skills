@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 from weather_skills_core import Dataset, UsageError, weather_skill
-from weather_skills_core.cf import auto_variable
+from weather_skills_core.cf import resolve_input_variable
 from weather_skills_core.display_labels import dataset_display_label
 from weather_skills_core.plot import export
 from weather_skills_core.plot.charts import compile_lines, leftover_dims
@@ -302,18 +302,6 @@ def _as_name_list(value) -> list:
     return list(value)
 
 
-def _series_variable(inputs, idx, ds) -> str | None:
-    """``inputs[idx].variable``, else ``inputs[0].variable``, else auto-detect."""
-    items = [item for item in (inputs or []) if isinstance(item, dict)]
-    own = items[idx].get("variable") if idx < len(items) else None
-    if own:
-        return own
-    fallback = items[0].get("variable") if items else None
-    if fallback:
-        return fallback
-    return auto_variable(ds)
-
-
 def _series_reduce(traces, idx) -> list:
     """``traces[idx].reduce`` when set, otherwise ``traces[0].reduce``."""
     items = [item for item in (traces or []) if isinstance(item, dict)]
@@ -452,7 +440,9 @@ def plot_timeseries(
 
     inputs = [item for item in (spec_data.get("inputs") or []) if isinstance(item, dict)]
     traces = spec_data.get("traces") or []
-    variables = [_series_variable(inputs, idx, dataset) for idx, dataset in enumerate(datasets)]
+    variables = [
+        resolve_input_variable(inputs, dataset, index=idx) for idx, dataset in enumerate(datasets)
+    ]
     for idx, (dataset, variable) in enumerate(zip(datasets, variables, strict=True)):
         if not variable or variable not in dataset:
             raise UsageError(

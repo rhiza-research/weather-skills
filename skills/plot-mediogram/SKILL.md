@@ -13,6 +13,17 @@ metadata:
 
 Single-point mediogram plotting an ECMWF ensemble forecast distribution against an m-climate (historical) ensemble distribution. For each forecast step, two side-by-side box plots are drawn (forecast left/cyan, m-climate right/red) with the forecast ensemble mean as a black line.
 
+## Before guessing a flag or a key
+
+Every drawing choice besides `-i`/`-o` is a JSON key under `--spec` (see
+**Parameters** below); an unknown or misplaced key is a hard error listing
+every valid key at that level, not a silent no-op. If you don't already
+know the shape of `--spec`, run `--dump-spec -` with your two `-i` files and
+no `--spec` at all to see the whole resolved schema in one call, rather
+than guessing keys one at a time. And render once and look at the PNG
+before trying another variation — the `plot hash` printed after a render
+only tells you the pixels changed, never what changed or how it looks.
+
 ## Input schema
 
 Both inputs are Zarr stores with at least:
@@ -36,20 +47,23 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_mediogram.py \
 - `--input`, `-i` — pass exactly twice: forecast Zarr first, m-climate Zarr second. Optional when `--spec` lists both paths.
 - `--output`, `-o` — PNG path.
 - `--spec` — JSON object or path, always deep-merged onto the spec built from the opened files. Your values win. `geo.lat` and `geo.lon` are required. A `patch` key inside the object is rejected.
-- `--dump-spec` — write the merged spec as JSON and skip the PNG. Bare `--dump-spec` or `-` prints to stdout.
+- `--dump-spec` — write the merged spec as JSON and skip the PNG. Bare `--dump-spec` or `-` prints to stdout. Run it with just `-i` (both files) and no `--spec` to see the full default schema before writing one.
 
 ### Parameters (`--spec`)
 
 - `geo.lat`, `geo.lon` — point, nearest-neighbor.
-- `inputs[0].variable`, `title`, `xlabel`, `ylabel`.
+- `inputs[]` — `variable` per input (`forecast`, `mclimate`); an input that omits it uses `inputs[0].variable` (the forecast input), then auto-detects. The two archives may name the field differently — set each one's own `variable`.
+- `title`, `xlabel`, `ylabel`.
 - `theme.fontsize` (default 16), `layout.figsize` as `[W, H]` (default about 10×5).
 
 ### Output
 
 A PNG at `--output`, single axes, default figsize `(10, 5)` (override with
 `layout.figsize`), legend below the boxes. Stdout prints `plot hash` (sha256 of
-RGB pixels) and `data: not null` or `data: NULL`. Compare hashes across
-runs; `NULL` means inspect-zarr the inputs. Look at the PNG as well.
+RGB pixels) and `data: not null` or `data: NULL`. `NULL` means inspect-zarr
+the inputs. A changed hash only proves the pixels differ, not what changed
+or whether it looks right — never use hash comparisons to answer a layout
+or appearance question; always look at the PNG.
 `--dump-spec` skips the PNG and this report. Up to 6 forecast steps on the x-axis labeled with actual leads (`+7d`, `+10d`, …). The y-axis (and default title) use the variable `long_name`.
 
 ### Provenance

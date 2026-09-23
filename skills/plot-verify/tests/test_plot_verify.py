@@ -133,6 +133,26 @@ def test_verify_count_mismatch_is_refused(tmp_path, plot_fn):
         run_skill(plot_fn, '--obs', str(obs), '--forecast', str(fc), '-o', str(tmp_path / 'out.png'))
     assert exc.value.code == 2
 
+def test_forecast_variable_name_can_differ_from_obs(tmp_path, plot_fn, verify_fn):
+    """inputs[].variable is per-input; obs's name must not leak onto the forecast."""
+    obs = write_zarr(_week(event_at=[(0, 0)], name='precip'), tmp_path / 'obs.zarr')
+    fc = write_zarr(_week(event_at=[(0, 0)], name='precipitation_surface'), tmp_path / 'fc.zarr')
+    verify_path = tmp_path / 'verify.zarr'
+    _run_verify(verify_fn, fc, obs, verify_path)
+    out = tmp_path / 'out.png'
+    run_skill(
+        plot_fn, '--obs', str(obs), '--forecast', str(fc), '--verify', str(verify_path),
+        '-o', str(out), '--spec',
+        json.dumps({
+            'inputs': [
+                {'id': 'obs', 'variable': 'precip'},
+                {'id': 'forecast1', 'variable': 'precipitation_surface'},
+            ],
+        }),
+    )
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
+
 def test_parse_figsize(plot_mod):
     import argparse
     assert plot_mod.parse_figsize('14,8') == (14.0, 8.0)
