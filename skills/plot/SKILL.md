@@ -169,6 +169,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
   use `theme.rc axes.labelpad` / `axes.labelsize` / `xtick.labelsize` for
   those — they also change the map axes.
   `pad` (not `labelpad`) is the gap between the maps and the colorbar strip.
+  Raise or lower the figure title with
+  `{"layout": {"suptitle": {"y": 1.04}}}` (`y` is a figure fraction; default
+  `0.98`).
   Shrink panel date titles (not the figure title) with
   `{"theme": {"rc": {"axes.titlesize": 10}}}`. Tick labels, axis labels,
   and line width are the same object:
@@ -287,7 +290,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --kind xy --output <out.png> \
 - `--title` — optional figure title (above all panels). Prefer a short name
   that fits on one line (about 56 characters or less), e.g. `S2S precip`,
   not a full sentence. Longer titles wrap onto a second line at a `·` / `:` /
-  word break.
+  word break. Vertical position is `--patch` only:
+  `{"layout": {"suptitle": {"y": 1.04}}}`. `y` is a figure fraction
+  (default `0.98`; larger moves the title up). This does not move panel
+  titles — those use `theme.rc.axes.titlepad`. `xy` draws `--title` on the
+  axes, so its gap is `axes.titlepad` too. Do not put the title string in
+  `layout.title`; that key moved to top-level `title`.
 - `--subplot-title` — optional map panel title, in panel order. Repeat the
   flag once per panel (`--subplot-title "Week 1" --subplot-title "Week 2"`).
   Fewer titles than panels keep the auto date/lead labels for the rest; more
@@ -629,7 +637,7 @@ linewidth keys) without a dump:
 | `font.size` | fallback size when a more specific key is unset |
 | `font.family` / `font.weight` | typeface and default weight |
 | `axes.titleweight` / `figure.titleweight` | panel / figure title weight (`bold`) |
-| `axes.titlepad` / `axes.labelpad` | gap from title or **every** axis label (lon/lat **and** colorbar) to the axes. Colorbar-only pad / size are `layout.colorbar.labelpad` / `labelsize` |
+| `axes.titlepad` / `axes.labelpad` | gap from a **panel** title or **every** axis label (lon/lat **and** colorbar) to the axes. Colorbar-only pad / size are `layout.colorbar.labelpad` / `labelsize`. Figure-title height is `layout.suptitle.y`, not `axes.titlepad` |
 | `xtick.major.pad` / `ytick.major.pad` | gap from tick labels to the spines |
 | `axes.labelweight` | axis-label weight |
 | `lines.linewidth` | default line width (timeseries / xy) |

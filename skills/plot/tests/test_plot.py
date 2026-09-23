@@ -248,6 +248,20 @@ def test_heatmap_colorbar_sits_below_maps():
     plt.close(fig)
 
 
+def test_layout_suptitle_y_raises_the_figure_title():
+    import matplotlib.pyplot as plt
+
+    ds = make_gridded(n_time=1, lats=(-4.0, 0.0, 4.0), lons=(35.0, 37.0, 39.0))
+    fig = _map_figure(
+        ds,
+        title="S2S precip",
+        layout={"facet": {}, "suptitle": {"y": 1.06}},
+    )
+    fig.canvas.draw()
+    assert fig._suptitle.get_position()[1] == pytest.approx(1.06)
+    plt.close(fig)
+
+
 def test_long_title_still_renders():
     import matplotlib.pyplot as plt
 

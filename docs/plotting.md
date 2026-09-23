@@ -100,10 +100,11 @@ key that used to be readable somewhere else. Spec version is `2`.
 | Where | Keys |
 | --- | --- |
 | top level | `version`, `skill`, `inputs`, `traces`, `layers`, `axes`, `annotations`, `shapes`, `title`, `subplot_titles`, `xlabel`, `ylabel`, `cbar_label`, `legend`, `vmin`, `vmax` |
-| `layout` | `figsize`, `autosize`, `dpi`, `facecolor`, `colorbar`, `shared_colorscale`, `subplots`, `bar_mode`, `facet` |
+| `layout` | `figsize`, `autosize`, `dpi`, `facecolor`, `colorbar`, `suptitle`, `shared_colorscale`, `subplots`, `bar_mode`, `facet` |
 | `layout.facet` | `rows`, `columns`, `max_columns`, `n_panels`, `wspace`, `hspace` |
 | `theme` | `template`, `colormap` (name, comma list, or `{name, colors, bounds, under, over, cmap}`), `fontsize`, `rc` |
 | `layout.colorbar` | `len`/`shrink`, `thickness`, `pad` (strip gap), `labelpad` / `labelsize` (colorbar label), `ticksize` (colorbar ticks), `location`, `orientation`, `extend`, `ticks`, `labels`, plus `drawedges` / `spacing` / `format` |
+| `layout.suptitle` | `y` — figure-title height as a figure fraction (default 0.98; larger moves `--title` up). Panel titles stay on `theme.rc.axes.titlepad`. A string at `layout.title` is still the title text and belongs on top-level `title` |
 | `geo` | `extent`, `bbox`, `cities`, `mask_geojson`, `draw_boxes`, `overlays`, `lat`, `lon` |
 | `inputs[]` | `id`, `path`, `variable`, `index`, `label`, `colormap`, `role` |
 | `traces[]` | `kind`, `input`, `mark`, `x`, `y`, `path`, `along`, `along_color`, `reduce`, `align`, `band`, `pair_on`, `u_variable`, `v_variable`, `x_variable`, `y_variable`, `metric`, `leads`, plus the artist blocks |
@@ -172,6 +173,12 @@ Key details:
   colorbar-only chrome. `label_pad` relocates to `labelpad`; `fontsize` on
   the colorbar object relocates to `labelsize`; `tick_size` relocates to
   `ticksize`.
+- **`layout.suptitle`**: vertical position of the figure `--title`. `y` is a
+  figure fraction; Matplotlib's default is `0.98`, and a larger value moves
+  the title up. Tight cropping keeps that gap. This does not move panel
+  titles (`theme.rc.axes.titlepad`) or an `xy` chart's axes title.
+  `--patch '{"layout": {"suptitle": {"y": 1.04}}}'`. `layout.title` is not
+  this knob — a title string still belongs on top-level `title`.
 - **`layout.colorbar.ticks` / `labels`**: explicit colorbar ticks. Labels
   need ticks and the same count. CLI: `--colormap-bounds`, `--cbar-ticks`,
   `--cbar-labels`.
