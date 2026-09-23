@@ -1,6 +1,6 @@
 ---
 name: plot-timeseries
-description: Render a PNG with traces overlaid on a shared time axis, as lines or bars. Name files with repeatable -i. Set parameters in --spec: traces[].reduce, traces[].along (e.g. number for ensemble spaghetti), traces[].mark, traces[].line, layout.subplots, layout.bar_mode, title, theme.fontsize (default 16). --dump-spec prints the merged spec. Leftover non-time dims must be reduced or fanned out; nothing is averaged silently. For precipitation, run aggregate-temporal then convert-to-totals first.
+description: Render a PNG with traces overlaid on a shared time axis, as lines or bars. Name files with repeatable -i. Set parameters in --spec: traces[].reduce, traces[].along (e.g. number for ensemble spaghetti), traces[].mark, traces[].line, layout.facet.per_trace, layout.bar_mode, title, theme.fontsize (default 16). --dump-spec prints the merged spec. Leftover non-time dims must be reduced or fanned out; nothing is averaged silently. For precipitation, run aggregate-temporal then convert-to-totals first.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py *)
@@ -44,7 +44,7 @@ For a single-input quick-look, use the `plot` skill with
 ## When to use
 
 - Comparing the same variable across two or more datasets (forecast vs
-  observation, or two models) as lines or bars, or as `layout.subplots`
+  observation, or two models) as lines or bars, or as `layout.facet.per_trace`
   when the y-scales should stay independent.
 - Plotting every ensemble member from one forecast Zarr
   (`traces[].along` `number`), optionally with a 1D overlay.
@@ -82,7 +82,7 @@ One internal trace per input, kind `timeseries`, mark `line`. `layout.bar_mode` 
 - `traces[0].along` — fan one leftover dim into lines (`number`). `along_color` is `same` or `cycle`.
 - `traces[].mark` — `line` or `bar`. `layout.bar_mode` — `grouped`, `stacked`, or `overlay`.
 - `traces[0].align` — `dayofyear` to overlay a seasonal axis. `traces[0].band` — percentile pair, e.g. `[10, 90]`, and it requires `along`.
-- `layout.subplots` — one panel per input. `layout.figsize` as `[W, H]`. `theme.fontsize` (default 16), `theme.template`.
+- `layout.facet.per_trace` — one panel per input. `layout.figsize` as `[W, H]`. `theme.fontsize` (default 16), `theme.template`.
 - Per-series style: `traces[].line` (`color`, `linewidth`, `linestyle`, `marker`, `markersize`, `alpha`, `zorder`) or `traces[].bar`. Match a series with `traces[].input` (`a`, `b`, …) or by index.
 
 ### Output
@@ -92,7 +92,7 @@ A PNG at `--output`. Stdout prints `plot hash` (sha256 of RGB pixels) and
 inspect-zarr the inputs. Look at the PNG as well. `--dump-spec` skips the
 PNG and this report.
 Overlay mode is a single axes (default `figsize=(10, 6)`).
-`layout.subplots` is one stacked panel per input. Override the canvas with
+`layout.facet.per_trace` is one stacked panel per input. Override the canvas with
 `layout.figsize`. One series per input
 (line with markers, `along` spaghetti, or bars; a per-trace `mark` of `line`
 can overlay a line on bars), legend below the traces. The y-axis label is the variable `long_name` (then
@@ -106,7 +106,7 @@ In overlay mode, all traces share one y-axis whose label takes the units of the
 first input. When the overlaid inputs carry the plotted variable in differing
 `units`, series in different units are drawn against a single scale and labeled
 with only one of them. The skill prints a warning to stderr naming the distinct
-units and still renders (exit status 0); set `layout.subplots` for independent
+units and still renders (exit status 0); set `layout.facet.per_trace` for independent
 y-axes. It is a rendering caveat, not a hard error.
 Only inputs that carry a `units` attr participate in the comparison.
 
@@ -124,7 +124,7 @@ python3 -c "from PIL import Image; import json; img = Image.open('out.png'); pri
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
     -i /tmp/chirps.zarr -i /tmp/imerg.zarr -o /tmp/precip_panels.png \
-    --spec '{"inputs":[{"variable":"precip","label":"CHIRPS"},{"label":"IMERG"}],"traces":[{"reduce":["latitude","longitude"]}],"layout":{"subplots":true}}'
+    --spec '{"inputs":[{"variable":"precip","label":"CHIRPS"},{"label":"IMERG"}],"traces":[{"reduce":["latitude","longitude"]}],"layout":{"facet":{"per_trace":true}}}'
 
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py \
     -i /tmp/ens_diff.zarr -o /tmp/ens_traces.png \

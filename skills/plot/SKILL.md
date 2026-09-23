@@ -15,11 +15,19 @@ Name the files on the command line. Put every drawing choice in `--spec`.
 
 Kind, variable, titles, colormap, map window, panel layout, index, reduce, and font size are spec keys: `traces[0].kind`, `inputs[0].variable`, `title`, `theme.colormap`, `geo.bbox`, `layout.facet.rows` / `columns`, `inputs[0].index`, `traces[0].reduce`, `theme.fontsize`. `--layer` is `KIND:PATH` only; options for that layer go on the matching `layers[]` entry. A `patch` key inside the JSON is rejected.
 
+## Before guessing a flag or a key
+
+There is no `--rows`, `--title`, `--fontsize`, `--cbar-label`, `--patch`, or any other per-knob flag — only the ones in **Command line** below. Every drawing choice is a JSON key under `--spec`, and an unknown or misplaced key is a hard error listing every valid key at that level (never a silent no-op). If you don't already know the shape of `--spec`, do **not** discover it by submitting guesses one at a time:
+
+1. Run `--dump-spec -` with just `-i <one of your files>` and no `--spec` at all. It prints the complete, already-resolved default spec — every top-level section (`inputs`, `traces`, `layout`, `theme`, `geo`, `axes`, `annotations`, ...) with its real keys, so you can see the whole schema in one call instead of one rejected key at a time.
+2. For the full key reference in prose, read the **Spec keys** table below, or [`docs/plotting.md`](../../docs/plotting.md).
+3. Write one `--spec`, render once, and look at the resulting PNG (or run `inspect-figure` on it) before trying another variation. The `plot hash` printed after a render tells you only that the image changed, not what changed or how it looks — never use hash comparisons to choose between layout options (a title's position, panel spacing, colorbar placement). Look at the pixels.
+
 ## Side by side, or one map
 
 | Goal | How |
 | --- | --- |
-| Two datasets in one PNG, each on its own lat/lon (0.05° beside 1.5°) | Pass `-i` once per file. Each file becomes an input and a heatmap trace, one panel on that file's lat/lon. `layout.facet` is `{"rows": 1, "columns": 2}`. `subplot_titles` names the panels; if omitted, the panel title is `inputs[].label` or the file name. `vmin`, `vmax`, and `layout.shared_colorscale` apply to both. |
+| Two datasets in one PNG, each on its own lat/lon (0.05° beside 1.5°) | Pass `-i` once per file. Put a `subplots` entry on each cell. `row` and `col` are 1-based. `layers` on that cell stack. The cell's `title`, `vmin`, `vmax`, `colormap`, and `cbar_label` style that cell; a key on the layer wins. |
 | Those same datasets drawn on top of each other | `--layer`. One axes. This does not make a panel per dataset. `layers[].panel` is not a key. |
 | Several times or forecast steps of one dataset | One heatmap trace. `layout.facet.rows` and `columns` tile those slices. |
 
@@ -48,7 +56,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i <in.zarr> --dump-spec -
 - `--layer` — repeatable `KIND:PATH` only (`heatmap`, `scatter`, `quiver`, `outline`, `mask`). Layer ids are `a`, `b`, `c`, … in this order. Options go on `layers[]` in `--spec`, matched by that id.
 - `-o`, `--output` — PNG path. Required unless `--dump-spec` is set.
 - `--spec` — JSON object or path. Deep-merged onto the spec built from the files you named. Your values win. `inputs[]` merges by `id`, `traces[]` by `input` (else `id`), `layers[]` by `id` (else index). An empty list does not wipe the figure.
-- `--dump-spec` — write the merged spec as JSON and skip the PNG. Bare `--dump-spec` or `-` prints to stdout; a path writes a file. The full JSON is token-expensive; use it to inspect a key, then edit `--spec` and draw again.
+- `--dump-spec` — write the merged spec as JSON and skip the PNG. Bare `--dump-spec` or `-` prints to stdout; a path writes a file. Run it with just `-i` and no `--spec` to see the complete default schema before writing one — that is the fastest way to learn what keys exist, faster than guessing a flag and reading the rejection. The full JSON is token-expensive once your `--spec` is large; at that point use it to check one key, then edit `--spec` and draw again.
 - `--theme-file` — palette file (JSON or TOML). Not a spec key. Named colormaps resolve against this file, then `~/.config/weather-skills/plot.toml`.
 
 Unset `traces[0].kind` stays `heatmap`. Unset `theme.fontsize` stays 16.
@@ -68,7 +76,7 @@ Set `traces[0].kind` in `--spec`.
 
 `--layer` draws several inputs on the **same** axes. It is not the side-by-side layout above. There is no per-layer panel: `layers[].panel` is not a key.
 
-`heatmap`, `scatter` (`station_id` / `point_id`), and `quiver` read Zarrs. `outline` draws GeoJSON edges. `mask` is a GeoJSON NaN mask, the same idea as `geo.mask_geojson`. A layer inherits `inputs[].variable`, `theme.colormap`, `inputs[].index`, `vmin`, and `vmax` when its own `layers[]` entry omits them. A forecast `step` axis still panels one map per lead; a static layer (outline, cities, a single-time field) repeats on every panel. Another data layer on the same axis kind is intersected on labels. Overlaying calendar `time` on a raw `step` forecast is an error — run `step-to-time` first. Same-variable heatmap and scatter layers share one color scale unless `layout.shared_colorscale` is `false`.
+`heatmap`, `scatter` (`station_id` / `point_id`), and `quiver` read Zarrs. `outline` draws GeoJSON edges. `mask` is a GeoJSON NaN mask, the same idea as `geo.mask_geojson`. A layer inherits `inputs[].variable`, `theme.colormap`, `inputs[].index`, `vmin`, and `vmax` when its own `layers[]` entry omits them. A forecast `step` axis still panels one map per lead; a static layer (outline, cities, a single-time field) repeats on every panel. Another data layer on the same axis kind is intersected on labels. Overlaying calendar `time` on a raw `step` forecast is an error — run `step-to-time` first. Same-variable heatmap and scatter layers stacked with `--layer` share one color scale unless `layout.shared_colorscale` is `false`. Side-by-side traces and `subplots[]` cells each scale independently by default, even with the same variable — set `layout.shared_colorscale: true` to share one colorbar across all of them.
 
 `--layer` cannot be combined with kind `timeseries`, `xy`, `windrose`, or `contour`.
 
@@ -95,18 +103,23 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/ecmwf_namibia.zarr -o /tmp/ec
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -i /tmp/weekly.zarr -o /tmp/weekly.png \
     --spec '{"inputs":[{"variable":"tp"}],"layout":{"facet":{"rows":2,"columns":3,"wspace":0.25,"hspace":0.25}}}'
 
-# Side by side. Each -i keeps its own lat/lon. This is not --layer.
+# Side by side. Each -i is an input (a, then b). Each subplot is a cell.
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py \
     -i /tmp/chirps.zarr -i /tmp/ecmwf.zarr -o /tmp/chirps_vs_ecmwf.png --spec '{
-  "inputs": [
-    {"variable": "precip"},
-    {"variable": "tp"}
+  "inputs": [{"id": "a", "variable": "precip"}, {"id": "b", "variable": "tp"}],
+  "subplots": [
+    {
+      "row": 1, "col": 1, "title": "CHIRPS 0.05°",
+      "vmin": 0, "vmax": 50, "colormap": "Blues", "cbar_label": "Obs [mm]",
+      "layers": [{"kind": "heatmap", "input": "a"}]
+    },
+    {
+      "row": 1, "col": 2, "title": "ECMWF 1.5°",
+      "vmin": 0, "vmax": 200, "colormap": "YlGn", "cbar_label": "Forecast [mm]",
+      "layers": [{"kind": "heatmap", "input": "b"}]
+    }
   ],
-  "layout": {"shared_colorscale": true, "facet": {"rows": 1, "columns": 2}},
-  "subplot_titles": ["CHIRPS 0.05°", "ECMWF 1.5°"],
-  "geo": {"bbox": [11.3, -3.5, 4.5, 1.3]},
-  "vmin": 0,
-  "vmax": 350
+  "geo": {"bbox": [11.3, -3.5, 4.5, 1.3]}
 }'
 
 uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py -o /tmp/imerg_vs_tahmo.png \
@@ -121,7 +134,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py --x /tmp/iod_sep.zarr --y /tmp/rain_o
 
 ## Output
 
-A PNG at `--output`. Stdout prints a pixel `plot hash` (sha256 of RGB pixels) and `data: not null (<var> N/M finite)` or `data: NULL`. `NULL` means every plotted variable is all-NaN — run `inspect-zarr` on the input. Look at the PNG as well. `--dump-spec` skips the PNG and this report.
+A PNG at `--output`. Stdout prints a pixel `plot hash` (sha256 of RGB pixels) and `data: not null (<var> N/M finite)` or `data: NULL`. `NULL` means every plotted variable is all-NaN — run `inspect-zarr` on the input. A changed hash only proves the pixels differ, not what changed or whether it looks right (a title moved above vs. inside a panel hashes just as differently as a broken render) — comparing hashes across a few candidate specs is never a substitute for looking at the PNG. Always look at the PNG, or run `inspect-figure` on it. `--dump-spec` skips the PNG and this report.
 
 The colorbar and timeseries y-axis label come from variable attrs: `long_name`, then `GRIB_name`, then the variable name, then `"value"`, with `[units]` when present. Dates stay on panel titles. Display units are short (`mm/day`, `°C`, `mm`, `m/s`). A wind rose labels speed stacks in those units and the radial axis as frequency percent. Prefer an amount Zarr from `convert-to-totals` (`Total precipitation [mm]`). A precip rate that already has `aggregation_period` is converted to a period total for the figure only. Unaggregated fetch rates stay `mm day-1`.
 
@@ -139,12 +152,12 @@ Values are JSON. Unknown keys on artist or axes objects are errors. There is no 
 | --- | --- |
 | Kind | `traces[0].kind` |
 | Variable | `inputs[0].variable` (or `layers[].variable`) |
-| Titles and axis text | `title`, `subplot_titles`, `xlabel`, `ylabel`, `cbar_label`, `legend` |
-| Color limits | `vmin`, `vmax` |
+| Titles and axis text | `title`, `subplot_titles`, `xlabel`, `ylabel`, `cbar_label`, `legend`. `layout.facet.titles` and `traces[].title` are panel titles and are stored on `subplot_titles`. |
+| Color limits | Figure `vmin`, `vmax` for every panel. One panel: `inputs[].vmin`, `inputs[].vmax`, `inputs[].colormap`, `inputs[].cbar_label`. `traces[].kind` and `traces[].mesh` / `contour` / `quiver` stay on that trace. |
 | Colormap and font | `theme.colormap`, `theme.fontsize`, `theme.template` (`weather_skills` or `colorblind`), `theme.rc` |
 | Map window | `geo.bbox` as `[N, W, S, E]`, `geo.extent`, `geo.mask_geojson`, `geo.cities`, `geo.draw_boxes` |
 | Panels | `layout.figsize` as `[W, H]`, `layout.dpi`, `layout.facecolor`, `layout.facet.rows` / `columns` / `wspace` / `hspace`. One heatmap trace: rows and columns tile `time` or `step`. Several heatmap traces: one panel per trace. |
-| Shared color scale | `layout.shared_colorscale` (`false` = each panel or layer scales alone), plus figure-level `vmin` / `vmax` |
+| Shared color scale | `layout.shared_colorscale` (`false` = never auto-share, even stacked `--layer` entries; `true` = one colorbar across every panel/cell), plus figure-level `vmin` / `vmax`. Unset: `--layer` stacks auto-share same-variable layers; side-by-side traces and `subplots[]` cells scale independently |
 | Extra-dim reduction | `inputs[0].index`, `traces[0].reduce`, `traces[0].along` |
 | xy / wind | `traces[0].pair_on`, `x_variable`, `y_variable`, `u_variable`, `v_variable`, `quiver.step`, `quiver.scale` |
 | One layer's options | `layers[]` entry with that layer's `id` |

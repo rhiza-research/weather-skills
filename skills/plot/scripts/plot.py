@@ -154,7 +154,7 @@ def _spec_data(spec):
 
 
 def _kind_from_spec(spec_data):
-    if spec_data.get("layers"):
+    if spec_data.get("layers") or spec_data.get("subplots"):
         return None
     kind = trace_at(spec_data).get("kind")
     return kind if kind and kind not in {"layer", "layers", "grid", "mediogram"} else None
@@ -477,6 +477,11 @@ def plot(
         raise UsageError("pass either --layer or --x/--y, not both")
     if files and (x_ds is not None or y_ds is not None):
         raise UsageError("pass either -i/--input or --x/--y, not both")
+    if layers and user.get("subplots"):
+        raise UsageError(
+            "pass either --layer or a subplots[] --spec, not both "
+            "(a subplots[] cell's own layers[] draws that stack)"
+        )
     if kind == "xy":
         x_ds, y_ds, _x_variable, _y_variable, _pair_on = _xy_from_spec(
             user, spec, x_ds, y_ds, None, None, None

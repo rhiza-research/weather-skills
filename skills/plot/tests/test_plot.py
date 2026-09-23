@@ -17,6 +17,34 @@ plot_mod = load_skill('plot', 'plot')
 def plot_fn():
     return plot_mod.plot
 
+def test_two_inputs_side_by_side_with_labels(tmp_path, plot_fn):
+    chirps = write_zarr(make_gridded(n_time=1, name='precip', fill=10.0), tmp_path / 'chirps.zarr')
+    ens = write_zarr(
+        make_gridded(n_time=1, name='precipitation_surface', fill=4.0, lats=(1.5, 2.5), lons=(10.5, 12.5)),
+        tmp_path / 'ens.zarr',
+    )
+    out = tmp_path / 'side.png'
+    spec = (
+        '{"inputs":[{"id":"a","variable":"precip","label":"CHIRPS observed"},'
+        '{"id":"b","variable":"precipitation_surface","label":"ECMWF ENS mean"}],'
+        '"traces":[{"kind":"heatmap","input":"a"},{"kind":"heatmap","input":"b"}],'
+        '"layout":{"shared_colorscale":true,"facet":{"max_columns":2}},'
+        '"geo":{"bbox":[4,9,-1,14]},"title":"Kenya daily rainfall"}'
+    )
+    run_skill(plot_fn, '-i', str(chirps), '-i', str(ens), '-o', str(out), '--spec', spec)
+    assert out.exists() and out.stat().st_size > 0
+    titled = tmp_path / 'titled.png'
+    spec_titles = (
+        '{"inputs":[{"id":"a","variable":"precip"},{"id":"b","variable":"precipitation_surface"}],'
+        '"traces":[{"kind":"heatmap","input":"a","title":"CHIRPS observed"},'
+        '{"kind":"heatmap","input":"b","title":"ECMWF ENS mean"}],'
+        '"layout":{"shared_colorscale":true,"facet":{"rows":1,"columns":2}},'
+        '"geo":{"bbox":[4,9,-1,14]}}'
+    )
+    run_skill(plot_fn, '-i', str(chirps), '-i', str(ens), '-o', str(titled), '--spec', spec_titles)
+    assert titled.exists() and titled.stat().st_size > 0
+
+
 def test_heatmap_writes_png(tmp_path, plot_fn):
     src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
     out = tmp_path / 'map.png'
@@ -916,6 +944,31 @@ def test_layer_rejects_timeseries_style(tmp_path, plot_fn):
     out = tmp_path / 'bad.png'
     with pytest.raises(SystemExit):
         run_skill(plot_fn, '--layer', f'heatmap:{src}', '-o', str(out), '--spec', '{"traces":[{"kind":"timeseries"}]}')
+
+def test_layer_rejects_subplots_spec(tmp_path, plot_fn):
+    src = write_zarr(make_gridded(), tmp_path / 'in.zarr')
+    out = tmp_path / 'bad.png'
+    with pytest.raises(SystemExit):
+        run_skill(
+            plot_fn, '--layer', f'heatmap:{src}', '-o', str(out),
+            '--spec', '{"subplots":[{"row":1,"col":1,"layers":[{"kind":"heatmap","input":"a"}]}]}',
+        )
+
+def test_subplots_two_inputs_write_png(tmp_path, plot_fn):
+    a = write_zarr(make_gridded(n_time=1, lats=(1.0, 2.0), lons=(10.0, 11.0)), tmp_path / 'a.zarr')
+    b = write_zarr(make_gridded(n_time=1, lats=(1.5,), lons=(10.5,)), tmp_path / 'b.zarr')
+    out = tmp_path / 'subplots.png'
+    run_skill(
+        plot_fn, '-i', str(a), '-i', str(b), '-o', str(out),
+        '--spec', '{'
+        '"inputs":[{"id":"a","variable":"precip"},{"id":"b","variable":"precip"}],'
+        '"subplots":['
+        '{"row":1,"col":1,"title":"A","layers":[{"kind":"heatmap","input":"a"}]},'
+        '{"row":1,"col":2,"title":"B","layers":[{"kind":"heatmap","input":"b"}]}'
+        ']}',
+    )
+    assert Path(out).exists()
+    assert out.stat().st_size > 0
 
 def test_calendar_year_and_pair_key():
     assert plot_charts._calendar_year(np.datetime64('2024-09-15')) == 2024

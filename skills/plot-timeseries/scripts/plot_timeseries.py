@@ -423,7 +423,7 @@ def plot_timeseries(
     along_color = parse_along_color(trace0.get("along_color"))
     figsize = tuple(params["figsize"]) if params["figsize"] else None
     mark = trace0.get("mark") or "line"
-    subplots = bool((spec_data.get("layout") or {}).get("subplots"))
+    per_trace = bool((spec_data.get("layout") or {}).get("facet", {}).get("per_trace"))
     align_day_of_year = trace0.get("align") in (
         True,
         "dayofyear",
@@ -471,15 +471,15 @@ def plot_timeseries(
         if isinstance(u, str) and u.strip():
             unit_vals.append(u)
             seen_units[_trace_label(dataset, idx, label_slots[idx])] = u.strip()
-    if not subplots and unit_vals and any(not units_equal(unit_vals[0], u) for u in unit_vals[1:]):
+    if not per_trace and unit_vals and any(not units_equal(unit_vals[0], u) for u in unit_vals[1:]):
         detail = ", ".join(f"{name} units={u!r}" for name, u in seen_units.items())
         plotted = variables[0] if len(set(variables)) == 1 else ", ".join(variables)
         print(
             f"Warning: variable '{plotted}' has differing units across the "
             f"overlaid inputs ({detail}). The series share one y-axis labeled "
             f"with a single unit, so values in different units are not directly "
-            f"comparable in this figure. Set layout.subplots to give each input "
-            f"its own y-axis.",
+            f"comparable in this figure. Set layout.facet.per_trace to give each "
+            f"input its own y-axis.",
             file=sys.stderr,
         )
 
@@ -611,7 +611,7 @@ def plot_timeseries(
             _bar_kwargs(series_style)
     panel_ylabels = (
         [_resolve_axis_label(ylabel, lab) for lab in y_labels]
-        if subplots
+        if per_trace
         else [_resolve_axis_label(ylabel, y_labels[0])]
     )
     if align_day_of_year:
@@ -625,7 +625,7 @@ def plot_timeseries(
         ylabels=panel_ylabels,
         fontsize=fontsize,
         figsize=figsize,
-        subplots=subplots,
+        per_trace=per_trace,
         kinds=kinds,
         styles=styles,
         template=template,
