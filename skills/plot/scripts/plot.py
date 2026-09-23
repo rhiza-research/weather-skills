@@ -219,76 +219,77 @@ def _warn(kind, **flags):
     legend_used = legend is not None and legend != "none"
     if kind in _MAP_KINDS and legend_used:
         print(
-            f"Warning: --legend is ignored for --kind {kind} (maps use a colorbar).",
+            f"Warning: legend is ignored for traces[0].kind {kind} (maps use a colorbar).",
             file=sys.stderr,
         )
     if kind == "heatmap" and (flags.get("u_variable") or flags.get("v_variable")):
         print(
-            "Warning: --u-variable/--v-variable is only used with --kind windrose or "
-            "--kind quiver; ignored for --kind heatmap.",
+            "Warning: traces[].u_variable / v_variable are only used with kind windrose or "
+            "quiver; ignored for kind heatmap.",
             file=sys.stderr,
         )
     if kind == "timeseries":
         for name, set_ in {
-            "--extent": bool(flags.get("extent")),
-            "--cities": bool(flags.get("cities")),
-            "--draw-box": bool(flags.get("draw_boxes")),
-            "--rows": flags.get("rows") is not None,
-            "--columns": flags.get("columns") is not None,
-            "--panel-spacing": flags.get("panel_spacing") is not None,
-            "--subplot-title": bool(flags.get("subplot_title")),
-            "--bbox": flags.get("bbox") is not None,
-            "--mask-geojson": bool(flags.get("mask_geojson")),
-            "--index": bool(flags.get("index")),
+            "geo.extent": bool(flags.get("extent")),
+            "geo.cities": bool(flags.get("cities")),
+            "geo.draw_boxes": bool(flags.get("draw_boxes")),
+            "layout.facet.rows": flags.get("rows") is not None,
+            "layout.facet.columns": flags.get("columns") is not None,
+            "layout.facet.wspace": flags.get("panel_spacing") is not None,
+            "subplot_titles": bool(flags.get("subplot_title")),
+            "geo.bbox": flags.get("bbox") is not None,
+            "geo.mask_geojson": bool(flags.get("mask_geojson")),
+            "inputs[].index": bool(flags.get("index")),
         }.items():
             if set_:
                 print(
-                    f"Warning: {name} is a map-only option; ignored for --kind {kind}.",
+                    f"Warning: {name} is a map-only spec key; ignored for traces[0].kind {kind}.",
                     file=sys.stderr,
                 )
     if kind in {"xy", "windrose"}:
         extras = {
-            "--extent": bool(flags.get("extent")),
-            "--cities": bool(flags.get("cities")),
-            "--draw-box": bool(flags.get("draw_boxes")),
-            "--rows": flags.get("rows") is not None,
-            "--columns": flags.get("columns") is not None,
-            "--panel-spacing": flags.get("panel_spacing") is not None,
-            "--subplot-title": bool(flags.get("subplot_title")),
+            "geo.extent": bool(flags.get("extent")),
+            "geo.cities": bool(flags.get("cities")),
+            "geo.draw_boxes": bool(flags.get("draw_boxes")),
+            "layout.facet.rows": flags.get("rows") is not None,
+            "layout.facet.columns": flags.get("columns") is not None,
+            "layout.facet.wspace": flags.get("panel_spacing") is not None,
+            "subplot_titles": bool(flags.get("subplot_title")),
         }
         if kind == "xy":
             extras.update(
                 {
-                    "--u-variable": bool(flags.get("u_variable")),
-                    "--v-variable": bool(flags.get("v_variable")),
-                    "--quiver-scale": flags.get("quiver_scale") is not None,
-                    "--quiver-step": flags.get("quiver_step") is not None,
-                    "--vmin": flags.get("vmin") is not None,
-                    "--vmax": flags.get("vmax") is not None,
-                    "--cbar-label": bool(flags.get("cbar_label")),
+                    "traces[].u_variable": bool(flags.get("u_variable")),
+                    "traces[].v_variable": bool(flags.get("v_variable")),
+                    "quiver.scale": flags.get("quiver_scale") is not None,
+                    "quiver.step": flags.get("quiver_step") is not None,
+                    "vmin": flags.get("vmin") is not None,
+                    "vmax": flags.get("vmax") is not None,
+                    "cbar_label": bool(flags.get("cbar_label")),
                 }
             )
             if flags.get("variable"):
                 print(
-                    "Warning: --variable is ignored for --kind xy; use --x-variable/--y-variable.",
+                    "Warning: inputs[].variable is ignored for kind xy; "
+                    "set traces[0].x_variable and traces[0].y_variable.",
                     file=sys.stderr,
                 )
             if legend_used:
-                print("Warning: --legend is ignored for --kind xy.", file=sys.stderr)
+                print("Warning: legend is ignored for kind xy.", file=sys.stderr)
         if kind == "windrose":
             extras.update(
                 {
-                    "--quiver-scale": flags.get("quiver_scale") is not None,
-                    "--quiver-step": flags.get("quiver_step") is not None,
-                    "--vmin": flags.get("vmin") is not None,
-                    "--vmax": flags.get("vmax") is not None,
-                    "--cbar-label": bool(flags.get("cbar_label")),
+                    "quiver.scale": flags.get("quiver_scale") is not None,
+                    "quiver.step": flags.get("quiver_step") is not None,
+                    "vmin": flags.get("vmin") is not None,
+                    "vmax": flags.get("vmax") is not None,
+                    "cbar_label": bool(flags.get("cbar_label")),
                 }
             )
         for name, set_ in extras.items():
             if set_:
                 print(
-                    f"Warning: {name} is ignored for --kind {kind}.",
+                    f"Warning: {name} is ignored for traces[0].kind {kind}.",
                     file=sys.stderr,
                 )
 

@@ -270,17 +270,17 @@ def _series_kind(style: dict, default: str, yvals=None) -> str:
     if yvals is not None and np.asarray(yvals).ndim == 2:
         if style.get("mark") == "bar":
             raise UsageError(
-                "--along traces are drawn as lines; do not set mark=bar on an --along series."
+                "traces[].along series are drawn as lines; do not set mark bar on an along series."
             )
         return "line"
     kind = style.get("mark", default)
     if kind not in _TRACE_STYLES:
-        raise UsageError(f"--trace mark={kind!r} must be line or bar")
+        raise UsageError(f"traces[].mark {kind!r} must be line or bar")
     return kind
 
 
 def _along_dim(da, along: str | None) -> str | None:
-    """Resolve ``--along`` to a dim on ``da``, including ontology aliases (member/number)."""
+    """Resolve ``traces[].along`` to a dim on ``da``, including ontology aliases."""
     return along_dim(da, along)
 
 
@@ -288,10 +288,39 @@ def _bar_kwargs(style: dict) -> dict:
     extra = [k for k in style if k in _LINE_ONLY_KEYS]
     if extra:
         raise UsageError(
-            f"--trace keys {sorted(extra)} apply to line traces, not bar traces. "
-            "Use color, alpha, or zorder, or set mark=line on this series."
+            f"traces[].line keys {sorted(extra)} apply to line traces, not bar traces. "
+            "Use color, alpha, or zorder, or set mark to line on this series."
         )
     return {k: v for k, v in style.items() if k in _BAR_KEYS}
+
+
+def _as_name_list(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return list(value)
+
+
+def _series_variable(inputs, idx, ds) -> str | None:
+    """``inputs[idx].variable``, else ``inputs[0].variable``, else auto-detect."""
+    items = [item for item in (inputs or []) if isinstance(item, dict)]
+    own = items[idx].get("variable") if idx < len(items) else None
+    if own:
+        return own
+    fallback = items[0].get("variable") if items else None
+    if fallback:
+        return fallback
+    return auto_variable(ds)
+
+
+def _series_reduce(traces, idx) -> list:
+    """``traces[idx].reduce`` when set, otherwise ``traces[0].reduce``."""
+    items = [item for item in (traces or []) if isinstance(item, dict)]
+    if idx < len(items) and items[idx].get("reduce") is not None:
+        return _as_name_list(items[idx].get("reduce"))
+    base = items[0] if items else {}
+    return _as_name_list(base.get("reduce"))
 
 
 def _trace_label(ds, idx: int, override: str | None = None) -> str:
@@ -390,8 +419,6 @@ def plot_timeseries(
     trace0 = trace_at(spec_data)
     params = params_from_spec(spec_data)
     title, xlabel, ylabel = params["title"], params["xlabel"], params["ylabel"]
-    variable = params["variable"]
-    reduce = list(trace0.get("reduce") or [])
     along = trace0.get("along")
     along_color = parse_along_color(trace0.get("along_color"))
     figsize = tuple(params["figsize"]) if params["figsize"] else None
@@ -405,7 +432,6 @@ def plot_timeseries(
     )
     band = trace0.get("band")
     theme = (spec_data.get("theme") or {}).get("template") or "weather_skills"
-    bar_mode = (spec_data.get("layout") or {}).get("bar_mode")
     fontsize = (spec_data.get("theme") or {}).get("fontsize") or DEFAULT_FONTSIZE
     time_dim = trace0.get("time_dim")
     label_slots = [
@@ -424,58 +450,66 @@ def plot_timeseries(
     import cf_xarray  # noqa: F401 — registers the .cf accessor
     import numpy as np
 
-    variable = variable or auto_variable(datasets[0])
-    if variable is None:
-        raise UsageError("no usable variable in the first input.")
-    for idx, ds in enumerate(datasets):
-        if variable not in ds:
+    inputs = [item for item in (spec_data.get("inputs") or []) if isinstance(item, dict)]
+    traces = spec_data.get("traces") or []
+    variables = [_series_variable(inputs, idx, dataset) for idx, dataset in enumerate(datasets)]
+    for idx, (dataset, variable) in enumerate(zip(datasets, variables, strict=True)):
+        if not variable or variable not in dataset:
             raise UsageError(
-                f"variable '{variable}' missing from input {idx + 1}. "
-                f"Available: {list(ds.data_vars)}"
+                f"variable {variable!r} missing from input {idx + 1}. "
+                f"Available: {list(dataset.data_vars)}. Set inputs[{idx}].variable."
             )
     datasets = [
-        precip_for_display(to_standard_units(ds, variables=[variable]), variable) for ds in datasets
+        precip_for_display(to_standard_units(dataset, variables=[variable]), variable)
+        for dataset, variable in zip(datasets, variables, strict=True)
     ]
 
     unit_vals = []
     seen_units = {}
-    for idx, ds in enumerate(datasets):
-        u = variable_units(ds[variable])
+    for idx, (dataset, variable) in enumerate(zip(datasets, variables, strict=True)):
+        u = variable_units(dataset[variable])
         if isinstance(u, str) and u.strip():
             unit_vals.append(u)
-            seen_units[_trace_label(ds, idx, label_slots[idx])] = u.strip()
+            seen_units[_trace_label(dataset, idx, label_slots[idx])] = u.strip()
     if not subplots and unit_vals and any(not units_equal(unit_vals[0], u) for u in unit_vals[1:]):
         detail = ", ".join(f"{name} units={u!r}" for name, u in seen_units.items())
+        plotted = variables[0] if len(set(variables)) == 1 else ", ".join(variables)
         print(
-            f"Warning: variable '{variable}' has differing units across the "
+            f"Warning: variable '{plotted}' has differing units across the "
             f"overlaid inputs ({detail}). The series share one y-axis labeled "
             f"with a single unit, so values in different units are not directly "
-            f"comparable in this figure. Pass --subplots to give each input "
+            f"comparable in this figure. Set layout.subplots to give each input "
             f"its own y-axis.",
             file=sys.stderr,
         )
 
-    y_labels = [_y_label(variable, ds[variable]) for ds in datasets]
+    y_labels = [
+        _y_label(variable, dataset[variable])
+        for dataset, variable in zip(datasets, variables, strict=True)
+    ]
     first_tdim = None
     axis_label = None
     series = []
     along_labels_by_series = []
     band_q = parse_band(band)
     if band_q is not None and not along:
-        raise UsageError("--band requires --along (percentiles are taken over that dim).")
+        raise UsageError(
+            "traces[].band requires traces[].along (percentiles are taken over that dim)."
+        )
     if trace0.get("along_color") and not along:
-        raise UsageError("--along-color requires --along.")
+        raise UsageError("traces[].along_color requires traces[].along.")
     if along_color == "cycle" and band_q is not None:
-        raise UsageError("--along-color cycle cannot be combined with --band.")
+        raise UsageError("traces[].along_color cycle cannot be combined with traces[].band.")
     template = normalize_template(theme)
 
-    for idx, ds in enumerate(datasets):
-        da = ds[variable]
+    for idx, (dataset, variable) in enumerate(zip(datasets, variables, strict=True)):
+        da = dataset[variable]
         try:
             tdim = pick_time_dim(da, time_dim)
         except UsageError as exc:
             raise UsageError(f"Error (input {idx + 1}): {exc}", prefix=False) from None
 
+        reduce = _series_reduce(traces, idx)
         applicable = [d for d in reduce if d in da.dims]
         if applicable:
             da = da.mean(applicable, keep_attrs=True)
@@ -483,14 +517,14 @@ def plot_timeseries(
         along_resolved = _along_dim(da, along)
         if along_resolved == tdim:
             raise UsageError(
-                f"Error (input {idx + 1}): --along {along!r} is the time axis "
-                f"('{tdim}'); pass a non-time dim such as number.",
+                f"Error (input {idx + 1}): traces[].along {along!r} is the time axis "
+                f"('{tdim}'); set a non-time dim such as number.",
                 prefix=False,
             )
         extras = leftover_dims(da, tdim, along=along_resolved)
         if along and along_resolved is None and extras:
             raise UsageError(
-                f"Error (input {idx + 1}): --along {along!r} is not a dim of "
+                f"Error (input {idx + 1}): traces[].along {along!r} is not a dim of "
                 f"variable '{variable}' (dims: {list(da.dims)}).",
                 prefix=False,
             )
@@ -498,21 +532,21 @@ def plot_timeseries(
             hint = extras[0]
             raise UsageError(
                 f"Error (input {idx + 1}): variable '{variable}' still has non-time dims "
-                f"{extras} after --reduce. Pass --reduce <dim> for each, or "
-                f"--along {hint} to draw one line per {hint} value.",
+                f"{extras} after traces[].reduce. Set traces[].reduce for each, or "
+                f"traces[].along {hint!r} to draw one line per {hint} value.",
                 prefix=False,
             )
 
-        label = _trace_label(ds, idx, label_slots[idx])
+        label = _trace_label(dataset, idx, label_slots[idx])
         series_xlabel = tdim
         if align_day_of_year:
             try:
                 xvals = da[tdim].dt.dayofyear.values
             except (TypeError, AttributeError):
                 raise UsageError(
-                    f"Error (input {idx + 1}): --align-day-of-year needs a calendar-date "
-                    f"time axis, but '{tdim}' is not a date axis. Drop the flag or pick "
-                    f"a date dim with --time-dim.",
+                    f"Error (input {idx + 1}): traces[].align dayofyear needs a calendar-date "
+                    f"time axis, but '{tdim}' is not a date axis. Drop align or pick "
+                    f"a date dim with traces[].time_dim.",
                     prefix=False,
                 ) from None
             if len(xvals) > 1 and np.any(np.diff(xvals) < 0):
@@ -527,11 +561,13 @@ def plot_timeseries(
             if (
                 tdim == "step"
                 and np.issubdtype(np.asarray(xvals).dtype, np.timedelta64)
-                and "time" in ds.coords
-                and ds["time"].ndim == 0
-                and np.asarray(ds["time"].values).dtype.kind == "M"
+                and "time" in dataset.coords
+                and dataset["time"].ndim == 0
+                and np.asarray(dataset["time"].values).dtype.kind == "M"
             ):
-                xvals = (np.asarray(ds["time"].values) + np.asarray(xvals)).astype("datetime64[ns]")
+                xvals = (np.asarray(dataset["time"].values) + np.asarray(xvals)).astype(
+                    "datetime64[ns]"
+                )
                 series_xlabel = "valid time"
         if along_resolved:
             da = da.transpose(tdim, along_resolved)
@@ -560,7 +596,7 @@ def plot_timeseries(
         for series_style, (_, yvals, _) in zip(styles, series, strict=True):
             if np.asarray(yvals).ndim == 2:
                 if series_style.get("mark") == "bar":
-                    raise UsageError("--band is not supported on bar traces; use mark=line.")
+                    raise UsageError("traces[].band is not supported on bar traces; set mark to line.")
                 series_style["band"] = band_q
     x_for_label = series[0][0] if series else None
     resolved_xlabel = _resolve_time_axis_label(

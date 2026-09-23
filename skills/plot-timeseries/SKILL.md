@@ -75,7 +75,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot_timeseries.py -i <a.zarr> --dump-spec -
 
 ### Parameters (`--spec`)
 
-One internal trace per input, kind `timeseries`, mark `line`. `layout.bar_mode` defaults to `grouped`. Globals (`reduce`, `along`, `along_color`, `mark`, `align`, `band`, `time_dim`) are read from `traces[0]` and apply to every series. Per-series `line`, `bar`, and `mark` stay on that trace.
+One internal trace per input, kind `timeseries`, mark `line`. `layout.bar_mode` defaults to `grouped`. `along`, `along_color`, `align`, `band`, and `time_dim` are read from `traces[0]` and apply to every series. `traces[].reduce` is per series; a trace that omits it uses `traces[0].reduce`. `inputs[].variable` is per input; an input that omits it uses `inputs[0].variable`. Per-series `line`, `bar`, and `mark` stay on that trace.
 
 - `inputs[].variable`, `inputs[].label`, `title`, `xlabel`, `ylabel`.
 - `traces[].reduce` — dims to average. Required for leftover non-time dims unless that dim is `along`.

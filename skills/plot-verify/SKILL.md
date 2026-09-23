@@ -22,9 +22,10 @@ see `has time size N; select the verifying week`, run `select` first
 `step-to-time` first.
 
 Columns are **observation, then week-1 through week-4** (week-1 next to
-obs). Pass `--forecast` week-1 first. If `traces[0].leads` titles include week
-numbers (e.g. `Week 4 (init …)`), columns are sorted week-1 → week-4
-even when you pass week-4 first. `--fontsize` and `--lead` are not flags.
+obs). Pass `--forecast` week-1 first. Column titles are `traces[0].leads`.
+If those titles include week numbers (e.g. `Week 4 (init …)`), columns are
+sorted week-1 → week-4 even when you pass week-4 first. Label size is
+`theme.fontsize` (default 16).
 
 | | Obs | 1-week lead | 2-week lead | 3-week lead | 4-week lead |
 | --- | --- | --- | --- | --- |

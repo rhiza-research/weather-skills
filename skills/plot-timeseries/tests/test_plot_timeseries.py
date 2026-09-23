@@ -485,3 +485,36 @@ def test_patch_flag_merges_into_spec(tmp_path, plot_timeseries):
     assert spec['axes']['xticks'] == ['2026-08-17']
     assert 'patch' not in spec
     assert not Path(out).exists()
+
+
+def test_per_input_variable(tmp_path, plot_timeseries):
+    precip = make_gridded(name='precip', fill=1.0)
+    temp = make_gridded(name='t2m', fill=2.0)
+    temp['t2m'].attrs.update(units='K', standard_name='air_temperature')
+    a = write_zarr(precip, tmp_path / 'precip.zarr')
+    b = write_zarr(temp, tmp_path / 'temp.zarr')
+    out = tmp_path / 'ts.png'
+    run_skill(
+        plot_timeseries,
+        '-i', str(a), '-i', str(b), '-o', str(out),
+        '--spec',
+        '{"inputs":[{"id":"a","variable":"precip"},{"id":"b","variable":"t2m"}],'
+        '"traces":[{"reduce":["latitude","longitude"]}],"layout":{"subplots":true}}',
+    )
+    assert out.exists()
+
+
+def test_per_trace_reduce_overrides_trace0(tmp_path, plot_timeseries, capsys):
+    a = write_zarr(make_gridded(), tmp_path / 'a.zarr')
+    b = write_zarr(make_gridded(fill=2.0), tmp_path / 'b.zarr')
+    with pytest.raises(SystemExit):
+        run_skill(
+            plot_timeseries,
+            '-i', str(a), '-i', str(b), '-o', str(tmp_path / 'ts.png'),
+            '--spec',
+            '{"traces":[{"reduce":["latitude","longitude"]},{"input":"b","reduce":["latitude"]}]}',
+        )
+    err = capsys.readouterr().err
+    assert 'input 2' in err
+    assert 'traces[].reduce' in err
+    assert 'longitude' in err

@@ -95,7 +95,7 @@ def test_heatmap_ignores_legend(tmp_path, plot_fn, capsys):
     out = tmp_path / 'map.png'
     run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"legend":"best"}')
     assert Path(out).exists()
-    assert 'ignored for --kind heatmap' in capsys.readouterr().err
+    assert 'ignored for traces[0].kind heatmap' in capsys.readouterr().err
 
 def test_contour_levels_span_and_pad_constant():
     levels = plot_maps._contour_levels(0.0, 10.0, n=10)
@@ -701,7 +701,7 @@ def test_heatmap_ignores_uv_flags(tmp_path, plot_fn, capsys):
     out = tmp_path / 'map.png'
     run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"u_variable":"u10"}]}')
     err = capsys.readouterr().err
-    assert 'only used with --kind windrose or --kind quiver' in err
+    assert 'only used with kind windrose or quiver' in err
     assert Path(out).exists()
 
 def test_wind_speed_da_is_hypot():
@@ -798,7 +798,7 @@ def test_subsample_quiver_stride():
 def test_quiver_step_flag_writes_png(tmp_path, plot_fn):
     src = write_zarr(_make_wind(), tmp_path / 'wind.zarr')
     out = tmp_path / 'quiver.png'
-    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"quiver","quiver_step":1,"quiver":{"scale":100.0}}]}')
+    run_skill(plot_fn, '-i', str(src), '-o', str(out), '--spec', '{"traces":[{"kind":"quiver","quiver":{"step":1,"scale":100.0}}]}')
     assert Path(out).exists()
     assert out.stat().st_size > 0
 
