@@ -85,7 +85,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py \
     --forecast /tmp/s2s_weekly.zarr --obs /tmp/chirps_weekly.zarr \
     --metric hits --variable precip --threshold 1 -o /tmp/hits.zarr
 uv run skills/plot/scripts/plot.py -i /tmp/hits.zarr -o /tmp/hits.png \
-    --title "Weekly rain ≥ 1 mm"
+    --spec '{"title":"Weekly rain ≥ 1 mm"}'
 
 # Bias error field
 uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py \

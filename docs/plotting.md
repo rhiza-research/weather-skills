@@ -132,7 +132,7 @@ Key details:
 
 - **`traces[].along_color`**: with `along`, `same` (default) paints every member one color; `cycle` gives each along-value its own color and legend entry. `cycle` cannot combine with `band`.
 - **`axes`** applies after the data are drawn. A dump includes only the keys you set; the catalog is `AXES_TEMPLATE` in `plot/figure.py`.
-- **`layout.facet.wspace` / `hspace`**: inter-panel gap as a fraction of panel size. Figures are built with seaborn `FacetGrid`, which passes the gap through `gridspec_kws` and lays out titles with `tight_layout`. The gap is applied again after that layout so the requested fraction survives.
+- **`layout.facet.wspace` / `hspace`**: inter-panel gap as a fraction of panel size. Figures are built with seaborn `FacetGrid`, which passes the gap through `gridspec_kws`. Line charts then run `tight_layout`, and the gap is applied again so the requested fraction survives. Map and wind-rose figures skip that second `tight_layout`: Cartopy and polar axes ignore it, and it pulls the colorbar onto the axes. Horizontal colorbar labels that still overlap are rotated 45°; no tick is dropped. Export does not crop with `bbox_inches="tight"`.
 - **`layout.bar_mode`**: `grouped` (default), `stacked`, or `overlay`. Per-trace `traces[].bar.mode` is an alias when `layout.bar_mode` is unset.
 - **`theme.colormap`**: a matplotlib name, a comma-separated color list, or `{colors, bounds, under, over}`. Named palettes also resolve from `--theme-file`. When plotting rainfall anomalies, omit the name so the default nested millimetre windows apply.
 - **`cbar_label`**: the quantity on the color scale, not a date. Valid time belongs on `title` / `subplot_titles`.

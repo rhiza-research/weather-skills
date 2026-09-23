@@ -115,7 +115,7 @@ realign with `coarsen --reference-grid` or `downscale --reference-grid`.
 The archive grid is daily S2S `tp` (fetch writes per-step rates). The product
 figure (`kenya-forecast-png` `weekly_precip.png`) is six weekly totals on the
 Kenya product extent `7/32/-6/43`, drawn with plot's default precip palette.
-Replicate it with weekly aggregation + totals, then plot (no `--colormap`):
+Replicate it with weekly aggregation + totals, then plot (omit `theme.colormap` so the default precip palette applies):
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset precip \
@@ -127,8 +127,8 @@ uv run skills/aggregate-temporal/scripts/aggregate.py \
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/kenya_weekly.zarr -o /tmp/kenya_weekly_mm.zarr
 
-uv run skills/plot/scripts/plot.py -i /tmp/kenya_weekly_mm.zarr -v tp \
-    --bbox 7/32/-6/43 -o /tmp/kenya_weekly.png
+uv run skills/plot/scripts/plot.py -i /tmp/kenya_weekly_mm.zarr -o /tmp/kenya_weekly.png \
+    --spec '{"inputs":[{"variable":"tp"}],"geo":{"bbox":[7,32,-6,43]}}'
 ```
 
 High-resolution weekly downscale (already weekly; fetch stamps
@@ -142,8 +142,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset precip_downscaled \
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/kenya_tp_ds.zarr -o /tmp/kenya_tp_ds_mm.zarr
 
-uv run skills/plot/scripts/plot.py -i /tmp/kenya_tp_ds_mm.zarr -v tp \
-    -o /tmp/kenya_weekly_downscaled.png
+uv run skills/plot/scripts/plot.py -i /tmp/kenya_tp_ds_mm.zarr -o /tmp/kenya_weekly_downscaled.png \
+    --spec '{"inputs":[{"variable":"tp"}]}'
 ```
 
 High-resolution daily downscale (ensemble-mean GeoTIFF; fetch writes per-step
@@ -161,6 +161,7 @@ uv run skills/aggregate-temporal/scripts/aggregate.py \
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/kenya_tp_ds_daily_weekly.zarr -o /tmp/kenya_tp_ds_daily_weekly_mm.zarr
 
-uv run skills/plot/scripts/plot.py -i /tmp/kenya_tp_ds_daily_weekly_mm.zarr -v tp \
-    -o /tmp/kenya_daily_downscaled.png
+uv run skills/plot/scripts/plot.py -i /tmp/kenya_tp_ds_daily_weekly_mm.zarr \
+    -o /tmp/kenya_daily_downscaled.png \
+    --spec '{"inputs":[{"variable":"tp"}]}'
 ```

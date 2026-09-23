@@ -124,6 +124,7 @@ uv run skills/aggregate-temporal/scripts/aggregate.py \
     -i /tmp/cumulus.zarr -o /tmp/cumulus_weekly.zarr --period weekly
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/cumulus_weekly.zarr -o /tmp/cumulus_weekly_mm.zarr
-uv run skills/plot/scripts/plot.py -i /tmp/cumulus_weekly_mm.zarr -v tp \
-    -o /tmp/cumulus_weekly.png
+uv run skills/plot/scripts/plot.py -i /tmp/cumulus_weekly_mm.zarr \
+    -o /tmp/cumulus_weekly.png \
+    --spec '{"inputs":[{"variable":"tp"}]}'
 ```

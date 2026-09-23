@@ -1,6 +1,6 @@
 ---
 name: plot-verify
-description: Plot a lead-week verification grid from pre-computed verify Zarrs. Columns are observation, then week-1 through week-4 forecasts; the metric row sits under the forecasts. Every --obs and --forecast must already be a single time — run select on the verifying week first. Run verify on each forecast/obs pair before this skill. For precipitation, aggregate-temporal then convert-to-totals before verify. Pass --forecast week-1 first. Use --fontsize to enlarge labels (default 16).
+description: Plot a lead-week verification grid from pre-computed verify Zarrs. Columns are observation, then week-1 through week-4 forecasts; the metric row sits under the forecasts. Every --obs and --forecast must already be a single time — run select on the verifying week first. Run verify on each forecast/obs pair before this skill. For precipitation, aggregate-temporal then convert-to-totals before verify. Pass --forecast week-1 first. Set theme.fontsize in --spec to enlarge labels (default 16).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/plot_verify.py *)
@@ -22,9 +22,9 @@ see `has time size N; select the verifying week`, run `select` first
 `step-to-time` first.
 
 Columns are **observation, then week-1 through week-4** (week-1 next to
-obs). Pass `--forecast` week-1 first. If `--lead` titles include week
+obs). Pass `--forecast` week-1 first. If `traces[0].leads` titles include week
 numbers (e.g. `Week 4 (init …)`), columns are sorted week-1 → week-4
-even when you pass week-4 first.
+even when you pass week-4 first. `--fontsize` and `--lead` are not flags.
 
 | | Obs | 1-week lead | 2-week lead | 3-week lead | 4-week lead |
 | --- | --- | --- | --- | --- |
