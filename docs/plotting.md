@@ -138,10 +138,10 @@ Key details:
   editable catalog is `AXES_TEMPLATE` in `plot/figure.py`.
 - **`layout.facet.wspace` / `hspace`**: inter-panel gap as a fraction of
   panel size (matplotlib `GridSpec` semantics). CLI: `--panel-spacing W[,H]`.
-  When set, equal-aspect map facets drop compressed packing and reserve the
-  gap in the canvas so panels separate with whitespace rather than extra
-  geographic extent. `layout.wspace` and `layout.facet.horizontal_spacing`
-  relocate to these keys.
+  Figures are built with seaborn `FacetGrid`, which passes the gap through
+  `gridspec_kws` and lays out titles with `tight_layout`. The gap is applied
+  again after that layout so the requested fraction survives. `layout.wspace`
+  and `layout.facet.horizontal_spacing` relocate to these keys.
 - **`layout.bar_mode`**: how bar traces compose on a shared axis:
   `grouped` (default; offset side-by-side), `stacked` (cumulative
   `bottom`), or `overlay` (same x, overlapping). CLI:
