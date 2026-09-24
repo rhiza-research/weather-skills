@@ -35,6 +35,18 @@ Different spacing is expected. Do not `coarsen` or `downscale` just to draw the 
 
 Each side-by-side trace has to already be one map. A `time` or `step` longer than one value is an error — aggregate it first (`aggregate-temporal`, then `convert-to-totals` for precipitation).
 
+## Panel spacing on map grids
+
+`heatmap`, `contour`, and `quiver` figures skip the auto-layout pass (`tight_layout`) that normally grows the gap between rows to fit titles — Cartopy axes ignore it and it would pull the colorbar onto the map. That means the default panel gap is fixed at whatever seaborn's `FacetGrid` starts with, **not** enough room for a title row once you have more than one row of panels. Left unset, rows and their date titles crush together.
+
+Always set `layout.facet.hspace` explicitly on any multi-row map grid (`layout.facet.rows > 1`, or several `-i` files with enough panels to wrap). Start at `hspace: 0.3`–`0.4`; raise it further for long or wrapped titles. `wspace` rarely needs to move past `0.1`–`0.15` since panels don't collide horizontally the same way:
+
+```bash
+--spec '{"layout":{"facet":{"rows":2,"columns":4,"wspace":0.15,"hspace":0.35}}}'
+```
+
+Single-row grids (`rows: 1`, the default for ≤4 panels) don't need this — there's no row below to collide with.
+
 ## Command line
 
 ```
@@ -65,7 +77,7 @@ Unset `traces[0].kind` stays `heatmap`. Unset `theme.fontsize` stays 16.
 
 Set `traces[0].kind` in `--spec`.
 
-- `heatmap` — lon/lat `pcolormesh` with coastlines, country borders, filled lakes, and (on country-scale views) admin-1 boundaries. One `-i` is one panel per `step` or `time`. Each extra `-i` adds a panel on that file's own lat/lon; see **Side by side, or one map**. Shared color scale, colorbar on the right for one panel and on the bottom for several. A single file's panel titles are calendar dates (`14 Sept '26`) or inclusive ranges (`4–10 Aug '26`); forecast leads keep `<start> until <end>`. Several files use `subplot_titles`, then `inputs[].label`, then the file name. The colorbar label is the variable and units (`Total precipitation [mm]`), not the date. Default grid is up to 4 columns. Set `layout.facet.rows` and `layout.facet.columns` to override; leftover cells stay blank. Ensemble `number` is averaged. `inputs[0].index` overrides the reduction for any other extra dim. Precipitation totals use a nested absolute-mm palette (same color = same millimetres; the window follows `aggregation_period`). For rainfall anomalies, omit `theme.colormap` so the diverging millimetre classes apply. A single-input heatmap and `--layer heatmap:<path>` draw the same picture.
+- `heatmap` — lon/lat `pcolormesh` with coastlines, country borders, filled lakes, and (on country-scale views) admin-1 boundaries. One `-i` is one panel per `step` or `time`. Each extra `-i` adds a panel on that file's own lat/lon; see **Side by side, or one map**. Shared color scale, colorbar on the right for one panel and on the bottom for several. A single file's panel titles are calendar dates (`14 Sept '26`) or inclusive ranges (`4–10 Aug '26`); forecast leads keep `<start> until <end>`. Several files use `subplot_titles`, then `inputs[].label`, then the file name. The colorbar label is the variable and units (`Total precipitation [mm]`), not the date. Default grid is up to 4 columns. Set `layout.facet.rows` and `layout.facet.columns` to override; leftover cells stay blank. **Any grid with more than one row needs an explicit `layout.facet.hspace`** (try `0.3`–`0.4`) — map panels skip the auto-layout pass that would otherwise reserve room between rows for panel titles (see **Panel spacing on map grids** below), so without it, titles from one row sit on top of the maps below. Ensemble `number` is averaged. `inputs[0].index` overrides the reduction for any other extra dim. Precipitation totals use a nested absolute-mm palette (same color = same millimetres; the window follows `aggregation_period`). For rainfall anomalies, omit `theme.colormap` so the diverging millimetre classes apply. A single-input heatmap and `--layer heatmap:<path>` draw the same picture.
 - `contour` — the same map as `heatmap`, drawn with `contourf` and thin black isolines. Values are interpolated between grid points. Cannot be combined with `--layer`.
 - `timeseries` — one line plus a marker at each time. Leftover non-time dims are not averaged: set `traces[0].reduce` to a list of dim names, or `traces[0].along` to draw one line per value of that dim. A forecast (`step` plus a scalar init `time`) is plotted against valid time (`init + step`). An analysis or obs cube is plotted against its `time` axis. For several series as stacked panels, use `plot-timeseries`.
 - `xy` — scatter one 1D series against another. Pass `--x` and `--y`, or one `-i` with `traces[0].x_variable` and `traces[0].y_variable`. Each series is reduced like `timeseries` (`geo.bbox` / `geo.mask_geojson` subset first when lat/lon remain). `traces[0].pair_on` is `time` (default, inner-join on time or valid time), `year` (calendar year), or `index` (position; lengths must match). Duplicate keys are an error — aggregate or select first. Points are labeled when `pair_on` is `year`, or when it is `time` and there are 25 points or fewer. This is not `--layer scatter`, which draws stations on a map.
@@ -156,7 +168,7 @@ Values are JSON. Unknown keys on artist or axes objects are errors. There is no 
 | Color limits | Figure `vmin`, `vmax` for every panel. One panel: `inputs[].vmin`, `inputs[].vmax`, `inputs[].colormap`, `inputs[].cbar_label`. `traces[].kind` and `traces[].mesh` / `contour` / `quiver` stay on that trace. |
 | Colormap and font | `theme.colormap`, `theme.fontsize`, `theme.template` (`weather_skills` or `colorblind`), `theme.rc` |
 | Map window | `geo.bbox` as `[N, W, S, E]`, `geo.extent`, `geo.mask_geojson`, `geo.cities`, `geo.draw_boxes` |
-| Panels | `layout.figsize` as `[W, H]`, `layout.dpi`, `layout.facecolor`, `layout.facet.rows` / `columns` / `wspace` / `hspace`. One heatmap trace: rows and columns tile `time` or `step`. Several heatmap traces: one panel per trace. |
+| Panels | `layout.figsize` as `[W, H]`, `layout.dpi`, `layout.facecolor`, `layout.facet.rows` / `columns` / `wspace` / `hspace`. One heatmap trace: rows and columns tile `time` or `step`. Several heatmap traces: one panel per trace. Multi-row map grids need `hspace` set explicitly (see **Panel spacing on map grids**) or rows crush together. |
 | Shared color scale | `layout.shared_colorscale` (`false` = never auto-share, even stacked `--layer` entries; `true` = one colorbar across every panel/cell), plus figure-level `vmin` / `vmax`. Unset: `--layer` stacks auto-share same-variable layers; side-by-side traces and `subplots[]` cells scale independently |
 | Extra-dim reduction | `inputs[0].index`, `traces[0].reduce`, `traces[0].along` |
 | xy / wind | `traces[0].pair_on`, `x_variable`, `y_variable`, `u_variable`, `v_variable`, `quiver.step`, `quiver.scale` |
