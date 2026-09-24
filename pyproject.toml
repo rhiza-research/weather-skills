@@ -3,13 +3,13 @@ requires = ["hatchling", "skills-runner"]
 build-backend = "hatchling.build"
 
 [project]
-name = "forecasting-skills"
+name = "weather-skills"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dynamic = ["dependencies", "scripts"]
 
 [tool.hatch.metadata.hooks.skills-runner]
-cli = "forecasting-skills"
+cli = "weather-skills"
 
 [tool.hatch.build.hooks.skills-runner]
 
