@@ -1,8 +1,8 @@
 ---
 name: ecmwf-fetch
-description: "Do not start here. Prefer dynamical-fetch (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`) for ECMWF S2S / ER whenever the catalog has the field and init. This is the ECDS fallback for pre-2026 inits, ocean, 6-hour max/min, accumulated fluxes, and `pv`. Inject ECMWF_DATASTORES_URL and ECMWF_DATASTORES_KEY only then. Prefer dynamical-fetch for medium-range IFS-ENS / AIFS too. Default `-v tp`. Short names (`t2m`, `sst`, `t`), not ARCO `2m_temperature`. Real-time has a 2-day embargo. Writes `tp` as `mm day-1` and temperatures as `degree_Celsius` — do not deaccumulate. Country bbox: resolve-region first."
+description: "Do not start here. Prefer dynamical-fetch (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`) for ECMWF S2S / ER whenever the catalog has the field and init. This is the ECDS fallback for pre-2026 inits, ocean, 6-hour max/min, accumulated fluxes, and `pv`. Inject ECMWF_DATASTORES_KEY only then — the ECDS store URL is hardcoded. Prefer dynamical-fetch for medium-range IFS-ENS / AIFS too. Default `-v tp`. Short names (`t2m`, `sst`, `t`), not ARCO `2m_temperature`. Real-time has a 2-day embargo. Writes `tp` as `mm day-1` and temperatures as `degree_Celsius` — do not deaccumulate. Country bbox: resolve-region first."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Default source is the dynamical.org catalog (no credentials). ECDS fallback requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`) and ECMWF_DATASTORES_URL / ECMWF_DATASTORES_KEY (or a `~/.ecmwfdatastoresrc` file). The URL is `https://ecds.ecmwf.int/api`; the key is the personal token from your ECDS account.
+compatibility: Requires Python 3.12 and uv. Default source is the dynamical.org catalog (no credentials). ECDS fallback requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`) and ECMWF_DATASTORES_KEY (or a `~/.ecmwfdatastoresrc` file). The store URL (`https://ecds.ecmwf.int/api`) is hardcoded in the skill, not read from the environment; the key is the personal token from your ECDS account.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.2"
@@ -23,8 +23,6 @@ metadata:
     - gh
   openclaw:
     envVars:
-      - name: ECMWF_DATASTORES_URL
-        description: ECDS API base URL (https://ecds.ecmwf.int/api). Needed only for the ECDS fallback.
       - name: ECMWF_DATASTORES_KEY
         description: Personal ECDS token. Needed only for the ECDS fallback.
 ---
@@ -56,14 +54,15 @@ Not for reanalysis, climatology, or deterministic HRES.
 
 ## Credentials
 
-The catalog path needs none. Inject ECDS secrets only on the **first**
+The catalog path needs none. The ECDS fallback's store URL
+(`https://ecds.ecmwf.int/api`) is hardcoded in the skill — it is not read
+from the environment. Inject the one remaining secret only on the **first**
 invocation that falls back to ECDS:
 
-- `ECMWF_DATASTORES_URL` — `https://ecds.ecmwf.int/api`
 - `ECMWF_DATASTORES_KEY` — personal ECDS token
 
-Do not call the skill once to discover they are missing, then retry.
-`--probe-latest` does not need credentials. Never print, log, or echo the values.
+Do not call the skill once to discover it is missing, then retry.
+`--probe-latest` does not need credentials. Never print, log, or echo the value.
 
 ## Usage
 

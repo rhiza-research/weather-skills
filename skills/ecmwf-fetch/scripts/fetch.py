@@ -56,6 +56,15 @@ LEADTIME_HOURS = [str(h) for h in range(0, _MAX_LEAD_HOURS + 1, 24)]
 
 S2S_LICENCE_URL = "https://ecds.ecmwf.int/datasets/s2s-forecasts?tab=download#manage-licences"
 
+# The ECDS API base URL is a fixed, public endpoint, not a secret — set it
+# ourselves so only ECMWF_DATASTORES_KEY needs to be injected. An explicit
+# override in the environment (e.g. a staging endpoint) still wins.
+_ECDS_URL = "https://ecds.ecmwf.int/api"
+
+
+def _ensure_datastores_url() -> None:
+    os.environ.setdefault("ECMWF_DATASTORES_URL", _ECDS_URL)
+
 # Embargo detection: match this phrase on the exception chain (MarsRuntimeError
 # is not reliably importable from ecmwf.datastores). Keep narrow so generic
 # access/auth failures do not classify as embargo.
@@ -748,7 +757,8 @@ def fetch(bbox, date, variable, **kwargs):
         )
         return _fetch_catalog(date, bbox, names)
 
-    require_env("ECMWF_DATASTORES_URL", "ECMWF_DATASTORES_KEY")
+    require_env("ECMWF_DATASTORES_KEY")
+    _ensure_datastores_url()
 
     import xarray as xr
     from ecmwf.datastores import Client

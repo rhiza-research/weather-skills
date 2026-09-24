@@ -48,6 +48,22 @@ def test_missing_ecmwf_env_exits_2(tmp_path, fetch):
     assert exc.value.code == 2
 
 
+def test_ensure_datastores_url_sets_hardcoded_default(mod):
+    """The ECDS store URL is not a secret — it's set even if absent from env."""
+    env = {k: v for k, v in os.environ.items() if k != "ECMWF_DATASTORES_URL"}
+    with patch.dict(os.environ, env, clear=True):
+        mod._ensure_datastores_url()
+        assert os.environ["ECMWF_DATASTORES_URL"] == "https://ecds.ecmwf.int/api"
+
+
+def test_ensure_datastores_url_does_not_override_explicit_env(mod):
+    """An operator-provided override (e.g. staging) still wins."""
+    env = {**os.environ, "ECMWF_DATASTORES_URL": "https://example.invalid"}
+    with patch.dict(os.environ, env, clear=True):
+        mod._ensure_datastores_url()
+        assert os.environ["ECMWF_DATASTORES_URL"] == "https://example.invalid"
+
+
 def test_unknown_variable_exits_2(tmp_path, fetch):
     out = tmp_path / "out.zarr"
     env = {
