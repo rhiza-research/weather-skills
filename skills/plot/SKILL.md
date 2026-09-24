@@ -27,7 +27,7 @@ There is no `--rows`, `--title`, `--fontsize`, `--cbar-label`, `--patch`, or any
 
 | Goal | How |
 | --- | --- |
-| Two datasets in one PNG, each on its own lat/lon (0.05° beside 1.5°) | Pass `-i` once per file. Put a `subplots` entry on each cell. `row` and `col` are 1-based. `layers` on that cell stack. The cell's `title`, `vmin`, `vmax`, `colormap`, and `cbar_label` style that cell; a key on the layer wins. |
+| Two datasets in one PNG, each on its own lat/lon (0.05° beside 1.5°) | Pass `-i` once per file. Put a `subplots` entry on each cell. `row` and `col` are 1-based. `layers` on that cell stack. The cell's `title`, `vmin`, `vmax`, `colormap`, `cbar_label`, and `colorbar` style that cell; a key on the layer wins. |
 | Those same datasets drawn on top of each other | `--layer`. One axes. This does not make a panel per dataset. `layers[].panel` is not a key. |
 | Several times or forecast steps of one dataset | One heatmap trace. `layout.facet.rows` and `columns` tile those slices. |
 
@@ -46,6 +46,21 @@ Always set `layout.facet.hspace` explicitly on any multi-row map grid (`layout.f
 ```
 
 Single-row grids (`rows: 1`, the default for ≤4 panels) don't need this — there's no row below to collide with.
+
+## Figure-wide vs per-panel settings
+
+One rule covers every knob that can vary panel by panel: a figure-level setting is the default that applies to **every** panel; a panel-specific key narrows or overrides it for just that panel.
+
+| Setting | Figure-wide default | Per-panel override |
+| --- | --- | --- |
+| Color scale, colormap, colorbar label | `vmin` / `vmax` / `theme.colormap` / `cbar_label` (or `inputs[].*`) | `subplots[].vmin` / `.vmax` / `.colormap` / `.cbar_label` |
+| Colorbar styling (ticks, labels, size, …) | `layout.colorbar` | `subplots[].colorbar` — same keys, deep-merged onto the figure default for that cell's own colorbar only |
+| Titles | `layout.facet.titles` / `traces[].title` / top-level `subplot_titles` | `subplots[].title` |
+| Annotations and shapes | An `annotations[]` / `shapes[]` entry with no `panel` | Set `panel` on that entry to an int (one panel) or a list of ints (a subset) |
+
+**Breaking change:** an `annotations[]` / `shapes[]` entry with no `panel` (or `axes`) used to draw on panel 0 only. It now draws on **every panel**. If an existing spec relied on the old default targeting just the first panel, add `"panel": 0` explicitly.
+
+`subplots[].colorbar` only works when that cell's colorbar isn't shared with another cell's (i.e. the cells have distinct `vmin`/`vmax`/`colormap`, or `layout.shared_colorscale` isn't `true`) — one physical colorbar can't have two different styles, so a conflicting override is a hard error naming the cells involved.
 
 ## Command line
 
@@ -128,6 +143,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/plot.py \
     {
       "row": 1, "col": 2, "title": "ECMWF 1.5°",
       "vmin": 0, "vmax": 200, "colormap": "YlGn", "cbar_label": "Forecast [mm]",
+      "colorbar": {"labelsize": 12},
       "layers": [{"kind": "heatmap", "input": "b"}]
     }
   ],
@@ -197,8 +213,8 @@ Use `layout.dpi`, `layout.figsize`, and `layout.facecolor`, not `figure.dpi`, `f
 | Spec key | Matplotlib surface |
 | --- | --- |
 | `axes` | Applied after the data are drawn: scales, limits, labels, ticks (`xticks` / `yticks` as lists or `{values, labels}`), locators, formatters, spines, grid, legend, twins. `xlabel` / `ylabel` may be a string or `{text, loc, pad, coords, rotation, ha, va, …}` (`coords` is `[x, y]` in axes fraction; omit `text` to keep the drawn label). A dump includes only the keys you set. |
-| `annotations` | `ax.text` or `ax.annotate`. `xref: paper` / `transform: axes` uses axes fraction. `axes` / `panel` picks a subplot. |
-| `shapes` | `rect`, `hline`, `vline`, `hspan`, `vspan`, `line`, `circle` / `ellipse` |
+| `annotations` | `ax.text` or `ax.annotate`. `xref: paper` / `transform: axes` uses axes fraction. No `axes` / `panel` draws on every panel (**breaking change** — previously panel 0 only); `panel` as an int or a list of ints narrows to that panel or subset. |
+| `shapes` | `rect`, `hline`, `vline`, `hspan`, `vspan`, `line`, `circle` / `ellipse`. Same `panel` broadcast/narrow rule as `annotations`. |
 | `traces[].line` / `.mesh` / `.contour` / `.scatter` / `.bar` / `.quiver` / `.windrose` | kwargs for that artist. `contour.lines: false` skips the isoline overlay |
 | `traces[].fill` | `fill_between` for a band set on `traces[0].band` |
 | `traces[].mediogram` | `{width, forecast, mclimate, mean, legend}` |
