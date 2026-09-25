@@ -45,6 +45,8 @@ Every figure — map or chart, one panel or many — is laid out by matplotlib's
 --spec '{"layout":{"facet":{"rows":2,"columns":4,"wspace":0.15,"hspace":0.35}}}'
 ```
 
+A figure `title` that is wider than the figure itself wraps onto more lines automatically — a centered figure title does not grow the canvas to fit itself, so without wrapping it would get cut off at the left and right edges instead. Panel titles already wrapped the same way; nothing to set for either case.
+
 ## Figure-wide vs per-panel settings
 
 One rule covers every knob that can vary panel by panel: a figure-level setting is the default that applies to **every** panel; a panel-specific key narrows or overrides it for just that panel.
