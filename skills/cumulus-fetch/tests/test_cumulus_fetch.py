@@ -38,12 +38,24 @@ def test_parse_name(fetch_mod):
 
 
 def test_canonical_dataset_aliases(fetch_mod):
-    assert fetch_mod._canonical_dataset("precip") == "total_precipitation_24h_acc_imerg"
-    assert fetch_mod._canonical_dataset("tp") == "total_precipitation_24h_acc_imerg"
+    assert fetch_mod._canonical_dataset("precip") == "total_precipitation_24h_acc_imerg_0p25"
+    assert fetch_mod._canonical_dataset("tp") == "total_precipitation_24h_acc_imerg_0p25"
+    assert (
+        fetch_mod._canonical_dataset("total_precipitation_24h_acc_imerg_0p25")
+        == "total_precipitation_24h_acc_imerg_0p25"
+    )
+    assert fetch_mod._canonical_dataset("precip_1deg") == "total_precipitation_24h_acc_imerg"
     assert (
         fetch_mod._canonical_dataset("total_precipitation_24h_acc_imerg")
         == "total_precipitation_24h_acc_imerg"
     )
+
+
+def test_prepare_dataset_renames_0p25_variable(fetch_mod):
+    remote = make_forecast(name="total_precipitation_24h_acc_imerg_0p25", members=2, n_step=2)
+    prepared = fetch_mod._prepare_dataset(remote, "2026-09-25")
+    assert "tp" in prepared.data_vars
+    assert "total_precipitation_24h_acc_imerg_0p25" not in prepared.data_vars
 
 
 def test_fetch_writes_zarr_and_stamps_history(tmp_path, fetch_mod, monkeypatch):
@@ -136,7 +148,7 @@ def test_fetch_honors_date_variable_and_bbox(tmp_path, fetch_mod, monkeypatch):
         str(out),
     )
 
-    assert seen["dataset"] == "total_precipitation_24h_acc_imerg"
+    assert seen["dataset"] == "total_precipitation_24h_acc_imerg_0p25"
     assert seen["iso"] == "2026-09-18"
     assert seen["bbox"] == (3.0, 9.0, 0.0, 12.0)
     ds = xr.open_zarr(out, consolidated=True)
