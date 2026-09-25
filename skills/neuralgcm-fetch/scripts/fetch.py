@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import sys
 
@@ -70,8 +72,9 @@ _VAR_ALIASES = {
 
 _AUTH_MSG = (
     "cannot read gs://neuralgcm-s2s (private GCS). Set "
-    "GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON that can read "
-    "that bucket, or run `gcloud auth application-default login`."
+    "NEURAL_GCM_SERVICE_CREDENTIALS to the full service-account key JSON "
+    "(no file needed), GOOGLE_APPLICATION_CREDENTIALS to a service-account "
+    "JSON file path, or run `gcloud auth application-default login`."
 )
 
 
@@ -88,6 +91,19 @@ def _canonical_dataset(dataset: str) -> str:
 def _filesystem():
     import gcsfs
 
+    creds_json = os.environ.get("NEURAL_GCM_SERVICE_CREDENTIALS")
+    if creds_json:
+        try:
+            info = json.loads(creds_json)
+        except json.JSONDecodeError as exc:
+            raise DataError(
+                f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc})."
+            ) from None
+        try:
+            return gcsfs.GCSFileSystem(token=info)
+        except Exception as exc:  # noqa: BLE001 — surface ADC failures as DataError
+            raise DataError(f"{_AUTH_MSG} ({type(exc).__name__}: {exc})") from None
+
     try:
         return gcsfs.GCSFileSystem()
     except Exception as exc:  # noqa: BLE001 — surface ADC failures as DataError
@@ -100,8 +116,9 @@ def _gcs_error(exc: Exception, what: str) -> DataError:
     lowered = text.lower()
     if any(token in lowered for token in ("401", "403", "forbidden", "credential", "anonymous")):
         hint = (
-            " Check GCS credentials: set GOOGLE_APPLICATION_CREDENTIALS or run "
-            "`gcloud auth application-default login`."
+            " Check GCS credentials: set NEURAL_GCM_SERVICE_CREDENTIALS "
+            "(service-account key JSON), GOOGLE_APPLICATION_CREDENTIALS (a key "
+            "file path), or run `gcloud auth application-default login`."
         )
     return DataError(f"{what} ({text}).{hint}")
 

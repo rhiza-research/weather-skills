@@ -1,8 +1,8 @@
 ---
 name: neuralgcm-fetch
-description: Fetch a NeuralGCM S2S ensemble forecast from gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/<init>/ (Tomorrow Now 2026 realtime) and write a weather-skills standard dataset Zarr. Default `--dataset imerg:precip` (`-v tp`, native `total_precipitation_6hr`); also `era5:surface` (`t2m`, `d2m`). 48 members, 6-hour leads out to 60 days, ~2.8° grid. Requires GCS credentials. Fetch writes `tp` as a per-step rate (`mm day-1`) — do not run deaccumulate after this skill.
+description: Fetch a NeuralGCM S2S ensemble forecast from gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/<init>/ (Tomorrow Now 2026 realtime) and write a weather-skills standard dataset Zarr. Default `--dataset imerg:precip` (`-v tp`, native `total_precipitation_6hr`); also `era5:surface` (`t2m`, `d2m`). 48 members, 6-hour leads out to 60 days, ~2.8° grid. Requires GCS credentials — inject NEURAL_GCM_SERVICE_CREDENTIALS (the service-account key JSON itself, no file needed) or GOOGLE_APPLICATION_CREDENTIALS (a key file path). Fetch writes `tp` as a per-step rate (`mm day-1`) — do not run deaccumulate after this skill.
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads private consolidated Zarr from gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1 via gcsfs. Requires Google Cloud Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS or `gcloud auth application-default login`).
+compatibility: Requires Python 3.12 and uv. Reads private consolidated Zarr from gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1 via gcsfs. Requires Google Cloud credentials: NEURAL_GCM_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
@@ -14,11 +14,13 @@ metadata:
   openclaw:
     requires:
       env:
-        - GOOGLE_APPLICATION_CREDENTIALS
-    primaryEnv: GOOGLE_APPLICATION_CREDENTIALS
+        - NEURAL_GCM_SERVICE_CREDENTIALS
+    primaryEnv: NEURAL_GCM_SERVICE_CREDENTIALS
     envVars:
+      - name: NEURAL_GCM_SERVICE_CREDENTIALS
+        description: Full contents of a GCP service-account key JSON with read access to gs://neuralgcm-s2s. Use this when the runtime can only inject secret values, not files.
       - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON with read access to gs://neuralgcm-s2s
+        description: Path to a GCP service-account JSON file with read access to gs://neuralgcm-s2s. Used only if NEURAL_GCM_SERVICE_CREDENTIALS is unset.
 ---
 
 # neuralgcm-fetch
@@ -54,10 +56,20 @@ Prefer `dynamical-fetch` for GFS / GEFS / IFS-ENS / IMERG observations, and
 ## Credentials
 
 The bucket is private. On the **first** invocation, including `--probe-latest`,
-inject `GOOGLE_APPLICATION_CREDENTIALS` (path to a service-account JSON with
-access to `gs://neuralgcm-s2s`), or rely on Application Default Credentials
-from `gcloud auth application-default login`. Do not call the skill once to
-discover they are missing, then retry. Never print, log, or echo the values.
+inject one of:
+
+- `NEURAL_GCM_SERVICE_CREDENTIALS` — the full contents of a
+  service-account key JSON with access to `gs://neuralgcm-s2s`, as a single
+  env var. Use this when the runtime can only inject secret values and can't
+  place a file on disk.
+- `GOOGLE_APPLICATION_CREDENTIALS` — a filesystem path to that same
+  service-account JSON.
+- Neither — falls back to Application Default Credentials from
+  `gcloud auth application-default login`.
+
+`NEURAL_GCM_SERVICE_CREDENTIALS` takes precedence when set. Do not call
+the skill once to discover they are missing, then retry. Never print, log, or
+echo the values.
 
 ## Usage
 
