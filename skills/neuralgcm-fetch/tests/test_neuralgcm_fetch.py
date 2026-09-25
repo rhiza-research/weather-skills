@@ -1,7 +1,9 @@
 """Correctness tests for neuralgcm-fetch (network / remote Zarr mocked)."""
 
+import json
 from pathlib import Path
 
+import gcsfs
 import numpy as np
 import pytest
 import xarray as xr
@@ -211,3 +213,36 @@ def test_missing_date_exits_1(tmp_path, fetch_mod, monkeypatch):
             str(tmp_path / "unused.zarr"),
         )
     assert exc.value.code == 1
+
+
+def test_filesystem_uses_credentials_json_when_set(fetch_mod, monkeypatch):
+    info = {"type": "service_account", "project_id": "sheerwater", "client_email": "x@y"}
+    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", json.dumps(info))
+    seen = {}
+
+    def fake_gcs_filesystem(**kwargs):
+        seen.update(kwargs)
+        return "fake-fs"
+
+    monkeypatch.setattr(gcsfs, "GCSFileSystem", fake_gcs_filesystem)
+    assert fetch_mod._filesystem() == "fake-fs"
+    assert seen == {"token": info}
+
+
+def test_filesystem_rejects_invalid_credentials_json(fetch_mod, monkeypatch):
+    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", "{not valid json")
+    with pytest.raises(fetch_mod.DataError, match="not valid JSON"):
+        fetch_mod._filesystem()
+
+
+def test_filesystem_falls_back_without_credentials_json(fetch_mod, monkeypatch):
+    monkeypatch.delenv("NEURAL_GCM_SERVICE_CREDENTIALS", raising=False)
+    seen = {}
+
+    def fake_gcs_filesystem(**kwargs):
+        seen.update(kwargs)
+        return "fake-fs"
+
+    monkeypatch.setattr(gcsfs, "GCSFileSystem", fake_gcs_filesystem)
+    assert fetch_mod._filesystem() == "fake-fs"
+    assert seen == {}
