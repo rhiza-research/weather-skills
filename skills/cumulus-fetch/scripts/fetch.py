@@ -5,7 +5,7 @@
 #   "xarray",
 #   "zarr>=3",
 #   "cftime",
-#   "gcsfs",
+#   "adlfs",
 #   "h5netcdf",
 #   "h5py",
 #   "netcdf4",
@@ -23,7 +23,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
-from weather_skills_core.standard_utils import bbox_subset, ensure_normalized_longitude
+from weather_skills_core.standard_utils import (
+    bbox_subset,
+    ensure_normalized_longitude,
+    require_env,
+)
 from weather_skills_core.units import (
     precip_amounts_to_rates,
     stamp_data_interval,
@@ -34,13 +38,16 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
 
-_BUCKET = "sheerwater-datalake"
-_VERSION = "v0.0.1-op"
+_ACCOUNT = "italynorthdata"
+_CONTAINER = "data"
+_RUN_PREFIX = "live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9"
 _STREAM = "pf"
+_SAS_ENV = "AZURE_STORAGE_SAS_TOKEN"
 _DEFAULT_DATASET = "precip"
 _NATIVE_PRECIP = "total_precipitation_24h_acc_imerg"
 _OUTPUT_PRECIP = "tp"
 DEFAULT_WORKERS = 8
+_SIG_RE = re.compile(r"(sig=)[^&\s'\"<>]+", re.IGNORECASE)
 
 # --dataset aliases → product folder under .../pf/<folder>/data/
 _DATASET_ALIASES = {
@@ -62,8 +69,50 @@ _VAR_ALIASES = {
 _FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-(\d{2})-(\d{4})\.nc$")
 
 
+def _blob_root() -> str:
+    return f"{_CONTAINER}/{_RUN_PREFIX}/{_STREAM}"
+
+
 def _data_prefix(dataset: str) -> str:
-    return f"cumulus-data/{_VERSION}/{_STREAM}/{dataset}/data"
+    return f"{_blob_root()}/{dataset}/data"
+
+
+def _display_prefix(dataset: str | None = None) -> str:
+    path = _blob_root() if dataset is None else _data_prefix(dataset)
+    return f"az://{_ACCOUNT}/{path}/"
+
+
+def _normalize_sas(token: str) -> str:
+    """Accept a raw SAS query, an optional leading ``?``, or a full blob URL."""
+    text = token.strip().strip('"').strip("'")
+    if "://" in text:
+        text = text.split("?", 1)[-1]
+    return text.removeprefix("?")
+
+
+def _redact(text: str) -> str:
+    return _SIG_RE.sub(r"\1REDACTED", text)
+
+
+def _sas_token() -> str:
+    (raw,) = require_env(
+        _SAS_ENV,
+        message=(
+            f"{_SAS_ENV} must be set to a read SAS for Azure container "
+            f"{_ACCOUNT}/{_CONTAINER} (list and read: sp=rl)."
+        ),
+    )
+    token = _normalize_sas(raw)
+    if "sig=" not in token.lower():
+        raise UsageError(
+            f"{_SAS_ENV} is set but does not look like an Azure SAS "
+            "(expected a query string containing sig=)."
+        )
+    return token
+
+
+def _storage_options() -> dict[str, str]:
+    return {"account_name": _ACCOUNT, "sas_token": _sas_token()}
 
 
 def _canonical_dataset(dataset: str) -> str:
@@ -79,63 +128,68 @@ def _parse_name(name: str) -> tuple[str, str, int] | None:
 
 
 def _filesystem():
-    import gcsfs
+    options = _storage_options()
+    import adlfs
 
     try:
-        return gcsfs.GCSFileSystem()
-    except Exception as exc:  # noqa: BLE001 — surface ADC failures as DataError
+        return adlfs.AzureBlobFileSystem(**options)
+    except UsageError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — surface SAS failures as DataError
         raise DataError(
-            "could not authenticate to Google Cloud Storage "
-            f"({type(exc).__name__}: {exc}). The Cumulus archive at "
-            f"gs://{_BUCKET}/ is private. Set GOOGLE_APPLICATION_CREDENTIALS "
-            "to a service-account JSON with bucket access, or run "
-            "`gcloud auth application-default login`."
+            f"could not open Azure Blob Storage account {_ACCOUNT} "
+            f"({_redact(f'{type(exc).__name__}: {exc}')}). "
+            f"Set {_SAS_ENV} to a read SAS for container {_CONTAINER}."
         ) from None
 
 
-def _gcs_error(exc: Exception, what: str) -> DataError:
-    text = f"{type(exc).__name__}: {exc}"
+def _azure_error(exc: Exception, what: str) -> DataError:
+    text = _redact(f"{type(exc).__name__}: {exc}")
     hint = ""
     lowered = text.lower()
-    if any(token in lowered for token in ("401", "403", "forbidden", "credential", "anonymous")):
+    if any(
+        token in lowered
+        for token in (
+            "401",
+            "403",
+            "forbidden",
+            "authentication",
+            "authorization",
+            "signature",
+        )
+    ):
         hint = (
-            " Check GCS credentials: set GOOGLE_APPLICATION_CREDENTIALS or run "
-            "`gcloud auth application-default login`."
+            f" Check {_SAS_ENV}: it needs list and read (sp=rl) on "
+            f"{_ACCOUNT}/{_CONTAINER}."
         )
     return DataError(f"{what} ({text}).{hint}")
 
 
-def _list_objects(dataset: str) -> list[str]:
-    """Basenames under the product ``data/`` prefix."""
+def _list_names(prefix: str) -> list[str]:
     fs = _filesystem()
-    prefix = f"{_BUCKET}/{_data_prefix(dataset)}"
     try:
         items = fs.ls(prefix, detail=False)
     except FileNotFoundError:
         return []
     except Exception as exc:  # noqa: BLE001
-        raise _gcs_error(exc, f"GCS listing failed for gs://{prefix}") from None
+        raise _azure_error(
+            exc, f"Azure listing failed for az://{_ACCOUNT}/{prefix}/"
+        ) from None
     names = []
     for item in items:
         name = str(item).rstrip("/").rsplit("/", 1)[-1]
-        if name and not name.endswith("/"):
+        if name and name not in {".", ".."} and not name.endswith("/"):
             names.append(name)
     return names
 
 
+def _list_objects(dataset: str) -> list[str]:
+    """Basenames under the product ``data/`` prefix."""
+    return _list_names(_data_prefix(dataset))
+
+
 def _list_datasets() -> list[str]:
-    fs = _filesystem()
-    prefix = f"{_BUCKET}/cumulus-data/{_VERSION}/{_STREAM}"
-    try:
-        items = fs.ls(prefix, detail=False)
-    except Exception as exc:  # noqa: BLE001
-        raise _gcs_error(exc, f"GCS listing failed for gs://{prefix}") from None
-    out = []
-    for item in items:
-        name = str(item).rstrip("/").rsplit("/", 1)[-1]
-        if name and name not in {".", ".."}:
-            out.append(name)
-    return sorted(out)
+    return sorted(_list_names(_blob_root()))
 
 
 def _init_dates_from_names(names: list[str]) -> list[str]:
@@ -154,18 +208,20 @@ def _resolve_date(date, dataset: str) -> str:
         if iso not in dates:
             available = f"{dates[0]} .. {dates[-1]}" if dates else "none"
             raise DataError(
-                f"no {dataset!r} Cumulus init {iso} in "
-                f"gs://{_BUCKET}/{_data_prefix(dataset)}/ "
+                f"no {dataset!r} Cumulus init {iso} in {_display_prefix(dataset)} "
                 f"(available init dates: {available}). "
                 "Omit --date to take the latest, or pass --probe-latest."
             )
         return iso
     if not dates:
         available = _list_datasets()
-        hint = f" Available --dataset folders: {', '.join(available)}." if available else ""
+        hint = (
+            f" Available --dataset folders: {', '.join(available)}."
+            if available
+            else ""
+        )
         raise DataError(
-            f"no YYYY-MM-DD NetCDF files under "
-            f"gs://{_BUCKET}/{_data_prefix(dataset)}/. {hint}".rstrip()
+            f"no YYYY-MM-DD NetCDF files under {_display_prefix(dataset)}.{hint}".rstrip()
         )
     return dates[-1]
 
@@ -179,7 +235,7 @@ def _list_lead_keys(dataset: str, iso: str) -> list[tuple[int, str]]:
             continue
         date_s, _hour, lead = parsed
         if date_s == iso:
-            keys.append((lead, f"gs://{_BUCKET}/{prefix}/{name}"))
+            keys.append((lead, f"az://{prefix}/{name}"))
     keys.sort()
     return keys
 
@@ -189,13 +245,15 @@ def _open_lead(url: str, lead_hours: int, bbox) -> object:
     import xarray as xr
 
     try:
-        with xr.open_dataset(url, engine="h5netcdf") as opened:
+        with xr.open_dataset(
+            url, engine="h5netcdf", storage_options=_storage_options()
+        ) as opened:
             ds = bbox_subset(opened, bbox) if bbox is not None else opened
             ds = ds.load()
-    except DataError:
+    except (DataError, UsageError):
         raise
     except Exception as exc:  # noqa: BLE001
-        raise _gcs_error(exc, f"failed to open {url}") from None
+        raise _azure_error(exc, f"failed to open {url}") from None
     step = np.timedelta64(lead_hours, "h").astype("timedelta64[ns]")
     return ds.expand_dims(step=[step])
 
@@ -221,7 +279,7 @@ def _open_init(dataset: str, iso: str, bbox, workers: int):
     keys = _list_lead_keys(dataset, iso)
     if not keys:
         raise DataError(
-            f"no lead files for init {iso} under gs://{_BUCKET}/{_data_prefix(dataset)}/"
+            f"no lead files for init {iso} under {_display_prefix(dataset)}"
         )
     print(f"Opening {len(keys)} Cumulus lead files for {iso}", file=sys.stderr)
     return _open_leads(keys, bbox, workers)
@@ -294,7 +352,7 @@ def _select_variables(ds, variable):
 @weather_skill.argument(
     "--dataset",
     default=_DEFAULT_DATASET,
-    help=(f"Product folder under v0.0.1-op/pf/ (default precip → {_NATIVE_PRECIP})."),
+    help=(f"Product folder under pf/ (default precip → {_NATIVE_PRECIP})."),
 )
 @weather_skill.argument("--date")
 @weather_skill.argument("--bbox")
@@ -321,10 +379,10 @@ def fetch(dataset, date, bbox, variable, output, **kwargs):
     """Fetch a Cumulus AI operational ensemble forecast and write a weather-skills standard dataset.
 
     Opens per-lead NetCDFs under
-    ``gs://sheerwater-datalake/cumulus-data/v0.0.1-op/pf/<dataset>/data/``
-    with Google Cloud Application Default Credentials, concatenates them
-    along ``step``, optionally subsets by ``--bbox`` / ``--variable``, and
-    returns a Dataset for the decorator to write.
+    ``az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/pf/<dataset>/data/``
+    with the SAS in ``AZURE_STORAGE_SAS_TOKEN``, concatenates them along
+    ``step``, optionally subsets by ``--bbox`` / ``--variable``, and returns
+    a Dataset for the decorator to write.
     """
     dsid = _canonical_dataset(kwargs["probe_latest"] or dataset)
     if kwargs.get("probe_latest") is not None:
@@ -336,7 +394,7 @@ def fetch(dataset, date, bbox, variable, output, **kwargs):
     iso = _resolve_date(date, dataset)
     print(f"Resolved init date: {iso}", file=sys.stderr)
     print(
-        f"Opening gs://{_BUCKET}/{_data_prefix(dataset)}/",
+        f"Opening {_display_prefix(dataset)}",
         file=sys.stderr,
     )
 
