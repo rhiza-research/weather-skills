@@ -44,24 +44,32 @@ _RUN_PREFIX = "live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4
 _STREAM = "pf"
 _SAS_ENV = "AZURE_STORAGE_SAS_TOKEN"
 _DEFAULT_DATASET = "precip"
-_NATIVE_PRECIP = "total_precipitation_24h_acc_imerg"
+# The run publishes IMERG-trained precip at both native 1° and regridded
+# 0.25°, under separate folders with the same file layout. Default to 0.25°.
+_NATIVE_PRECIP_0P25 = "total_precipitation_24h_acc_imerg_0p25"
+_NATIVE_PRECIP_1DEG = "total_precipitation_24h_acc_imerg"
+_NATIVE_PRECIP = _NATIVE_PRECIP_0P25
 _OUTPUT_PRECIP = "tp"
 DEFAULT_WORKERS = 8
 _SIG_RE = re.compile(r"(sig=)[^&\s'\"<>]+", re.IGNORECASE)
 
 # --dataset aliases → product folder under .../pf/<folder>/data/
 _DATASET_ALIASES = {
-    "precip": _NATIVE_PRECIP,
-    "tp": _NATIVE_PRECIP,
-    "total_precipitation": _NATIVE_PRECIP,
-    _NATIVE_PRECIP: _NATIVE_PRECIP,
+    "precip": _NATIVE_PRECIP_0P25,
+    "tp": _NATIVE_PRECIP_0P25,
+    "total_precipitation": _NATIVE_PRECIP_0P25,
+    "precip_0p25": _NATIVE_PRECIP_0P25,
+    _NATIVE_PRECIP_0P25: _NATIVE_PRECIP_0P25,
+    "precip_1deg": _NATIVE_PRECIP_1DEG,
+    _NATIVE_PRECIP_1DEG: _NATIVE_PRECIP_1DEG,
 }
 _VAR_ALIASES = {
     "tp": _OUTPUT_PRECIP,
     "precip": _OUTPUT_PRECIP,
     "precipitation": _OUTPUT_PRECIP,
     "total_precipitation": _OUTPUT_PRECIP,
-    _NATIVE_PRECIP: _OUTPUT_PRECIP,
+    _NATIVE_PRECIP_0P25: _OUTPUT_PRECIP,
+    _NATIVE_PRECIP_1DEG: _OUTPUT_PRECIP,
     _OUTPUT_PRECIP: _OUTPUT_PRECIP,
 }
 
@@ -306,8 +314,10 @@ def _shift_step_origin_to_zero(ds):
 def _prepare_dataset(ds, iso: str):
     import numpy as np
 
-    if _NATIVE_PRECIP in ds.data_vars:
-        ds = ds.rename({_NATIVE_PRECIP: _OUTPUT_PRECIP})
+    for native in (_NATIVE_PRECIP_0P25, _NATIVE_PRECIP_1DEG):
+        if native in ds.data_vars:
+            ds = ds.rename({native: _OUTPUT_PRECIP})
+            break
     if _OUTPUT_PRECIP in ds.data_vars:
         ds[_OUTPUT_PRECIP] = ds[_OUTPUT_PRECIP].clip(min=0)
         ds[_OUTPUT_PRECIP].attrs.setdefault("units", "mm")
