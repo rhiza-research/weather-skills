@@ -40,7 +40,7 @@ _SKILL_VERSION = "0.0.1"
 
 _ACCOUNT = "italynorthdata"
 _CONTAINER = "data"
-_RUN_PREFIX = "live_forecasts/global_model/aurora_s2s/supposed-ballism-0bc54f084fee4"
+_RUN_PREFIX = "live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9"
 _STREAM = "pf"
 _SAS_ENV = "AZURE_STORAGE_SAS_TOKEN"
 _DEFAULT_DATASET = "precip"
@@ -379,7 +379,7 @@ def fetch(dataset, date, bbox, variable, output, **kwargs):
     """Fetch a Cumulus AI operational ensemble forecast and write a weather-skills standard dataset.
 
     Opens per-lead NetCDFs under
-    ``az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/supposed-ballism-0bc54f084fee4/pf/<dataset>/data/``
+    ``az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/pf/<dataset>/data/``
     with the SAS in ``AZURE_STORAGE_SAS_TOKEN``, concatenates them along
     ``step``, optionally subsets by ``--bbox`` / ``--variable``, and returns
     a Dataset for the decorator to write.

@@ -1,8 +1,8 @@
 ---
 name: cumulus-fetch
-description: On the first call (including --probe-latest), inject secret AZURE_STORAGE_SAS_TOKEN as an environment variable — do not run once without it and retry. Fetch a Cumulus AI operational ensemble precipitation forecast from Azure Blob italynorthdata/data/live_forecasts/global_model/aurora_s2s/supposed-ballism-0bc54f084fee4 (perturbed members, 24h IMERG-trained total precipitation) and write a weather-skills standard dataset Zarr. Use when a task needs the Cumulus forecast grid for clipping, aggregation, comparison, or plotting. Default `-v tp`. Fetch writes `tp` as a per-step rate (`mm day-1`) — do not run deaccumulate after this skill.
+description: On the first call (including --probe-latest), inject secret AZURE_STORAGE_SAS_TOKEN as an environment variable — do not run once without it and retry. Fetch a Cumulus AI operational ensemble precipitation forecast from Azure Blob italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9 (perturbed members, 24h IMERG-trained total precipitation) and write a weather-skills standard dataset Zarr. Use when a task needs the Cumulus forecast grid for clipping, aggregation, comparison, or plotting. Default `-v tp`. Fetch writes `tp` as a per-step rate (`mm day-1`) — do not run deaccumulate after this skill.
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads private NetCDF from Azure Blob italynorthdata/data/live_forecasts/global_model/aurora_s2s/supposed-ballism-0bc54f084fee4/pf/total_precipitation_24h_acc_imerg/data via adlfs. Requires AZURE_STORAGE_SAS_TOKEN (a read SAS with list and read, sp=rl).
+compatibility: Requires Python 3.12 and uv. Reads private NetCDF from Azure Blob italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/pf/total_precipitation_24h_acc_imerg/data via adlfs. Requires AZURE_STORAGE_SAS_TOKEN (a read SAS with list and read, sp=rl).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
@@ -28,12 +28,12 @@ standard dataset, and writes a local Zarr.
 Layout:
 
 ```
-az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/supposed-ballism-0bc54f084fee4/pf/
+az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/pf/
   total_precipitation_24h_acc_imerg/data/YYYY-MM-DD-00-LLLL.nc
 ```
 
 Each file is one init + one lead (`LLLL` hours, 0024 … 1104). The cube is
-a 1° global grid, 29 perturbed members (`number` = 1..29), 46 daily steps.
+a 0.25° global grid, 29 perturbed members (`number` = 1..29), 46 daily steps.
 
 By default the skill takes the **most recent** init date. Pass `--date` to
 pin an init.
@@ -74,8 +74,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - `--probe-latest [dataset-id]` — print the latest init `YYYY-MM-DD` on stdout
   and exit. No `-o`.
 - `--bbox` — optional spatial subset `N/W/S/E`. Native longitude is 0..359;
-  negative west/east values still work. Omit for the full 1° global grid
-  (~330 MB per init). Named places: compose with `resolve-region`.
+  negative west/east values still work. Omit for the full 0.25° global grid
+  (~5 GB per init — 16x the old 1° run's ~330 MB). Named places: compose with
+  `resolve-region`.
 - `--variable`, `-v` — restrict to named data variables (repeatable). Default
   is the product's field, written as `tp`. Aliases: `precip`,
   `total_precipitation`, `total_precipitation_24h_acc_imerg`.
