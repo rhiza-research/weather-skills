@@ -68,25 +68,26 @@ credentialed or source-specific fetcher only when it does not.
 
 ### Figure skills
 
-`plot`, `plot-timeseries`, `plot-compare`, `plot-compare-forecasts`,
-`plot-verify`, and `plot-mediogram` all write a PNG and print a `plot hash`
-(sha256 of RGB pixels) plus `data: not null` or `data: NULL`. Compare hashes
-across runs to see whether the figure changed; `NULL` means inspect-zarr the
-input. First runs use CLI flags (`--title`, `--variable`, `--figsize`, …).
-`--dump-spec -` dumps the assembled spec as JSON and skips the PNG (`-o` is
-not required); `--patch` submits edits. There is no `*.plot.json` sidecar.
-A set CLI flag still overlays the spec.
-See [docs/plotting.md](docs/plotting.md) for the catalog, the shared JSON
-spec, and remaining limits.
+`plot`, `plot-timeseries`, `plot-verify`, and `plot-mediogram` moved to their
+own repo, [`weather-skills-plotting`](https://github.com/rhiza-research/weather-skills-plotting)
+(`plot-compare` and `plot-compare-forecasts` live elsewhere too). All of them
+write a PNG and print a `plot hash` (sha256 of RGB pixels) plus `data: not
+null` or `data: NULL`. Compare hashes across runs to see whether the figure
+changed; `NULL` means inspect-zarr the input. First runs use CLI flags
+(`--title`, `--variable`, `--figsize`, …). `--dump-spec -` dumps the assembled
+spec as JSON and skips the PNG (`-o` is not required); `--patch` submits
+edits. There is no `*.plot.json` sidecar. A set CLI flag still overlays the
+spec. See [weather-skills-plotting's docs/plotting.md](https://github.com/rhiza-research/weather-skills-plotting/blob/main/docs/plotting.md)
+for the catalog, the shared JSON spec, and remaining limits.
 
 | Skill | Use when |
 |---|---|
-| [`plot`](skills/plot/SKILL.md) | One product, or overlays on the same axes (`--layer`) |
-| [`plot-timeseries`](skills/plot-timeseries/SKILL.md) | Many 1D traces (`--along` spaghetti, `--band`) |
+| [`plot`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot/SKILL.md) | One product, or overlays on the same axes (`--layer`) |
+| [`plot-timeseries`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-timeseries/SKILL.md) | Many 1D traces (`--along` spaghetti, `--band`) |
 | [`plot-compare`](skills/plot-compare/SKILL.md) | Exactly two datasets, two rows |
 | [`plot-compare-forecasts`](skills/plot-compare-forecasts/SKILL.md) | N grids vs shared valid times |
-| [`plot-verify`](skills/plot-verify/SKILL.md) | Lead-week obs / forecast / metric maps |
-| [`plot-mediogram`](skills/plot-mediogram/SKILL.md) | Ensemble vs m-climate at one lat/lon |
+| [`plot-verify`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-verify/SKILL.md) | Lead-week obs / forecast / metric maps |
+| [`plot-mediogram`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-mediogram/SKILL.md) | Ensemble vs m-climate at one lat/lon |
 
 ### Agent capabilities
 Capabilities the agent uses alongside pipelines; none of them produces a
@@ -191,7 +192,7 @@ npx skillkit install rhiza-research/forecasting-skills --all --yes --agent claud
 
 # Install just a subset
 npx skillkit install rhiza-research/forecasting-skills --skill=ecmwf-fetch
-npx skillkit install rhiza-research/forecasting-skills --skills=clip-region,plot
+npx skillkit install rhiza-research/forecasting-skills --skills=clip-region,difference
 
 # Overwrite an existing install
 npx skillkit install rhiza-research/forecasting-skills --all --yes --force
