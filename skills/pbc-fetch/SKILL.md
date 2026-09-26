@@ -1,23 +1,32 @@
 ---
 name: pbc-fetch
-description: Fetch a PBC (probabilistic bias correction) AI Weather Quest precipitation forecast from gs://sheerwater-public-datalake/pbc-data and write a weather-skills standard dataset Zarr. Quintile probabilities on the 1.5° AI-WQ grid (`pr`, units 1, dim `quintile` 0.2/0.4/0.6/0.8/1.0). `--dataset era5-p_pr_19` (aliases `pr_19`, `p1`) is week 3, days 19–25; `era5-p_pr_26` (`pr_26`, `p2`) is week 4, days 26–32. Use when a task needs StillLearning / PBC subseasonal precip probabilities from the Sheerwater datalake — not dynamical-fetch or ecmwf-fetch. Public GCS, read anonymously — no credentials needed.
+description: Fetch a PBC (probabilistic bias correction) AI Weather Quest precipitation forecast from gs://sheerwater-datalake/pbc-data and write a weather-skills standard dataset Zarr. Quintile probabilities on the 1.5° AI-WQ grid (`pr`, units 1, dim `quintile` 0.2/0.4/0.6/0.8/1.0). `--dataset era5-p_pr_19` (aliases `pr_19`, `p1`) is week 3, days 19–25; `era5-p_pr_26` (`pr_26`, `p2`) is week 4, days 26–32. Use when a task needs StillLearning / PBC subseasonal precip probabilities from the Sheerwater datalake — not dynamical-fetch or ecmwf-fetch. Private GCS; inject NEURAL_GCM_SERVICE_CREDENTIALS (the service-account key JSON itself, no file needed) or GOOGLE_APPLICATION_CREDENTIALS (a key file path) on the first call if ADC is not already configured.
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads public GCS gs://sheerwater-public-datalake/pbc-data via gcsfs anonymous access.
+compatibility: Requires Python 3.12 and uv. Reads private GCS gs://sheerwater-datalake/pbc-data via gcsfs. Requires Google Cloud credentials: NEURAL_GCM_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
   catalog-group: fetchers
   variables:
     - pr
+  openclaw:
+    requires:
+      env:
+        - NEURAL_GCM_SERVICE_CREDENTIALS
+    primaryEnv: NEURAL_GCM_SERVICE_CREDENTIALS
+    envVars:
+      - name: NEURAL_GCM_SERVICE_CREDENTIALS
+        description: Full contents of a GCP service-account key JSON with read access to gs://sheerwater-datalake/pbc-data. Use this when the runtime can only inject secret values, not files.
+      - name: GOOGLE_APPLICATION_CREDENTIALS
+        description: Path to a GCP service-account JSON file that can read gs://sheerwater-datalake/pbc-data. Used only if NEURAL_GCM_SERVICE_CREDENTIALS is unset.
 ---
 
 # pbc-fetch
 
 Opens a StillLearning PBC (probabilistic bias correction) precipitation
-forecast from `gs://sheerwater-public-datalake/pbc-data` (public, read
-anonymously), maps it onto a classic weather-skills forecast, and writes a
-local Zarr. The values are **quintile probabilities** (they sum to 1 across
-`quintile`), not millimetres.
+forecast from `gs://sheerwater-datalake/pbc-data`, maps it onto a classic
+weather-skills forecast, and writes a local Zarr. The values are **quintile
+probabilities** (they sum to 1 across `quintile`), not millimetres.
 
 Layout:
 
@@ -44,10 +53,21 @@ does **not** convert probabilities to `mm` — do not run `deaccumulate` or
 
 ## Credentials
 
-None. `gs://sheerwater-public-datalake/pbc-data` is a public mirror (grants
-`allUsers` object-viewer access) synced from the formerly private
-`sheerwater-datalake` bucket, so this skill reads it via anonymous `gcsfs`
-access — no `GOOGLE_APPLICATION_CREDENTIALS` or ADC login required.
+The prefix is private (anonymous HTTPS 403). On the **first** invocation,
+including `--probe-latest`, inject one of:
+
+- `NEURAL_GCM_SERVICE_CREDENTIALS` — the full contents of the NeuralGCM
+  GCP service-account key JSON, as a single env var. That service account
+  also has read access to `gs://sheerwater-datalake/pbc-data`. Use this when
+  the runtime can only inject secret values and can't place a file on disk.
+- `GOOGLE_APPLICATION_CREDENTIALS` — a filesystem path to a service-account
+  JSON that can read `gs://sheerwater-datalake/pbc-data`.
+- Neither — falls back to host Application Default Credentials
+  (`gcloud auth application-default login`).
+
+`NEURAL_GCM_SERVICE_CREDENTIALS` takes precedence when set. Do not call once
+to discover auth is missing, then retry. Never print, log, or echo the
+key/credential contents.
 
 ## Usage
 
