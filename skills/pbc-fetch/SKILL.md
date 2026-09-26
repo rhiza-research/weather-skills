@@ -1,30 +1,23 @@
 ---
 name: pbc-fetch
-description: Fetch a PBC (probabilistic bias correction) AI Weather Quest precipitation forecast from gs://sheerwater-datalake/pbc-data and write a weather-skills standard dataset Zarr. Quintile probabilities on the 1.5° AI-WQ grid (`pr`, units 1, dim `quintile` 0.2/0.4/0.6/0.8/1.0). `--dataset era5-p_pr_19` (aliases `pr_19`, `p1`) is week 3, days 19–25; `era5-p_pr_26` (`pr_26`, `p2`) is week 4, days 26–32. Use when a task needs StillLearning / PBC subseasonal precip probabilities from the Sheerwater datalake — not dynamical-fetch or ecmwf-fetch. Private GCS; inject GOOGLE_APPLICATION_CREDENTIALS on the first call if ADC is not already configured.
+description: Fetch a PBC (probabilistic bias correction) AI Weather Quest precipitation forecast from gs://sheerwater-public-datalake/pbc-data and write a weather-skills standard dataset Zarr. Quintile probabilities on the 1.5° AI-WQ grid (`pr`, units 1, dim `quintile` 0.2/0.4/0.6/0.8/1.0). `--dataset era5-p_pr_19` (aliases `pr_19`, `p1`) is week 3, days 19–25; `era5-p_pr_26` (`pr_26`, `p2`) is week 4, days 26–32. Use when a task needs StillLearning / PBC subseasonal precip probabilities from the Sheerwater datalake — not dynamical-fetch or ecmwf-fetch. Public GCS, read anonymously — no credentials needed.
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads private GCS gs://sheerwater-datalake/pbc-data via gcsfs using Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS or `gcloud auth application-default login`).
+compatibility: Requires Python 3.12 and uv. Reads public GCS gs://sheerwater-public-datalake/pbc-data via gcsfs anonymous access.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
   catalog-group: fetchers
   variables:
     - pr
-  openclaw:
-    requires:
-      env:
-        - GOOGLE_APPLICATION_CREDENTIALS
-    primaryEnv: GOOGLE_APPLICATION_CREDENTIALS
-    envVars:
-      - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON that can read gs://sheerwater-datalake/pbc-data
 ---
 
 # pbc-fetch
 
 Opens a StillLearning PBC (probabilistic bias correction) precipitation
-forecast from `gs://sheerwater-datalake/pbc-data`, maps it onto a classic
-weather-skills forecast, and writes a local Zarr. The values are **quintile
-probabilities** (they sum to 1 across `quintile`), not millimetres.
+forecast from `gs://sheerwater-public-datalake/pbc-data` (public, read
+anonymously), maps it onto a classic weather-skills forecast, and writes a
+local Zarr. The values are **quintile probabilities** (they sum to 1 across
+`quintile`), not millimetres.
 
 Layout:
 
@@ -51,16 +44,10 @@ does **not** convert probabilities to `mm` — do not run `deaccumulate` or
 
 ## Credentials
 
-The prefix is private (anonymous HTTPS 403). On the **first** invocation,
-including `--probe-latest`, ensure GCS Application Default Credentials can
-read `gs://sheerwater-datalake/pbc-data`:
-
-- Inject `GOOGLE_APPLICATION_CREDENTIALS` (path to a service-account JSON) if
-  that secret is available.
-- Or rely on host ADC (`gcloud auth application-default login`).
-
-Do not call once to discover auth is missing, then retry. Never print, log,
-or echo the key file contents.
+None. `gs://sheerwater-public-datalake/pbc-data` is a public mirror (grants
+`allUsers` object-viewer access) synced from the formerly private
+`sheerwater-datalake` bucket, so this skill reads it via anonymous `gcsfs`
+access — no `GOOGLE_APPLICATION_CREDENTIALS` or ADC login required.
 
 ## Usage
 
