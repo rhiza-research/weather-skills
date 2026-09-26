@@ -22,12 +22,16 @@ join on shared dims, broadcasting over dims present on only one side — so a
 - Anomaly vs climatology: a field minus its baseline mean (e.g. SST
   anomalies as `sst.zarr` minus a `summarize-dim --dim time --method mean`
   baseline, or CHIRPS minus `clim-fetch`). When plotting rainfall
-  anomalies, omit `--colormap` so the default diverging millimetre classes
+  anomalies, omit `theme.colormap` so the default diverging millimetre classes
   apply.
 - Scenario minus historical: a change map (e.g. a CMIP6 SSP time-mean minus
   the historical time-mean = projected change by 2050).
 - Any cell-by-cell difference of two datasets on a shared grid (forecast
-  minus observations, model A minus model B).
+  minus observations, model A minus model B). If the lat/lon coordinates
+  differ, `coarsen` or `downscale` first so the inner join hits the same
+  points. That alignment is for this subtraction. To draw them, pass two
+  heatmap traces to `plot`: each panel keeps its own lat/lon. `--layer`
+  stacks both on one map.
 
 ## Usage
 

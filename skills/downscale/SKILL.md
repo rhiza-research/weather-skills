@@ -37,7 +37,9 @@ Algorithms:
 
 ## When to use
 
-- A gridded Zarr needs higher spatial resolution before plotting or comparison.
+- A task needs a finer grid, or a lateral realign onto another dataset's
+  coordinates before `difference` or `verify`. Plotting does not: `plot`
+  with two heatmap traces keeps each input's own lat/lon.
 - Matching the (finer) resolution of another dataset via its grid
   (`--reference-grid`).
 - Bias-correcting interpolated output against an observational reference on the

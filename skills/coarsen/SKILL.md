@@ -1,6 +1,6 @@
 ---
 name: coarsen
-description: Coarsen or align a weather-skills standard dataset Zarr by linearly interpolating it onto a target grid. Prefer --reference-grid PATH to copy another Zarr's exact lat/lon (avoids float mismatch on difference/verify). Or pass --target-resolution and --offset for a synthetic grid (points at offset + k*resolution). Equal or near-equal resolution is a lateral realign (same spacing, different offset — including a half-cell shift). Geometry-only — changes spacing/alignment, adds no information. Use to make a grid coarser or to put two datasets on the same grid for comparison.
+description: Coarsen or align a weather-skills standard dataset Zarr by linearly interpolating it onto a target grid. Prefer --reference-grid PATH to copy another Zarr's exact lat/lon (avoids float mismatch on difference/verify). Or pass --target-resolution and --offset for a synthetic grid (points at offset + k*resolution). Equal or near-equal resolution is a lateral realign (same spacing, different offset — including a half-cell shift). Geometry-only — changes spacing/alignment, adds no information. Use before difference or verify, which subtract cell by cell. Do not coarsen just to plot: `plot` draws two heatmap traces as two panels, each on its own lat/lon grid.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/coarsen.py *)
@@ -13,8 +13,9 @@ metadata:
 
 Source-agnostic spatial coarsening and alignment: linearly interpolates the
 input onto a target lat/lon grid. This changes grid geometry only — it adds
-no information — and is used to coarsen a grid or to align two grids for
-comparison. The target must be coarser-or-equal to the input on each axis;
+no information — and is used to coarsen a grid or to align two grids before
+`difference` or `verify`. Plotting does not need that alignment. The target
+must be coarser-or-equal to the input on each axis;
 equal (or near-equal) resolution is accepted as a lateral realign — same
 spacing, different cell-center offset, including a half-cell shift. A
 meaningfully-finer target is rejected with a pointer to the `downscale`
@@ -38,12 +39,12 @@ often lands *near* IMERG/CHIRPS/ECMWF points without matching them exactly.
   `verify` — use `--reference-grid` on the dataset you want to match.
   This includes a same-resolution lateral shift (CHIRPS 0.05° onto the
   Kenya weekly downscale, or the reverse).
-- Coarsening to a larger spacing before plotting or ensemble aggregation.
+- Coarsening to a larger spacing before ensemble aggregation.
 - Producing output on a named sheerwater grid via `(resolution, offset)`.
 
-Not for: making a grid finer / adding information — that is the `downscale`
-skill. Not for choosing a non-linear method (nearest, cubic, conservative,
-most_common); this skill is linear-only.
+Not for: `plot`. Two heatmap traces are two panels, each on its own lat/lon. Not for making a grid finer / adding
+information — that is the `downscale` skill. Not for choosing a non-linear
+method (nearest, cubic, conservative, most_common); this skill is linear-only.
 
 ## Usage
 

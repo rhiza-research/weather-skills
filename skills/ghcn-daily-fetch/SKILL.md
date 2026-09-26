@@ -34,7 +34,7 @@ GHCN-Daily has ~130k stations and each is a separate whole-history download, so 
 - A task needs recent or historical daily station observations anywhere in the
   world, without credentials.
 - A downstream skill will compare stations against gridded precip/temperature
-  (via `plot-compare`) or aggregate them temporally.
+  (via `plot --layer`) or aggregate them temporally.
 
 For African stations with sub-daily sensor data, `tahmo-fetch` is an alternative
 (credentialed).

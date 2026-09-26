@@ -1,6 +1,6 @@
 ---
 name: resolve-region
-description: Resolve an ISO 3166-1 alpha-3 country code, a Natural Earth multi-country region (East Africa, Western Africa), a custom forecast box (Kenya OND region, Indian Ocean basin), a sub-national region (state, province, county), or a leftover landmark name to a lat/lon bbox and optionally a boundary polygon GeoJSON. Use when you need to turn a country, county, or named place into a `--bbox N/W/S/E` value (or a polygon mask) for clip-region, ecmwf-fetch, plot, or plot-compare. Prefer ISO3 / country-admin1 / Natural Earth region names / custom forecast boxes; Nominatim is the fallback for landmarks. Do not send Indian Ocean to Nominatim — it is the basin box 30/20/-40/120.
+description: Resolve an ISO 3166-1 alpha-3 country code, a Natural Earth multi-country region (East Africa, Western Africa), a custom forecast box (Kenya OND region, Indian Ocean basin), a sub-national region (state, province, county), or a leftover landmark name to a lat/lon bbox and optionally a boundary polygon GeoJSON. Use when you need to turn a country, county, or named place into a bbox (or a polygon mask) for clip-region, ecmwf-fetch, or plot. Prefer ISO3 / country-admin1 / Natural Earth region names / custom forecast boxes; Nominatim is the fallback for landmarks. Do not send Indian Ocean to Nominatim — it is the basin box 30/20/-40/120.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py *)
@@ -31,16 +31,15 @@ key fall through to
 
 ## When to use
 
-- Turning a country into a `--bbox` value for `clip-region`, `ecmwf-fetch`,
-  `plot`, or `plot-compare`.
+- Turning a country into a bbox for `clip-region`, `ecmwf-fetch`, or `plot`.
 - Turning a Natural Earth multi-country region (East Africa, Western Africa)
   or a custom forecast box (Kenya OND region) into a bbox without hitting
   Nominatim.
 - Turning a county / state / province into a bbox or a boundary polygon.
 - Turning a landmark (Mount Kenya, a lake, a city that is not an admin unit)
   into a bbox when you do not have an ISO3 / `country-admin1` / named-region key.
-- Producing a boundary polygon (`--geojson`) to feed `plot-compare`'s
-  `--mask-geojson` or `clip-region`'s `--geojson` so grid cells outside the
+- Producing a boundary polygon (`--geojson`) to feed `plot`'s
+  `geo.mask_geojson` or `clip-region`'s `--geojson` so grid cells outside the
   region are masked.
 
 Prefer ISO3, named regions, and hierarchical admin keys when you have them —
@@ -211,7 +210,7 @@ a **wrapped** bbox where **west is greater than east** — an RFC 7946 §5.2
 antimeridian-crossing bounding box. For example, Russia's longitude band runs
 from roughly `19` eastward across 180° to roughly `-169`, so `W ≈ 19` and
 `E ≈ -169` with `W > E`. The forecasting skills' `--bbox` consumers
-(`clip-region`, `plot`, `plot-compare`, `ecmwf-fetch`) honor this: when `W > E`
+(`clip-region`, `plot`, `ecmwf-fetch`) honor this: when `W > E`
 they select the two longitude bands `lon ≥ W` and `lon ≤ E` rather than the
 empty `slice(W, E)`. A genuinely circumpolar geometry (Antarctica) instead
 returns the full width `-180`/`180`.
@@ -220,7 +219,7 @@ returns the full width `-180`/`180`.
 
 ```bash
 # Resolve a country to a bbox; pass the printed value to a --bbox consumer
-# such as the clip-region, ecmwf-fetch, plot, or plot-compare skill:
+# such as the clip-region, ecmwf-fetch, or plot skill:
 BBOX=$(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py KEN)
 
 # Resolve a Kenyan county (geoBoundaries ADM1) and mask with its polygon:
@@ -238,8 +237,8 @@ BBOX=$(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py "Indian Ocean")
 # Landmark bbox (Nominatim). stderr shows the OSM display_name:
 BBOX=$(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py "Mount Kenya, Kenya")
 
-# Resolve a country to a boundary polygon; pass the file to the plot-compare
-# skill's --mask-geojson to mask grid cells outside the country:
+# Resolve a country to a boundary polygon; pass the file as plot's
+# geo.mask_geojson to mask grid cells outside the country:
 uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py KEN --geojson /tmp/ken.json
 ```
 

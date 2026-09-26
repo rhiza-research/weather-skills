@@ -38,7 +38,7 @@ fetch every TA station in the box.
 - A task needs recent daily in-situ observations for specific TAHMO stations
   (or every TA station in a region).
 - A downstream skill will compare stations against gridded precip (via
-  `plot-compare`) or aggregate them temporally.
+  `plot --layer`) or aggregate them temporally.
 
 ## Usage
 

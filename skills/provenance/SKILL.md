@@ -59,10 +59,10 @@ skill prints a one-line malformed-history warning to stderr, reports
 
 Prints the lineage oldest-first. Each step shows its skill, version, git
 commit (when recorded), input basename, and args. A single-input path is a
-flat list. Any multi-input join (`concat`, `difference`, `plot-compare`, …)
+flat list. Any multi-input join (`concat`, `difference`, `plot-mediogram`, …)
 lists each parent subgraph under its own label (`a`, `b`, …), including
 nested joins. For a two-input PNG that still stores separate tEXt keys
-(`plot-compare` or `plot-mediogram`), each input branch is printed under its
+(`plot-mediogram`), each input branch is printed under its
 own label. If the zarr carries a `weather_skills_source` attr it is printed
 first.
 
@@ -82,7 +82,7 @@ without a recorded commit fall back to the default `weather-skills` repo.
 - A single-input path reproduces linearly: each step's output threads into
   the next step's `--input`; fetch steps take no `--input`; intermediates
   write to `stepN.zarr` and the final step writes the artifact's own name.
-- Any multi-input join (`concat`, `difference`, `plot-compare`, …) reproduces
+- Any multi-input join (`concat`, `difference`, `plot-mediogram`, …) reproduces
   each parent subgraph to a distinctly-named file, then emits one final
   command that takes every branch as an `--input`. Nested joins recurse.
 - A two-input plot that still stores separate tEXt keys reproduces each
