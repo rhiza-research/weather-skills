@@ -38,7 +38,7 @@ dev = [
 
 [tool.uv.sources]
 skills-runner = { git = "https://github.com/tescalada/skills-runner" }
-weather-skills-core = { git = "https://github.com/rhiza-research/weather-skills-core", branch = "dev" }
+weather-skills-core = { git = "https://github.com/rhiza-research/weather-skills-core", branch = "old-dev" }
 
 [tool.pytest.ini_options]
 testpaths = ["skills"]
