@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import sys
 from datetime import timedelta
@@ -26,13 +28,13 @@ from weather_skills_core.units import stamp_data_interval
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
 
-_BUCKET = "sheerwater-public-datalake"
+_BUCKET = "sheerwater-datalake"
 _PREFIX = "pbc-data"
 _DEFAULT_DATASET = "era5-p_pr_19"
 _COMPACT_DATE_RE = re.compile(r"^\d{8}$")
 _VAR_ALIASES = {"forecast": "pr", "precip": "pr", "tp": "pr", "probability": "pr"}
 
-# Canonical folder names under gs://sheerwater-public-datalake/pbc-data/.
+# Canonical folder names under gs://sheerwater-datalake/pbc-data/.
 # lead_start is AI-WQ day-1-is-init numbering: week 3 is days 19–25, week 4 is 26–32.
 # Store folders are named by that first valid day (init + lead_start - 1).
 _DATASETS: dict[str, dict] = {
@@ -48,24 +50,40 @@ _ALIASES = {
 _DATASET_CHOICES = [*_DATASETS, *_ALIASES]
 
 _AUTH_MSG = (
-    "cannot read gs://sheerwater-public-datalake/pbc-data. It is a public "
-    "bucket (no credentials needed) — this is likely a network issue or the "
-    "bucket/prefix no longer exists."
+    "cannot read gs://sheerwater-datalake/pbc-data (private GCS). Set "
+    "NEURAL_GCM_SERVICE_CREDENTIALS to the full service-account key JSON "
+    "(no file needed), GOOGLE_APPLICATION_CREDENTIALS to a service-account "
+    "JSON file path, or run `gcloud auth application-default login`."
 )
 
 _FS = None
 
 
 def _gcs():
-    """Anonymous GCS filesystem: gs://sheerwater-public-datalake is public."""
+    """Authenticated GCS filesystem: NEURAL_GCM_SERVICE_CREDENTIALS, then
+    GOOGLE_APPLICATION_CREDENTIALS / Application Default Credentials.
+    """
     global _FS
     if _FS is None:
         import gcsfs
 
-        try:
-            _FS = gcsfs.GCSFileSystem(token="anon")
-        except Exception as exc:  # noqa: BLE001 — surface access failures cleanly
-            raise DataError(f"{_AUTH_MSG} ({exc})") from None
+        creds_json = os.environ.get("NEURAL_GCM_SERVICE_CREDENTIALS")
+        if creds_json:
+            try:
+                info = json.loads(creds_json)
+            except json.JSONDecodeError as exc:
+                raise DataError(
+                    f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc})."
+                ) from None
+            try:
+                _FS = gcsfs.GCSFileSystem(token=info)
+            except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
+                raise DataError(f"{_AUTH_MSG} ({exc})") from None
+        else:
+            try:
+                _FS = gcsfs.GCSFileSystem()
+            except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
+                raise DataError(f"{_AUTH_MSG} ({exc})") from None
     return _FS
 
 
@@ -257,11 +275,11 @@ def _as_forecast(ds, *, init, dataset: str):
 def fetch(dataset, date, bbox, variable, output, **kwargs):
     """Fetch a PBC AI Weather Quest precip forecast and write a weather-skills standard dataset.
 
-    Opens a Zarr under
-    ``gs://sheerwater-public-datalake/pbc-data/<dataset>/<YYYYMMDD>/`` (public,
-    read anonymously). Optionally subsets by ``--bbox`` and ``--variable``,
-    maps quintile probabilities onto a classic forecast (scalar init ``time``
-    + ``step``), and returns a Dataset for the decorator to write.
+    Opens a Zarr under ``gs://sheerwater-datalake/pbc-data/<dataset>/<YYYYMMDD>/``
+    with GCS Application Default Credentials. Optionally subsets by ``--bbox``
+    and ``--variable``, maps quintile probabilities onto a classic forecast
+    (scalar init ``time`` + ``step``), and returns a Dataset for the decorator
+    to write.
     """
     dataset = _resolve_dataset(dataset)
     if kwargs.get("probe_latest") is not None:
