@@ -1,8 +1,9 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@main",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 #   "cftime",
+#   "dynamical-catalog==1.0.1",
 #   "ecmwf-datastores-client==0.4.2",
 #   "requests",
 #   "xarray",
@@ -21,6 +22,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import sys
 import tempfile
 import time
@@ -29,7 +31,12 @@ from typing import NamedTuple
 
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
-from weather_skills_core.standard_utils import require_env
+from weather_skills_core.standard_utils import (
+    bbox_subset,
+    ensure_normalized_longitude,
+    np_to_date,
+    require_env,
+)
 from weather_skills_core.units import (
     convert_dataarray,
     precip_amounts_to_rates,
@@ -48,6 +55,15 @@ _MAX_LEAD_HOURS = 46 * 24
 LEADTIME_HOURS = [str(h) for h in range(0, _MAX_LEAD_HOURS + 1, 24)]
 
 S2S_LICENCE_URL = "https://ecds.ecmwf.int/datasets/s2s-forecasts?tab=download#manage-licences"
+
+# The ECDS API base URL is a fixed, public endpoint, not a secret — set it
+# ourselves so only ECMWF_DATASTORES_KEY needs to be injected. An explicit
+# override in the environment (e.g. a staging endpoint) still wins.
+_ECDS_URL = "https://ecds.ecmwf.int/api"
+
+
+def _ensure_datastores_url() -> None:
+    os.environ.setdefault("ECMWF_DATASTORES_URL", _ECDS_URL)
 
 # Embargo detection: match this phrase on the exception chain (MarsRuntimeError
 # is not reliably importable from ecmwf.datastores). Keep narrow so generic
@@ -184,6 +200,59 @@ VARIABLES: dict[str, _Var] = {
 }
 DEFAULT_VARIABLES = ["tp"]
 
+# dynamical.org ECMWF ER / S2S 46-day product. Inits start 2026-01-01; still
+# ~2-day embargo. Prefer this over ECDS when every requested field maps.
+_DATASET = "ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree"
+_STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
+_CATALOG_START = dt.date(2026, 1, 1)
+_PRESSURE_GROUP = "pressure_level"
+_DROP_COORDS = (
+    "valid_time",
+    "expected_forecast_length",
+    "ingested_forecast_length",
+    "spatial_ref",
+)
+
+# S2S short name → catalog field. Fluxes (ECDS accumulated J m-2 vs catalog
+# mean W m-2), 6-hour max/min, static masks, ocean, and pv stay on ECDS.
+_CATALOG_SURFACE = {
+    "tp": "precipitation_surface",
+    "t2m": "average_temperature_2m",
+    "sst": "sea_surface_temperature",
+    "d2m": "average_dew_point_temperature_2m",
+    "u10": "wind_u_10m",
+    "v10": "wind_v_10m",
+    "msl": "pressure_reduced_to_mean_sea_level",
+    "cape": "average_convective_available_potential_energy_atmosphere",
+    "tcw": "total_column_water_atmosphere",
+    "skt": "skin_temperature_surface",
+    "tcc": "total_cloud_cover_atmosphere",
+    "sp": "pressure_surface",
+    "sd": "snow_water_equivalent_surface",
+    "rsn": "snow_density_surface",
+    "asn": "snow_albedo_surface",
+    "sm20": "soil_moisture_0_20cm",
+    "sm100": "soil_moisture_0_100cm",
+    "st20": "soil_temperature_0_20cm",
+    "st100": "soil_temperature_0_100cm",
+    "ci": "sea_ice_area_fraction",
+    "cp": "precipitation_convective_surface",
+    "sf": "snowfall_water_equivalent_rate_surface",
+    "ewss": "eastward_turbulent_surface_stress",
+    "nsss": "northward_turbulent_surface_stress",
+    "ro": "runoff_water_equivalent_surface",
+    "sro": "runoff_surface",
+}
+_CATALOG_PRESSURE = {
+    "gh": "geopotential_height",
+    "t": "temperature",
+    "u": "wind_u",
+    "v": "wind_v",
+    "w": "vertical_velocity",
+    "q": "specific_humidity",
+}
+_CATALOG_TO_SHORT = {v: k for k, v in {**_CATALOG_SURFACE, **_CATALOG_PRESSURE}.items()}
+
 # cfgrib / S2S abbreviations that are not the canonical `-v` token.
 _GRIB_EXTRAS = {
     "2t": "t2m",
@@ -211,8 +280,23 @@ def _canonical_name(token: str) -> str | None:
     return None
 
 
-def _resolve_variables(raw: list[str] | None) -> list[str]:
-    tokens = raw or list(DEFAULT_VARIABLES)
+def _flatten_variable_tokens(raw) -> list[str]:
+    """Accept ``-v tp t2m``, ``-v tp -v t2m``, and ``-v tp,t2m`` alike."""
+    if raw is None:
+        return []
+    items = raw if isinstance(raw, (list, tuple)) else [raw]
+    tokens: list[str] = []
+    for item in items:
+        parts = item if isinstance(item, (list, tuple)) else [item]
+        for part in parts:
+            for token in str(part).replace(",", " ").split():
+                if token:
+                    tokens.append(token)
+    return tokens
+
+
+def _resolve_variables(raw: list | None) -> list[str]:
+    tokens = _flatten_variable_tokens(raw) or list(DEFAULT_VARIABLES)
     unknown = [token for token in tokens if _canonical_name(token) is None]
     if unknown:
         raise UsageError(
@@ -227,6 +311,168 @@ def _resolve_variables(raw: list[str] | None) -> list[str]:
             seen.add(name)
             resolved.append(name)
     return resolved
+
+
+def _catalog_covers(init: dt.date, names: list[str]) -> bool:
+    if init < _CATALOG_START:
+        return False
+    return all(name in _CATALOG_SURFACE or name in _CATALOG_PRESSURE for name in names)
+
+
+def _use_staging_catalog() -> None:
+    import dynamical_catalog
+
+    os.environ["DYNAMICAL_STAC_CATALOG_URL"] = _STAGING_CATALOG
+    dynamical_catalog.clear_cache()
+
+
+def _ensure_catalog() -> None:
+    """Prefer production; fall through to staging until the 46-day product is promoted."""
+    import dynamical_catalog
+
+    if _DATASET in dynamical_catalog.list():
+        return
+    _use_staging_catalog()
+    ids = dynamical_catalog.list()
+    if _DATASET not in ids:
+        raise DataError(
+            f"{_DATASET} is not in the dynamical.org catalog "
+            f"(tried production and staging). Available: {', '.join(ids)}"
+        )
+
+
+def _open_catalog(group: str | None = None):
+    import dynamical_catalog
+
+    _ensure_catalog()
+    kwargs: dict = {"chunks": None}
+    if group:
+        kwargs["group"] = group
+    return dynamical_catalog.open(_DATASET, **kwargs)
+
+
+def _catalog_latest_init() -> dt.date | None:
+    import numpy as np
+
+    try:
+        ds = _open_catalog()
+    except Exception:
+        return None
+    if ds.sizes.get("init_time", 0) == 0:
+        return None
+    return np_to_date(np.max(ds["init_time"].values))
+
+
+def _drop_empty_lead0(ds):
+    """Drop lead 0 when every requested field is all-NaN there, then reindex steps.
+
+    Catalog 24-hour surface statistics are NaN at init (no preceding day). ECDS
+    deaccumulation already writes `step=0` as the first 24 h, so shift remaining
+    leads down to match. Instant fields (winds, pressure, pressure-level) keep
+    lead 0.
+    """
+    import numpy as np
+
+    if "lead_time" not in ds.dims or ds.sizes["lead_time"] < 2:
+        return ds
+    first = ds.isel(lead_time=0)
+    for name in ds.data_vars:
+        if not bool(np.asarray(first[name].isnull().all())):
+            return ds
+    ds = ds.isel(lead_time=slice(1, None))
+    steps = np.arange(ds.sizes["lead_time"]) * np.timedelta64(1, "D")
+    return ds.assign_coords(lead_time=("lead_time", steps))
+
+
+def _standardize_catalog(ds):
+    """CF attrs + standard units. Catalog precip is already a rate."""
+    stamp_cf_attrs(ds)
+    if "tp" in ds.data_vars:
+        ds["tp"].attrs.setdefault("standard_name", "precipitation_flux")
+        ds["tp"].attrs.setdefault("long_name", "Total precipitation")
+    ds = ensure_normalized_longitude(ds)
+    out = ds
+    for name in list(ds.data_vars):
+        try:
+            out = to_standard_units(out, variables=[name])
+        except UsageError:
+            continue
+    for name in _KELVIN_TEMPS:
+        if name in out.data_vars:
+            out[name] = _to_celsius(out[name])
+    return stamp_data_interval(out)
+
+
+def _fetch_catalog(init: dt.date, bbox, names: list[str]):
+    import numpy as np
+    import xarray as xr
+
+    date_iso = init.isoformat()
+    surface = [name for name in names if name in _CATALOG_SURFACE]
+    pressure = [name for name in names if name in _CATALOG_PRESSURE]
+
+    pieces = []
+    if surface:
+        ds = _open_catalog()[[_CATALOG_SURFACE[name] for name in surface]]
+        pieces.append(ds)
+    if pressure:
+        pds = _open_catalog(group=_PRESSURE_GROUP)
+        pds = pds[[_CATALOG_PRESSURE[name] for name in pressure]]
+        if "pressure_level" in pds.dims:
+            pds = pds.rename({"pressure_level": "vertical"})
+            pds["vertical"].attrs.update(
+                units="hPa",
+                standard_name="air_pressure",
+                long_name="pressure",
+                positive="down",
+                axis="Z",
+            )
+        pieces.append(pds)
+    ds = pieces[0] if len(pieces) == 1 else xr.merge(pieces, compat="override")
+
+    ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
+
+    inits = ds["init_time"].values
+    init_target = np.datetime64(f"{date_iso}T00:00:00").astype(inits.dtype)
+
+    def _no_init() -> DataError:
+        return DataError(
+            f"{_DATASET} has no {date_iso} 00 UTC init; available init range is "
+            f"{np_to_date(inits.min()).isoformat()}..{np_to_date(inits.max()).isoformat()}."
+        )
+
+    if init_target not in inits:
+        raise _no_init()
+    try:
+        ds = ds.sel(init_time=init_target)
+    except KeyError:
+        raise _no_init() from None
+
+    drop = [c for c in _DROP_COORDS if c in ds.coords or c in ds]
+    if drop:
+        ds = ds.drop_vars(drop)
+    ds = _drop_empty_lead0(ds)
+    rename = {"lead_time": "step"}
+    if "ensemble_member" in ds.dims:
+        rename["ensemble_member"] = "number"
+    ds = ds.rename(rename)
+    if "init_time" in ds.coords or "init_time" in ds:
+        ds = ds.assign_coords(time=ds["init_time"]).drop_vars("init_time")
+
+    rename_vars = {
+        name: _CATALOG_TO_SHORT[name]
+        for name in ds.data_vars
+        if name in _CATALOG_TO_SHORT and _CATALOG_TO_SHORT[name] != name
+    }
+    if rename_vars:
+        ds = ds.rename(rename_vars)
+    missing = [name for name in names if name not in ds.data_vars]
+    if missing:
+        have = ", ".join(ds.data_vars) if list(ds.data_vars) else "none"
+        raise DataError(f"{_DATASET} did not contain {', '.join(missing)} (opened: {have}).")
+    ds = ds[names]
+    ds.attrs.update(Conventions="CF-1.13", weather_skills_source="ecmwf-s2s")
+    return _standardize_catalog(ds)
 
 
 def _request_group_key(name: str) -> tuple:
@@ -344,9 +590,7 @@ def _concat_lon(datasets: list) -> object:
             break
     if lon_name is None:
         return datasets[0]
-    normed = [
-        d.assign_coords({lon_name: ((d[lon_name] + 180.0) % 360.0) - 180.0}) for d in datasets
-    ]
+    normed = [ensure_normalized_longitude(d, lon_dim=lon_name) for d in datasets]
     combined = xr.concat(normed, dim=lon_name)
     _, unique_idx = np.unique(combined[lon_name].values, return_index=True)
     return combined.isel({lon_name: np.sort(unique_idx)}).sortby(lon_name)
@@ -431,6 +675,7 @@ def _standardize(ds):
         ds["tp"].attrs["standard_name"] = "precipitation_amount"
         ds["tp"].attrs["units"] = "kg m-2"
         ds["tp"].attrs["long_name"] = "Total precipitation"
+    ds = ensure_normalized_longitude(ds)
     ds = to_standard_units(ds)
     for name in _KELVIN_TEMPS:
         if name in ds.data_vars:
@@ -463,10 +708,12 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
     "--variable",
     "-v",
     action="append",
+    nargs="+",
     help=(
-        "S2S field to retrieve (repeatable). Most used first: tp, t2m, sst. "
-        "Pressure-level: gh, t, u, v, w, q. Default tp. Names are cfgrib short "
-        "names (sst, t, not ARCO 2m_temperature)."
+        "S2S fields to retrieve. Pass several names in one flag (`-v tp t2m`), "
+        "repeat `-v`, or comma-separate (`-v tp,t2m`). Most used first: tp, "
+        "t2m, sst. Pressure-level: gh, t, u, v, w, q. Default tp. Names are "
+        "cfgrib short names (sst, t, not ARCO 2m_temperature)."
     ),
 )
 @weather_skill.argument(
@@ -485,7 +732,12 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
 def fetch(bbox, date, variable, **kwargs):
     """Fetch ECMWF S2S ensemble fields (cf + pf) and write a weather-skills standard dataset Zarr."""
     if kwargs.get("probe_latest") is not None:
-        # ECDS has no cheap public date list; 2-day embargo, Mon/Thu before 2023-06-27.
+        found = _catalog_latest_init()
+        if found is not None:
+            print(found.isoformat())
+            return
+        # Calendar fallback when the catalog is unreachable. 2-day embargo;
+        # Mon/Thu only before 2023-06-27.
         day = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=2)
         if day < dt.date(2023, 6, 27):
             while day.weekday() not in (0, 3):
@@ -497,14 +749,23 @@ def fetch(bbox, date, variable, **kwargs):
     area = list(bbox)
     names = _resolve_variables(variable)
 
-    require_env("ECMWF_DATASTORES_URL", "ECMWF_DATASTORES_KEY")
+    if _catalog_covers(date, names):
+        print(
+            f"Fetching ECMWF S2S from dynamical:{_DATASET} "
+            f"for area={area} date={date_iso} variables={','.join(names)}",
+            file=sys.stderr,
+        )
+        return _fetch_catalog(date, bbox, names)
+
+    require_env("ECMWF_DATASTORES_KEY")
+    _ensure_datastores_url()
 
     import xarray as xr
     from ecmwf.datastores import Client
     from ecmwf.datastores.processing import ProcessingFailedError
 
     print(
-        f"Fetching ECMWF S2S for area={area} date={date_iso} variables={','.join(names)}",
+        f"Fetching ECMWF S2S from ECDS for area={area} date={date_iso} variables={','.join(names)}",
         file=sys.stderr,
     )
     with tempfile.TemporaryDirectory(prefix="ecmwf-fetch-") as tmpdir:

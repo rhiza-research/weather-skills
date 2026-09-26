@@ -1,10 +1,11 @@
 ---
 name: step-to-time
-description: Realize a forecast dataset's `step` lead-time axis as wall-clock valid times (`time = init + step`), replacing the `step` dim with a `time` dim. Use it to compare a forecast against observations — e.g. before plot-compare, plot-timeseries, or difference against a time-based dataset.
+description: Realize a forecast dataset's `step` lead-time axis as wall-clock valid times (`time = init + step`), replacing the `step` dim with a `time` dim. Use it to compare a forecast against observations — e.g. before plot, plot-timeseries, difference, or verify against a time-based dataset.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/step_to_time.py *)
 metadata:
+  version: "0.0.2"
   catalog-group: transforms
 ---
 
@@ -16,12 +17,13 @@ the forecast init date — while observation datasets carry a wall-clock `time`
 dim (`datetime64`). Skills that compare the two need both inputs on the same
 kind of axis. This skill computes `valid_time = init + step` and rewrites the
 standard dataset with the `step` dim replaced by a `time` dim labeled with those valid
-times.
+times. After fetch, interval fields are left-labeled, so `step = 0` becomes
+the init calendar date (the first 24h of rain for daily precip).
 
 ## When to use
 
 - To compare a forecast against observations: run it on the forecast before
-  feeding both inputs to `plot-compare`, `plot-timeseries`, or `difference`
+  feeding both inputs to `plot`, `plot-timeseries`, `difference`, or `verify`
   against a time-based dataset (e.g. CHIRPS, IMERG, station data).
 - Whenever a downstream consumer needs the forecast's values labeled by the
   date they are valid for rather than by lead time.
@@ -29,12 +31,14 @@ times.
 ## Input precondition
 
 The input must have a `step` dim whose values are `timedelta64` lead times AND
-a scalar (0-d) `time` coord holding the forecast init date. The init may be a
-standard `datetime64` or, for a non-standard model calendar (`noleap`,
-`360_day`), an object-dtype `cftime` datetime. An input that already has a
-`time` dim is already on a wall-clock axis and is rejected; an input that has
-BOTH a `time` dim and a `step` dim (a multi-init/hindcast cube) is rejected with
-a message to select a single init first.
+a scalar (0-d) `time` coord holding the forecast init date. Spatial dims
+(`lat`/`lon`) are optional — a cube already reduced over space (e.g.
+`dims=['step', 'number']`) is accepted. The init may be a standard
+`datetime64` or, for a non-standard model calendar (`noleap`, `360_day`), an
+object-dtype `cftime` datetime. An input that already has a `time` dim is
+already on a wall-clock axis and is rejected; an input that has BOTH a `time`
+dim and a `step` dim (a multi-init/hindcast cube) is rejected with a message to
+select a single init first.
 
 ## Usage
 

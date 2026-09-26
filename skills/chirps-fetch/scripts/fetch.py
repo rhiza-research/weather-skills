@@ -1,178 +1,104 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@main",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 #   "cftime",
-#   "requests",
+#   "dynamical-catalog==1.0.1",
 #   "xarray",
 #   "zarr",
 #   "numpy",
-#   "rioxarray",
 #   "pint-xarray>=0.6",
 # ]
 # ///
-"""Fetch CHIRPS precipitation over HTTPS (final product, prelim fallback) and write a weather-skills standard dataset Zarr."""
+"""Fetch CHIRPS precipitation from the dynamical.org catalog (final, prelim fallback) and write a weather-skills standard dataset Zarr."""
 
 import os
-import re
 import sys
-import tempfile
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
-from pathlib import Path
 
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
+from weather_skills_core.standard_utils import (
+    bbox_subset,
+    ensure_normalized_longitude,
+    np_to_date,
+)
 from weather_skills_core.units import stamp_data_interval, to_standard_units
-
-CHIRPS_FINAL_BASE_URL = "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/daily/final/sat"
-CHIRPS_PRELIM_BASE_URL = "https://data.chc.ucsb.edu/products/CHIRPS/v3.0/daily/prelim/sat"
-CHIRPS_FINAL_START_YEAR = 1998
-CHIRPS_NODATA = -9999.0
-HTTP_TIMEOUT = 60
-DEFAULT_WORKERS = 2
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-_NOT_FOUND = object()
-_TIF_NAME_RE = re.compile(r"chirps-v3\.0\.(?:prelim|sat)\.(\d{4})\.(\d{2})\.(\d{2})\.tif")
+_FINAL_ID = "ucsb-chc-chirps-analysis-final"
+_PRELIM_ID = "ucsb-chc-chirps-analysis-preliminary"
+_STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
+_VAR = "precipitation_surface"
+_DROP_COORDS = ("spatial_ref",)
+CHIRPS_START_YEAR = 1981
+DEFAULT_WORKERS = 8
 
 
-class DayUnavailable(Exception):
-    """Day's TIF unavailable (404, 5xx, truncated/empty/non-TIFF). ``status`` is HTTP code when known."""
+def _use_staging_catalog() -> None:
+    import dynamical_catalog
 
-    def __init__(self, message: str, status: int | None = None):
-        super().__init__(message)
-        self.status = status
-
-
-class _SessionPool:
-    """Per-thread requests.Session (Session is not thread-safe)."""
-
-    def __init__(self):
-        self._local = threading.local()
-        self._all = []
-        self._lock = threading.Lock()
-
-    def session(self):
-        import requests
-
-        s = getattr(self._local, "session", None)
-        if s is None:
-            s = requests.Session()
-            self._local.session = s
-            with self._lock:
-                self._all.append(s)
-        return s
-
-    def close_all(self) -> None:
-        with self._lock:
-            sessions = list(self._all)
-        for s in sessions:
-            s.close()
+    os.environ["DYNAMICAL_STAC_CATALOG_URL"] = _STAGING_CATALOG
+    dynamical_catalog.clear_cache()
 
 
-def _get_tif_body(session, url: str):
-    """Fetch one day TIF. Returns bytes, ``_NOT_FOUND`` on 404, or raises DayUnavailable."""
-    import requests
+def _ensure_catalog() -> None:
+    """Prefer the production catalog; fall through to staging until CHIRPS is promoted."""
+    import dynamical_catalog
 
-    try:
-        resp = session.get(url, timeout=HTTP_TIMEOUT)
-    except requests.RequestException as exc:
-        raise DayUnavailable(f"transient network error: {exc}") from exc
-
-    if resp.status_code == 404:
-        return _NOT_FOUND
-    if resp.status_code >= 500:
-        raise DayUnavailable(
-            f"transient server error: HTTP {resp.status_code} for {url}",
-            status=resp.status_code,
+    if _FINAL_ID in dynamical_catalog.list():
+        return
+    _use_staging_catalog()
+    ids = dynamical_catalog.list()
+    if _FINAL_ID not in ids:
+        raise DataError(
+            f"{_FINAL_ID} is not in the dynamical.org catalog "
+            f"(tried production and staging). Available: {', '.join(ids)}"
         )
-    if resp.status_code != 200:
-        resp.raise_for_status()
-
-    body = resp.content
-    declared = resp.headers.get("Content-Length")
-    if declared is not None:
-        try:
-            declared_len = int(declared)
-        except (TypeError, ValueError):
-            declared_len = None
-        if declared_len is not None and len(body) != declared_len:
-            raise DayUnavailable(
-                f"truncated body for {url}: got {len(body)} bytes, Content-Length was {declared}"
-            )
-    if not body:
-        raise DayUnavailable(f"empty body for {url}")
-    if body[:4] not in (b"II*\x00", b"MM\x00*"):
-        raise DayUnavailable(f"non-TIFF body for {url}: leading bytes {body[:4]!r}")
-    return body
 
 
-def _http_refusal_message(exc, workers: int) -> str:
-    resp = exc.response
-    if resp is None:
-        status = None
-        detail = str(exc)
+def _open_catalog(dataset_id: str):
+    import dynamical_catalog
+
+    _ensure_catalog()
+    return dynamical_catalog.open(dataset_id, chunks=None)
+
+
+def _present_dates(ds) -> list[date]:
+    return [np_to_date(t) for t in ds["time"].values]
+
+
+def _subset(ds, start_time: date, end_time: date, bbox):
+    import numpy as np
+
+    if bbox is not None:
+        ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
     else:
-        status = resp.status_code
-        detail = " ".join(f"HTTP {status} {resp.reason or ''} for {resp.url}".split())
-    if status is None or status in (403, 429):
-        return (
-            f"Error: the CHIRPS data server refused the request ({detail}). "
-            "This usually means rate limiting / a temporary IP block from "
-            "too many requests — wait and retry later, and consider "
-            f"lowering --workers (current: {workers})."
-        )
-    return (
-        f"Error: the CHIRPS data server refused the request ({detail}). "
-        f"This looks like a request/auth/layout problem (HTTP {status}); "
-        "retrying will not help — check that the CHIRPS product layout "
-        "has not changed."
+        ds = ensure_normalized_longitude(ds, lon_dim="longitude")
+    ds = ds.drop_vars([c for c in _DROP_COORDS if c in ds.coords or c in ds])
+    return ds.sel(
+        time=slice(np.datetime64(start_time.isoformat()), np.datetime64(end_time.isoformat()))
     )
 
 
-def _download_day_tif(session, day: date, dest_dir: Path) -> Path:
-    """Prefer final product; fall through to prelim on any final-side failure."""
-    import requests
+def _select_dates(ds, days: list[date]):
+    import numpy as np
 
-    final_name = f"chirps-v3.0.sat.{day.year:04d}.{day.month:02d}.{day.day:02d}.tif"
-    final_url = f"{CHIRPS_FINAL_BASE_URL}/{day.year:04d}/{final_name}"
-    prelim_name = f"chirps-v3.0.prelim.{day.year:04d}.{day.month:02d}.{day.day:02d}.tif"
-    prelim_url = f"{CHIRPS_PRELIM_BASE_URL}/{day.year:04d}/{prelim_name}"
+    return ds.sel(time=[np.datetime64(day.isoformat()) for day in days])
+
+
+def _latest_day(dataset_id: str) -> date | None:
+    import numpy as np
 
     try:
-        body = _get_tif_body(session, final_url)
-    except (DayUnavailable, requests.HTTPError):
-        body = _NOT_FOUND
-    name = final_name
-    if body is _NOT_FOUND:
-        body = _get_tif_body(session, prelim_url)
-        name = prelim_name
-        if body is _NOT_FOUND:
-            raise DayUnavailable(
-                f"day unavailable from final ({final_url}) or prelim ({prelim_url})"
-            )
-
-    out = dest_dir / name
-    with open(out, "wb") as f:
-        f.write(body)
-    return out
-
-
-def _open_day(tif: Path, day: date):
-    import numpy as np
-    import rioxarray
-
-    da = rioxarray.open_rasterio(tif, masked=False).squeeze("band", drop=True)
-    da = da.where(da != CHIRPS_NODATA)
-    da = da.rename({"y": "latitude", "x": "longitude"})
-    if "spatial_ref" in da.coords:
-        da = da.drop_vars("spatial_ref")
-    da.attrs = {}
-    return da.expand_dims(time=[np.datetime64(day.isoformat(), "ns")])
+        ds = _open_catalog(dataset_id)
+    except Exception:
+        return None
+    if ds.sizes.get("time", 0) == 0:
+        return None
+    return np_to_date(np.max(ds["time"].values))
 
 
 @weather_skill(
@@ -181,15 +107,12 @@ def _open_day(tif: Path, day: date):
 )
 @weather_skill.argument("--start-time", required=True)
 @weather_skill.argument("--end-time", required=True)
+@weather_skill.argument("--bbox")
 @weather_skill.argument(
     "--workers",
     type=int,
     default=DEFAULT_WORKERS,
-    help=(
-        f"Max concurrent per-day download threads (default {DEFAULT_WORKERS}). "
-        "Deliberately conservative: CHC's data server can throttle and "
-        "temporarily block IPs under higher concurrency."
-    ),
+    help="Ignored; retained for CLI compatibility with the previous TIF fetcher.",
 )
 @weather_skill.argument(
     "--probe-latest",
@@ -204,160 +127,96 @@ def _open_day(tif: Path, day: date):
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(start_time, end_time, workers, **kwargs):
-    """Fetch CHIRPS precipitation over HTTPS (final product, prelim fallback) and write a weather-skills standard dataset Zarr."""
+def fetch(start_time, end_time, bbox, **kwargs):
+    """Fetch CHIRPS precipitation from the dynamical.org catalog (final, prelim fallback) and write a weather-skills standard dataset Zarr."""
     if kwargs.get("probe_latest") is not None:
-        import requests
-
-        found: list[date] = []
-        today = date.today()
-        for year in (today.year, today.year - 1):
-            for base in (CHIRPS_PRELIM_BASE_URL, CHIRPS_FINAL_BASE_URL):
-                url = f"{base}/{year:04d}/"
-                try:
-                    resp = requests.get(
-                        url,
-                        timeout=HTTP_TIMEOUT,
-                        headers={"User-Agent": "weather-skills-chirps-fetch"},
-                    )
-                except requests.RequestException as exc:
-                    raise DataError(f"CHIRPS directory listing failed for {url}: {exc}") from None
-                if resp.status_code == 404:
-                    continue
-                if resp.status_code in (403, 429):
-                    raise DataError(
-                        f"CHIRPS directory listing refused ({resp.status_code} for {url}). "
-                        "Wait and retry; do not GET the daily TIFs to probe."
-                    )
-                if resp.status_code != 200:
-                    raise DataError(
-                        f"CHIRPS directory listing failed: HTTP {resp.status_code} for {url}"
-                    )
-                for match in _TIF_NAME_RE.finditer(resp.text):
-                    found.append(
-                        date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
-                    )
-            if found:
-                break
+        found = [day for day in (_latest_day(_FINAL_ID), _latest_day(_PRELIM_ID)) if day is not None]
         if not found:
-            raise DataError("CHIRPS probe found no daily TIF names in the year directories")
+            raise DataError("CHIRPS probe found no time coordinate on the dynamical.org catalogs")
         print(max(found).isoformat())
         return
 
-    import requests
+    import xarray as xr
 
     start = start_time.isoformat()
     end = end_time.isoformat()
-    print(f"Fetching CHIRPS {start} -> {end} (final product, prelim fallback)", file=sys.stderr)
+    region = f" bbox={bbox[0]:g}/{bbox[1]:g}/{bbox[2]:g}/{bbox[3]:g}" if bbox is not None else ""
+    print(
+        f"Fetching CHIRPS {start} -> {end} from dynamical.org "
+        f"({_FINAL_ID}, {_PRELIM_ID} fallback){region}",
+        file=sys.stderr,
+    )
 
     expected_days = [
         start_time + timedelta(days=i) for i in range((end_time - start_time).days + 1)
     ]
-    succeeded = []
-    missing_days: list[date] = []
-    missing_status: dict[date, int | None] = {}
 
-    with tempfile.TemporaryDirectory(prefix="chirps_") as tmpdir:
-        tmp = Path(tmpdir)
-        sessions = _SessionPool()
+    final = _subset(_open_catalog(_FINAL_ID), start_time, end_time, bbox)
+    if _VAR not in final:
+        raise DataError(f"{_FINAL_ID} has no {_VAR} variable.")
+    final_dates = set(_present_dates(final))
+    missing = [day for day in expected_days if day not in final_dates]
 
-        def _download(day: date) -> tuple[date, Path]:
-            return day, _download_day_tif(sessions.session(), day, tmp)
+    fill_dates: list[date] = []
+    if missing:
+        prelim = _subset(_open_catalog(_PRELIM_ID), start_time, end_time, bbox)
+        if _VAR in prelim:
+            prelim_dates = set(_present_dates(prelim))
+            fill_dates = [day for day in missing if day in prelim_dates]
+            missing = [day for day in missing if day not in prelim_dates]
+        else:
+            prelim = None
+    else:
+        prelim = None
 
-        downloaded: list[tuple[date, Path]] = []
-        try:
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = {pool.submit(_download, day): day for day in expected_days}
-                for fut in as_completed(futures):
-                    day = futures[fut]
-                    try:
-                        result_day, tif = fut.result()
-                    except DayUnavailable as e:
-                        print(
-                            f"  {day.isoformat()}: day unavailable ({e}); "
-                            "will classify after download",
-                            file=sys.stderr,
-                        )
-                        missing_days.append(day)
-                        missing_status[day] = e.status
-                        continue
-                    except requests.HTTPError as e:
-                        pool.shutdown(wait=False, cancel_futures=True)
-                        print(_http_refusal_message(e, workers), file=sys.stderr)
-                        sys.stderr.flush()
-                        # Skip ThreadPoolExecutor/tempdir cleanup to avoid blocking
-                        # on in-flight requests; OS reclaims the temp dir later.
-                        os._exit(2)
-                    print(f"  {result_day.isoformat()}", file=sys.stderr)
-                    downloaded.append((result_day, tif))
-        finally:
-            sessions.close_all()
+    pieces = []
+    if final_dates:
+        pieces.append(final[[_VAR]])
+    if fill_dates and prelim is not None:
+        pieces.append(_select_dates(prelim[[_VAR]], fill_dates))
 
-        missing_days.sort()
-        for day, tif in sorted(downloaded, key=lambda dt: dt[0]):
-            succeeded.append((day, _open_day(tif, day)))
+    if not pieces:
+        raise UsageError(
+            f"no days available in range {start}..{end} from the dynamical.org "
+            f"CHIRPS catalogs ({_FINAL_ID} / {_PRELIM_ID}). Coverage starts in "
+            f"{CHIRPS_START_YEAR}; the validated final product lags the calendar "
+            "month, and very recent days come from the preliminary product "
+            "(published 2 days after each pentad closes — pentads end on days "
+            "5, 10, 15, 20, 25, and last of month, worst-case lag ~7 days)."
+        )
 
-        if not succeeded:
-            statuses = [missing_status.get(d) for d in missing_days]
-            if statuses and all(s is not None and s >= 500 for s in statuses):
-                codes = ", ".join(str(c) for c in sorted(set(statuses)))
-                raise UsageError(
-                    f"the CHIRPS data server refused every request in "
-                    f"range {start}..{end} (HTTP {codes} on all days). This "
-                    "usually means rate limiting / a temporary server-side "
-                    "block from too many requests — wait and retry later, and "
-                    f"consider lowering --workers (current: {workers})."
-                )
-            raise UsageError(
-                f"no days available in range {start}..{end} from the "
-                f"CHIRPS data server (final or prelim sat product). CHIRPS v3.0 "
-                f"sat coverage runs {CHIRPS_FINAL_START_YEAR}-to-present, so a "
-                "date before that range yields nothing; otherwise this is a "
-                "server-side data gap. The validated final product also lags, so "
-                "very recent days come from the preliminary product (published 2 "
-                "days after each pentad closes — pentads end on days 5, 10, 15, "
-                "20, 25, and last of month, worst-case lag ~7 days); for a very "
-                "recent --end-time, try an earlier one."
-            )
+    ds = xr.concat(pieces, dim="time") if len(pieces) > 1 else pieces[0]
+    ds = ds.sortby("time")
+    if "latitude" in ds.dims:
+        ds = ds.sortby("latitude")
 
-        succeeded_days = [d for d, _ in succeeded]
-        last_succeeded = succeeded_days[-1]
-        expected_tail = [d for d in expected_days if d > last_succeeded]
-        if missing_days and missing_days != expected_tail:
-            raise UsageError(
-                f"Non-tail missing day(s) {', '.join(d.isoformat() for d in missing_days)} "
-                f"— server-side data gap, not a lag issue. "
-                "Refusing to write a partial zarr with a hole in the middle.",
-                prefix=False,
-            )
+    succeeded_days = _present_dates(ds)
+    last_succeeded = succeeded_days[-1]
+    expected_tail = [day for day in expected_days if day > last_succeeded]
+    if missing and missing != expected_tail:
+        raise UsageError(
+            f"Non-tail missing day(s) {', '.join(d.isoformat() for d in missing)} "
+            f"— server-side data gap, not a lag issue. "
+            "Refusing to write a partial zarr with a hole in the middle.",
+            prefix=False,
+        )
 
-        effective_end = last_succeeded.isoformat()
-        if missing_days:
-            print(
-                f"Tail-missing day(s) {', '.join(d.isoformat() for d in missing_days)}; "
-                f"writing partial dataset with effective end {effective_end} "
-                f"(requested --end-time was {end}). "
-                "Consistent with CHIRPS v3.0 preliminary's pentad-based schedule.",
-                file=sys.stderr,
-            )
+    if missing:
+        print(
+            f"Tail-missing day(s) {', '.join(d.isoformat() for d in missing)}; "
+            f"writing partial dataset with effective end {last_succeeded.isoformat()} "
+            f"(requested --end-time was {end}). "
+            "Consistent with CHIRPS v3.0 preliminary's pentad-based schedule.",
+            file=sys.stderr,
+        )
 
-        import xarray as xr
-
-        pieces = []
-        for _, da in succeeded:
-            da = da.sortby("latitude", ascending=True)
-            da.name = "precip"
-            da.attrs["units"] = "mm day-1"
-            da.attrs["standard_name"] = "lwe_precipitation_rate"
-            da.attrs["long_name"] = "CHIRPS daily precipitation"
-            pieces.append(da)
-
-        ds = xr.concat(pieces, dim="time").to_dataset()
-        ds.attrs["Conventions"] = "CF-1.13"
-        ds.attrs["weather_skills_source"] = "chirps"
-        stamp_cf_attrs(ds)
-        ds = to_standard_units(ds, variables=["precip"])
-        return stamp_data_interval(ds, period="1 day")
+    ds = to_standard_units(ds, variables=[_VAR])
+    ds = ds.rename({_VAR: "precip"})
+    ds["precip"].attrs.setdefault("long_name", "CHIRPS daily precipitation")
+    ds.attrs.update(Conventions="CF-1.13", weather_skills_source="chirps")
+    stamp_cf_attrs(ds)
+    ds = ensure_normalized_longitude(ds, lon_dim="longitude")
+    return stamp_data_interval(ds, period="1 day")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@main",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 #   "cftime",
 #   "xarray",
 #   "zarr",
@@ -23,8 +23,25 @@ from weather_skills_core.provenance import (
     validate_chain,
 )
 
+DEFAULT_REPO = "https://github.com/rhiza-research/weather-skills"
+DEFAULT_CLI = "forecasting-skills"
+
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
+
+
+def _parent_histories(step: dict) -> list[tuple[str, list]]:
+    """``(basename, nested history)`` for every parent that recorded a subgraph."""
+    value = step.get("input")
+    items = value if isinstance(value, list) else [value] if isinstance(value, dict) else []
+    out = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        history = item.get("history")
+        if isinstance(history, list):
+            out.append((item.get("basename") or "?", history))
+    return out
 
 
 def _load_zarr(path: Path) -> dict:
@@ -153,7 +170,15 @@ def _print_step(n: int, step: dict, indent: str) -> None:
     if not isinstance(step, dict):
         print(f"{indent}{n}. (malformed entry: not an object)")
         return
-    print(f"{indent}{n}. {step.get('skill', '?')} (v{step.get('version', '?')})")
+    identity = f"{step.get('skill', '?')} (v{step.get('version', '?')}"
+    commit = step.get("commit")
+    if isinstance(commit, str) and commit:
+        short = commit[:12] if len(commit) > 12 else commit
+        identity += f" @{short}"
+        if step.get("dirty") is True:
+            identity += " dirty"
+    identity += ")"
+    print(f"{indent}{n}. {identity}")
     step_input = step.get("input")
     if step_input is None:
         inp = "(none -- fetcher)"
@@ -171,6 +196,23 @@ def _print_step(n: int, step: dict, indent: str) -> None:
         print(f"{indent}   args: (none)")
 
 
+def _print_chain(chain: list, indent: str) -> None:
+    for n, step in enumerate(chain, start=1):
+        _print_step(n, step, indent)
+        if not isinstance(step, dict):
+            continue
+        branches = _parent_histories(step)
+        if len(branches) < 2:
+            continue
+        for idx, (basename, history) in enumerate(branches):
+            label = chr(ord("a") + idx) if idx < 26 else str(idx)
+            print(f"{indent}   input branch {label} ({basename}):")
+            if not history:
+                print(f"{indent}     (no recorded history)")
+                continue
+            _print_chain(history, indent + "     ")
+
+
 def _render_human(data: dict) -> None:
     chains = data["chains"]
     source = data.get("source")
@@ -186,34 +228,21 @@ def _render_human(data: dict) -> None:
         if multi:
             print(f"branch {label}:")
         indent = "  " if multi else ""
-        for n, step in enumerate(chain, start=1):
-            _print_step(n, step, indent)
-            if (
-                isinstance(step, dict)
-                and step.get("skill") == "concat"
-                and isinstance(step.get("input"), list)
-            ):
-                for idx, item in enumerate(step["input"]):
-                    if not isinstance(item, dict) or "history" not in item:
-                        continue
-                    history = item.get("history")
-                    if not isinstance(history, list):
-                        history = []
-                    print(
-                        f"{indent}   input branch {chr(ord('a') + idx)} ({item.get('basename', '?')}):"
-                    )
-                    if not history:
-                        print(f"{indent}     (no recorded history)")
-                        continue
-                    for bn, bstep in enumerate(history, start=1):
-                        _print_step(bn, bstep, indent + "     ")
+        _print_chain(chain, indent)
 
 
-def _command(skill: str, args: dict, inputs: list, output: str) -> str:
-    parts = [
-        "uvx --from git+https://github.com/rhiza-research/forecasting-skills forecasting-skills",
-        skill,
-    ]
+def _uvx_spec(step: dict) -> str:
+    repo = step.get("repo") if isinstance(step.get("repo"), str) and step["repo"] else DEFAULT_REPO
+    commit = step.get("commit")
+    if isinstance(commit, str) and commit:
+        return f"git+{repo}@{commit}"
+    return f"git+{repo}"
+
+
+def _command(step: dict, inputs: list, output: str) -> str:
+    skill = step.get("skill", "?")
+    args = step.get("args") or {}
+    parts = ["uvx", "--from", _uvx_spec(step), DEFAULT_CLI, skill]
     for dest, value in sorted(args.items()):
         flag = "--" + dest.replace("_", "-")
         if value is None or value is False:
@@ -228,7 +257,28 @@ def _command(skill: str, args: dict, inputs: list, output: str) -> str:
     for flag, path in inputs:
         parts += [flag, shlex.quote(path)]
     parts += ["--output", shlex.quote(output)]
-    return " ".join(parts)
+    line = " ".join(parts)
+    if step.get("dirty") is True:
+        return (
+            f"# dirty working tree when this step ran; commit {step.get('commit')} "
+            f"may not match what executed\n{line}"
+        )
+    return line
+
+
+def _join_parents(chain: list) -> tuple[list[tuple[str, list]], dict] | None:
+    """Terminal multi-parent join → ``([(letter, history), ...], terminal)``."""
+    if not chain or not isinstance(chain[-1], dict):
+        return None
+    terminal = chain[-1]
+    branches = _parent_histories(terminal)
+    if len(branches) < 2:
+        return None
+    labeled = []
+    for idx, (_basename, history) in enumerate(branches):
+        label = chr(ord("a") + idx) if idx < 26 else str(idx)
+        labeled.append((label, history if isinstance(history, list) else []))
+    return labeled, terminal
 
 
 def _emit_linear(chain: list, prefix: str, final_output: str) -> list:
@@ -240,7 +290,6 @@ def _emit_linear(chain: list, prefix: str, final_output: str) -> list:
             lines.append(f"# (malformed entry skipped: not an object) -- step {i}")
             continue
         skill = step.get("skill", "?")
-        args = step.get("args") or {}
         step_input = step.get("input")
         output = final_output if i == n else f"{prefix}{i}.zarr"
 
@@ -251,7 +300,7 @@ def _emit_linear(chain: list, prefix: str, final_output: str) -> list:
                     ins.append(("--input", prev))
                 else:
                     ins.append(("--input", item.get("basename", "?")))
-            lines.append(_command(skill, args, ins, output))
+            lines.append(_command(step, ins, output))
             prev = output
             continue
 
@@ -264,30 +313,40 @@ def _emit_linear(chain: list, prefix: str, final_output: str) -> list:
             lines.append("# reproduce it separately and replace <UPSTREAM> below.")
             inputs = [("--input", "<UPSTREAM>")]
 
-        lines.append(_command(skill, args, inputs, output))
+        lines.append(_command(step, inputs, output))
         prev = output
     return lines
 
 
-def _concat_branches(chain: list) -> dict | None:
-    """Expand a terminal multi-input concat into ``{letter: history + [concat]}``."""
-    if not chain or not isinstance(chain[-1], dict):
-        return None
-    terminal = chain[-1]
-    if terminal.get("skill") != "concat":
-        return None
-    items = terminal.get("input")
-    if not isinstance(items, list) or not all(
-        isinstance(i, dict) and "history" in i for i in items
-    ):
-        return None
-    branches = {}
-    for idx, item in enumerate(items):
-        history = item.get("history")
-        if not isinstance(history, list):
-            history = []
-        branches[chr(ord("a") + idx)] = list(history) + [terminal]
-    return branches
+def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
+    """Emit a path or a join (recursing so nested DAGs reproduce)."""
+    joined = _join_parents(chain)
+    if joined is None:
+        return _emit_linear(chain, prefix, final_output)
+
+    branches, terminal = joined
+    lines = []
+    branch_outputs = []
+    for label, history in branches:
+        branch_out = f"{prefix}{label}.zarr" if prefix != "step" else f"{label}.zarr"
+        lines.append(f"# --- input branch {label} ---")
+        if history:
+            lines += _emit_graph(history, prefix=f"{prefix}{label}_", final_output=branch_out)
+        else:
+            lines.append(f"# branch {label} records no steps; supply {branch_out} yourself.")
+        branch_outputs.append((label, branch_out))
+        lines.append("")
+
+    lines.append("# --- combine into the final step ---")
+    labels = [lab for lab, _ in branch_outputs]
+    if set(labels) <= {"forecast", "mclimate"}:
+        order = {"forecast": 0, "mclimate": 1}
+        ordered = sorted(branch_outputs, key=lambda x: order.get(x[0], 99))
+        ins = [("--" + lab, out) for lab, out in ordered]
+    else:
+        ins = [("--input", out) for _, out in branch_outputs]
+    lines.append(_command(terminal, ins, final_output))
+    return lines
 
 
 def _render_script(data: dict) -> None:
@@ -302,12 +361,9 @@ def _render_script(data: dict) -> None:
 
     if len(chains) <= 1:
         chain = next(iter(chains.values()))
-        branches = _concat_branches(chain)
-        if branches is None:
-            lines += _emit_linear(chain, prefix="step", final_output=name)
-            print("\n".join(lines))
-            return
-        chains = branches
+        lines += _emit_graph(chain, prefix="step", final_output=name)
+        print("\n".join(lines))
+        return
 
     terminal = None
     branch_outputs = []
@@ -319,7 +375,7 @@ def _render_script(data: dict) -> None:
         branch_out = f"{label}.zarr"
         lines.append(f"# --- input branch {label} ---")
         if sub:
-            lines += _emit_linear(sub, prefix=f"{label}_", final_output=branch_out)
+            lines += _emit_graph(sub, prefix=f"{label}_", final_output=branch_out)
         else:
             lines.append(
                 f"# branch {label} records no steps before the final step; "
@@ -341,9 +397,7 @@ def _render_script(data: dict) -> None:
             else:
                 ordered = sorted(branch_outputs, key=lambda x: x[0])
                 ins = [("--input", out) for _, out in ordered]
-            lines.append(
-                _command(terminal.get("skill", "?"), terminal.get("args") or {}, ins, name)
-            )
+            lines.append(_command(terminal, ins, name))
     print("\n".join(lines))
 
 

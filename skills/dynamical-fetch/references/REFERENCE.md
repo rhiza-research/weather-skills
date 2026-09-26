@@ -1,7 +1,14 @@
 # dynamical-fetch reference
 
-Default forecast/analysis fetcher when the catalog has the product. Use
-`ecmwf-fetch` only for ECMWF S2S.
+Default forecast/analysis fetcher when the catalog has the product, including
+ECMWF S2S / ER (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`). Use
+`ecmwf-fetch` only when the catalog cannot serve the request (pre-2026,
+ocean, unmapped fields).
+Default IMERG source:
+`nasa-imerg-analysis-late` / `nasa-imerg-analysis-early` — do not start
+with `imerg-fetch`. CHIRPS daily analyses:
+`ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`.
+Prefer `chirps-fetch` for the final+prelim merge written as `precip`.
 
 ## Library
 
@@ -28,6 +35,8 @@ grid and are rejected (see below).
 |---|---|---|---|
 | `noaa-gefs-forecast-35-day` | ensemble forecast | `init_time, ensemble_member, lead_time, latitude, longitude` | 31 |
 | `ecmwf-ifs-ens-forecast-15-day-0-25-degree` | ensemble forecast | `init_time, lead_time, ensemble_member, latitude, longitude` | 51 |
+| `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` | ensemble forecast | `init_time, lead_time, ensemble_member, latitude, longitude` | 101 |
+| `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | ensemble forecast | `init_time, lead_time, ensemble_member, latitude, longitude` | 101 |
 | `ecmwf-aifs-ens-forecast` | ensemble forecast | `init_time, lead_time, ensemble_member, latitude, longitude` | 51 |
 | `noaa-gfs-forecast` | deterministic forecast | `init_time, lead_time, latitude, longitude` | — |
 | `ecmwf-aifs-single-forecast` | deterministic forecast | `init_time, lead_time, latitude, longitude` | — |
@@ -37,6 +46,8 @@ grid and are rejected (see below).
 | `noaa-mrms-conus-analysis-hourly` | analysis | `time, latitude, longitude` | — |
 | `nasa-imerg-analysis-early` | analysis | `time, latitude, longitude` | — |
 | `nasa-imerg-analysis-late` | analysis | `time, latitude, longitude` | — |
+| `ucsb-chc-chirps-analysis-final` | analysis | `time, latitude, longitude` | — |
+| `ucsb-chc-chirps-analysis-preliminary` | analysis | `time, latitude, longitude` | — |
 | `noaa-hrrr-forecast-48-hour` | **rejected** — projected | `init_time, lead_time, y, x` (2-D lat/lon) | — |
 | `noaa-hrrr-analysis` | **rejected** — projected | `time, y, x` (2-D lat/lon) | — |
 
@@ -66,21 +77,25 @@ analysis.
 | `latitude` / `longitude` | `latitude` / `longitude` | unchanged (1-D) |
 | `time` (analysis) | `time` dim | sliced to `--start-time`/`--end-time`, kept |
 | `*_Nhpa` data variables | prefix + `vertical` dim | stacked; `vertical` is pressure in hPa (`positive=down`). Height-above-ground fields (`temperature_2m`, `wind_u_80m`) are not stacked. |
-| other data variables | data variables | known precip → `mm day-1`; known air temp → `degree_Celsius` |
+| other data variables | data variables | known precip → `mm day-1`; known air temp → `degree_Celsius`. SST stays `sea_surface_temperature` (alias `-v sst`). |
 
 Forecast `--date` selects the **00 UTC** initialization of the resolved date
 (`init_time == <date>T00:00:00`); all supported forecast datasets publish a 00
 UTC cycle. A date with no matching init exits 1 and prints the available init
 range.
 
-The catalog does not store a native vertical axis. Pressure-level fields are
-separate 2-D variables, stacked here onto `vertical`:
+Medium-range IFS/AIFS/GEFS stores pressure-level fields as separate 2-D
+`*_Nhpa` variables, stacked here onto `vertical`. The 46-day S2S/ER product
+keeps a native `pressure_level` dim in `group="pressure_level"`; this skill
+opens that group and renames the dim to `vertical`.
 
 | Dataset | Pressure-level fields |
 |---|---|
 | `ecmwf-ifs-ens-forecast-15-day-0-25-degree`, `ecmwf-aifs-ens-forecast`, `ecmwf-aifs-single-forecast` | `temperature_{850,925}hpa`, `geopotential_height_{500,850,925}hpa` |
+| `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` | `group=pressure_level`: `temperature`, `geopotential_height`, `wind_u`, `wind_v`, `vertical_velocity`, `specific_humidity` on 10 levels |
+| `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | none (surface only: precip, 10 m wind, 6 h max/min 2 m temperature) |
 | `noaa-gefs-forecast-35-day`, `noaa-gefs-analysis` | `geopotential_height_500hpa` only |
-| `noaa-gfs-forecast`, `noaa-gfs-analysis`, `dwd-icon-eu-forecast-5-day`, IMERG, MRMS | none |
+| `noaa-gfs-forecast`, `noaa-gfs-analysis`, `dwd-icon-eu-forecast-5-day`, IMERG, CHIRPS, MRMS | none |
 
 `-v t` / `-v gh` (or the prefixes `temperature` / `geopotential_height`) expand
 to every `*_Nhpa` field of that prefix. `temperature_2m` is not included.

@@ -5,6 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads NOAA GHCN-Daily from the public S3 website endpoint (noaa-ghcn-pds.s3.amazonaws.com) over HTTPS; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
+  version: "0.0.2"
   catalog-group: fetchers
   variables:
     - precip
@@ -33,7 +34,7 @@ GHCN-Daily has ~130k stations and each is a separate whole-history download, so 
 - A task needs recent or historical daily station observations anywhere in the
   world, without credentials.
 - A downstream skill will compare stations against gridded precip/temperature
-  (via `plot-compare`) or aggregate them temporally.
+  (via `plot --layer`) or aggregate them temporally.
 
 For African stations with sub-daily sensor data, `tahmo-fetch` is an alternative
 (credentialed).
