@@ -64,7 +64,6 @@ credentialed or source-specific fetcher only when it does not.
 | `plot-compare-forecasts` | N-dataset comparison grid (rows = forecasts and/or gridded obs; columns = union of times); missing times are blank `n/a` cells |
 | `plot-verify` | Lead-week verification **map** grid from pre-computed `verify` Zarrs (one `--verify` per `--forecast`) |
 | `plot-mediogram` | ECMWF-style mediogram PNG comparing a forecast ensemble against an m-climate ensemble at a single lat/lon |
-| `kenya-forecast-png` | Pre-rendered KMSA / Sheerwater Kenya forecast product PNGs from the public kenya-forecasts archive (credential-free) |
 
 ### Figure skills
 

@@ -1,6 +1,6 @@
 ---
 name: kenya-forecast-fetch
-description: Fetch a forecast grid from the public Kenya forecasts archive (gs://kenya-forecasting-data/<date>/data/). Native ECMWF S2S is the low-resolution Zarr (`--dataset precip`, ~1.5°); the CHIRPS-resolution weekly downscale is `--dataset precip_downscaled` (~0.05°, data_weekly_Kenya_downscaled.nc); the daily downscale is `--dataset precip_downscaled_daily` (~0.05°, daily_downscaled_kenya.tif, ensemble mean). Also GEFS, medium-range precip, temps, and winds. Use for clipping, aggregation, comparison, or plotting via plot / plot-timeseries / plot-mediogram. For pre-rendered product PNGs, use kenya-forecast-png instead.
+description: Fetch a forecast grid from the public Kenya forecasts archive (gs://kenya-forecasting-data/<date>/data/). Native ECMWF S2S is the low-resolution Zarr (`--dataset precip`, ~1.5°); the CHIRPS-resolution weekly downscale is `--dataset precip_downscaled` (~0.05°, data_weekly_Kenya_downscaled.nc); the daily downscale is `--dataset precip_downscaled_daily` (~0.05°, daily_downscaled_kenya.tif, ensemble mean). Also GEFS, medium-range precip, temps, and winds. Use for clipping, aggregation, comparison, or plotting via plot / plot-timeseries / plot-mediogram.
 license: MIT
 compatibility: Requires Python 3.12 and uv. Opens public consolidated Zarr (native S2S / GEFS / medium-range), the weekly downscaled NetCDF, or the daily downscaled GeoTIFF over HTTPS from Google Cloud Storage bucket kenya-forecasting-data; no credentials required. Older init folders may only have GRIB/NetCDF under data/ and no Zarr.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -38,8 +38,9 @@ By default the skill takes the **most recent** init date that has the requested
 `--dataset`. Pass `--date` to pin an init.
 
 This skill does **not** plot. For flexible figures, chain to `plot`,
-`plot-timeseries`, `plot-mediogram`, `summarize-dim`, `clip-region`, etc. For the
-archive's pre-rendered product PNGs, use `kenya-forecast-png`.
+`plot-timeseries`, `plot-mediogram`, `summarize-dim`, `clip-region`, etc.
+Recreate KMSA / Sheerwater product figures from the data this way rather
+than downloading the archive's pre-rendered PNGs.
 
 ## When to use
 
@@ -110,10 +111,10 @@ realign with `coarsen --reference-grid` or `downscale --reference-grid`.
 - `--variable`, `-v` — restrict to named data variables (repeatable).
 - `--output`, `-o` — output Zarr path.
 
-### Example: match the precomputed weekly precip PNG
+### Example: recreate the KMSA weekly precip product figure
 
 The archive grid is daily S2S `tp` (fetch writes per-step rates). The product
-figure (`kenya-forecast-png` `weekly_precip.png`) is six weekly totals on the
+figure (`weekly_precip.png` in the archive) is six weekly totals on the
 Kenya product extent `7/32/-6/43`, drawn with plot's default precip palette.
 Replicate it with weekly aggregation + totals, then plot (omit `theme.colormap` so the default precip palette applies):
 
