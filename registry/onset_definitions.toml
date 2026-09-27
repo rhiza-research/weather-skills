@@ -1,0 +1,331 @@
+# Rainy-season onset definitions: one registry, many consumers.
+#
+# DRAFT PROPOSAL. Today the same definitions are hard-coded in two skills and already disagree
+# (see registry/README.md). This file states each definition once, with its source.
+#
+# status:
+#   canonical -- an institution's or paper's published rule. Frozen and cited. Agents may
+#                select it, never edit it.
+#   variant   -- a documented re-parameterisation of a canonical rule (derived_from + why).
+#   candidate -- output of an optimisation. Must carry an [x.optimization] block (objective,
+#                data, method, validation, date, parent_hash, distance_from_parent).
+#                Never replaces a canonical entry.
+#
+# [definitions.<id>.tunable] (required except on candidates):
+#   "section.field" = {min = .., max = ..} or {choices = [..]}  -- what a harness may move
+#   fixed = ["section.field", ...]  -- institutionally fixed; never tuned
+#   why = "..."                      -- one line justifying the bounds
+# On a canonical entry the bounds describe the neighbourhood a CANDIDATE may explore; they
+# are never permission to edit the canonical entry itself. A field that is neither tunable
+# nor fixed is simply not tuned. A candidate may change only fields its parent lists as
+# tunable, inside those bounds, and records the parent's content hash in parent_hash.
+#
+# Parameter conventions: amounts in mm/day or mm; windows in days; ops are one of
+# ">", ">=", "<", "<=". Anything the source does not pin down is listed in
+# unspecified_in_source, with the value shown being the convention chosen HERE.
+
+schema_version = 1
+
+[definitions.icpac-onset]
+status = "canonical"
+name = "ICPAC rainy-season onset (wet event not followed by a dry spell)"
+source.citation = "ICPAC; operationalised in the IRI Data Library IGAD onset maprooms (CHIRPS v2.0)"
+source.url = "https://iridl.ldeo.columbia.edu/maproom/Agriculture/Historical_Onset/ICPAC_Eq_Onset.html"
+source.checked = "2026-09-27"
+time_basis = "rolling_daily"
+trigger.window_days = 3
+trigger.total_mm = 20.0
+trigger.total_op = ">="
+veto.mode = "consecutive_dry"
+veto.dry_days = 7
+veto.dry_day_mm = 1.0
+veto.follow_days = 21
+veto.follow_anchor = "run_start_after_trigger_start"
+search.start = ["02-01", "08-01"]  # equatorial IGAD: MAM and OND seasons
+search.window_days = 60
+unspecified_in_source = ["trigger.total_op", "veto.dry_day_mm", "veto.follow_anchor"]
+notes = "The maproom gives 20 mm / 3 days and 7 days / 21 days as defaults ('e.g.'); users may change them. Northern IGAD uses search.start 03-01 (see icpac-onset-north)."
+
+[definitions.icpac-onset.tunable]
+why = "The maproom offers 20 mm/3 d and 7 d/21 d as user-adjustable 'e.g.' values; bounds stay near those defaults (about half to double the amounts) and keep the wet-event + dry-spell structure, time basis and season starts fixed."
+"trigger.total_mm" = {min = 10.0, max = 40.0}
+"trigger.window_days" = {min = 3, max = 7}
+"trigger.total_op" = {choices = [">=", ">"]}
+"veto.dry_days" = {min = 5, max = 10}
+"veto.dry_day_mm" = {min = 0.5, max = 2.0}
+"veto.follow_days" = {choices = [21, 30]}
+"search.window_days" = {min = 30, max = 90}
+fixed = ["time_basis", "veto.mode", "search.start"]
+
+[definitions.icpac-onset-north]
+status = "variant"
+derived_from = "icpac-onset"
+why = "Northern IGAD countries: one rainy season (about Apr-Sep); the maproom's search starts 1 March."
+name = "ICPAC onset, northern IGAD search window"
+source.citation = "IRI Data Library, Northern IGAD Countries Historical Onset Date maproom"
+source.url = "https://iridl.ldeo.columbia.edu/maproom/Agriculture/Historical_Onset/ICPAC_North_Onset.html"
+source.checked = "2026-09-27"
+time_basis = "rolling_daily"
+trigger.window_days = 3
+trigger.total_mm = 20.0
+trigger.total_op = ">="
+veto.mode = "consecutive_dry"
+veto.dry_days = 7
+veto.dry_day_mm = 1.0
+veto.follow_days = 21
+veto.follow_anchor = "run_start_after_trigger_start"
+search.start = ["03-01"]
+search.window_days = 60
+unspecified_in_source = ["trigger.total_op", "veto.dry_day_mm", "veto.follow_anchor"]
+
+[definitions.icpac-onset-north.tunable]
+why = "Same adjustable maproom defaults and bounds as icpac-onset; the 1 March search start is what makes this variant, so it is fixed."
+"trigger.total_mm" = {min = 10.0, max = 40.0}
+"trigger.window_days" = {min = 3, max = 7}
+"trigger.total_op" = {choices = [">=", ">"]}
+"veto.dry_days" = {min = 5, max = 10}
+"veto.dry_day_mm" = {min = 0.5, max = 2.0}
+"veto.follow_days" = {choices = [21, 30]}
+"search.window_days" = {min = 30, max = 90}
+fixed = ["time_basis", "veto.mode", "search.start"]
+
+[definitions.agrhymet-sos]
+status = "canonical"
+name = "AGRHYMET start of season (as used by FEWS NET / CHC WRSI)"
+source.citation = "AGRHYMET; FEWS NET start-of-season definition, as described in 'Sending out an SOS: using start of rainy season indicators for market price forecasting to support famine early warning', Environ. Res. Lett. (2021)"
+source.url = "https://iopscience.iop.org/article/10.1088/1748-9326/ac15cc"
+source.checked = "2026-09-27"
+time_basis = "calendar_dekad"
+trigger.window_days = 10
+trigger.total_mm = 25.0
+trigger.total_op = ">="
+confirm.window_days = 20
+confirm.total_mm = 20.0
+confirm.total_op = ">="
+confirm.after_days = 10
+veto.mode = "none"
+unspecified_in_source = []
+notes = "First dekad with at least 25 mm, followed by two dekads totalling at least 20 mm; onset = first day of that first dekad. Defined on CALENDAR dekads."
+
+[definitions.agrhymet-sos.tunable]
+why = "Institutional definition used operationally by AGRHYMET and FEWS NET: the 25/20 mm thresholds, 'at least' comparisons, dekad windows and calendar-dekad basis are the published rule, so nothing is tunable."
+fixed = ["time_basis", "trigger.window_days", "trigger.total_mm", "trigger.total_op", "confirm.window_days", "confirm.total_mm", "confirm.total_op", "confirm.after_days", "veto.mode"]
+
+[definitions.agrhymet-sos-rolling]
+status = "variant"
+derived_from = "agrhymet-sos"
+why = "Daily-resolution approximation: rolling 10/20-day windows instead of calendar dekads, as both current Weather Skills implementations do."
+name = "AGRHYMET start of season on rolling daily windows"
+source.citation = "derived from agrhymet-sos"
+source.url = "https://iopscience.iop.org/article/10.1088/1748-9326/ac15cc"
+source.checked = "2026-09-27"
+time_basis = "rolling_daily"
+trigger.window_days = 10
+trigger.total_mm = 25.0
+trigger.total_op = ">="
+confirm.window_days = 20
+confirm.total_mm = 20.0
+confirm.total_op = ">="
+confirm.after_days = 10
+veto.mode = "none"
+unspecified_in_source = []
+
+[definitions.agrhymet-sos-rolling.tunable]
+why = "An approximation of the institutional rule: thresholds, comparisons and window lengths are AGRHYMET's and the rolling basis is what defines the variant, so nothing is tunable."
+fixed = ["time_basis", "trigger.window_days", "trigger.total_mm", "trigger.total_op", "confirm.window_days", "confirm.total_mm", "confirm.total_op", "confirm.after_days", "veto.mode"]
+
+[definitions.moron-robertson-2014]
+status = "canonical"
+name = "Moron & Robertson (2014) local onset"
+source.citation = "Moron V., Robertson A.W. (2014) Int. J. Climatol. 34(4):1050-1061, doi:10.1002/joc.3745"
+source.url = "https://doi.org/10.1002/joc.3745"
+source.checked = "2026-09-27"
+time_basis = "rolling_daily"
+trigger.window_days = 5
+trigger.all_days_wet = true
+trigger.wet_day_mm = 1.0
+trigger.wet_day_op = ">="
+trigger.threshold_kind = "per_cell_climatology"
+trigger.total_op = ">"
+veto.mode = "window_sum"
+veto.window_days = 10
+veto.window_total_mm = 5.0
+veto.follow_days = 30
+veto.follow_anchor = "window_start_after_trigger_end"
+unspecified_in_source = []
+notes = "Per-cell threshold = the local climatological 5-day wet-spell amount. Parameters as reproduced by the MIT-licensed reference implementation (amarchakitus/onset_blending, README 'reproduce the original Moron-Robertson definition')."
+
+[definitions.moron-robertson-2014.tunable]
+why = "Published paper parameters; bounds allow modest changes to window lengths and wet/dry thresholds while keeping the per-cell climatological trigger, all-days-wet test and window-sum veto that define the method."
+"trigger.window_days" = {min = 3, max = 7}
+"trigger.wet_day_mm" = {min = 0.5, max = 2.0}
+"veto.window_days" = {min = 7, max = 15}
+"veto.window_total_mm" = {min = 2.0, max = 10.0}
+"veto.follow_days" = {choices = [21, 30]}
+fixed = ["time_basis", "trigger.threshold_kind", "trigger.all_days_wet", "veto.mode"]
+
+[definitions.moron-robertson-india-operational]
+status = "variant"
+derived_from = "moron-robertson-2014"
+why = "Agriculturally relevant onset for India: local onset searched only after the climatological monsoon onset over Kerala."
+name = "Moron-Robertson, India operational (search after 2 June)"
+source.citation = "Masiwal et al. (2026) arXiv:2602.03767, Methods"
+source.url = "https://arxiv.org/abs/2602.03767"
+source.checked = "2026-09-27"
+time_basis = "rolling_daily"
+trigger.window_days = 5
+trigger.all_days_wet = true
+trigger.wet_day_mm = 1.0
+trigger.wet_day_op = ">="
+trigger.threshold_kind = "per_cell_climatology"
+trigger.total_op = ">"
+veto.mode = "window_sum"
+veto.window_days = 10
+veto.window_total_mm = 5.0
+veto.follow_days = 30
+veto.follow_anchor = "window_start_after_trigger_end"
+search.start = ["06-02"]
+unspecified_in_source = []
+notes = "The paper reports the operational version replaced the dry-spell check with a Kerala-onset reference; exact operational veto settings are in the unlicensed envfluids/monsoon-onset code and are not reproduced here."
+
+[definitions.moron-robertson-india-operational.tunable]
+why = "Same neighbourhood as moron-robertson-2014; the 2 June search start (climatological Kerala onset) defines the variant, so it is fixed."
+"trigger.window_days" = {min = 3, max = 7}
+"trigger.wet_day_mm" = {min = 0.5, max = 2.0}
+"veto.window_days" = {min = 7, max = 15}
+"veto.window_total_mm" = {min = 2.0, max = 10.0}
+"veto.follow_days" = {choices = [21, 30]}
+fixed = ["time_basis", "trigger.threshold_kind", "trigger.all_days_wet", "veto.mode", "search.start"]
+
+[definitions.uchicago-ethiopia-2026]
+status = "variant"
+derived_from = "moron-robertson-2014"
+why = "Ethiopia/ICPAC-style dry-spell veto in the University of Chicago blending pipeline."
+name = "University of Chicago Ethiopia onset (consecutive-dry veto)"
+source.citation = "amarchakitus/onset_blending README, 'Onset Definition' (MIT)"
+source.url = "https://github.com/amarchakitus/onset_blending"
+source.checked = "2026-09-27"
+time_basis = "rolling_daily"
+trigger.window_days = 5
+trigger.all_days_wet = true
+trigger.wet_day_mm = 1.0
+trigger.wet_day_op = ">="
+trigger.threshold_kind = "per_cell_climatology"
+trigger.total_op = ">"
+veto.mode = "consecutive_dry"
+veto.dry_days = 7
+veto.dry_day_mm = 1.0
+veto.follow_days = 21
+veto.follow_anchor = "run_start_after_trigger_end"
+unspecified_in_source = ["trigger.window_days"]
+notes = "The README names follow_days=21 as 'the Ethiopia/ICPAC definition' and min_dry_days=7 as the consecutive_dry default; the operational Ethiopia window length lives in onsetblending2026 specs and should be confirmed there."
+
+[definitions.uchicago-ethiopia-2026.tunable]
+why = "Keeps the per-cell trigger and ICPAC-style consecutive-dry veto; the unconfirmed trigger window and the dry-spell settings may move within the same neighbourhood as the ICPAC and Moron-Robertson entries."
+"trigger.window_days" = {min = 3, max = 7}
+"trigger.wet_day_mm" = {min = 0.5, max = 2.0}
+"veto.dry_days" = {min = 5, max = 10}
+"veto.dry_day_mm" = {min = 0.5, max = 2.0}
+"veto.follow_days" = {choices = [21, 30]}
+fixed = ["time_basis", "trigger.threshold_kind", "trigger.all_days_wet", "veto.mode"]
+
+[definitions.sheerwater-spw-rainy-onset]
+status = "canonical"
+name = "Sheerwater suitable-planting-window rainy onset (Rhiza Research)"
+source.citation = "rhiza-research/sheerwater, sheerwater/tasks/spw.py, rainy_onset_condition (MIT); used by the Kenya suitable-planting-window dashboard"
+source.url = "https://github.com/rhiza-research/sheerwater/blob/main/sheerwater/tasks/spw.py"
+source.checked = "2026-09-27"
+time_basis = "rolling_daily"
+trigger.window_days = 8
+trigger.total_mm = 30.0
+trigger.total_op = ">"
+confirm.window_days = 11
+confirm.total_mm = 40.0
+confirm.total_op = ">"
+confirm.after_days = 0
+veto.mode = "none"
+trigger.window_align = "forward"
+unspecified_in_source = ["trigger.window_align"]
+notes = "cond = (agg_precip_11d > 40) & (agg_precip_8d > 30), both windows starting on the same day. For ensembles Sheerwater takes the member fraction and optionally compares it with prob_threshold (0.6 in its signature); that probability step is not part of the definition. Window alignment (forward from the onset day vs trailing) is set by the caller-supplied agg_fn, not in spw.py; forward is the convention recorded here and should be confirmed with Rhiza. rainy_onset_no_drought_condition adds a no-drought check and is not registered here."
+
+[definitions.sheerwater-spw-rainy-onset.tunable]
+why = "Rhiza's operational choice, not an external institutional standard: the two accumulations may move near their published values; window lengths and the strict comparisons are kept as published."
+"trigger.total_mm" = {min = 20.0, max = 40.0}
+"confirm.total_mm" = {min = 30.0, max = 50.0}
+fixed = ["time_basis", "trigger.window_days", "trigger.total_op", "confirm.window_days", "confirm.total_op", "confirm.after_days", "veto.mode"]
+
+# ---- Rhiza's Sheerwater benchmark: the team's own implementations -------------------------
+# sheerwater/interfaces/events.py (MIT). has_onset_conditions() evaluates each spell with
+# above_threshold (np.digitize right=True: strictly greater) on a left-aligned rolling window,
+# and shifts every later spell to start where the trigger window ends. A "sum" spell compares
+# the window mean with threshold/agg_days, i.e. window sum > threshold.
+
+[definitions.sheerwater-icpac-onset]
+status = "canonical"
+name = "Sheerwater ICPAC onset (icpac_onset)"
+source.citation = "rhiza-research/sheerwater, sheerwater/interfaces/events.py, icpac_onset (MIT)"
+source.url = "https://github.com/rhiza-research/sheerwater/blob/main/sheerwater/interfaces/events.py"
+source.checked = "2026-09-27"
+time_basis = "rolling_daily"
+trigger.window_days = 3
+trigger.total_mm = 21.0
+trigger.total_op = ">"
+confirm.window_days = 7
+confirm.total_mm = 10.5
+confirm.total_op = ">"
+confirm.after_days = 3
+veto.mode = "none"
+unspecified_in_source = []
+notes = "Differs from the ICPAC maproom example (icpac-onset: 20 mm / 3 days, no 7-day dry spell within 21 days): Sheerwater requires more than 21 mm in 3 days followed by more than 10.5 mm in the next 7 days."
+
+[definitions.sheerwater-icpac-onset.tunable]
+why = "Rhiza's operational ICPAC parameters; the two accumulations may move near their published values, windows and strict comparisons stay as implemented."
+"trigger.total_mm" = {min = 15.0, max = 30.0}
+"confirm.total_mm" = {min = 5.0, max = 20.0}
+fixed = ["time_basis", "trigger.window_days", "trigger.total_op", "confirm.window_days", "confirm.total_op", "confirm.after_days", "veto.mode"]
+
+[definitions.sheerwater-chc-onset]
+status = "canonical"
+name = "Sheerwater CHC onset (chc_onset)"
+source.citation = "rhiza-research/sheerwater, sheerwater/interfaces/events.py, chc_onset (MIT)"
+source.url = "https://github.com/rhiza-research/sheerwater/blob/main/sheerwater/interfaces/events.py"
+source.checked = "2026-09-27"
+time_basis = "rolling_daily"
+trigger.window_days = 10
+trigger.total_mm = 25.0
+trigger.total_op = ">"
+confirm.window_days = 20
+confirm.total_mm = 20.0
+confirm.total_op = ">"
+confirm.after_days = 10
+veto.mode = "none"
+unspecified_in_source = []
+notes = "The AGRHYMET thresholds (25 mm, then 20 mm over 20 days) with strict comparisons on rolling windows. The published AGRHYMET / FEWS NET wording is 'at least' on calendar dekads (agrhymet-sos)."
+
+[definitions.sheerwater-chc-onset.tunable]
+why = "Matches the institutional AGRHYMET thresholds; kept fixed so the entry stays recognisably CHC."
+fixed = ["time_basis", "trigger.window_days", "trigger.total_mm", "trigger.total_op", "confirm.window_days", "confirm.total_mm", "confirm.total_op", "confirm.after_days", "veto.mode"]
+
+[definitions.sheerwater-moron-robertson-onset]
+status = "canonical"
+name = "Sheerwater Moron-Robertson onset, simplified (moron_and_robertson_onset)"
+source.citation = "rhiza-research/sheerwater, sheerwater/interfaces/events.py, moron_and_robertson_onset (MIT)"
+source.url = "https://github.com/rhiza-research/sheerwater/blob/main/sheerwater/interfaces/events.py"
+source.checked = "2026-09-27"
+time_basis = "rolling_daily"
+trigger.window_days = 5
+trigger.total_mm = 38.0
+trigger.total_op = ">"
+confirm.window_days = 10
+confirm.total_mm = 5.0
+confirm.total_op = ">"
+confirm.after_days = 5
+veto.mode = "none"
+unspecified_in_source = []
+notes = "A simplification of moron-robertson-2014: one fixed 38 mm threshold instead of the per-cell climatological 5-day amount, no all-days-wet test, and 'next 10 days total more than 5 mm' instead of 'no 10-day window below 5 mm within 30 days'. Whether 38 mm is a calibration or a placeholder is not documented in the code."
+
+[definitions.sheerwater-moron-robertson-onset.tunable]
+why = "The fixed 38 mm stands in for a per-cell climatology, so it is the natural thing to tune; the follow-on amount may move modestly."
+"trigger.total_mm" = {min = 20.0, max = 60.0}
+"confirm.total_mm" = {min = 2.0, max = 10.0}
+fixed = ["time_basis", "trigger.window_days", "trigger.total_op", "confirm.window_days", "confirm.total_op", "confirm.after_days", "veto.mode"]
