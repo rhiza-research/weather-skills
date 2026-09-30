@@ -217,9 +217,7 @@ def test_eastern_africa_keeps_madagascar(capsys, resolve_region, monkeypatch):
 
 def test_kenya_ond_region_prints_custom_bbox(capsys, resolve_region, monkeypatch):
     def _fail_nominatim(query):
-        raise AssertionError(
-            f"Nominatim should not run for Kenya OND region; got {query!r}"
-        )
+        raise AssertionError(f"Nominatim should not run for Kenya OND region; got {query!r}")
 
     monkeypatch.setattr("weather_skills_core.region._load_nominatim", _fail_nominatim)
 

@@ -62,12 +62,8 @@ def test_fetch_writes_zarr_and_stamps_history(tmp_path, fetch_mod, monkeypatch):
     out = tmp_path / "cumulus.zarr"
     remote = _native_forecast()
 
-    monkeypatch.setattr(
-        fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-07", "2026-09-18"]
-    )
-    monkeypatch.setattr(
-        fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True)
-    )
+    monkeypatch.setattr(fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-07", "2026-09-18"])
+    monkeypatch.setattr(fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True))
 
     run_skill(fetch_mod.fetch, "-o", str(out))
 
@@ -92,9 +88,7 @@ def test_fetch_does_not_deaccumulate_period_totals(tmp_path, fetch_mod, monkeypa
         remote["total_precipitation_24h_acc_imerg"].values[:, i, :, :] = val
 
     monkeypatch.setattr(fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-18"])
-    monkeypatch.setattr(
-        fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True)
-    )
+    monkeypatch.setattr(fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True))
 
     run_skill(fetch_mod.fetch, "--date", "2026-09-18", "-o", str(out))
 
@@ -108,9 +102,7 @@ def test_fetch_clips_negatives(tmp_path, fetch_mod, monkeypatch):
     remote = _native_forecast(negatives=True)
 
     monkeypatch.setattr(fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-18"])
-    monkeypatch.setattr(
-        fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True)
-    )
+    monkeypatch.setattr(fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True))
 
     run_skill(fetch_mod.fetch, "--date", "2026-09-18", "-o", str(out))
 
@@ -156,9 +148,7 @@ def test_fetch_honors_date_variable_and_bbox(tmp_path, fetch_mod, monkeypatch):
 
 
 def test_probe_latest(capsys, fetch_mod, monkeypatch):
-    monkeypatch.setattr(
-        fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-07", "2026-09-18"]
-    )
+    monkeypatch.setattr(fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-07", "2026-09-18"])
     run_skill(fetch_mod.fetch, "--probe-latest")
     assert capsys.readouterr().out.strip() == "2026-09-18"
 
@@ -166,9 +156,7 @@ def test_probe_latest(capsys, fetch_mod, monkeypatch):
 def test_unknown_variable_exits_2(tmp_path, fetch_mod, monkeypatch):
     remote = _native_forecast()
     monkeypatch.setattr(fetch_mod, "_list_init_dates", lambda dataset: ["2026-09-18"])
-    monkeypatch.setattr(
-        fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True)
-    )
+    monkeypatch.setattr(fetch_mod, "_open_init", lambda *args, **kwargs: remote.copy(deep=True))
     with pytest.raises(SystemExit) as exc:
         run_skill(
             fetch_mod.fetch,

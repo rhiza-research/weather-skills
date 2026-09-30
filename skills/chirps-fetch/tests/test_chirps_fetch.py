@@ -1,6 +1,5 @@
 """Correctness tests for chirps-fetch (mocked catalog)."""
 
-from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 

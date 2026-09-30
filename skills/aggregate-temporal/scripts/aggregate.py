@@ -645,9 +645,7 @@ def aggregate(
         n = out.sizes.get(dim, 0)
         if n:
             out = _assign_coverage(out, dim, np.ones(n, dtype=float))
-        return _stamp_attrs(
-            out, dim, spec["agg"], method, interval, data_interval=native_interval
-        )
+        return _stamp_attrs(out, dim, spec["agg"], method, interval, data_interval=native_interval)
     if dim == "step":
         out = _aggregate_step(ds, spec, method)
         if end_time is not None or start_time is not None:

@@ -9,7 +9,6 @@
 """Subset by bbox, named region, or GeoJSON polygon."""
 
 from shapely.geometry import shape
-
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.region import lookup_region
 from weather_skills_core.standard_utils import bbox_subset, clip_by_geometry, polygon_from_geojson

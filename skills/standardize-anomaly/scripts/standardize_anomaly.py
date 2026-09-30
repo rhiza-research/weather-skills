@@ -11,7 +11,6 @@
 """Standardized anomaly: (ds[var] - clim[var_avg]) / clim[var_std]."""
 
 import pint_xarray
-
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import detect_spatial_dims
 
@@ -26,7 +25,9 @@ _SKILL_VERSION = "0.0.1"
 @weather_skill.argument("-i", "--input", type=Dataset("any"), required=True)
 @weather_skill.argument("--climatology", type=Dataset("any"), required=True)
 @weather_skill.argument("--variable", "-v", action="append", required=True)
-@weather_skill.argument("--epsilon", type=float, default=0.1, help="Normalization to avoid divide-by-zero.")
+@weather_skill.argument(
+    "--epsilon", type=float, default=0.1, help="Normalization to avoid divide-by-zero."
+)
 def standardize_anomaly(ds, climatology, variable, epsilon, **kwargs):
     """Standardized anomaly: (ds[var] - clim[var_avg]) / clim[var_std] per --variable."""
     import xarray as xr
@@ -54,14 +55,19 @@ def standardize_anomaly(ds, climatology, variable, epsilon, **kwargs):
     vars_ = list(dict.fromkeys(variable))
     missing_input = [v for v in vars_ if v not in ds.data_vars]
     missing_clim = [
-        f"{v}_{stat}" for v in vars_ for stat in ("avg", "std") if f"{v}_{stat}" not in climatology.data_vars
+        f"{v}_{stat}"
+        for v in vars_
+        for stat in ("avg", "std")
+        if f"{v}_{stat}" not in climatology.data_vars
     ]
     if missing_input or missing_clim:
         parts = []
         if missing_input:
             parts.append(f"--input missing {missing_input} (have {list(ds.data_vars)})")
         if missing_clim:
-            parts.append(f"--climatology missing {missing_clim} (have {list(climatology.data_vars)})")
+            parts.append(
+                f"--climatology missing {missing_clim} (have {list(climatology.data_vars)})"
+            )
         raise UsageError("; ".join(parts))
 
     out = {}

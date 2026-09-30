@@ -166,10 +166,7 @@ def _azure_error(exc: Exception, what: str) -> DataError:
             "signature",
         )
     ):
-        hint = (
-            f" Check {_SAS_ENV}: it needs list and read (sp=rl) on "
-            f"{_ACCOUNT}/{_CONTAINER}."
-        )
+        hint = f" Check {_SAS_ENV}: it needs list and read (sp=rl) on {_ACCOUNT}/{_CONTAINER}."
     return DataError(f"{what} ({text}).{hint}")
 
 
@@ -180,9 +177,7 @@ def _list_names(prefix: str) -> list[str]:
     except FileNotFoundError:
         return []
     except Exception as exc:  # noqa: BLE001
-        raise _azure_error(
-            exc, f"Azure listing failed for az://{_ACCOUNT}/{prefix}/"
-        ) from None
+        raise _azure_error(exc, f"Azure listing failed for az://{_ACCOUNT}/{prefix}/") from None
     names = []
     for item in items:
         name = str(item).rstrip("/").rsplit("/", 1)[-1]
@@ -223,11 +218,7 @@ def _resolve_date(date, dataset: str) -> str:
         return iso
     if not dates:
         available = _list_datasets()
-        hint = (
-            f" Available --dataset folders: {', '.join(available)}."
-            if available
-            else ""
-        )
+        hint = f" Available --dataset folders: {', '.join(available)}." if available else ""
         raise DataError(
             f"no YYYY-MM-DD NetCDF files under {_display_prefix(dataset)}.{hint}".rstrip()
         )
@@ -253,9 +244,7 @@ def _open_lead(url: str, lead_hours: int, bbox) -> object:
     import xarray as xr
 
     try:
-        with xr.open_dataset(
-            url, engine="h5netcdf", storage_options=_storage_options()
-        ) as opened:
+        with xr.open_dataset(url, engine="h5netcdf", storage_options=_storage_options()) as opened:
             ds = bbox_subset(opened, bbox) if bbox is not None else opened
             ds = ds.load()
     except (DataError, UsageError):
@@ -286,9 +275,7 @@ def _open_leads(keys: list[tuple[int, str]], bbox, workers: int):
 def _open_init(dataset: str, iso: str, bbox, workers: int):
     keys = _list_lead_keys(dataset, iso)
     if not keys:
-        raise DataError(
-            f"no lead files for init {iso} under {_display_prefix(dataset)}"
-        )
+        raise DataError(f"no lead files for init {iso} under {_display_prefix(dataset)}")
     print(f"Opening {len(keys)} Cumulus lead files for {iso}", file=sys.stderr)
     return _open_leads(keys, bbox, workers)
 

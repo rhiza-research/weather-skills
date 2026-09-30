@@ -96,9 +96,7 @@ def _filesystem():
         try:
             info = json.loads(creds_json)
         except json.JSONDecodeError as exc:
-            raise DataError(
-                f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc})."
-            ) from None
+            raise DataError(f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
         try:
             return gcsfs.GCSFileSystem(token=info)
         except Exception as exc:  # noqa: BLE001 — surface ADC failures as DataError

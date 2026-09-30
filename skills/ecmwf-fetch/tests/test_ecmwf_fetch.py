@@ -453,4 +453,3 @@ def test_probe_latest_uses_catalog_init(capsys, fetch, mod):
     with patch.object(mod, "_open_catalog", return_value=_catalog_surface_ds()):
         run_skill(fetch, "--probe-latest")
     assert capsys.readouterr().out.strip() == "2026-01-01"
-
