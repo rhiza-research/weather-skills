@@ -1,0 +1,153 @@
+{
+  "catalog_schema_version": "1",
+  "note": "Minimal router-facing action metadata. action_semantic_version is independent of the CI-owned _SKILL_VERSION: bump it only when an action's meaning or boundary changes. nearest_confusions lists the eligible-but-wrong neighbours a router most often confuses (the hard negatives). Eligibility itself lives in predicates.py.",
+  "actions": {
+    "aggregate-temporal": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Roll a time or lead axis up into fixed windows (daily, weekly, dekadal, monthly) with mean/min/max; rates stay rates.",
+      "nearest_confusions": [
+        "summarize-dim",
+        "convert-to-totals"
+      ]
+    },
+    "convert-to-totals": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Multiply an aggregated rate by its stamped aggregation_period to give period totals (mm).",
+      "nearest_confusions": [
+        "aggregate-temporal",
+        "unit-convert",
+        "deaccumulate"
+      ]
+    },
+    "deaccumulate": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Turn a cumulative-since-init forecast along its lead axis into per-step rates.",
+      "nearest_confusions": [
+        "convert-to-totals",
+        "unit-convert"
+      ]
+    },
+    "step-to-time": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Replace a forecast's lead axis with wall-clock valid time (init + lead).",
+      "nearest_confusions": [
+        "select",
+        "convert-calendar"
+      ]
+    },
+    "clip-region": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Subset a dataset to a bbox or GeoJSON polygon.",
+      "nearest_confusions": [
+        "select",
+        "resolve-region"
+      ]
+    },
+    "coarsen": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Linearly interpolate onto a coarser or equal target grid, preferably another dataset's grid via --reference-grid.",
+      "nearest_confusions": [
+        "downscale",
+        "regrid"
+      ]
+    },
+    "downscale": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Move onto a finer-or-equal grid by linear interpolation or empirical q-q mapping against a reference.",
+      "nearest_confusions": [
+        "coarsen",
+        "regrid"
+      ]
+    },
+    "difference": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Subtract dataset B from A cell by cell with inner-join alignment.",
+      "nearest_confusions": [
+        "verify",
+        "standardize-anomaly"
+      ]
+    },
+    "verify": {
+      "action_semantic_version": "1",
+      "action_class": "verification",
+      "short_description": "Score a forecast against observations on a shared grid: hits, bias or MAE (ensemble mean).",
+      "nearest_confusions": [
+        "difference",
+        "indicator",
+        "summarize-dim"
+      ]
+    },
+    "standardize-anomaly": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Z-score a field against a climatology's mean and standard deviation.",
+      "nearest_confusions": [
+        "difference",
+        "make-climatology",
+        "clim-fetch"
+      ]
+    },
+    "indicator": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Apply a daily boolean rule (windowed thresholds, onset, spells) per member, optionally reduced to ensemble probability or first-true date.",
+      "nearest_confusions": [
+        "verify",
+        "summarize-dim",
+        "exceedance-probability"
+      ]
+    },
+    "summarize-dim": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Collapse named dimensions with mean/std/min/max/sum/median (e.g. ensemble spread, time-mean baseline).",
+      "nearest_confusions": [
+        "aggregate-temporal",
+        "verify",
+        "make-climatology"
+      ]
+    },
+    "unit-convert": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Convert variables to target units (pint/CF) or to standard display units.",
+      "nearest_confusions": [
+        "convert-to-totals"
+      ]
+    },
+    "select": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Pick entries along one dimension by position or value; a single pick collapses the dim.",
+      "nearest_confusions": [
+        "clip-region",
+        "summarize-dim"
+      ]
+    },
+    "convert-calendar": {
+      "action_semantic_version": "1",
+      "action_class": "transform",
+      "short_description": "Convert the time axis to a target CF calendar; unrepresentable dates are dropped.",
+      "nearest_confusions": [
+        "step-to-time"
+      ]
+    },
+    "clim-fetch": {
+      "action_semantic_version": "1",
+      "action_class": "fetcher",
+      "short_description": "Fetch a PRECOMPUTED daily climatology (avg + std) for a named dataset and expand it onto a requested window.",
+      "nearest_confusions": [
+        "make-climatology",
+        "summarize-dim"
+      ]
+    }
+  }
+}
