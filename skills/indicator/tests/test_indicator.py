@@ -1,5 +1,11 @@
 """Correctness tests for indicator."""
 
+import hashlib
+import json
+import sys
+import tomllib
+from pathlib import Path
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -142,10 +148,10 @@ def test_icpac_incomplete_lookahead_is_nan(tmp_path, indicator_fn):
     assert np.isnan(_cell(tmp_path / "short_out.zarr").values[0])
 
 
-def test_chc_onset_strict_gt_and_follow_on(tmp_path, indicator_fn):
+def test_chc_onset_strict_and_follow_on(tmp_path, indicator_fn):
     ds = _daily(40, fill=0.0)
-    ds["precip"].values[0:10, 0, 0] = 3.0  # 30 > 25
-    ds["precip"].values[10:30, 0, 0] = 1.1  # 22 > 20
+    ds["precip"].values[0:10, 0, 0] = 3.0  # 30 >= 25
+    ds["precip"].values[10:30, 0, 0] = 1.1  # 22 >= 20
     src = write_zarr(ds, tmp_path / "chc.zarr")
     run_skill(
         indicator_fn,
@@ -158,9 +164,11 @@ def test_chc_onset_strict_gt_and_follow_on(tmp_path, indicator_fn):
     )
     assert _cell(tmp_path / "chc_out.zarr").values[0] == pytest.approx(1)
 
+    # Unchanged behaviour: chc-onset resolves to Sheerwater's chc_onset, which is strict ('>'),
+    # exactly as the pre-registry alias was, so exact totals do not trigger.
     exact = _daily(40, fill=0.0)
-    exact["precip"].values[0:10, 0, 0] = 2.5  # 25 not > 25
-    exact["precip"].values[10:30, 0, 0] = 1.0  # 20 not > 20
+    exact["precip"].values[0:10, 0, 0] = 2.5  # exactly 25
+    exact["precip"].values[10:30, 0, 0] = 1.0  # exactly 20
     src_e = write_zarr(exact, tmp_path / "exact.zarr")
     run_skill(
         indicator_fn,
@@ -172,6 +180,21 @@ def test_chc_onset_strict_gt_and_follow_on(tmp_path, indicator_fn):
         "chc-onset",
     )
     assert _cell(tmp_path / "exact_out.zarr").values[0] == pytest.approx(0)
+
+    short = _daily(40, fill=0.0)
+    short["precip"].values[0:10, 0, 0] = 2.4  # 24 < 25
+    short["precip"].values[10:30, 0, 0] = 1.0
+    src_s = write_zarr(short, tmp_path / "short.zarr")
+    run_skill(
+        indicator_fn,
+        "-i",
+        str(src_s),
+        "-o",
+        str(tmp_path / "short_out.zarr"),
+        "--rule",
+        "chc-onset",
+    )
+    assert _cell(tmp_path / "short_out.zarr").values[0] == pytest.approx(0)
 
     dry_follow = _daily(40, fill=0.0)
     dry_follow["precip"].values[0:10, 0, 0] = 3.0
@@ -214,6 +237,144 @@ def test_alias_matches_written_rule_on_data(tmp_path, indicator_fn):
         _cell(tmp_path / "alias.zarr").values,
         _cell(tmp_path / "written.zarr").values,
     )
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+REFERENCES_COPY = REPO_ROOT / "skills" / "indicator" / "references" / "onset_definitions.toml"
+
+
+def _registry_defs():
+    with REFERENCES_COPY.open("rb") as f:
+        return tomllib.load(f)["definitions"]
+
+
+def _recompute_hash(d):
+    keep = {k: d[k] for k in ("time_basis", "trigger", "confirm", "veto", "search") if k in d}
+    return hashlib.sha256(json.dumps(keep, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def test_references_copy_matches_registry():
+    canonical = REPO_ROOT / "registry" / "onset_definitions.toml"
+    if not canonical.is_file():
+        pytest.skip("registry/ not present (skill installed standalone)")
+    # Line endings are normalised: git autocrlf checkouts rewrite both files alike.
+    a = canonical.read_bytes().replace(b"\r\n", b"\n")
+    b = REFERENCES_COPY.read_bytes().replace(b"\r\n", b"\n")
+    assert a == b, (
+        "skills/indicator/references/onset_definitions.toml has drifted from "
+        "registry/onset_definitions.toml; run python tools/sync_definitions.py"
+    )
+
+
+def test_registry_name_matches_clause_string(tmp_path, indicator_fn, indicator_mod):
+    spec = indicator_mod.parse_rule("agrhymet-sos-rolling")
+    written = "precip sum 10d >= 25 and precip sum 20d >= 20 after 10d"
+    assert spec.expanded == written
+    ds = _daily(40, fill=0.0)
+    ds["precip"].values[3:13, 0, 0] = 3.0
+    ds["precip"].values[13:33, 0, 0] = 1.2
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    for rule, out in (("agrhymet-sos-rolling", "named.zarr"), (written, "written.zarr")):
+        run_skill(indicator_fn, "-i", str(src), "-o", str(tmp_path / out), "--rule", rule)
+    named = _cell(tmp_path / "named.zarr").values
+    assert np.nansum(named) >= 1
+    np.testing.assert_array_equal(named, _cell(tmp_path / "written.zarr").values)
+
+
+def test_unknown_name_lists_known_names(indicator_mod):
+    with pytest.raises(UsageError, match="unknown rule name") as exc:
+        indicator_mod.parse_rule("no-such-onset")
+    msg = str(exc.value)
+    for name in ("icpac-onset", "chc-onset", "agrhymet-sos-rolling", "moron-robertson-2014"):
+        assert name in msg
+
+
+def test_per_cell_definition_is_refused(indicator_mod):
+    with pytest.raises(UsageError, match="cannot be expressed exactly") as exc:
+        indicator_mod.parse_rule("moron-robertson-2014")
+    msg = str(exc.value)
+    assert "per-cell climatological threshold" in msg
+    assert "grammar only has '>'" in msg
+
+
+@pytest.mark.parametrize("name", ["agrhymet-sos", "icpac-onset-north"])
+def test_inexpressible_definitions_are_refused(indicator_mod, name):
+    with pytest.raises(UsageError, match="refused rather than silently approximated"):
+        indicator_mod.parse_rule(name)
+
+
+def _prov(path, var="indicator"):
+    ds = xr.open_zarr(path, consolidated=True)
+    keys = (
+        "onset_definition_id",
+        "onset_definition_hash",
+        "onset_definition_status",
+        "onset_definition_overrides",
+    )
+    ds_attrs = {k: ds.attrs[k] for k in keys}
+    var_attrs = {k: ds[var].attrs[k] for k in keys}
+    assert ds_attrs == var_attrs
+    return ds_attrs
+
+
+def test_provenance_attrs(tmp_path, indicator_fn, indicator_mod):
+    defs = _registry_defs()
+    src = write_zarr(_daily(40, fill=2.0), tmp_path / "in.zarr")
+
+    run_skill(indicator_fn, "-i", str(src), "-o", str(tmp_path / "a.zarr"), "--rule", "chc-onset")
+    got = _prov(tmp_path / "a.zarr")
+    assert got["onset_definition_id"] == "sheerwater-chc-onset"
+    assert got["onset_definition_hash"] == _recompute_hash(defs["sheerwater-chc-onset"])
+    assert got["onset_definition_status"] == defs["sheerwater-chc-onset"]["status"]
+    assert json.loads(got["onset_definition_overrides"]) == {}
+
+    # Legacy icpac-onset keeps working as the rolling-window core; search start/window are
+    # not expressible, so the output says it is an unregistered variant and what was dropped.
+    run_skill(indicator_fn, "-i", str(src), "-o", str(tmp_path / "b.zarr"), "--rule", "icpac-onset")
+    got = _prov(tmp_path / "b.zarr")
+    assert got["onset_definition_id"] == "icpac-onset"
+    assert got["onset_definition_hash"] == _recompute_hash(defs["icpac-onset"])
+    assert got["onset_definition_status"] == "unregistered-variant"
+    dropped = json.loads(got["onset_definition_overrides"])["dropped"]
+    assert any("search start" in s for s in dropped)
+    assert any("search window" in s for s in dropped)
+
+    rule = "precip sum 8d >= 25"
+    run_skill(
+        indicator_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(tmp_path / "c.zarr"),
+        "--rule",
+        rule,
+        "--probability",
+    )
+    got = _prov(tmp_path / "c.zarr", "probability")
+    assert got["onset_definition_id"] == "ad-hoc"
+    assert got["onset_definition_hash"] == hashlib.sha256(rule.encode()).hexdigest()[:12]
+    assert got["onset_definition_status"] == "unregistered"
+    assert got["onset_definition_overrides"] == "{}"
+
+
+def test_registry_ignores_unknown_keys(tmp_path, indicator_mod, monkeypatch):
+    text = REFERENCES_COPY.read_text(encoding="utf-8")
+    text += (
+        # the canonical registry already has tunable tables; add a key no skill knows
+        "\n[definitions.agrhymet-sos-rolling.future_extension]\n"
+        'note = "a key this skill does not know"\n'
+    )
+    extra = tmp_path / "onset_definitions.toml"
+    extra.write_text(text, encoding="utf-8")
+    spec_mod = sys.modules[indicator_mod.parse_rule.__module__]
+    monkeypatch.setattr(spec_mod, "REGISTRY_COPY", extra)
+    spec_mod.load_registry.cache_clear()
+    try:
+        spec = indicator_mod.parse_rule("agrhymet-sos-rolling")
+        defs = _registry_defs()
+        assert spec.provenance.hash == _recompute_hash(defs["agrhymet-sos-rolling"])
+    finally:
+        spec_mod.load_registry.cache_clear()
 
 
 def test_ensemble_probability(tmp_path, indicator_fn):
