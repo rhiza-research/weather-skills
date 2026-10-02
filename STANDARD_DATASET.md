@@ -2,7 +2,7 @@
 
 The skills in this repo consume and produce a shared Zarr-based container: a
 CF-compliant store with gridded and point_obs shapes, `weather_skills_*`
-attributes, and the append-only `weather_skills_history` provenance chain that
+attributes, and the `weather_skills_history` provenance DAG that
 every standard-dataset Zarr and figure PNG carries.
 
 The enforced definition of the standard dataset, its attributes, and the

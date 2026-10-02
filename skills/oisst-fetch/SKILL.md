@@ -5,6 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads NOAA OISST v2.1 from NOAA PSL's OPeNDAP server (psl.noaa.gov) over HTTPS; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
+  version: "0.0.2"
   catalog-group: fetchers
   variables:
     - sst
@@ -83,6 +84,11 @@ provider or the resolver fails:
   (a DAP failure, typically a large `--bbox` over a long window). The message
   names the remedy: reduce `--bbox` and/or shorten the date range; this is not a
   credentials or availability problem, so retrying the same request will not help.
+- **Transient server error** — NOAA PSL returns a 502 / proxy HTML page instead
+  of OPeNDAP data. The skill retries once, then exits. `--probe-latest` treats a
+  non-datetime `time` axis (the usual symptom of an HTML error page that
+  netCDF4 did not raise on) as this case rather than crashing. Distinct from
+  the oversized-request case; retrying later may succeed.
 - **Availability** — a year file cannot be opened. The year may be outside the
   served range (1981-09 to present) or the server is unreachable; check the date
   range. Distinct from the oversized case.

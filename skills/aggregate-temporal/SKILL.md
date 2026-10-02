@@ -1,10 +1,11 @@
 ---
 name: aggregate-temporal
-description: Roll up a weather-skills standard dataset Zarr along its time axis (or forecast step axis) into fixed windows (daily, weekly, dekadal, monthly, or a pint duration like '21 day') or a rolling --window, with mean/min/max. Keeps data_interval; stamps aggregation_period, aggregation_coverage, and CF cell_methods. Rates in and rates out — use convert-to-totals for period amounts (refuses overlapping rolling series; select non-overlapping times first).
+description: Roll up a weather-skills standard dataset Zarr along its time axis (or forecast step axis) into fixed windows (daily, weekly, dekadal, monthly, or a pint duration like '21 day') or a rolling --window, with mean/min/max. Stamps the new output spacing as data_interval for --period, plus aggregation_period, aggregation_coverage, and CF cell_methods. Rates in and rates out — use convert-to-totals for period amounts (refuses overlapping rolling series; select non-overlapping times first).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py *)
 metadata:
+  version: "0.0.2"
   catalog-group: transforms
 ---
 
@@ -20,6 +21,11 @@ Autodetects which dim is present. For forecasts, aggregates ensemble members (`n
 
 - Turning daily or half-hourly rates into weekly/dekadal/monthly/custom-duration
   **mean** (or min/max) rates (`--period weekly` or `--period '21 day'`).
+- Stamping `aggregation_period` on a cube that is **already** that period
+  (weekly downscaled forecast, `data_interval` already `7 day`). Values and
+  the time/step axis stay unchanged so `convert-to-totals` can run. Do not
+  use this to "re-aggregate" already-weekly Kenya `precip_downscaled` —
+  that product is stamped on fetch.
 - Rolling N-step means (`--window`) with optional `--align` / `--stride`.
 - Selecting weekly or dekadal subsets of a forecast initialized at multiple steps.
 - For period **totals** (`mm`), run `convert-to-totals` afterward (non-overlapping bins only; rolling series with Δt &lt; `aggregation_period` are refused — `select` the times you want first). A single remaining bin is allowed. Incomplete bins are kept and stamped with `aggregation_coverage` &lt; 1; convert-to-totals `--min-coverage` (default 1.0) drops them.
@@ -54,29 +60,45 @@ Exactly one of `--period` or `--window` is required.
 - `--method` — reducer: `mean` (default), `max`, `min`. There is no `sum`; totals are a separate skill.
 - `--variable`, `-v` — repeatable; restricts aggregation to the named data variable(s).
 - `--time-dim` — override; by default uses `time` if present, else `step`.
-- `--end-time` — with `--period` on a `time` axis: date the final bin ends on (bins walk backward). Same standard flag as fetchers. No effect on `step` or `--window`.
+- `--end-time` — with `--period` on a `time` axis: exclusive right edge of
+  the final bin (bins walk backward). Labeled at the **left** edge, same
+  as forecast `step` buckets — a week with `--end-time 2026-08-31` is
+  `[2026-08-24, 2026-08-31)` labeled `2026-08-24`. Copy the `YYYY-MM-DD`
+  from fetch / resolve-time. No effect on `step` or `--window`.
 - `--start-time` — with `--period` and `--end-time`: optional earliest coverage floor. Requires `--end-time`.
 
 ### Metadata stamped
 
 On each aggregated data variable:
 
-- `data_interval` — native sample spacing from the fetch (kept when the input was uniform; omitted when the input had CF bounds).
+- `data_interval` — sample spacing of the **output**. A `--period` roll-up
+  sets it to the period (daily → `--period '21 day'` gives `21 day`). A
+  rolling `--window`, or an input already at the period, keeps the native
+  spacing from the fetch.
 - `aggregation_period` — pint duration for the window (`1 day`, `7 day`,
   `1 dekad`, `1 month`, `21 day`, or e.g. `7 day` for `--window 7` on daily
   data) used later by `convert-to-totals`.
 - `cell_methods` — CF statistic, e.g. `time: mean (interval: 1 day)`.
-  `interval:` is the **input** sample spacing when it is a scalar `data_interval`.
+  `interval:` is the **input** sample spacing (the native `data_interval`).
 
 On the time/step axis:
 
 - `aggregation_coverage` — completeness of each interval vs native cells
-  (0–1). Incomplete bins are kept. Uniform: expected count =
-  `aggregation_period / data_interval` (or vs the input `aggregation_period`
-  on a re-aggregate). Irregular CF bounds: covered duration / window.
-  convert-to-totals `--min-coverage` (default 1.0) drops incomplete bins.
+  (0–1). Incomplete bins are kept. A native sample counts only if it has
+  **finite data** (all-NaN unpublished forecast leads do not). A persistent
+  spatial hole (land mask) does not mark the time as missing. Uniform:
+  finite count / (`aggregation_period / native spacing`). Irregular CF
+  bounds: finite covered duration / window. convert-to-totals
+  `--min-coverage` (default 1.0) drops incomplete bins.
 
 Inputs with CF `{dim}_bounds` are duration-weighted (`sum(rate × dt) / sum(dt)`), so a 1-day cell and a 5-day cell in the same week are not equal-weighted. `--window` is a step count and is refused on those axes.
+
+Forecast `step` bins and `--end-time` observation bins are the same
+geometry: half-open `[left, right)` labeled at the **left** edge. Week 1
+of a forecast initialized 24 Aug is `0d` / `2026-08-24`; the observation
+week for `--end-time 2026-08-31` is also `2026-08-24`. Both cover
+`[2026-08-24, 2026-08-31)`. Forward `--period` resample (no `--end-time`)
+is already left-labeled.
 
 Rate `units` are unchanged (still `mm day-1`, etc.).
 

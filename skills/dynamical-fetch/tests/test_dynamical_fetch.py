@@ -60,6 +60,29 @@ def test_forecast_fetch_writes_zarr(tmp_path, mod, fetch):
     assert load_history(out)[-1]["skill"] == "dynamical-fetch"
 
 
+def test_forecast_fetch_wraps_0_360_longitude(tmp_path, mod, fetch):
+    out = tmp_path / "out.zarr"
+    ds = _forecast_catalog_ds()
+    ds = ds.assign_coords(longitude=[0.0, 270.0])
+    ds["tp"].values[..., 1] = 7.0
+    state = {"ds": ds, "shape": "forecast"}
+
+    with patch.object(mod, "_open_dataset", return_value=state):
+        run_skill(
+            fetch,
+            "--dataset",
+            "test-forecast",
+            "--date",
+            "2026-01-01",
+            "-o",
+            str(out),
+        )
+
+    written = xr.open_zarr(out, consolidated=True)
+    assert list(written["longitude"].values) == [-90.0, 0.0]
+    assert float(written["tp"].isel(step=0, latitude=0).sel(longitude=-90.0)) == 7.0
+
+
 def _imerg_like_analysis_ds():
     times = np.array([np.datetime64("2026-01-01T00:00"), np.datetime64("2026-01-01T00:30")])
     lats = [1.0, 2.0]
@@ -104,6 +127,32 @@ def test_imerg_quality_index_does_not_block_standard_units(tmp_path, mod, fetch)
     assert written["precipitation_surface"].attrs["data_interval"] == "30 minute"
     assert "aggregation_period" not in written["precipitation_surface"].attrs
     assert "aggregation_coverage" not in written.coords
+
+
+def test_open_dataset_falls_back_to_staging(mod, monkeypatch):
+    calls = {"list": 0, "cleared": 0}
+
+    class _Catalog:
+        @staticmethod
+        def list():
+            calls["list"] += 1
+            if calls["list"] == 1:
+                return ["nasa-imerg-analysis-late"]
+            return ["nasa-imerg-analysis-late", "ucsb-chc-chirps-analysis-final"]
+
+        @staticmethod
+        def clear_cache():
+            calls["cleared"] += 1
+
+        @staticmethod
+        def open(dataset):
+            return _imerg_like_analysis_ds()
+
+    monkeypatch.setitem(__import__("sys").modules, "dynamical_catalog", _Catalog)
+    state = mod._open_dataset({}, "ucsb-chc-chirps-analysis-final")
+    assert calls["cleared"] == 1
+    assert state["shape"] == "analysis"
+    assert "precipitation_surface" in state["ds"]
 
 
 def test_forecast_missing_date_exits_2(tmp_path, mod, fetch):
@@ -170,6 +219,24 @@ def test_resolve_t_alias_expands_hpa_only(mod):
     assert mod._resolve_variables(["temperature_850hpa"], names, "ifs") == ["temperature_850hpa"]
 
 
+def test_resolve_t_alias_uses_grouped_temperature(mod):
+    names = ["average_temperature_2m", "temperature", "geopotential_height"]
+    assert mod._resolve_variables(["t"], names, "er") == ["temperature"]
+    assert mod._resolve_variables(["gh"], names, "er") == ["geopotential_height"]
+    assert mod._resolve_variables(["t2m"], names, "er") == ["average_temperature_2m"]
+
+
+def test_resolve_precip_aliases_to_surface(mod):
+    names = ["precipitation_surface", "precipitation_quality_index_surface"]
+    for token in ("precip", "precipitation", "tp", "total_precipitation", "pr"):
+        assert mod._resolve_variables([token], names, "nasa-imerg-analysis-late") == [
+            "precipitation_surface"
+        ]
+    assert mod._resolve_variables(["precipitation_surface"], names, "nasa-imerg-analysis-late") == [
+        "precipitation_surface"
+    ]
+
+
 def test_resolve_unknown_lists_available(mod):
     with pytest.raises(Exception, match="Available: temperature_2m"):
         mod._resolve_variables(["tp"], ["temperature_2m"], "ifs")
@@ -215,3 +282,50 @@ def test_fetch_stacks_pressure_levels(tmp_path, mod, fetch):
     assert "temperature_2m" not in written
     assert "vertical" in written.dims
     assert list(written["vertical"].values) == [925.0, 850.0]
+
+
+def test_merge_pressure_group_renames_vertical(mod):
+    root = xr.Dataset(
+        {
+            "precipitation_surface": (
+                ("init_time", "lead_time", "latitude", "longitude"),
+                np.ones((1, 1, 2, 2)),
+            )
+        },
+        coords={
+            "init_time": [np.datetime64("2026-01-01")],
+            "lead_time": [np.timedelta64(1, "D")],
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    pressure = xr.Dataset(
+        {
+            "temperature": (
+                ("init_time", "lead_time", "pressure_level", "latitude", "longitude"),
+                np.ones((1, 1, 2, 2, 2)) * 280.0,
+            )
+        },
+        coords={
+            "init_time": [np.datetime64("2026-01-01")],
+            "lead_time": [np.timedelta64(1, "D")],
+            "pressure_level": [1000.0, 850.0],
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+
+    class _Catalog:
+        @staticmethod
+        def open(dataset, group=None, chunks=None):
+            assert group == "pressure_level"
+            return pressure
+
+    with patch.dict("sys.modules", {"dynamical_catalog": _Catalog}):
+        merged = mod._merge_pressure_if_needed(
+            root, "ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree", ["t"]
+        )
+    assert "temperature" in merged
+    assert "vertical" in merged.dims
+    assert "pressure_level" not in merged.dims
+    assert mod._resolve_variables(["t"], merged.data_vars, "er") == ["temperature"]
