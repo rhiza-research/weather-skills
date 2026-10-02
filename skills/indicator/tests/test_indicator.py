@@ -273,6 +273,47 @@ def test_detect_first_and_cumulative_probability(tmp_path, indicator_fn):
     assert cdf[-1] == pytest.approx(1)
 
 
+def test_cumulative_probability_incomplete_lookahead_tail(tmp_path, indicator_fn):
+    # Members 0-1 have ICPAC onset on day 0. Members 2-3 are dry, then turn wet
+    # from day 25, so their 3-day sum passes but the 21-day dry-spell look-ahead
+    # runs past the 40-day series: NaN, not "no onset yet".
+    ds = _daily(40, fill=2.0)
+    ds = ds.expand_dims(number=[0, 1, 2, 3]).copy(deep=True)
+    ds["precip"].values[0:2, 0:3, 0, 0] = 10.0
+    ds["precip"].values[2:4, :25, 0, 0] = 0.0
+    ds["precip"].values[2:4, 25:, 0, 0] = 10.0
+    src = write_zarr(ds, tmp_path / "ens.zarr")
+
+    def run(out, *extra):
+        run_skill(
+            indicator_fn,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / out),
+            "--rule",
+            "icpac-onset",
+            "--cumulative",
+            "--probability",
+            *extra,
+        )
+        return _cell(tmp_path / out, "probability").values
+
+    p = run("p.zarr")
+    # Every member is defined through day 23: two of four have onset.
+    np.testing.assert_allclose(p[:24], 0.5)
+    # From day 24 members 2-3 are undefined; not 2/2 = 1.0 over onset members.
+    assert np.isnan(p[24:]).all()
+
+    loose = run("loose.zarr", "--min-valid-fraction", "0.5")
+    np.testing.assert_allclose(loose[:24], 0.5)
+    np.testing.assert_allclose(loose[24:], 1.0)
+
+    with pytest.raises(SystemExit) as exc:
+        run("bad.zarr", "--min-valid-fraction", "0")
+    assert exc.value.code == 2
+
+
 def test_detect_first_rejects_probability_and_cumulative(tmp_path, indicator_fn):
     src = write_zarr(_daily(8, fill=4.0), tmp_path / "in.zarr")
     with pytest.raises(SystemExit) as exc:

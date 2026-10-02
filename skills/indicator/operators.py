@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import xarray as xr
 from weather_skills_core import UsageError
@@ -38,6 +40,7 @@ def apply_reductions(
     cumulative: bool,
     detect: str | None,
     probability: bool,
+    min_valid_fraction: float = 1.0,
 ) -> xr.Dataset:
     """Apply ``--cumulative``, ``--detect``, ``--probability`` in that order."""
     if detect is not None and cumulative:
@@ -58,7 +61,7 @@ def apply_reductions(
         field = _detect_any(field, dim)
 
     if probability:
-        field = _probability(field)
+        field = _probability(field, min_valid_fraction)
         name = "probability"
     else:
         name = "indicator"
@@ -192,7 +195,19 @@ def _detect_first(mask: xr.DataArray, dim: str) -> xr.Dataset:
     return out
 
 
-def _probability(mask: xr.DataArray) -> xr.DataArray:
+def _probability(mask: xr.DataArray, min_valid_fraction: float = 1.0) -> xr.DataArray:
+    """Ensemble fraction True; NaN where too few members are defined.
+
+    Members are NaN where a look-ahead (``within`` / ``after`` / a forward
+    window) runs past the end of the series. Under ``--cumulative`` the
+    members that already had the event are 1 there and the rest stay NaN, so
+    a ``skipna`` mean over the defined members alone would be biased toward 1.
+    """
+    if not 0.0 < min_valid_fraction <= 1.0:
+        raise UsageError(f"--min-valid-fraction must be in (0, 1]; got {min_valid_fraction}")
     if "number" not in mask.dims:
         return mask.astype("float32")
-    return mask.mean("number", skipna=True).astype("float32")
+    n = mask.sizes["number"]
+    need = max(1, math.ceil(min_valid_fraction * n - 1e-9))
+    enough = mask.count("number") >= need
+    return mask.mean("number", skipna=True).where(enough).astype("float32")
