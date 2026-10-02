@@ -115,14 +115,38 @@ def _require_daily(ds, dim: str) -> None:
     action="store_true",
     help="Ensemble fraction True (mean over number). No-op if there is no number dim.",
 )
-def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **kwargs):
+@weather_skill.argument(
+    "--min-valid-fraction",
+    type=float,
+    default=1.0,
+    help=(
+        "With --probability: write NaN unless at least this fraction (0-1] of "
+        "members is defined. Default 1.0 (all members)."
+    ),
+)
+def indicator(
+    ds,
+    rule,
+    variable,
+    time_dim,
+    detect,
+    cumulative,
+    probability,
+    min_valid_fraction,
+    **kwargs,
+):
     """Apply a boolean indicator (or ensemble probability) to a daily standard dataset."""
     spec = parse_rule(rule)
     dim = _axis(ds, time_dim)
     _require_daily(ds, dim)
     mask = _ops.evaluate_spec(ds, spec, dim, variable)
     out = _ops.apply_reductions(
-        mask, dim, cumulative=bool(cumulative), detect=detect, probability=bool(probability)
+        mask,
+        dim,
+        cumulative=bool(cumulative),
+        detect=detect,
+        probability=bool(probability),
+        min_valid_fraction=float(min_valid_fraction),
     )
     payload = json.dumps(spec.to_json(), default=str)
     for name in out.data_vars:

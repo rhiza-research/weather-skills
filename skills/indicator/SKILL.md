@@ -76,7 +76,8 @@ Applied in order. Default: 0/1 `indicator`, all dims kept.
    Mutex with `--cumulative`. `--detect first` cannot combine with
    `--probability` (dates are not 0/1).
 3. `--probability` — mean over `number`. Variable `probability` (`units="1"`).
-   No-op on the ensemble axis if `number` is absent (still 0/1).
+   NaN unless at least `--min-valid-fraction` of members (default 1.0, all)
+   are defined. No-op on the ensemble axis if `number` is absent (still 0/1).
 
 | Want | Flags |
 | --- | --- |
@@ -87,13 +88,29 @@ Applied in order. Default: 0/1 `indicator`, all dims kept.
 | Onset date map | `--detect first`, then `plot` (do not reduce `number` first) |
 | Mean onset day-of-year | `--detect first`, then `summarize-dim --dim number --method mean` on `indicator_doy` |
 
+### Incomplete look-ahead tail
+
+Forward-looking clauses (`within Nd`, `after Nd`, and the forward `<window>`)
+are NaN wherever the window runs past the end of the series. For
+`icpac-onset`, that covers the last 27 days (a 21-day look-ahead plus a 7-day
+dry-spell window, minus 1). On a 46-day S2S forecast, that is most of the lead
+time. In that tail, a member whose 3-day sum passes cannot be confirmed yet.
+It is NaN, while a member whose 3-day sum fails is still 0. Under
+`--cumulative`, members that already had onset are 1 and the unconfirmed ones
+stay NaN. With the default `--min-valid-fraction 1.0`, `--probability` is NaN
+on those days. Averaging over only the defined members would bias the result
+toward 1, often to 100%. Lowering `--min-valid-fraction` accepts that bias.
+If you need probabilities closer to the end date, extend the input with
+later obs or a longer forecast.
+
 ## Usage
 
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \
     -i <daily.zarr> -o <out.zarr> --rule <alias-or-clauses> \
     [--variable NAME] [--time-dim DIM] \
-    [--detect first|any] [--cumulative] [--probability]
+    [--detect first|any] [--cumulative] [--probability] \
+    [--min-valid-fraction F]
 ```
 
 ### Arguments
@@ -106,6 +123,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \
 - `--detect` — `first` or `any`.
 - `--cumulative` — running OR along the daily axis.
 - `--probability` — ensemble fraction.
+- `--min-valid-fraction` — with `--probability`, the minimum fraction (0–1]
+  of members that must be defined; otherwise NaN. Default 1.0.
 
 ## Examples
 
