@@ -74,7 +74,7 @@ def test_same_name_rename_is_a_noop(tmp_path, edit_coords):
     assert load_history(out)[-1]["skill"] == "edit-coords"
 
 
-def test_rename_carries_bounds_and_cf_refs(tmp_path, edit_coords):
+def test_rename_rewrites_cf_refs(tmp_path, edit_coords):
     base = make_gridded()
     base = base.assign_coords(
         time_bounds=(("time", "nv"), np.stack([base.time.values] * 2, axis=1)),
@@ -82,9 +82,16 @@ def test_rename_carries_bounds_and_cf_refs(tmp_path, edit_coords):
     )
     base["time"].attrs["bounds"] = "time_bounds"
     base["precip"].attrs["ancillary_variables"] = "valid_time"
-    ds, _ = _run(edit_coords, tmp_path, base, "--rename", "time=t", "--rename", "valid_time=vt")
-    assert "t_bounds" in ds.variables and "time_bounds" not in ds.variables
-    assert ds["t"].attrs["bounds"] == "t_bounds"
+    ds, _ = _run(
+        edit_coords,
+        tmp_path,
+        base,
+        "--rename",
+        "time_bounds=time_bnds",
+        "--rename",
+        "valid_time=vt",
+    )
+    assert ds["time"].attrs["bounds"] == "time_bnds"
     assert ds["precip"].attrs["ancillary_variables"] == "vt"
 
 
@@ -146,6 +153,10 @@ def test_swap_onto_non_1d_coord_is_refused(tmp_path, edit_coords):
     base = make_gridded()
     base = base.assign_coords(mask=(("latitude", "longitude"), np.zeros((3, 4))))
     _usage_error(edit_coords, tmp_path, base, "--swap-dims", "latitude=mask")
+
+
+def test_swap_onto_missing_coord_is_refused(tmp_path, edit_coords):
+    _usage_error(edit_coords, tmp_path, make_gridded(), "--swap-dims", "time=nope")
 
 
 def test_swap_onto_duplicate_values_is_refused(tmp_path, edit_coords):

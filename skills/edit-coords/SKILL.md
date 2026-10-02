@@ -1,6 +1,6 @@
 ---
 name: edit-coords
-description: Rename data variables, coordinates, or dimensions in a weather-skills standard dataset Zarr (--rename OLD=NEW), and re-index a dimension by another 1-D coordinate along it, like xarray swap_dims (--swap-dims OLD_DIM=NEW_DIM). Use to make two datasets' names match before concat or difference, or to put stations on point_id. CF bounds and coordinates/grid_mapping references follow the rename. Refuses edits that lose an ontology dim (lat, lon, time, member, ...). To remove variables or coordinates, use drop.
+description: Rename data variables, coordinates, or dimensions in a weather-skills standard dataset Zarr (--rename OLD=NEW), and re-index a dimension by another 1-D coordinate along it, like xarray swap_dims (--swap-dims OLD_DIM=NEW_DIM). Use to make two datasets' names match before concat or difference, or to put stations on point_id. CF coordinates/grid_mapping/bounds references follow the rename. Refuses edits that lose an ontology dim (lat, lon, time, member, ...). To remove variables or coordinates, use drop.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/edit_coords.py *)
@@ -50,20 +50,19 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/edit_coords.py --input <in.zarr> --output <ou
 At least one of `--swap-dims` / `--rename` is required.
 
 **Order:** all swaps run first, then all renames, so renames use the names as
-they are after the swaps. The whole edit is checked before anything is
-written: either every edit applies or the skill exits with code 2.
+they are after the swaps. Nothing is written unless every edit applies.
 
 ### Output
 
-Same data as the input with the edits applied. When a coordinate with a CF
-`bounds` variable named after it is renamed (`time` with `time_bounds`), the
-bounds variable is renamed to match (`t_bounds`). Names in the `coordinates`,
-`grid_mapping`, `bounds`, and `ancillary_variables` attributes are rewritten.
+Same data as the input with the edits applied. Names in the `coordinates`,
+`grid_mapping`, `bounds`, and `ancillary_variables` attributes are rewritten
+to follow the renames. A bounds variable keeps its own name unless you rename
+it too (`--rename time_bounds=t_bounds`).
 
 The skill exits with code 2 and a clear message when: a pair is not
-`OLD=NEW`; a name is given twice or two edits target the same new name; `OLD`
-does not exist; `NEW` already exists (and is not itself being renamed away);
-the swap target is not a 1-D coordinate along `OLD_DIM` or has duplicate
+`OLD=NEW`; `OLD` does not exist; `NEW` already exists or two renames target
+the same name; the swap target is not an existing coordinate, is not 1-D along
+`OLD_DIM`, or has duplicate
 values; or the edit would remove an ontology dim the input had (`lat`, `lon`,
 `time`, `init_time`, `prediction_timedelta`, `member`, `vertical`,
 `point_id`, ...). Renaming to an ontology alias (`latitude → lat`,
