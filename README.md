@@ -55,6 +55,7 @@ credentialed or source-specific fetcher only when it does not.
 | `rename` | Rename a data variable to a new name |
 | `concat` | Join Zarr stores along a named dim (incl. new dims with coord values) |
 | `summarize-dim` | Summarize named dims with a statistic (mean/std/min/max/sum/median) — e.g. ensemble spread as the std across `number`, or a time-mean baseline |
+| `point-value` | Sample a gridded dataset at point locations (station Zarr, `--point LAT,LON[,ID]`, or CSV) into a `station_id` point_obs dataset — nearest, bilinear, or N×N cell-mean — for grid-vs-station `difference` / `verify` |
 | `difference` | Subtract one dataset from another (A − B) with inner-join alignment and broadcasting — anomalies vs a baseline, scenario-minus-historical change maps |
 | `standardize-anomaly` | Standardized anomaly aka z-score: `(field − clim_avg) / clim_std` against a climatology (e.g. `clim-fetch`) — dimensionless output, errors on units mismatch. For a plain physical-unit anomaly, use `difference` instead. |
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `ecmwf-fetch -v q -v u` |
