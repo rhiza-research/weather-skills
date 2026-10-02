@@ -102,7 +102,14 @@ def _pick_var(
 
 
 def _column_ivt(qu: xr.DataArray, vdim: str) -> xr.DataArray:
-    """(1/g) ∫ q u dp with trapezoidal rule; pressure in Pa."""
+    """(1/g) ∫ q u dp with trapezoidal rule; pressure in Pa.
+
+    Sorted to ascending pressure (top of atmosphere -> surface, dp > 0)
+    before integrating, so the sign of the result reflects the true
+    transport direction (from u) rather than an artifact of whatever level
+    order the source file happened to use. Do not take the absolute value
+    here: viwve is a signed eastward/westward quantity, not a magnitude.
+    """
     other = [d for d in qu.dims if d != vdim]
     valid = qu.notnull().any(dim=other) if other else qu.notnull()
     qu = qu.where(valid, drop=True)
@@ -113,8 +120,8 @@ def _column_ivt(qu: xr.DataArray, vdim: str) -> xr.DataArray:
             "(ecmwf-fetch -v q and -v u)."
         )
     p_pa = _as_pa(qu[vdim])
-    column = qu.assign_coords({vdim: p_pa}).integrate(vdim)
-    return (np.abs(column) / G).assign_attrs(
+    column = qu.assign_coords({vdim: p_pa}).sortby(vdim).integrate(vdim)
+    return (column / G).assign_attrs(
         units="kg m-1 s-1",
         standard_name="eastward_atmosphere_water_vapor_transport",
         long_name="vertically integrated eastward water vapour flux",

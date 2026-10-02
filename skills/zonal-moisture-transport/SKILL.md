@@ -71,7 +71,9 @@ The output must be a distinct store from every input.
 | `--no-integrate` | `qu` | `kg kg-1 m s-1` | Per-level eastward moisture flux |
 
 Integrated output drops the vertical dim. Dataset attrs from the first input
-are preserved. Positive `viwve` is eastward transport.
+are preserved. Positive `viwve` is eastward transport, negative is westward —
+the integral sorts levels to ascending pressure first, so the sign reflects
+the wind, not the source file's level order.
 
 ### Provenance
 
