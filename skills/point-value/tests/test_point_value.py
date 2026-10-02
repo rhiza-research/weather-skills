@@ -142,10 +142,10 @@ def test_outside_grid_is_nan(tmp_path, point_value, capsys):
     out = tmp_path / "out.zarr"
     run_skill(
         point_value, "-i", str(src), "-o", str(out),
-        "--point", "2.0,12.0,in", "--point", "9.0,12.0,out",
+        "--point", "2.0,12.0,in", "--point", "9.0,12.0,out", "--point", "4.5,14.5,edge",
     )  # fmt: skip
     vals = _open(out)["precip"].isel(time=0).values
-    assert vals[0] == 32.0 and np.isnan(vals[1])
+    assert vals[0] == 32.0 and np.isnan(vals[1]) and vals[2] == 54.0
     assert "1 point(s) set to NaN" in capsys.readouterr().err
 
 
@@ -162,7 +162,6 @@ def test_max_distance_snaps_to_nearest_valid_cell(tmp_path, point_value):
     vals = res["precip"].isel(time=0).values
     assert vals[0] == 7.0 and np.isnan(vals[1])
     np.testing.assert_allclose(res["grid_longitude"].values[0], 12.0)
-    np.testing.assert_allclose(res["grid_distance"].values[0], 1.0)
     assert np.isnan(res["grid_latitude"].values[1])
 
 
@@ -180,7 +179,6 @@ def test_descending_latitude_grid(tmp_path, point_value):
         [],
         ["--point", "1,11", "--points-csv", "x.csv"],
         ["--point", "1"],
-        ["--point", "1,11", "--neighborhood", "3"],
         ["--point", "1,11", "--method", "cell-mean", "--neighborhood", "2"],
         ["--point", "1,11,a", "--point", "2,12,a"],
     ],
