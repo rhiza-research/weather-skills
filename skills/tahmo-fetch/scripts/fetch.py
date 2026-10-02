@@ -143,9 +143,7 @@ def _select_stations(stations, station_ids, bbox):
     selected = _filter_bbox(_ta_stations(stations), bbox)
     if selected.empty:
         north, west, south, east = bbox
-        raise DataError(
-            f"no TAHMO stations in --bbox {north:g}/{west:g}/{south:g}/{east:g}."
-        )
+        raise DataError(f"no TAHMO stations in --bbox {north:g}/{west:g}/{south:g}/{east:g}.")
     return selected
 
 
@@ -284,12 +282,7 @@ def fetch(start_time, end_time, workers, bbox, station, **kwargs):
     list_stations = kwargs.get("list_stations")
     if list_stations and bbox is None:
         raise UsageError("--list-stations requires --bbox N/W/S/E.")
-    if (
-        not list_stations
-        and kwargs.get("probe_latest") is None
-        and not station
-        and bbox is None
-    ):
+    if not list_stations and kwargs.get("probe_latest") is None and not station and bbox is None:
         raise UsageError("pass --station ID (repeatable) and/or --bbox N/W/S/E.")
 
     api, stations, var_meta = _ensure_setup({})

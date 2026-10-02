@@ -130,7 +130,9 @@ def _latest_day(dataset_id: str) -> date | None:
 def fetch(start_time, end_time, bbox, **kwargs):
     """Fetch CHIRPS precipitation from the dynamical.org catalog (final, prelim fallback) and write a weather-skills standard dataset Zarr."""
     if kwargs.get("probe_latest") is not None:
-        found = [day for day in (_latest_day(_FINAL_ID), _latest_day(_PRELIM_ID)) if day is not None]
+        found = [
+            day for day in (_latest_day(_FINAL_ID), _latest_day(_PRELIM_ID)) if day is not None
+        ]
         if not found:
             raise DataError("CHIRPS probe found no time coordinate on the dynamical.org catalogs")
         print(max(found).isoformat())

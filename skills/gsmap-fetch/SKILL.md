@@ -39,6 +39,7 @@ value — check the real coverage yourself:
 
 ```python
 import ee
+
 ee.Initialize()
 coll = ee.ImageCollection("JAXA/GPM_L3/GSMaP/v6/operational")
 print(coll.aggregate_min("system:time_start").getInfo())

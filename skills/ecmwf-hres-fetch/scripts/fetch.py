@@ -44,7 +44,20 @@ _SKILL_VERSION = "0.0.1"
 _FULL_RUN_STEPS = list(range(0, 144 + 1, 3)) + list(range(150, 360 + 1, 6))
 _SHORT_CUTOFF_STEPS = list(range(0, 144 + 1, 3))
 
-PRESSURE_LEVELS = ("1000", "925", "850", "700", "500", "400", "300", "250", "200", "150", "100", "50")
+PRESSURE_LEVELS = (
+    "1000",
+    "925",
+    "850",
+    "700",
+    "500",
+    "400",
+    "300",
+    "250",
+    "200",
+    "150",
+    "100",
+    "50",
+)
 
 # Keep dim-like coords; drop GRIB filter scalars that collide across parameters.
 _KEEP_COORDS = frozenset(
@@ -162,7 +175,9 @@ def _group_for_request(names: list[str]) -> list[tuple[tuple, list[str]]]:
     return list(groups.items())
 
 
-def _build_request(date_iso: str, run_hour: int, group_vars: list[str], level_type: str, levels: tuple[str, ...]) -> dict:
+def _build_request(
+    date_iso: str, run_hour: int, group_vars: list[str], level_type: str, levels: tuple[str, ...]
+) -> dict:
     req: dict = {
         "date": dt.date.fromisoformat(date_iso),
         "time": run_hour,
@@ -314,7 +329,9 @@ def fetch(bbox, date, run, variable, **kwargs):
         return
 
     if bbox is None:
-        raise UsageError("--bbox is required (HRES is retrieved as global GRIB2 and subset locally).")
+        raise UsageError(
+            "--bbox is required (HRES is retrieved as global GRIB2 and subset locally)."
+        )
 
     date_iso = date.isoformat()
     names = _resolve_variables(variable)

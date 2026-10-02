@@ -15,7 +15,7 @@
 
 import sys
 
-from weather_skills_core import DataError, UsageError, weather_skill
+from weather_skills_core import DataError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
 from weather_skills_core.units import stamp_data_interval, to_standard_units
 
@@ -68,13 +68,16 @@ def _to_dataarray(raster, day_str: str):
     lat = np.linspace(north, south, n_lat, endpoint=False) - (north - south) / n_lat / 2
     lon = np.linspace(west, east, n_lon, endpoint=False) + (east - west) / n_lon / 2
 
-    all_hours = pd.date_range(f"{day_str}T00:00:00", periods=24, freq="h")  # naive UTC, not tz-aware
+    all_hours = pd.date_range(
+        f"{day_str}T00:00:00", periods=24, freq="h"
+    )  # naive UTC, not tz-aware
     if n_hours > 24:
         raise DataError(f"got {n_hours} hourly images for one day; expected <= 24.")
     time = all_hours[-n_hours:] if n_hours < 24 else all_hours
 
     da = xr.DataArray(
-        img, dims=("time", "latitude", "longitude"),
+        img,
+        dims=("time", "latitude", "longitude"),
         coords={"time": time, "latitude": lat, "longitude": lon},
     )
     return da

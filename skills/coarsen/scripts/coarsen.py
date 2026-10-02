@@ -88,7 +88,6 @@ def _clip_reference_axis(input_vals, ref_vals):
 )
 def coarsen(ds, variable, reference_grid, target_resolution, offset, **kwargs):
     """Coarsen/align onto a target grid (geometry only, linear)."""
-    import numpy as np
     import xarray as xr
     import xarray_regrid  # noqa: F401
 

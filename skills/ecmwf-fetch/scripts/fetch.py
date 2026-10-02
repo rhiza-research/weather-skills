@@ -65,6 +65,7 @@ _ECDS_URL = "https://ecds.ecmwf.int/api"
 def _ensure_datastores_url() -> None:
     os.environ.setdefault("ECMWF_DATASTORES_URL", _ECDS_URL)
 
+
 # Embargo detection: match this phrase on the exception chain (MarsRuntimeError
 # is not reliably importable from ecmwf.datastores). Keep narrow so generic
 # access/auth failures do not classify as embargo.
