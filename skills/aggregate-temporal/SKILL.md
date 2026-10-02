@@ -1,6 +1,6 @@
 ---
 name: aggregate-temporal
-description: Roll up a weather-skills standard dataset Zarr along its time axis (or forecast step axis) into fixed windows (daily, weekly, dekadal, monthly, or a pint duration like '21 day') or a rolling --window, with mean/min/max. Keeps data_interval; stamps aggregation_period, aggregation_coverage, and CF cell_methods. Rates in and rates out — use convert-to-totals for period amounts (refuses overlapping rolling series; select non-overlapping times first).
+description: Roll up a weather-skills standard dataset Zarr along its time axis (or forecast step axis) into fixed windows (daily, weekly, dekadal, monthly, or a pint duration like '21 day') or a rolling --window, with mean/min/max. Stamps the new output spacing as data_interval for --period, plus aggregation_period, aggregation_coverage, and CF cell_methods. Rates in and rates out — use convert-to-totals for period amounts (refuses overlapping rolling series; select non-overlapping times first).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py *)
@@ -71,12 +71,15 @@ Exactly one of `--period` or `--window` is required.
 
 On each aggregated data variable:
 
-- `data_interval` — native sample spacing from the fetch (kept when the input was uniform; omitted when the input had CF bounds).
+- `data_interval` — sample spacing of the **output**. A `--period` roll-up
+  sets it to the period (daily → `--period '21 day'` gives `21 day`). A
+  rolling `--window`, or an input already at the period, keeps the native
+  spacing from the fetch.
 - `aggregation_period` — pint duration for the window (`1 day`, `7 day`,
   `1 dekad`, `1 month`, `21 day`, or e.g. `7 day` for `--window 7` on daily
   data) used later by `convert-to-totals`.
 - `cell_methods` — CF statistic, e.g. `time: mean (interval: 1 day)`.
-  `interval:` is the **input** sample spacing when it is a scalar `data_interval`.
+  `interval:` is the **input** sample spacing (the native `data_interval`).
 
 On the time/step axis:
 
@@ -84,7 +87,7 @@ On the time/step axis:
   (0–1). Incomplete bins are kept. A native sample counts only if it has
   **finite data** (all-NaN unpublished forecast leads do not). A persistent
   spatial hole (land mask) does not mark the time as missing. Uniform:
-  finite count / (`aggregation_period / data_interval`). Irregular CF
+  finite count / (`aggregation_period / native spacing`). Irregular CF
   bounds: finite covered duration / window. convert-to-totals
   `--min-coverage` (default 1.0) drops incomplete bins.
 

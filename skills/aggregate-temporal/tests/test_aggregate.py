@@ -166,7 +166,7 @@ def test_aggregate_duration_21_day(tmp_path, aggregate):
 
 
 def test_aggregate_21_day_partial_stamps_coverage(tmp_path, aggregate):
-    """19 of 21 daily samples → one bin with coverage 19/21."""
+    """19 of 21 daily samples → one bin with coverage 19/21, stamped 21 day."""
     src = write_zarr(make_gridded(n_time=19, fill=3.0), tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
 
@@ -183,7 +183,8 @@ def test_aggregate_21_day_partial_stamps_coverage(tmp_path, aggregate):
     ds = xr.open_zarr(out, consolidated=True)
     assert ds.sizes["time"] == 1
     assert ds["precip"].attrs.get("aggregation_period") == "21 day"
-    assert ds["precip"].attrs.get("data_interval") == "1 day"
+    # data_interval is the output spacing, not the native 1 day.
+    assert ds["precip"].attrs.get("data_interval") == "21 day"
     assert float(ds["aggregation_coverage"].values[0]) == pytest.approx(19 / 21)
 
 
