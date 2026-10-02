@@ -2,7 +2,7 @@
 name: pbc-fetch
 description: Fetch a PBC (probabilistic bias correction) AI Weather Quest precipitation forecast from gs://sheerwater-datalake/pbc-data and write a weather-skills standard dataset Zarr. Quintile probabilities on the 1.5° AI-WQ grid (`pr`, units 1, dim `quintile` 0.2/0.4/0.6/0.8/1.0). `--dataset era5-p_pr_19` (aliases `pr_19`, `p1`) is week 3, days 19–25; `era5-p_pr_26` (`pr_26`, `p2`) is week 4, days 26–32. Use when a task needs StillLearning / PBC subseasonal precip probabilities from the Sheerwater datalake — not dynamical-fetch or ecmwf-fetch. Private GCS; inject NEURAL_GCM_SERVICE_CREDENTIALS (the service-account key JSON itself, no file needed) or GOOGLE_APPLICATION_CREDENTIALS (a key file path) on the first call if ADC is not already configured.
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads private GCS gs://sheerwater-datalake/pbc-data via gcsfs. Requires Google Cloud credentials: NEURAL_GCM_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`.
+compatibility: "Requires Python 3.12 and uv. Reads private GCS gs://sheerwater-datalake/pbc-data via gcsfs. Requires Google Cloud credentials: NEURAL_GCM_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"

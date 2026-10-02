@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Forecast vs observation verification on a shared grid — hits (event classification), bias (forecast − obs), or MAE (|forecast − obs|). Cell-by-cell only: coarsen --obs onto the forecast lat/lon grid first, and align time with step-to-time / aggregate-temporal. The output Zarr is the metric field to plot with plot-verify. Do not coarsen inputs just to draw them; plot with two heatmap traces keeps each dataset on its own grid.
+description: "Forecast vs observation verification on a shared grid — hits (event classification), bias (forecast − obs), or MAE (|forecast − obs|). Cell-by-cell only: coarsen --obs onto the forecast lat/lon grid first, and align time with step-to-time / aggregate-temporal. The output Zarr is the metric field to plot with plot-verify. Do not coarsen inputs just to draw them; plot with two heatmap traces keeps each dataset on its own grid."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py *)

@@ -1,6 +1,6 @@
 ---
 name: inspect-zarr
-description: Inspect a weather-skills standard dataset Zarr — print dimension sizes, coordinate values, and a data-variable summary (names, dims, dtype, units, min/max/mean, finite/NaN counts, truncated value sample). Use when you need to see what is in a Zarr before clipping, selecting, aggregating, or plotting, or to confirm values after a fetch. Data arrays can be huge: this skill never dumps them in full.
+description: "Inspect a weather-skills standard dataset Zarr — print dimension sizes, coordinate values, and a data-variable summary (names, dims, dtype, units, min/max/mean, finite/NaN counts, truncated value sample). Use when you need to see what is in a Zarr before clipping, selecting, aggregating, or plotting, or to confirm values after a fetch. Data arrays can be huge: this skill never dumps them in full."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/inspect_zarr.py *)

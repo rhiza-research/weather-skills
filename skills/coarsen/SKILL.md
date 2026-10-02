@@ -1,6 +1,6 @@
 ---
 name: coarsen
-description: Coarsen or align a weather-skills standard dataset Zarr by linearly interpolating it onto a target grid. Prefer --reference-grid PATH to copy another Zarr's exact lat/lon (avoids float mismatch on difference/verify). Or pass --target-resolution and --offset for a synthetic grid (points at offset + k*resolution). Equal or near-equal resolution is a lateral realign (same spacing, different offset — including a half-cell shift). Geometry-only — changes spacing/alignment, adds no information. Use before difference or verify, which subtract cell by cell. Do not coarsen just to plot: `plot` draws two heatmap traces as two panels, each on its own lat/lon grid.
+description: "Coarsen or align a weather-skills standard dataset Zarr by linearly interpolating it onto a target grid. Prefer --reference-grid PATH to copy another Zarr's exact lat/lon (avoids float mismatch on difference/verify). Or pass --target-resolution and --offset for a synthetic grid (points at offset + k*resolution). Equal or near-equal resolution is a lateral realign (same spacing, different offset — including a half-cell shift). Geometry-only — changes spacing/alignment, adds no information. Use before difference or verify, which subtract cell by cell. Do not coarsen just to plot: `plot` draws two heatmap traces as two panels, each on its own lat/lon grid."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/coarsen.py *)
