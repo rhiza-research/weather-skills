@@ -85,14 +85,11 @@ integer, floating-point, and other dtypes are left untouched.
 ### Input units
 
 The output variable keeps the first input's attrs, including its `units`.
-When the two inputs carry a variable's `units` attr in differing values, the
-subtraction would mix incompatible scales, so a warning naming each input (by
-its full path) and its units is printed to stderr and the run proceeds —
-convert the inputs onto one units basis with `unit-convert` first. The check
-keys on the full input path rather than the basename, so two inputs that share
-a filename in different directories are still compared as distinct inputs.
-Only string `units` values are compared, after stripping surrounding
-whitespace; an input that omits `units` is not treated as a difference.
+The subtraction is units-aware: when the two inputs carry a variable in
+different but compatible `units` (e.g. `mm day-1` and `mm hour-1`, or `m` and
+`km`), B is converted to A's units before subtracting, so no manual
+`unit-convert` step is needed. Incompatible units (e.g. `K` minus `mm`) stop
+the run with an error and write no output.
 
 ### Output
 
