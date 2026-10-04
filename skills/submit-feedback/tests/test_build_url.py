@@ -13,7 +13,7 @@ def test_build_url_prints_github_link(capsys, submit_feedback):
     run_skill(submit_feedback, "--title", "Plot bug", "--body", "Heatmap axis labels overlap.")
 
     out = capsys.readouterr().out
-    assert "github.com/rhiza-research/forecasting-skills/issues/new" in out
+    assert "github.com/rhiza-research/weather-skills/issues/new" in out
     assert "title=Plot%20bug" in out
 
 

@@ -55,7 +55,7 @@ verifies it fits.
 uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py --title <title> (--body <text> | --body-file <path>)
 ```
 
-Issues are always filed to the `rhiza-research/forecasting-skills` repository;
+Issues are always filed to the `rhiza-research/weather-skills` repository;
 the target is built in and not configurable.
 
 ### Arguments

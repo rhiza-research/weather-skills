@@ -103,7 +103,7 @@ dataset output.
 
 ## Install
 
-These skills live at <https://github.com/rhiza-research/forecasting-skills>.
+These skills live at <https://github.com/rhiza-research/weather-skills>.
 There are three ways to use them.
 
 ### As a Claude Code plugin
@@ -111,7 +111,7 @@ There are three ways to use them.
 Install the plugin once — add the marketplace, then install the plugin:
 
 ```bash
-claude plugin marketplace add rhiza-research/forecasting-skills
+claude plugin marketplace add rhiza-research/weather-skills
 claude plugin install rhiza-forecasting@weather-skills
 ```
 
@@ -153,16 +153,16 @@ single `forecasting-skills` binary:
 
 ```bash
 # One-shot, no install — list available skills
-uvx --from git+https://github.com/rhiza-research/forecasting-skills forecasting-skills
+uvx --from git+https://github.com/rhiza-research/weather-skills forecasting-skills
 
 # Run one
-uvx --from git+https://github.com/rhiza-research/forecasting-skills forecasting-skills <skill> [args]
+uvx --from git+https://github.com/rhiza-research/weather-skills forecasting-skills <skill> [args]
 ```
 
 Or install once and invoke directly:
 
 ```bash
-uv tool install git+https://github.com/rhiza-research/forecasting-skills
+uv tool install git+https://github.com/rhiza-research/weather-skills
 forecasting-skills                          # list
 forecasting-skills <skill> [args]           # run one
 ```
@@ -180,30 +180,30 @@ to always pull the newest):
 
 ```bash
 # List what skillkit discovers in the repo
-npx skillkit install rhiza-research/forecasting-skills --list
+npx skillkit install rhiza-research/weather-skills --list
 
 # Install all skills to the current project
-npx skillkit install rhiza-research/forecasting-skills --all --yes
+npx skillkit install rhiza-research/weather-skills --all --yes
 
 # Install globally so any project can use them
-npx skillkit install rhiza-research/forecasting-skills --all --yes --global
+npx skillkit install rhiza-research/weather-skills --all --yes --global
 
 # Target a specific agent (otherwise skillkit installs for every agent it detects)
-npx skillkit install rhiza-research/forecasting-skills --all --yes --agent claude-code
+npx skillkit install rhiza-research/weather-skills --all --yes --agent claude-code
 
 # Install just a subset
-npx skillkit install rhiza-research/forecasting-skills --skill=ecmwf-fetch
-npx skillkit install rhiza-research/forecasting-skills --skills=clip-region,difference
+npx skillkit install rhiza-research/weather-skills --skill=ecmwf-fetch
+npx skillkit install rhiza-research/weather-skills --skills=clip-region,difference
 
 # Overwrite an existing install
-npx skillkit install rhiza-research/forecasting-skills --all --yes --force
+npx skillkit install rhiza-research/weather-skills --all --yes --force
 ```
 
 Pin in a manifest for team / reproducible use:
 
 ```bash
 npx skillkit manifest init
-npx skillkit manifest add rhiza-research/forecasting-skills
+npx skillkit manifest add rhiza-research/weather-skills
 npx skillkit manifest install
 ```
 

@@ -18,7 +18,7 @@ _SKILL_VERSION = "0.0.2"
 
 # The target repository is fixed so feedback always lands in the right place and
 # the caller cannot direct it elsewhere by guessing a slug.
-REPO = "rhiza-research/forecasting-skills"
+REPO = "rhiza-research/weather-skills"
 
 # The clean ceiling GitHub accepts for a prefilled new-issue URL. Above it GitHub
 # starts erroring (500s) well before the hard 414, so this is the usable limit.
