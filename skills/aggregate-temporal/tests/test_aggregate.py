@@ -442,3 +442,15 @@ def test_weekly_period_on_weekly_step_keeps_values(tmp_path, aggregate):
     np.testing.assert_allclose(weekly["tp"].values[:, 0, 0], [1, 4, 9, 16, 25, 36])
     assert weekly["tp"].attrs.get("aggregation_period") == "7 day"
     assert weekly["tp"].attrs.get("data_interval") == "7 day"
+
+
+def test_monthly_on_a_lead_axis_is_refused(tmp_path, aggregate):
+    """Pins current behaviour: the description says the skill rolls up "the time axis (or
+    forecast step axis)" into windows including monthly, but monthly on step is refused, so a
+    monthly forecast pipeline must run step-to-time first."""
+    fc = make_forecast(n_step=62, members=2)
+    fc["tp"].attrs.update(units="mm day-1")
+    src = write_zarr(fc, tmp_path / "fc.zarr")
+    run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "w.zarr"), "--period", "weekly")
+    with pytest.raises((Exception, SystemExit)):
+        run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "m.zarr"), "--period", "monthly")

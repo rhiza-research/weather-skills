@@ -28,7 +28,19 @@ def evaluate_spec(ds, spec, dim: str, variable_override: str | None) -> xr.DataA
     combine = spec.combinator or "and"
     for other in masks[1:]:
         out = _combine(out, other, combine)
-    return out.astype("float32")
+    return _uniform_chunks(out.astype("float32"), ds, dim)
+
+
+def _uniform_chunks(mask: xr.DataArray, ds, dim: str) -> xr.DataArray:
+    """Rechunk ``dim`` uniformly: shift/concat (after/within) leave ragged dask chunks,
+    which Zarr refuses to write."""
+    if mask.chunks is None or dim not in mask.dims:
+        return mask
+    size = next(
+        (v.chunksizes[dim][0] for v in ds.data_vars.values() if v.chunks and dim in v.dims),
+        -1,
+    )
+    return mask.chunk({dim: size if size and size > 0 else -1})
 
 
 def apply_reductions(
@@ -77,7 +89,7 @@ def _evaluate_clause(da: xr.DataArray, clause, dim: str) -> xr.DataArray:
     da = _strip_pint(da)
     core = _core_mask(da, clause, dim)
     if clause.after is not None:
-        core = core.shift({dim: -int(clause.after)})
+        core = _shift_back(core, dim, int(clause.after))
     if clause.within is not None:
         core = _within(core, dim, int(clause.within))
     if clause.negate:
@@ -145,11 +157,18 @@ def _left_roll(da: xr.DataArray, dim: str, window: int, method: str) -> xr.DataA
     return out.reindex({dim: axis})
 
 
+def _shift_back(mask: xr.DataArray, dim: str, k: int) -> xr.DataArray:
+    """``mask.shift({dim: -k})``; all-NaN when k >= the axis length (dask pad fails there)."""
+    if k >= mask.sizes[dim]:
+        return xr.full_like(mask, np.nan, dtype="float32")
+    return mask.shift({dim: -k})
+
+
 def _within(mask: xr.DataArray, dim: str, days: int) -> xr.DataArray:
     """True if ``mask`` is True on any of the next ``days`` labels; NaN if incomplete."""
     if days < 1:
         raise UsageError(f"within window must be >= 1d; got {days}")
-    shifted = [mask.shift({dim: -k}) for k in range(1, days + 1)]
+    shifted = [_shift_back(mask, dim, k) for k in range(1, days + 1)]
     stack = xr.concat(shifted, dim="_look")
     complete = stack.notnull().all("_look")
     hit = (stack == 1).any("_look")
