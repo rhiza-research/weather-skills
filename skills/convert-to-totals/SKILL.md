@@ -59,7 +59,9 @@ a non-overlapping subset, then convert-to-totals. A **single** time/step
 point (one aggregated bin) is allowed — including after `select` has already
 collapsed that dim away (spatial-only map). In that case conversion uses the
 stamped `aggregation_period` alone; `--min-coverage` and the overlap gate
-do not apply.
+do not apply — so selecting a single bin *before* this skill switches them
+off, and an incomplete week is published as a total. Convert the full
+series first, then `select` the bin you want.
 
 ### Output metadata
 
