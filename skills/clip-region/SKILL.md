@@ -54,6 +54,22 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py --input <in.zarr> --output <out.zarr>
 
 Longitudes in `[0, 360]` are auto-wrapped to `[-180, 180]` before clipping, so a global grid stored in the `[0, 360]` convention still intersects bboxes/polygons that use negative lon.
 
+`--bbox` longitudes may be written in either convention (`[-180, 180]` or
+`[0, 360]`); values above 180 are mapped onto `[-180, 180]` first. West > east
+means the box runs east from W across a seam to E, and is honoured only when
+that span is at most 180°:
+
+- `10/170/-10/-170` — crosses the antimeridian (a 20° Pacific box).
+- `10/350/-10/10` — crosses the 0/360 meridian, written in 0..360 notation.
+- `10/42/-10/34` — refused with a usage error (exit 2): read as a wrap it is a
+  352° band, the complement of the 8° box, so W/E are almost certainly
+  swapped. Write a genuinely wider dateline box in 0..360 notation instead
+  (`10/100/-10/300`).
+
+Whenever a box crosses a seam, a `clip-region: note: --bbox crosses …` line on
+stderr says which span was selected. N > S is required; a swapped N/S selects
+nothing and exits 1.
+
 ### Output
 
 A spatial subset of the input Zarr with provenance history stamped.

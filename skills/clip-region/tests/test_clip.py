@@ -29,6 +29,72 @@ def test_clip_bbox_subsets_and_stamps_history(tmp_path, clip_region):
     assert load_history(out)[-1]["skill"] == "clip-region"
 
 
+def test_clip_bbox_swapped_west_east_is_refused(tmp_path, clip_region):
+    # W/E swapped (12.5 > 10.5) on a box that cannot be a seam crossing: the
+    # wrapped reading would be a 358° band, i.e. the complement of the box.
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    with pytest.raises(SystemExit) as exc:
+        run_skill(clip_region, "-i", str(src), "-o", str(out), "--bbox", "2.5/12.5/0.5/10.5")
+    assert exc.value.code == 2
+    assert not Path(out).exists()
+
+
+def test_clip_bbox_swapped_negative_lons_is_refused(tmp_path, clip_region):
+    src = write_zarr(make_gridded(lons=(-80.0, -75.0, -70.0, 10.0)), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    with pytest.raises(SystemExit) as exc:
+        run_skill(clip_region, "-i", str(src), "-o", str(out), "--bbox", "2.5/-70.5/0.5/-79.5")
+    assert exc.value.code == 2
+
+
+def test_clip_bbox_antimeridian_wrap_kept_and_noted(tmp_path, clip_region, capsys):
+    src = write_zarr(
+        make_gridded(lons=(-175.0, -170.0, -100.0, 0.0, 100.0, 170.0, 175.0)),
+        tmp_path / "in.zarr",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(clip_region, "-i", str(src), "-o", str(out), "--bbox", "2.5/168/0.5/-172")
+    ds = xr.open_zarr(out, consolidated=True)
+    assert sorted(float(v) for v in ds.longitude.values) == [-175.0, 170.0, 175.0]
+    assert "note: --bbox crosses the antimeridian" in capsys.readouterr().err
+
+
+def test_clip_bbox_antimeridian_on_0_360_grid(tmp_path, clip_region, capsys):
+    src = write_zarr(
+        make_gridded(lons=(100.0, 170.0, 175.0, 185.0, 190.0, 260.0)),
+        tmp_path / "in.zarr",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(clip_region, "-i", str(src), "-o", str(out), "--bbox", "2.5/168/0.5/-172")
+    ds = xr.open_zarr(out, consolidated=True)
+    assert sorted(float(v) for v in ds.longitude.values) == [-175.0, 170.0, 175.0]
+    assert "note: --bbox crosses the antimeridian" in capsys.readouterr().err
+
+
+def test_clip_bbox_0_360_notation_crossing_prime_meridian(tmp_path, clip_region, capsys):
+    # W=350 > E=10 written in 0..360 notation is a 20° box across 0°/360°.
+    src = write_zarr(make_gridded(lons=(-20.0, -5.0, 0.0, 5.0, 20.0)), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(clip_region, "-i", str(src), "-o", str(out), "--bbox", "2.5/350/0.5/10")
+    ds = xr.open_zarr(out, consolidated=True)
+    assert [float(v) for v in ds.longitude.values] == [-5.0, 0.0, 5.0]
+    assert "note: --bbox crosses the 0/360 meridian" in capsys.readouterr().err
+
+
+def test_clip_bbox_0_360_notation_east_past_180(tmp_path, clip_region, capsys):
+    # W < E as written in 0..360 notation, but E > 180: the box crosses ±180.
+    src = write_zarr(
+        make_gridded(lons=(-175.0, -100.0, 0.0, 100.0, 175.0)),
+        tmp_path / "in.zarr",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(clip_region, "-i", str(src), "-o", str(out), "--bbox", "2.5/170/0.5/190")
+    ds = xr.open_zarr(out, consolidated=True)
+    assert sorted(float(v) for v in ds.longitude.values) == [-175.0, 175.0]
+    assert "note: --bbox crosses the antimeridian" in capsys.readouterr().err
+
+
 def test_clip_region_rejects_bbox_together(tmp_path, clip_region):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
