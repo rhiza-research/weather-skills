@@ -14,6 +14,7 @@ from weather_skills_core.units import (
     convert_dataarray,
     to_standard_units,
     units_equal,
+    variable_units,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
@@ -63,8 +64,10 @@ def unit_convert(ds, variable, to_units, to_standard, standard_name, **kwargs):
     out = ds.copy()
     for name in names:
         da = ds[name]
-        src_units = da.attrs.get("units")
-        if not (isinstance(src_units, str) and src_units.strip()):
+        # The decorator quantifies on open, moving the units attr into the
+        # pint quantity; read from there first, then fall back to attrs.
+        src_units = variable_units(da)
+        if src_units is None:
             raise UsageError(f"variable '{name}' has no units attr")
         if units_equal(src_units, to_units):
             converted_da, density_converted = da, False
@@ -94,6 +97,9 @@ def unit_convert(ds, variable, to_units, to_standard, standard_name, **kwargs):
                 new_name = None
             else:
                 new_name = source_name
+        if converted_da.pint.units is not None:
+            # Write the caller's --to-units spelling, not pint's on dequantify.
+            converted_da = converted_da.pint.dequantify()
         attrs = {**converted_da.attrs, "units": to_units}
         if new_name is None:
             attrs.pop("standard_name", None)
