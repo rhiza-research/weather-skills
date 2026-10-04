@@ -10,9 +10,27 @@
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import detect_spatial_dims
 from weather_skills_core.standard_utils import latitude_weights
+from weather_skills_core.units import ureg
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
+
+
+def _weighted_mean(da, weights, dims):
+    """Weighted mean on magnitudes, units re-attached.
+
+    xarray's weighted mean is ``sum(w * x) / sum(w)``. pint refuses that for
+    offset units (``degree_Celsius``) even though the result — a convex
+    combination — is a well-defined temperature in the same unit. Strip the
+    quantity, average the magnitudes, and re-quantify with the input unit.
+    """
+    units = da.pint.units
+    if units is None:
+        return da.weighted(weights).mean(dim=dims, keep_attrs=True)
+    plain = da.copy(data=da.pint.magnitude)
+    mean = plain.weighted(weights).mean(dim=dims, keep_attrs=True)
+    # Re-wrap the data only: .pint.quantify() would also re-quantify coords.
+    return mean.copy(data=ureg.Quantity(mean.data, units))
 
 
 @weather_skill(
@@ -64,7 +82,7 @@ def summarize_dim(ds, variable, dim, method, lat_weighted, **kwargs):
         elif method == "std":
             out[var] = da.std(dim=rdims, keep_attrs=True, ddof=1)
         elif method == "mean" and lat_weighted and lat_dim in rdims:
-            out[var] = da.weighted(latitude_weights(ds[lat_dim])).mean(dim=rdims, keep_attrs=True)
+            out[var] = _weighted_mean(da, latitude_weights(ds[lat_dim]), rdims)
         else:
             out[var] = getattr(da, method)(dim=rdims, keep_attrs=True)
 
