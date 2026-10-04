@@ -429,7 +429,7 @@ jobs:
           git config user.name "forecasting-skills-release-bot[bot]"
           git config user.email "3799090+forecasting-skills-release-bot[bot]@users.noreply.github.com"
 
-          # Stage exactly the plugin payload from main: manifest, agent, skills,
+          # Stage exactly the plugin payload from main: manifest, agents, skills,
           # and the LICENSE whose terms the manifest declares. Nothing else in
           # the repo is copied, so the published plugin never carries demo/,
           # tools/, CI, or tests.
@@ -437,7 +437,7 @@ jobs:
           rm -rf "$stage"
           mkdir -p "$stage/.claude-plugin" "$stage/agents"
           cp .claude-plugin/plugin.json "$stage/.claude-plugin/plugin.json"
-          cp agents/forecaster.md "$stage/agents/forecaster.md"
+          cp agents/*.md "$stage/agents/"
           cp LICENSE "$stage/LICENSE"
           cp -R skills "$stage/skills"
 
