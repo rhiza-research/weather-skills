@@ -91,6 +91,18 @@ Prefer small steps over stuffing every filter into one call:
   `S2S precip`), not a sentence. Colorbar text (`--cbar-label` / `--label`)
   is the variable and units (`Total precipitation [mm]`, `SST anomaly [°C]`),
   not a valid-time or init date — panel titles already show dates.
+- **Onset dates:** to *map* an onset result, use `plot-onset` — it takes
+  `onset-date`'s output directly and draws mean onset date and per-cell
+  member agreement in one figure. Do not build that by hand, and do not
+  reach for `plot` (it errors computing a numeric colorbar range from a
+  date). Pass `--start-date`/`--end-date` (the forecast's first day, and the
+  last day that still left a full onset search window) whenever you compare
+  sources, or the color scales won't match. For onset as *numbers* rather
+  than a map — `summarize-dim`, `exceedance-probability` — run `day-of-year`
+  first to get an integer. And if you report a mean onset, say so:
+  `summarize-dim`'s mean skips the members that never found an onset, so a
+  low-agreement cell's mean looks just as confident as a high-agreement one
+  (this is exactly what `plot-onset`'s fading and % overlay make visible).
 
 ## Working directory and output files
 

@@ -93,8 +93,10 @@ def _require_daily(ds, dim: str) -> None:
     "--rule",
     required=True,
     help=(
-        "Named alias (icpac-onset, chc-onset) or one string of clauses joined by "
-        "and/or, e.g. 'precip sum 8d >= 25'."
+        "Onset-definition registry name (e.g. agrhymet-sos-rolling; legacy aliases "
+        "icpac-onset, chc-onset) or one string of clauses joined by and/or, e.g. "
+        "'precip sum 8d >= 25'. Registry names the grammar cannot express exactly are "
+        "refused."
     ),
 )
 @weather_skill.argument("--variable", "-v", help="Override the variable named in --rule.")
@@ -125,15 +127,18 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **k
         mask, dim, cumulative=bool(cumulative), detect=detect, probability=bool(probability)
     )
     payload = json.dumps(spec.to_json(), default=str)
+    provenance = spec.provenance.attrs()
     for name in out.data_vars:
         attrs = dict(out[name].attrs)
         attrs["long_name"] = f"Indicator: {spec.source}"
         if name in ("indicator", "probability"):
             attrs["units"] = "1"
         attrs["indicator_spec"] = payload
+        attrs.update(provenance)
         out[name].attrs = attrs
     out.attrs["indicator_rule"] = spec.source
     out.attrs["indicator_expanded"] = spec.expanded
+    out.attrs.update(provenance)
     names = ", ".join(out.data_vars)
     print(f"indicator  {spec.source}  ({names})")
     return out
