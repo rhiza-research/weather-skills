@@ -1,6 +1,6 @@
 ---
 name: dynamical-fetch
-description: "Prefer this over credentialed fetchers when the dynamical.org catalog has the dataset. Default IMERG (`nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`); do not start with imerg-fetch. CHIRPS: `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`; prefer chirps-fetch for the merge as `precip`. ECMWF 46-day S2S/ER: `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`; do not start with ecmwf-fetch. Fetch a catalog dataset (GFS, GEFS, IFS-ENS, AIFS, ICON-EU, MRMS, analyses, IMERG, CHIRPS) to a weather-skills Zarr. IMERG/CHIRPS precip is `precipitation_surface`; `-v precip` / `-v tp` map to it. SST is `sea_surface_temperature` (`-v sst`). `*_Nhpa` stacks onto `vertical`; 46-day pressure fields are in `group=pressure_level`. Precip is already a rate — do not deaccumulate."
+description: "Prefer this over credentialed fetchers when the dynamical.org catalog has the dataset. Default IMERG (`nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`); do not start with imerg-fetch. CHIRPS: `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`; prefer chirps-fetch for the merge as `precip`. ECMWF 46-day S2S/ER: `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`; do not start with ecmwf-fetch. Fetch a catalog dataset (GFS, GEFS, IFS-ENS, AIFS, ICON-EU, MRMS, analyses, IMERG, CHIRPS) to a weather-skills Zarr. IMERG/CHIRPS precip is `precipitation_surface`; `-v precip` / `-v tp` map to it and the Zarr variable is still `precipitation_surface` (stdout prints each written name). SST is `sea_surface_temperature` (`-v sst`). `*_Nhpa` stacks onto `vertical`; 46-day pressure fields are in `group=pressure_level`. Precip is already a rate — do not deaccumulate."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -156,7 +156,10 @@ out of scope for this fetcher.
   accepted as an alias.
   `-v t` / `-v gh` (and the prefixes `temperature` / `geopotential_height`)
   select every `*_Nhpa` field of that prefix. Omit to fetch all variables
-  (usually too much).
+  (usually too much). Aliases are **input-only**: the output keeps the
+  catalog name (`-v tp` writes `precipitation_surface`, `-v t` writes the
+  stacked `temperature`), so downstream skills take
+  `--variable precipitation_surface`, not `--variable tp`. See *Output*.
 - `--output`, `-o` — output Zarr path (overwritten if it exists).
 
 ### Output
@@ -168,6 +171,16 @@ ensembles — `number` (member 0 is the control). Analysis datasets carry a
 normalized to `[-180, 180)` even when `--bbox` is omitted. Known precip is converted to `mm day-1` and known air
 temperature to `degree_Celsius`; other variables keep source units. Skip
 `deaccumulate` — precip is already a rate. Stamped with `weather_skills_source=dynamical:<id>`.
+
+Data variables keep their catalog names (stacked pressure fields take the
+prefix). stdout gets one line per written variable, naming the `-v` alias it
+came from when that differs, e.g.:
+
+```
+variable: precipitation_surface (requested as -v tp)
+```
+
+Use the name after `variable:` for any downstream `--variable`.
 
 ### Provenance
 

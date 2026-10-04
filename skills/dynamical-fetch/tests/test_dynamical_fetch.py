@@ -129,6 +129,66 @@ def test_imerg_quality_index_does_not_block_standard_units(tmp_path, mod, fetch)
     assert "aggregation_coverage" not in written.coords
 
 
+def _precip_forecast_catalog_ds():
+    ds = _forecast_catalog_ds().rename({"tp": "precipitation_surface"})
+    ds["precipitation_surface"] = ds["precipitation_surface"] * 1e-5
+    ds["precipitation_surface"].attrs["units"] = "kg m-2 s-1"
+    return ds
+
+
+def test_alias_writes_catalog_name_and_reports_it_on_stdout(tmp_path, mod, fetch, capsys):
+    # `-v tp` is an input alias: the Zarr keeps the catalog name (the skill's
+    # documented convention), and stdout names what was written so a
+    # downstream `--variable` can use it.
+    out = tmp_path / "out.zarr"
+    state = {"ds": _precip_forecast_catalog_ds(), "shape": "forecast"}
+
+    with patch.object(mod, "_open_dataset", return_value=state):
+        run_skill(
+            fetch, "--dataset", "test-forecast", "--date", "2026-01-01", "-v", "tp", "-o", str(out)
+        )
+
+    written = xr.open_zarr(out, consolidated=True)
+    assert list(written.data_vars) == ["precipitation_surface"]
+    stdout = capsys.readouterr().out
+    assert stdout.splitlines() == ["variable: precipitation_surface (requested as -v tp)"]
+
+
+def test_stdout_names_stacked_pressure_variable(tmp_path, mod, fetch, capsys):
+    out = tmp_path / "out.zarr"
+    state = {"ds": _ifs_like_forecast_ds(), "shape": "forecast"}
+
+    with patch.object(mod, "_open_dataset", return_value=state):
+        run_skill(
+            fetch,
+            "--dataset",
+            "ecmwf-ifs-ens-forecast-15-day-0-25-degree",
+            "--date",
+            "2026-01-01",
+            "-v",
+            "t",
+            "-v",
+            "temperature_2m",
+            "-o",
+            str(out),
+        )
+
+    assert capsys.readouterr().out.splitlines() == [
+        "variable: temperature (requested as -v t)",
+        "variable: temperature_2m",
+    ]
+
+
+def test_stdout_lists_all_variables_without_v(tmp_path, mod, fetch, capsys):
+    out = tmp_path / "out.zarr"
+    state = {"ds": _precip_forecast_catalog_ds(), "shape": "forecast"}
+
+    with patch.object(mod, "_open_dataset", return_value=state):
+        run_skill(fetch, "--dataset", "test-forecast", "--date", "2026-01-01", "-o", str(out))
+
+    assert capsys.readouterr().out.splitlines() == ["variable: precipitation_surface"]
+
+
 def test_open_dataset_falls_back_to_staging(mod, monkeypatch):
     calls = {"list": 0, "cleared": 0}
 
