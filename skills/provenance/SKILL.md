@@ -74,10 +74,15 @@ branch stays identified.
 
 ### `script`
 
-Emits a runnable bash reproduction that regenerates the artifact. Every line
-is a full literal `uvx --from git+<repo>@<commit> forecasting-skills <skill> …`
-command, so a skill that ran from a branch is pinned to that commit. Steps
-without a recorded commit fall back to the default `weather-skills` repo.
+Emits a runnable bash reproduction that regenerates the artifact. Every
+`weather-skills` step is a full literal
+`uvx --from git+<repo>@<commit> forecasting-skills <skill> …` command, so a
+skill that ran from a branch is pinned to that commit. Steps without a
+recorded commit run from the `dev` branch of their default repo, and a header
+comment lists them. Plotting skills (`plot`, `plot-timeseries`,
+`plot-mediogram`, `plot-verify`) have no CLI: the script clones
+`weather-skills-plotting` at the step's commit (or `dev`) once and runs the
+skill's script from that checkout with `uv run`.
 
 - A single-input path reproduces linearly: each step's output threads into
   the next step's `--input`; fetch steps take no `--input`; intermediates
@@ -85,6 +90,9 @@ without a recorded commit fall back to the default `weather-skills` repo.
 - Any multi-input join (`concat`, `difference`, `plot-mediogram`, …) reproduces
   each parent subgraph to a distinctly-named file, then emits one final
   command that takes every branch as an `--input`. Nested joins recurse.
+- A subgraph shared by several branches (e.g. an ensemble and its mean, both
+  built from the same fetch) is reproduced once; later branches reuse its
+  file instead of re-fetching.
 - A two-input plot that still stores separate tEXt keys reproduces each
   labeled branch, then emits one final plot command.
 - A branch whose head is not a fetcher still emits the `<UPSTREAM>` caveat
@@ -134,7 +142,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py -i /tmp/forecast.zarr --check
   (underscored, e.g. `time_dim`); the script translates them back to CLI
   flags (`--time-dim`). Booleans become a bare flag when true and are
   omitted when false; list values become one repeated flag per element;
-  `None` values are omitted.
+  `None` values are omitted. Object values (a plot `--spec`) are emitted
+  as single-quoted JSON.
 - **Fetch-step credentials.** Fetch steps read credentials from the
   environment at run time. The emitted script calls the fetcher but embeds
   no secret value.

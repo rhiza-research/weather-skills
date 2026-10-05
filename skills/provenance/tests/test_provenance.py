@@ -183,3 +183,68 @@ def test_check_accepts_stamped_join(tmp_path, provenance, capsys):
 
     captured = capsys.readouterr().out
     assert "valid weather_skills_history" in captured
+
+
+def _fetch(skill, **args):
+    return {"skill": skill, "version": "0.0.2", "args": args, "input": None}
+
+
+def _step(skill, **args):
+    return {"skill": skill, "version": "0.0.2", "args": args, "input": {"basename": "x.zarr"}}
+
+
+def test_script_quotes_structured_args_as_json(tmp_path, provenance, capsys):
+    spec = {"title": "Kenya rain", "traces": [{"input": "a"}]}
+    history = [
+        _fetch("chirps-fetch", bbox="1/2/3/4"),
+        {**_step("plot-timeseries", spec=spec)},
+    ]
+    out = _stamp_history(tmp_path / "plot.zarr", history)
+
+    run_skill(provenance, "-i", str(out), "--format", "script")
+
+    captured = capsys.readouterr().out
+    assert """--spec '{"title": "Kenya rain", "traces": [{"input": "a"}]}'""" in captured
+
+
+def test_script_unpinned_steps_use_dev_and_plotting_checkout(tmp_path, provenance, capsys):
+    history = [_fetch("chirps-fetch"), _step("plot-timeseries")]
+    out = _stamp_history(tmp_path / "plot.zarr", history)
+
+    run_skill(provenance, "-i", str(out), "--format", "script")
+
+    captured = capsys.readouterr().out
+    assert "git+https://github.com/rhiza-research/weather-skills@dev forecasting-skills" in captured
+    assert "No commit was recorded for: chirps-fetch, plot-timeseries" in captured
+    assert (
+        'CHECKOUT_1="$(_checkout https://github.com/rhiza-research/weather-skills-plotting dev)"'
+        in captured
+    )
+    assert 'uv run "$CHECKOUT_1/skills/plot-timeseries/scripts/plot_timeseries.py"' in captured
+
+
+def test_script_reuses_shared_branch_prefix(tmp_path, provenance, capsys):
+    base = [_fetch("kenya-forecast-fetch", date="2026-10-03"), _step("step-to-time")]
+    history = [
+        {
+            "skill": "concat",
+            "version": "0.0.2",
+            "args": {"dim": "model"},
+            "input": [
+                {"basename": "members.zarr", "hash": "aa", "history": base},
+                {
+                    "basename": "mean.zarr",
+                    "hash": "bb",
+                    "history": base + [_step("summarize-dim", dim=["number"])],
+                },
+            ],
+        }
+    ]
+    out = _stamp_history(tmp_path / "join.zarr", history)
+
+    run_skill(provenance, "-i", str(out), "--format", "script")
+
+    captured = capsys.readouterr().out
+    assert captured.count("forecasting-skills kenya-forecast-fetch") == 1
+    assert "summarize-dim --dim number --input a.zarr --output b.zarr" in captured
+    assert "--input a.zarr --input b.zarr" in captured
