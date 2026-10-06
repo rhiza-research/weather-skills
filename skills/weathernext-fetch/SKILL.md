@@ -163,8 +163,7 @@ generic `select` skill (`--dim step`) on the result.
   (repeatable). Default: all six.
 - `--max-lead` — keep only leads up to this many hours after init (e.g.
   `--max-lead 48`). Cuts the download proportionally.
-- `--billing-project` — GCP project billed for requester-pays reads (v3
-  ensemble). Default `$GOOGLE_CLOUD_PROJECT`, then `$CLOUDSDK_CORE_PROJECT`.
+- `--billing-project` — v3 ensemble only; see **Credentials**.
 - `--output`, `-o` — output Zarr path (overwritten if it exists).
 
 ### Output

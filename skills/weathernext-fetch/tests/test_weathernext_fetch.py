@@ -15,6 +15,10 @@ def fetch_mod():
     return load_skill("weathernext-fetch", "fetch")
 
 
+def _lead_hours(ds):
+    return list(np.asarray(ds["step"].values).astype("timedelta64[h]").astype(int))
+
+
 def _native_predictions(*, fill=0.001, t2m_fill=280.0, n_step=4, members=2, with_level=False):
     """Source-like cube: raw undecoded ``time`` (int64 ns), no attrs anywhere."""
     lats = np.array([0.0, 2.0], dtype="float32")
@@ -93,8 +97,7 @@ def test_fetch_writes_zarr_and_stamps_history(tmp_path, fetch_mod, monkeypatch):
         assert {"number", "step", "lat", "lon"} <= set(ds.sizes)
         assert ds["tp"].attrs["units"] == "mm day-1"
         assert ds["tp"].attrs.get("data_interval")
-        hours = np.asarray(ds["step"].values).astype("timedelta64[h]").astype(int)
-        assert list(hours) == [0, 6, 12, 18]
+        assert _lead_hours(ds) == [0, 6, 12, 18]
         # 0.001 m / 6h = 4 mm day-1
         np.testing.assert_allclose(ds["tp"].values[0, :, 0, 0], [4.0, 4.0, 4.0, 4.0], rtol=1e-5)
         assert ds["2m_temperature"].attrs["units"] == "degree_Celsius"
@@ -356,8 +359,7 @@ def test_v3_ensemble_flattens_hourly_leads(tmp_path, fetch_mod, monkeypatch):
     with xr.open_zarr(out, consolidated=True) as ds:
         assert set(ds.data_vars) == {"tp", "2m_temperature"}
         assert {"number", "step", "lat", "lon"} == set(ds.sizes)
-        hours = np.asarray(ds["step"].values).astype("timedelta64[h]").astype(int)
-        assert list(hours) == list(range(12))
+        assert _lead_hours(ds) == list(range(12))
         valid = ds["valid_time"].values
         assert valid[0] == np.datetime64("2026-10-02T01:00:00", "ns")
         assert valid[-1] == np.datetime64("2026-10-02T12:00:00", "ns")
@@ -376,23 +378,8 @@ def test_v3_pressure_levels_are_6_hourly_on_025(tmp_path, fetch_mod, monkeypatch
     with xr.open_zarr(out, consolidated=True) as ds:
         assert list(ds.data_vars) == ["temperature"]
         assert "level" in ds.dims
-        hours = np.asarray(ds["step"].values).astype("timedelta64[h]").astype(int)
-        assert list(hours) == [0, 6]
+        assert _lead_hours(ds) == [0, 6]
         np.testing.assert_allclose(ds["lat"].values, [0.0, 0.25])
-
-
-def test_v3_mixed_grids_exit_2(tmp_path, fetch_mod, monkeypatch):
-    _mock_v3(monkeypatch, fetch_mod, _native_v3_ensemble())
-    with pytest.raises(SystemExit) as exc:
-        run_skill(
-            fetch_mod.fetch,
-            "--version", "3",
-            "--date", "2026-10-02",
-            "--billing-project", "p",
-            "-v", "t2m", "-v", "t",
-            "-o", str(tmp_path / "out.zarr"),
-        )  # fmt: skip
-    assert exc.value.code == 2
 
 
 def test_v3_default_variables_are_01deg_surface(tmp_path, fetch_mod, monkeypatch):
@@ -409,22 +396,6 @@ def test_v3_default_variables_are_01deg_surface(tmp_path, fetch_mod, monkeypatch
     with xr.open_zarr(out, consolidated=True) as ds:
         assert set(ds.data_vars) == {"tp", "2m_temperature", "mean_sea_level_pressure"}
         assert list(ds["number"].values) == [1]
-
-
-def test_v3_ensemble_requires_billing_project(tmp_path, fetch_mod, monkeypatch):
-    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
-    monkeypatch.delenv("CLOUDSDK_CORE_PROJECT", raising=False)
-    with pytest.raises(SystemExit) as exc:
-        run_skill(
-            fetch_mod.fetch,
-            "--version",
-            "3",
-            "--date",
-            "2026-10-02",
-            "-o",
-            str(tmp_path / "o.zarr"),
-        )
-    assert exc.value.code == 2
 
 
 def test_v3_statistics(tmp_path, fetch_mod, monkeypatch):
@@ -450,8 +421,7 @@ def test_v3_statistics(tmp_path, fetch_mod, monkeypatch):
             "2m_temperature_p90",
         }
         assert "number" not in ds.dims
-        hours = np.asarray(ds["step"].values).astype("timedelta64[h]").astype(int)
-        assert list(hours) == [0, 1, 2]
+        assert _lead_hours(ds) == [0, 1, 2]
         np.testing.assert_allclose(ds["tp_mean"].values, 48.0, rtol=1e-5)
         assert ds["tp_p90"].attrs["units"] == "mm day-1"
         assert ds["2m_temperature_p90"].attrs["units"] == "degree_Celsius"
@@ -466,10 +436,14 @@ def test_v3_statistics(tmp_path, fetch_mod, monkeypatch):
         ["--cycle", "07"],  # v2 has no interim inits
         ["--version", "3", "--product", "statistics", "--member", "0"],
         ["--version", "3", "--billing-project", "p", "--statistic", "mean"],
+        ["--version", "3"],  # requester-pays ensemble without a billing project
+        ["--version", "3", "--billing-project", "p", "-v", "t2m", "-v", "t"],  # mixed grids
     ],
 )
 def test_invalid_flag_combinations_exit_2(tmp_path, fetch_mod, monkeypatch, argv):
-    _mock_v3(monkeypatch, fetch_mod, _native_v3_statistics())
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("CLOUDSDK_CORE_PROJECT", raising=False)
+    _mock_v3(monkeypatch, fetch_mod, _native_v3_ensemble())
     with pytest.raises(SystemExit) as exc:
         run_skill(fetch_mod.fetch, *argv, "--date", "2026-10-02", "-o", str(tmp_path / "o.zarr"))
     assert exc.value.code == 2
@@ -491,15 +465,8 @@ def test_v3_probe_latest_skips_interim_inits_by_default(capsys, fetch_mod, monke
 
     seen.clear()
     run_skill(
-        fetch_mod.fetch,
-        "--version",
-        "3",
-        "--product",
-        "statistics",
-        "--cycle",
-        "01",
-        "--probe-latest",
-    )
+        fetch_mod.fetch, "--version", "3", "--product", "statistics", "--cycle", "01", "--probe-latest"
+    )  # fmt: skip
     assert seen == ["20261002_01hr_01_preds"]
 
 
@@ -516,5 +483,4 @@ def test_max_lead_trims_before_load(tmp_path, fetch_mod, monkeypatch):
         "-o", str(out),
     )  # fmt: skip
     with xr.open_zarr(out, consolidated=True) as ds:
-        hours = np.asarray(ds["step"].values).astype("timedelta64[h]").astype(int)
-        assert list(hours) == list(range(8))  # leads 1..8h, left-labeled
+        assert _lead_hours(ds) == list(range(8))  # leads 1..8h, left-labeled

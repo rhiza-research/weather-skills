@@ -46,54 +46,69 @@ _LATEST_LOOKBACK_DAYS = 14
 class _Product(NamedTuple):
     """One WeatherNext realtime archive: where it lives and how it is shaped."""
 
-    key: str
+    version: str
+    product: str
     bucket: str
     prefix: str
     metadata_file: str  # consolidated-metadata object that marks a complete store
     requester_pays: bool
     cycles: tuple[str, ...]
     precip_interval: str
-    ensemble: bool
     title: str
     source_tag: str
+    size_note: str
+
+    @property
+    def ensemble(self) -> bool:
+        return self.product == "ensemble"
 
 
 _PRODUCTS = {
-    "2/ensemble": _Product(
-        key="2/ensemble",
+    ("2", "ensemble"): _Product(
+        version="2",
+        product="ensemble",
         bucket="weathernext",
         prefix="weathernext_2_0_0/zarr/2025_to_present",
         metadata_file=".zmetadata",
         requester_pays=False,
         cycles=_SYNOPTIC_CYCLES,
         precip_interval="6 hour",
-        ensemble=True,
         title="Google WeatherNext 2 ensemble forecast",
         source_tag="weathernext",
+        size_note="WeatherNext 2 is 64 members x 60 leads x 0.25deg global, chunked per "
+        "member/lead (a --bbox does not shrink the download) — pass -v and --member to "
+        "keep the read small.",
     ),
-    "3/ensemble": _Product(
-        key="3/ensemble",
+    ("3", "ensemble"): _Product(
+        version="3",
+        product="ensemble",
         bucket="weathernext3_spatial",
         prefix="weathernext_3_0_0/zarr/2026_to_present",
         metadata_file="zarr.json",
         requester_pays=True,
         cycles=_ALL_CYCLES,
         precip_interval="1 hour",
-        ensemble=True,
         title="Google WeatherNext 3 ensemble forecast",
         source_tag="weathernext3",
+        size_note="WeatherNext 3 is 64 members x 360 hourly leads x 0.1deg global, chunked "
+        "per member per 6h lead block (a --bbox does not shrink the download, and the bucket "
+        "is requester pays) — pass -v and --member to keep the read small. Defaulted to the "
+        "0.1deg hourly surface fields.",
     ),
-    "3/statistics": _Product(
-        key="3/statistics",
+    ("3", "statistics"): _Product(
+        version="3",
+        product="statistics",
         bucket="weathernext3_statistics_spatial",
         prefix="weathernext_3_0_0_statistics/zarr/2026_to_present",
         metadata_file="zarr.json",
         requester_pays=False,
         cycles=_ALL_CYCLES,
         precip_interval="1 hour",
-        ensemble=False,
         title="Google WeatherNext 3 ensemble statistics forecast",
         source_tag="weathernext3-statistics",
+        size_note="WeatherNext 3 statistics are 360 hourly leads x 0.1deg global, chunked per "
+        "lead (a --bbox does not shrink the download) — pass -v and --statistic to keep the "
+        "read small. Defaulted to the 0.1deg surface fields.",
     ),
 }
 
@@ -165,31 +180,25 @@ _NATIVE_ATTRS = {
     "geopotential_500hPa": ("m2 s-2", "geopotential", "Geopotential at 500 hPa"),
 }
 
-_PRECIP_NAMES = ("tp", "experimental_tp", "imerg_tp")
 _PRECIP_LONG_NAMES = {
     "tp": "Total precipitation",
     "experimental_tp": "Experimental total precipitation",
     "imerg_tp": "IMERG-calibrated total precipitation",
 }
 
-# Aliases shared by both versions, resolved to the *output* name.
+# Aliases shared by both versions, resolved to the *output* name. v3 native
+# names come from _V3_RENAME; lookups fall back to the name itself.
 _VAR_ALIASES = {
+    **_V3_RENAME,
+    _V2_NATIVE_PRECIP: "tp",
     "t2m": "2m_temperature",
-    "temperature_2m": "2m_temperature",
     "d2m": "2m_dewpoint_temperature",
-    "dewpoint_temperature_2m": "2m_dewpoint_temperature",
     "u10": "10m_u_component_of_wind",
-    "u_component_of_wind_10m": "10m_u_component_of_wind",
     "v10": "10m_v_component_of_wind",
-    "v_component_of_wind_10m": "10m_v_component_of_wind",
     "u100": "100m_u_component_of_wind",
-    "u_component_of_wind_100m": "100m_u_component_of_wind",
     "v100": "100m_v_component_of_wind",
-    "v_component_of_wind_100m": "100m_v_component_of_wind",
     "si10": "10m_wind_speed",
-    "wind_speed_10m": "10m_wind_speed",
     "si100": "100m_wind_speed",
-    "wind_speed_100m": "100m_wind_speed",
     "msl": "mean_sea_level_pressure",
     "sst": "sea_surface_temperature",
     "tcc": "total_cloud_cover",
@@ -197,15 +206,10 @@ _VAR_ALIASES = {
     "mcc": "medium_cloud_cover",
     "hcc": "high_cloud_cover",
     "ssrd": "surface_solar_radiation_downwards_1hr",
-    "tp": "tp",
     "precip": "tp",
     "precipitation": "tp",
     "total_precipitation": "tp",
-    _V2_NATIVE_PRECIP: "tp",
-    "total_precipitation_1hr": "tp",
     "pr": "tp",
-    "experimental_tp_1hr": "experimental_tp",
-    "imerg_tp_1hr": "imerg_tp",
     "q": "specific_humidity",
     "t": "temperature",
     "u": "u_component_of_wind",
@@ -221,10 +225,24 @@ _VAR_ALIASES = {
 }
 
 _GRID_RE = re.compile(r"^lat_(0p\d+)$")
-_GRID_LABELS = {"0p05": "0.05deg", "0p1": "0.1deg", "0p25": "0.25deg"}
 # Default WeatherNext 3 field group when no --variable is given: the hourly
 # 0.1deg surface fields (every field but station-head 0.05deg and 0.25deg upper air).
 _V3_DEFAULT_GRID = "0p1"
+
+
+_REQUESTER_PAYS_HINT = (
+    "pass --billing-project PROJECT_ID (or set GOOGLE_CLOUD_PROJECT); reads are billed "
+    "to that project."
+)
+_AUTH_TOKENS = (
+    "401",
+    "403",
+    "forbidden",
+    "credential",
+    "anonymous",
+    "requester pays",
+    "user project",
+)
 
 
 def _auth_msg(product: _Product) -> str:
@@ -234,10 +252,7 @@ def _auth_msg(product: _Product) -> str:
         "service-account JSON, or run `gcloud auth application-default login`."
     )
     if product.requester_pays:
-        msg += (
-            " This bucket is requester pays: pass --billing-project (or set "
-            "GOOGLE_CLOUD_PROJECT) to a project with billing enabled."
-        )
+        msg += f" This bucket is requester pays: {_REQUESTER_PAYS_HINT}"
     return msg
 
 
@@ -245,7 +260,7 @@ def _resolve_product(version: str, product_name: str | None) -> _Product:
     name = product_name or "ensemble"
     if version == "2" and name != "ensemble":
         raise UsageError("--product statistics is WeatherNext 3 only (use --version 3).")
-    return _PRODUCTS[f"{version}/{name}"]
+    return _PRODUCTS[version, name]
 
 
 def _billing_project(explicit: str | None) -> str | None:
@@ -259,11 +274,6 @@ def _billing_project(explicit: str | None) -> str | None:
 def _filesystem(product: _Product, billing_project: str | None = None):
     import gcsfs
 
-    if product.requester_pays and not billing_project:
-        raise UsageError(
-            f"gs://{product.bucket} is requester pays: pass --billing-project PROJECT_ID "
-            "(or set GOOGLE_CLOUD_PROJECT). Reads are billed to that project."
-        )
     kwargs = {"requester_pays": billing_project} if product.requester_pays else {}
     try:
         return gcsfs.GCSFileSystem(**kwargs)
@@ -275,16 +285,7 @@ def _gcs_error(exc: Exception, what: str, product: _Product) -> DataError:
     text = f"{type(exc).__name__}: {exc}"
     hint = ""
     lowered = text.lower()
-    tokens = (
-        "401",
-        "403",
-        "forbidden",
-        "credential",
-        "anonymous",
-        "requester pays",
-        "user project",
-    )
-    if any(token in lowered for token in tokens):
+    if any(token in lowered for token in _AUTH_TOKENS):
         hint = f" {_auth_msg(product)}"
     return DataError(f"{what} ({text}).{hint}")
 
@@ -354,7 +355,7 @@ def _latest_stamp(product: _Product, cycle: str | None, billing_project: str | N
 def _check_cycle(product: _Product, cycle: str | None) -> None:
     if cycle and cycle not in product.cycles:
         raise UsageError(
-            f"--cycle {cycle} is not published for WeatherNext {product.key.split('/')[0]} "
+            f"--cycle {cycle} is not published for WeatherNext {product.version} "
             f"(inits: {', '.join(product.cycles)} UTC)."
         )
 
@@ -370,7 +371,7 @@ def _resolve_stamp(date, cycle: str | None, product: _Product, billing_project: 
                 f"{'/'.join(_SYNOPTIC_CYCLES)} UTC (`--cycle`)"
                 + (
                     "; WeatherNext 3 also has 48h interim inits every other hour"
-                    if product.cycles == _ALL_CYCLES
+                    if product.version == "3"
                     else ""
                 )
                 + f". Only the {product.prefix.rsplit('/', 1)[-1]} realtime archive is supported by this skill."
@@ -452,50 +453,41 @@ def _field_group(da) -> tuple[str | None, bool]:
 
 def _group_label(group) -> str:
     grid, hourly = group
-    return f"{_GRID_LABELS.get(grid, grid)} {'hourly' if hourly else '6-hourly'}"
+    return f"{grid.replace('p', '.')}deg {'hourly' if hourly else '6-hourly'}"
 
 
-def _select_v2(ds, variable):
-    if _V2_NATIVE_PRECIP in ds.data_vars:
-        ds = ds.rename({_V2_NATIVE_PRECIP: "tp"})
-    if not variable:
-        return ds
+def _resolve_names(variable, available, normalize=lambda name: name) -> list[str]:
+    """``--variable`` values → deduped names in ``available``; UsageError lists misses."""
     resolved, missing = [], []
     for raw in variable:
-        name = _VAR_ALIASES.get(raw, raw)
-        if name not in ds.data_vars:
+        name = normalize(_VAR_ALIASES.get(raw, raw))
+        if name not in available:
             missing.append(raw)
         elif name not in resolved:
             resolved.append(name)
     if missing:
         raise UsageError(
             f"variable(s) not in this WeatherNext product: {', '.join(missing)}.\n"
-            f"Available: {', '.join(sorted(ds.data_vars))}"
+            f"Available: {', '.join(sorted(available))}"
         )
-    return ds[resolved]
+    return resolved
+
+
+def _select_v2(ds, variable):
+    if _V2_NATIVE_PRECIP in ds.data_vars:
+        ds = ds.rename({_V2_NATIVE_PRECIP: "tp"})
+    return ds[_resolve_names(variable, ds.data_vars)] if variable else ds
 
 
 def _select_v3(ds, variable, statistic):
     """Pick WeatherNext 3 fields by output name, renamed, all on one grid and lead axis."""
+    out_names = {n: _v3_output_name(n) for n in ds.data_vars}
     by_base: dict[str, list[str]] = {}
-    for native in ds.data_vars:
-        out = _v3_output_name(native)
+    for native, out in out_names.items():
         by_base.setdefault(_split_statistic(out)[0], []).append(native)
 
     if variable:
-        bases, missing = [], []
-        for raw in variable:
-            name = _VAR_ALIASES.get(raw, raw)
-            name = _split_statistic(_v3_output_name(name))[0]
-            if name not in by_base:
-                missing.append(raw)
-            elif name not in bases:
-                bases.append(name)
-        if missing:
-            raise UsageError(
-                f"variable(s) not in this WeatherNext product: {', '.join(missing)}.\n"
-                f"Available: {', '.join(sorted(by_base))}"
-            )
+        bases = _resolve_names(variable, by_base, lambda n: _split_statistic(_v3_output_name(n))[0])
     else:
         bases = [
             b for b, names in by_base.items() if _field_group(ds[names[0]])[0] == _V3_DEFAULT_GRID
@@ -505,13 +497,14 @@ def _select_v3(ds, variable, statistic):
     if statistic:
         natives = [n for n in natives if _split_statistic(n)[1] in statistic]
 
-    groups: dict[tuple, list[str]] = {}
+    groups: dict[tuple, set[str]] = {}
     for native in natives:
-        groups.setdefault(_field_group(ds[native]), []).append(_v3_output_name(native))
+        groups.setdefault(_field_group(ds[native]), set()).add(
+            _split_statistic(out_names[native])[0]
+        )
     if len(groups) > 1:
         detail = "; ".join(
-            f"{_group_label(g)}: {', '.join(sorted(set(_split_statistic(n)[0] for n in names)))}"
-            for g, names in groups.items()
+            f"{_group_label(g)}: {', '.join(sorted(names))}" for g, names in groups.items()
         )
         raise UsageError(
             "WeatherNext 3 stores these variables on different grids or lead axes, so they "
@@ -519,7 +512,7 @@ def _select_v3(ds, variable, statistic):
         )
 
     grid = next(iter(groups))[0] if groups else None
-    ds = ds[natives].rename({n: _v3_output_name(n) for n in natives})
+    ds = ds[natives].rename({n: out_names[n] for n in natives})
     if grid:
         ds = ds.rename({f"lat_{grid}": "lat", f"lon_{grid}": "lon"})
     return ds
@@ -541,9 +534,9 @@ def _prepare_dataset(ds, product: _Product, variable=None, statistic=None):
     """Native WeatherNext cube → standard ensemble-forecast dims and attrs."""
     import numpy as np
 
-    if product.key.startswith("3/"):
+    if product.version == "3":
         ds = _select_v3(ds, variable, statistic)
-        ds = ds.drop_vars([c for c in ("datetime",) if c in ds.variables])
+        ds = ds.drop_vars("datetime", errors="ignore")
         ds = _flatten_leads(ds)
         rename = {"sample": "number", "init_time": "time"}
     else:
@@ -584,13 +577,10 @@ def _prepare_dataset(ds, product: _Product, variable=None, statistic=None):
 
     for name in ds.data_vars:
         base, stat = _split_statistic(name)
-        if base in _PRECIP_NAMES:
+        if base in _PRECIP_LONG_NAMES:
+            # standard_name is stamped later by stamp_precip_amounts.
             ds[name] = ds[name].clip(min=0)
-            ds[name].attrs.update(
-                units="m",
-                standard_name="lwe_thickness_of_precipitation_amount",
-                long_name=_PRECIP_LONG_NAMES[base],
-            )
+            ds[name].attrs.update(units="m", long_name=_PRECIP_LONG_NAMES[base])
         elif base in _NATIVE_ATTRS:
             units, standard_name, long_name = _NATIVE_ATTRS[base]
             ds[name].attrs.update(units=units, standard_name=standard_name, long_name=long_name)
@@ -609,25 +599,15 @@ def _prepare_dataset(ds, product: _Product, variable=None, statistic=None):
     return ds
 
 
-def _size_note(product: _Product) -> str:
-    if product.key == "2/ensemble":
-        return (
-            "WeatherNext 2 is 64 members x 60 leads x 0.25deg global, chunked per "
-            "member/lead (a --bbox does not shrink the download) — pass -v and --member "
-            "to keep the read small."
-        )
-    if product.key == "3/ensemble":
-        return (
-            "WeatherNext 3 is 64 members x 360 hourly leads x 0.1deg global, chunked per "
-            "member per 6h lead block (a --bbox does not shrink the download, and the bucket "
-            "is requester pays) — pass -v and --member to keep the read small. Defaulted to "
-            "the 0.1deg hourly surface fields."
-        )
-    return (
-        "WeatherNext 3 statistics are 360 hourly leads x 0.1deg global, chunked per lead "
-        "(a --bbox does not shrink the download) — pass -v and --statistic to keep the "
-        "read small. Defaulted to the 0.1deg surface fields."
-    )
+def _trim_leads(ds, max_lead: int):
+    """Keep leads up to ``max_lead`` hours (lazy, so dropped leads are never read)."""
+    import numpy as np
+
+    keep = ds["step"].values <= np.timedelta64(max_lead, "h")
+    if not keep.any():
+        first = int(ds["step"].values[0] / np.timedelta64(1, "h"))
+        raise UsageError(f"--max-lead {max_lead} keeps no leads (first lead is {first}h).")
+    return ds.isel(step=np.flatnonzero(keep))
 
 
 @weather_skill(
@@ -709,11 +689,13 @@ def fetch(date, bbox, variable, output, member=None, **kwargs):
     ``step``), optionally subsets by ``--bbox`` / ``--variable``, and returns a
     Dataset for the decorator to write.
     """
-    product = _resolve_product(kwargs.get("model_version") or "2", kwargs.get("product"))
+    product = _resolve_product(kwargs["model_version"], kwargs.get("product"))
     cycle = kwargs.get("cycle")
     statistic = kwargs.get("statistic")
     billing_project = _billing_project(kwargs.get("billing_project"))
     _check_cycle(product, cycle)
+    if product.requester_pays and not billing_project:
+        raise UsageError(f"gs://{product.bucket} is requester pays: {_REQUESTER_PAYS_HINT}")
     if member and not product.ensemble:
         raise UsageError("--member needs ensemble members; --product statistics has none.")
     if statistic and product.ensemble:
@@ -736,18 +718,11 @@ def fetch(date, bbox, variable, output, member=None, **kwargs):
             raise UsageError(f"--member {bad} out of range for {n} members (valid: {-n}..{n - 1})")
         ds = ds.isel(sample=[m % n for m in member])
     ds = _prepare_dataset(ds, product, variable, statistic)
-    max_lead = kwargs.get("max_lead")
-    if max_lead is not None:
-        import numpy as np
-
-        keep = ds["step"].values <= np.timedelta64(max_lead, "h")
-        if not keep.any():
-            first = int(ds["step"].values[0] / np.timedelta64(1, "h"))
-            raise UsageError(f"--max-lead {max_lead} keeps no leads (first lead is {first}h).")
-        ds = ds.isel(step=np.flatnonzero(keep))
+    if kwargs.get("max_lead") is not None:
+        ds = _trim_leads(ds, kwargs["max_lead"])
     if not variable:
         print(
-            f"Note: no --variable given; selecting all data variables. {_size_note(product)}",
+            f"Note: no --variable given; selecting all data variables. {product.size_note}",
             file=sys.stderr,
         )
     if bbox is not None:
