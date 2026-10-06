@@ -2,7 +2,7 @@
 
 import pytest
 from conftest import load_skill, make_gridded, run_skill, write_zarr
-from weather_skills_core.provenance import stamp_zarr
+from weather_skills_core.provenance import stamp_figure, stamp_zarr
 
 
 @pytest.fixture(scope="module")
@@ -183,3 +183,29 @@ def test_check_accepts_stamped_join(tmp_path, provenance, capsys):
 
     captured = capsys.readouterr().out
     assert "valid weather_skills_history" in captured
+
+
+@pytest.mark.parametrize("suffix", [".html", ".jpg"])
+def test_reads_html_and_jpg_figures(tmp_path, provenance, capsys, suffix):
+    from PIL import Image
+
+    history = [{"skill": "plot", "version": "0.0.2", "args": {"spec": {"data": []}}, "input": None}]
+    fig = tmp_path / f"fig{suffix}"
+    if suffix == ".html":
+        fig.write_text("<html><head></head><body>figure</body></html>")
+    else:
+        Image.new("RGB", (64, 64), "white").save(fig)
+    stamp_figure(fig, history)
+
+    run_skill(provenance, "-i", str(fig), "--format", "human")
+    assert "plot" in capsys.readouterr().out
+    run_skill(provenance, "-i", str(fig), "--check")
+    assert "valid weather_skills_history" in capsys.readouterr().out
+
+
+def test_rejects_other_files(tmp_path, provenance, capsys):
+    other = tmp_path / "notes.txt"
+    other.write_text("x")
+    with pytest.raises(SystemExit):
+        run_skill(provenance, "-i", str(other))
+    assert ".png, .jpg or .html" in capsys.readouterr().err

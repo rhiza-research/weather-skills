@@ -149,6 +149,5 @@ uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/neuralgcm_weekly.zarr -o /tmp/neuralgcm_weekly_mm.zarr
 # plot lives in the weather-skills-plotting repo
 uv run skills/plot/scripts/plot.py -i /tmp/neuralgcm_weekly_mm.zarr \
-    -o /tmp/neuralgcm_weekly.png \
-    --spec '{"inputs":[{"variable":"tp"}]}'
+    -o /tmp/neuralgcm_weekly.png
 ```

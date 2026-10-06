@@ -1,8 +1,8 @@
 ---
 name: provenance
-description: Inspect the weather_skills_history provenance chain stamped on a weather-skills artifact (a standard dataset Zarr or a plot PNG) and render it as a human-readable lineage, the raw JSON chain, or a runnable reproduction script. Use when you need to answer "how did this file come to exist, and how do I regenerate it?" — especially for a PNG, whose chain lives in binary tEXt chunks an editor can't open.
+description: Inspect the weather_skills_history provenance chain stamped on a weather-skills artifact (a standard dataset Zarr or a figure: PNG, JPG, or HTML) and render it as a human-readable lineage, the raw JSON chain, or a runnable reproduction script. Use when you need to answer "how did this file come to exist, and how do I regenerate it?" — especially for a PNG or JPG, whose chain lives in binary metadata an editor can't open.
 license: MIT
-compatibility: Requires Python 3.12 and uv. Inspects a zarr directory or a .png file; reads no credentials and writes nothing.
+compatibility: Requires Python 3.12 and uv. Inspects a zarr directory or a .png, .jpg or .html figure; reads no credentials and writes nothing.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py *)
 metadata:
   version: "0.0.2"
@@ -12,20 +12,20 @@ metadata:
 # provenance
 
 Read-only inspector for the `weather_skills_history` provenance DAG that every
-zarr-writing skill stamps on its output (and that plot-writers embed in PNG
-`tEXt` chunks). It does not produce an artifact — every view prints to
+zarr-writing skill stamps on its output (and that plot skills embed in a
+figure: PNG `tEXt` chunks, JPEG EXIF, or an HTML `<meta>` tag). It does not produce an artifact — every view prints to
 stdout, and the user redirects when they want a file.
 
 ## When to use
 
-- You have a zarr or PNG and want to know which skills produced it, in what
+- You have a zarr or a figure and want to know which skills produced it, in what
   order, with what arguments.
 - You need to regenerate an artifact and want a starting-point reproduction
   script rather than reconstructing the pipeline by hand.
-- The chain is unreadable directly: a zarr keeps it in store attrs, and a PNG
-  keeps it in binary `tEXt` chunks.
+- The chain is unreadable directly: a zarr keeps it in store attrs, a PNG
+  in binary `tEXt` chunks, a JPG in EXIF, and an HTML page in a `<meta>` tag.
 - You need lineage, not a visual check — plot skills print `plot hash` and
-  `data: not null` / `NULL`; look at the PNG as well.
+  `data: not null` / `NULL`; look at the figure as well.
 
 Read-only: it takes no `--output` and prints the result to stdout; it never
 writes a file or modifies its input.
@@ -38,12 +38,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py --input <artifact> [--format hu
 
 ### Arguments
 - `--input`, `-i` — the artifact to inspect: a weather-skills standard dataset Zarr (a
-  directory) or a plot PNG (a file ending `.png`). Required.
+  directory) or a figure (`.png`, `.jpg`/`.jpeg`, or `.html`). Required.
 - `--format` — output view, one of `human` (default), `json`, or `script`.
 - `--check` — validate the `weather_skills_history` schema instead of rendering it.
   Takes precedence over `--format`.
 
-A path that is neither a zarr directory nor a `.png` file, or a missing
+A path that is neither a zarr directory nor one of those figure files, or a missing
 path, is an error: a message goes to stderr and the skill exits 2. An
 artifact with no `weather_skills_history` reports `no provenance recorded` and
 exits 0.
@@ -61,15 +61,14 @@ Prints the lineage oldest-first. Each step shows its skill, version, git
 commit (when recorded), input basename, and args. A single-input path is a
 flat list. Any multi-input join (`concat`, `difference`, `plot-mediogram`, …)
 lists each parent subgraph under its own label (`a`, `b`, …), including
-nested joins. For a two-input PNG that still stores separate tEXt keys
-(`plot-mediogram`), each input branch is printed under its
-own label. If the zarr carries a `weather_skills_source` attr it is printed
+nested joins. An older two-input PNG that stores one tEXt key per input
+(`weather_skills_history_<label>`) prints each branch under its own label. If the zarr carries a `weather_skills_source` attr it is printed
 first.
 
 ### `json`
 
 Emits the raw chain(s) to stdout as JSON. A single-branch artifact emits the
-chain array; a multi-branch PNG emits a `{label: chain}` object so each
+chain array; an older multi-key PNG emits a `{label: chain}` object so each
 branch stays identified.
 
 ### `script`
@@ -85,7 +84,7 @@ without a recorded commit fall back to the default `weather-skills` repo.
 - Any multi-input join (`concat`, `difference`, `plot-mediogram`, …) reproduces
   each parent subgraph to a distinctly-named file, then emits one final
   command that takes every branch as an `--input`. Nested joins recurse.
-- A two-input plot that still stores separate tEXt keys reproduces each
+- An older two-input PNG with one tEXt key per input reproduces each
   labeled branch, then emits one final plot command.
 - A branch whose head is not a fetcher still emits the `<UPSTREAM>` caveat
   so you can supply that input yourself. A step recorded with `dirty: true`
@@ -101,7 +100,7 @@ own skill names.
 
 For a zarr it reads the single `weather_skills_history` attribute; for a PNG it reads
 the `weather_skills_history` key and every `weather_skills_history_<label>` tEXt key, validating
-each. Each value must be a JSON array, and each entry an object with:
+each; for a JPG or HTML figure it reads the one chain stamped there. Each value must be a JSON array, and each entry an object with:
 
 - `skill` — a non-empty string.
 - `version` — a string.

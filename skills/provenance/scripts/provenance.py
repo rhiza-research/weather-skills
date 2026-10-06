@@ -8,7 +8,7 @@
 #   "pillow",
 # ]
 # ///
-"""Inspect weather_skills_history on a Zarr or plot PNG (stdout only; never writes)."""
+"""Inspect weather_skills_history on a Zarr or a figure (PNG, JPG, HTML); stdout only."""
 
 import json
 import shlex
@@ -19,6 +19,7 @@ from weather_skills_core.provenance import (
     HISTORY_ATTR,
     SOURCE_ATTR,
     coerce_chain,
+    load_figure_history,
     parse_chain,
     validate_chain,
 )
@@ -85,6 +86,18 @@ def _load_png(path: Path) -> dict:
     return {"chains": chains, "source": None, "name": path.name}
 
 
+# Figures other than PNG keep one chain: JPEG in EXIF, HTML in a <meta> tag.
+_OTHER_FIGURES = (".jpg", ".jpeg", ".html", ".htm")
+_KINDS = "a zarr directory or a .png, .jpg or .html figure"
+
+
+def _load_other_figure(path: Path) -> list | None:
+    try:
+        return load_figure_history(path)
+    except Exception as exc:  # noqa: BLE001
+        raise UsageError(f"Error: could not read {path}: {exc}", prefix=False) from None
+
+
 def _read_artifact(path: Path) -> dict:
     if not path.exists():
         raise UsageError(f"Error: {path} not found.", prefix=False)
@@ -92,8 +105,11 @@ def _read_artifact(path: Path) -> dict:
         return _load_zarr(path)
     if path.is_file() and path.suffix.lower() == ".png":
         return _load_png(path)
+    if path.is_file() and path.suffix.lower() in _OTHER_FIGURES:
+        chain = _load_other_figure(path)
+        return {"chains": {path.name: chain} if chain else {}, "source": None, "name": path.name}
     raise UsageError(
-        f"Error: {path} is neither a zarr directory nor a .png file; cannot inspect provenance.",
+        f"Error: {path} is not {_KINDS}; cannot inspect provenance.",
         prefix=False,
     )
 
@@ -128,8 +144,11 @@ def _read_raw_histories(path: Path) -> dict:
             if (key == HISTORY_ATTR or key.startswith(f"{HISTORY_ATTR}_")) and info[key]:
                 raw[key] = info[key]
         return raw
+    if path.is_file() and path.suffix.lower() in _OTHER_FIGURES:
+        chain = _load_other_figure(path)
+        return {HISTORY_ATTR: json.dumps(chain)} if chain else {}
     raise UsageError(
-        f"Error: {path} is neither a zarr directory nor a .png file; cannot inspect provenance.",
+        f"Error: {path} is not {_KINDS}; cannot inspect provenance.",
         prefix=False,
     )
 
@@ -410,7 +429,7 @@ def _render_script(data: dict) -> None:
     "-i",
     "--input",
     required=True,
-    help="Artifact to inspect: a zarr dir or a .png file.",
+    help="Artifact to inspect: a zarr dir or a .png, .jpg or .html figure.",
 )
 @weather_skill.argument(
     "--format",
@@ -424,7 +443,7 @@ def _render_script(data: dict) -> None:
     help="Validate weather_skills_history schema (exit 0/1/2).",
 )
 def provenance(input, format, check, **kwargs):
-    """Inspect weather_skills_history on a Zarr or plot PNG (stdout only; never writes)."""
+    """Inspect weather_skills_history on a Zarr or a figure (PNG, JPG, HTML); stdout only."""
     if check:
         code, report = _run_check(Path(input))
         if code == 0:
