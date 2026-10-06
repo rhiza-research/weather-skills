@@ -24,6 +24,9 @@ from weather_skills_core.units import (
     variable_units,
 )
 
+# Stamped by aggregate-temporal --keep-partial-cells.
+PARTIAL_CELLS_ATTR = "aggregation_partial_cells"
+
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
@@ -94,6 +97,12 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
             raise UsageError(
                 f"variable {name!r} has no {AGGREGATION_PERIOD_ATTR!r}; "
                 "run aggregate-temporal first"
+            )
+        if da.attrs.get(PARTIAL_CELLS_ATTR) == "kept":
+            raise UsageError(
+                f"variable {name!r} was aggregated with --keep-partial-cells, so some "
+                "cells' rates come from fewer samples than the period; a total would "
+                "extrapolate the missing samples. Re-run aggregate-temporal without it."
             )
         if dim is not None:
             assert_nonoverlapping_intervals(ds, dim, period)
