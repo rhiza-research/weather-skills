@@ -1,6 +1,6 @@
 ---
 name: cumulus-fetch
-description: On the first call (including --probe-latest), inject secret AZURE_STORAGE_SAS_TOKEN as an environment variable — do not run once without it and retry. Fetch a Cumulus AI operational ensemble precipitation forecast from Azure Blob italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9 (perturbed members, 24h IMERG-trained total precipitation, 0.25° grid by default) and write a weather-skills standard dataset Zarr. Use when a task needs the Cumulus forecast grid for clipping, aggregation, comparison, or plotting. Default `-v tp`. Fetch writes `tp` as a per-step rate (`mm day-1`) — do not run deaccumulate after this skill.
+description: On the first call (including --probe-latest), inject secret AZURE_STORAGE_SAS_TOKEN as an environment variable — do not run once without it and retry. Fetch a Cumulus AI operational ensemble precipitation forecast from Azure Blob italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9 (30 ensemble members, 24h IMERG-trained total precipitation, 0.25° grid by default) and write a weather-skills standard dataset Zarr. Use when a task needs the Cumulus forecast grid for clipping, aggregation, comparison, or plotting. Default `-v tp`. Fetch writes `tp` as a per-step rate (`mm day-1`) — do not run deaccumulate after this skill.
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads private Zarr stores from Azure Blob italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr/total_precipitation_24h_acc_imerg_0p25 via adlfs. Requires AZURE_STORAGE_SAS_TOKEN (a read SAS with list and read, sp=rl).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -74,10 +74,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 
 ### Arguments
 
-- `--dataset` — variable folder under `zarr/` (default `precip`, alias for the
-  0.25° `total_precipitation_24h_acc_imerg_0p25`; `precip_1deg` selects the
-  native 1° `total_precipitation_24h_acc_imerg`, `precip_era5` the
-  ERA5-trained `total_precipitation_24h_acc_era5`).
+- `--dataset` — `precip` (default, the 0.25°
+  `total_precipitation_24h_acc_imerg_0p25`), `precip_1deg` (native 1°
+  `total_precipitation_24h_acc_imerg`), or `precip_era5` (ERA5-trained
+  `total_precipitation_24h_acc_era5`). A variable folder name also works.
 - `--date` — forecast init date `YYYY-MM-DD`. Default: latest published init.
   Calendar day: `resolve-time latest`. Latest published init: `--probe-latest`.
 - `--probe-latest [dataset-id]` — print the latest init `YYYY-MM-DD` on stdout
@@ -86,8 +86,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
   negative west/east values still work. Omit for the full 0.25° global grid
   (~5.5 GB per init; the `precip_1deg` alternative is ~350 MB per init).
   Named places: compose with `resolve-region`.
-- `--variable`, `-v` — restrict to named data variables (repeatable). Default
-  is the product's field, written as `tp`. Aliases: `precip`,
+- `--variable`, `-v` — optional; each store holds one field, always written as
+  `tp`. Any other name is an error. Accepted: `tp`, `precip`, `precipitation`,
   `total_precipitation`, `total_precipitation_24h_acc_imerg_0p25`,
   `total_precipitation_24h_acc_imerg`, `total_precipitation_24h_acc_era5`.
 - `--workers` — max concurrent Zarr chunk requests (default 8).
@@ -101,10 +101,10 @@ init). `number` is 0..29 (renamed from the store's `ensemble_member`;
 exchangeable draws, member 0 is not a control). Source stores are
 already 24h period totals — fetch writes `tp` as a per-step **rate**
 (`mm day-1`), **left-labeled** so `step = 0` is the first 24h
-`[init, init+1d)`. Negative values are clipped at zero. Do **not**
+`[init, init+1d)`. The source already sets negative model output to 0. Do **not**
 run `deaccumulate`. Next steps are `aggregate-temporal` then
 `convert-to-totals` for period `mm`. Stamped with
-`weather_skills_source=cumulus:<dataset>`.
+`weather_skills_source=cumulus:<variable folder>`.
 
 ### Provenance
 
