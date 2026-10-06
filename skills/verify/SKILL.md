@@ -1,6 +1,6 @@
 ---
 name: verify
-description: "Forecast vs observation verification on a shared grid — hits (event classification), bias (forecast − obs), or MAE (|forecast − obs|). Cell-by-cell only: coarsen --obs onto the forecast lat/lon grid first, and align time with step-to-time / aggregate-temporal. The output Zarr is the metric field to plot with plot-verify. Do not coarsen inputs just to draw them; plot with two heatmap traces keeps each dataset on its own grid."
+description: "Forecast vs observation verification on a shared grid — hits (event classification), bias (forecast − obs), or MAE (|forecast − obs|). Cell-by-cell only: coarsen --obs onto the forecast lat/lon grid first, and align time with step-to-time / aggregate-temporal. The output Zarr is the metric field to plot with plot-verify. Do not coarsen inputs just to draw them; plot with two -i files keeps each dataset on its own grid."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py *)
@@ -33,7 +33,8 @@ An **event** is `--variable` ≥ `--threshold` (default `1`, in stored units):
 NaNs in either input stay NaN. Ensemble `number` is averaged before
 comparison. Inputs are inner-joined (overlapping coordinates only).
 
-Plot hits with `plot` (discrete red / gray / green map). For a lead-week
+Plot hits with `plot`: the CF flags draw as a discrete red / gray / green map
+labelled disagree / below / hit. For a lead-week
 grid of obs, forecast, and verification maps, use `plot-verify`.
 
 ## When to use
@@ -46,8 +47,8 @@ grid of obs, forecast, and verification maps, use `plot-verify`.
 **Match obs to the forecast, not the reverse.** Coarsen `--obs` onto the
 forecast's lat/lon spacing and offset before this skill. Do not `downscale`
 the forecast onto the obs grid. That shared grid is for the subtraction
-here, not for drawing the two fields: `plot` with two heatmap traces
-keeps each on its own grid. Run `step-to-time` on a classic forecast first. For a precip
+here, not for drawing the two fields: `plot` with two `-i` files puts
+each side by side on its own grid. Run `step-to-time` on a classic forecast first. For a precip
 threshold in `mm`, run `aggregate-temporal` then `convert-to-totals` first.
 
 ## Usage
@@ -85,7 +86,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py \
     --forecast /tmp/s2s_weekly.zarr --obs /tmp/chirps_weekly.zarr \
     --metric hits --variable precip --threshold 1 -o /tmp/hits.zarr
 uv run skills/plot/scripts/plot.py -i /tmp/hits.zarr -o /tmp/hits.png \
-    --spec '{"title":"Weekly rain ≥ 1 mm"}'
+    --spec '{"layout": {"title": {"text": "Weekly rain ≥ 1 mm"}}}'
 
 # Bias error field
 uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py \

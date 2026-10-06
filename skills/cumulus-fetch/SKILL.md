@@ -131,6 +131,7 @@ uv run skills/aggregate-temporal/scripts/aggregate.py \
     -i /tmp/cumulus.zarr -o /tmp/cumulus_weekly.zarr --period weekly
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/cumulus_weekly.zarr -o /tmp/cumulus_weekly_mm.zarr
-uv run skills/plot/scripts/plot.py -i /tmp/cumulus_weekly_mm.zarr -v tp \
+# plot lives in the weather-skills-plotting repo
+uv run skills/plot/scripts/plot.py -i /tmp/cumulus_weekly_mm.zarr \
     -o /tmp/cumulus_weekly.png
 ```

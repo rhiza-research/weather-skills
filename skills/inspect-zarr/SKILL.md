@@ -26,7 +26,7 @@ data samples stay capped. To look at a specific slice, `clip-region` /
 
 Use `provenance` when you need the `weather_skills_history` lineage rather than
 the grid itself. Plot skills print a `plot hash` and `data: not null` / `NULL`
-when they write a PNG.
+when they write a PNG or JPG.
 
 ## When to use
 

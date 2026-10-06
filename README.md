@@ -61,32 +61,32 @@ credentialed or source-specific fetcher only when it does not.
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `ecmwf-fetch -v q -v u` |
 | `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). Plot the output with `plot`. |
 | `indicator` | Daily boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
-| `plot` | Heatmap, filled-contour, timeseries, **xy scatter**, wind-rose, quiver, or **layered** map (repeatable `--layer heatmap:…` / `scatter:…` / `outline:…`) from one or more datasets |
-| `plot-compare` | Side-by-side multi-panel comparison of two datasets (incl. station-vs-grid), optionally clipped to a `--bbox` and masked to a `--mask-geojson` polygon |
-| `plot-compare-forecasts` | N-dataset comparison grid (rows = forecasts and/or gridded obs; columns = union of times); missing times are blank `n/a` cells |
+| `plot` | Maps (heatmap, filled contour, stations, wind quiver), time series, **xy scatter**, or wind rose; several files side by side (repeat `-i`) or **layered** on one map (`--layer heatmap:…` / `scatter:…` / `outline:…`) |
+| `plot-timeseries` | One series per input on a shared time axis, as lines or bars; ensemble spaghetti and percentile bands |
 | `plot-verify` | Lead-week verification **map** grid from pre-computed `verify` Zarrs (one `--verify` per `--forecast`) |
-| `plot-mediogram` | ECMWF-style mediogram PNG comparing a forecast ensemble against an m-climate ensemble at a single lat/lon |
+| `plot-mediogram` | ECMWF-style mediogram comparing a forecast ensemble against an m-climate ensemble at a single lat/lon |
 
 ### Figure skills
 
-`plot`, `plot-timeseries`, `plot-verify`, and `plot-mediogram` moved to their
-own repo, [`weather-skills-plotting`](https://github.com/rhiza-research/weather-skills-plotting)
-(`plot-compare` and `plot-compare-forecasts` live elsewhere too). All of them
-write a PNG and print a `plot hash` (sha256 of RGB pixels) plus `data: not
-null` or `data: NULL`. Compare hashes across runs to see whether the figure
-changed; `NULL` means inspect-zarr the input. First runs use CLI flags
-(`--title`, `--variable`, `--figsize`, …). `--dump-spec -` dumps the assembled
-spec as JSON and skips the PNG (`-o` is not required); `--patch` submits
-edits. There is no `*.plot.json` sidecar. A set CLI flag still overlays the
-spec. See [weather-skills-plotting's docs/plotting.md](https://github.com/rhiza-research/weather-skills-plotting/blob/main/docs/plotting.md)
-for the catalog, the shared JSON spec, and remaining limits.
+`plot`, `plot-timeseries`, `plot-verify`, and `plot-mediogram` live in their
+own repo, [`weather-skills-plotting`](https://github.com/rhiza-research/weather-skills-plotting).
+They name files on the command line and take every drawing choice in
+`--spec`, which is a **standard Plotly figure** JSON (`{"data": [...],
+"layout": {...}}`): titles, axes, colorbars, annotations and shapes are plain
+Plotly keys, and each trace's `meta` says which dataset it draws. `--spec`
+merges onto the figure built from the files (traces by `uid`: `a`, `b`, … in
+`-i` order). `--dump-spec -` prints that figure so you can edit it and pass it
+back. The `-o` suffix picks the format: `.png`, `.jpg`, or interactive `.html`.
+PNG/JPG print a `plot hash` (sha256 of RGB pixels) plus `data: not null` or
+`data: NULL`; `NULL` means inspect-zarr the input. Each skill's `--help` lists
+the `meta` keys with recipes, and
+[docs/plotting.md](https://github.com/rhiza-research/weather-skills-plotting/blob/main/docs/plotting.md)
+describes the design.
 
 | Skill | Use when |
 |---|---|
-| [`plot`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot/SKILL.md) | One product, or overlays on the same axes (`--layer`) |
-| [`plot-timeseries`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-timeseries/SKILL.md) | Many 1D traces (`--along` spaghetti, `--band`) |
-| [`plot-compare`](skills/plot-compare/SKILL.md) | Exactly two datasets, two rows |
-| [`plot-compare-forecasts`](skills/plot-compare-forecasts/SKILL.md) | N grids vs shared valid times |
+| [`plot`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot/SKILL.md) | One product; several side by side, each on its own grid (repeat `-i`); or layers on one map (`--layer`) |
+| [`plot-timeseries`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-timeseries/SKILL.md) | Many 1D series (`meta.along` spaghetti, `meta.band`, `meta.align` seasonal overlays) |
 | [`plot-verify`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-verify/SKILL.md) | Lead-week obs / forecast / metric maps |
 | [`plot-mediogram`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-mediogram/SKILL.md) | Ensemble vs m-climate at one lat/lon |
 
@@ -98,7 +98,7 @@ dataset output.
 |---|---|
 | `resolve-time` | Resolve relative calendar dates to absolute `--start-time`/`--end-time` or `--date`. |
 | `inspect-zarr` | Print dims, coordinate values, and a bounded data-variable summary of a Zarr (stdout; no write). Data arrays can be huge — this skill never dumps them in full. |
-| `provenance` | Inspect `weather_skills_history` on a Zarr or plot PNG (DAG lineage, JSON, or a commit-pinned reproduction script). |
+| `provenance` | Inspect `weather_skills_history` on a Zarr or figure (PNG, JPG, HTML) (DAG lineage, JSON, or a commit-pinned reproduction script). |
 | `submit-feedback` | Build a length-checked prefilled GitHub new-issue URL the user clicks to file feedback under their own account. Holds no token, makes no network call, creates no issue itself. |
 
 ## Install
@@ -231,8 +231,8 @@ forecasting-skills convert-to-totals \
     --output /tmp/ecmwf_weekly_totals.zarr
 forecasting-skills plot \
     --input /tmp/ecmwf_weekly_totals.zarr \
-    --variable tp \
-    --output /tmp/weekly.png
+    --output /tmp/weekly.png \
+    --spec '{"layout": {"title": {"text": "ECMWF weekly totals"}}}' 
 
 forecasting-skills dynamical-fetch \
     --dataset nasa-imerg-analysis-late \
@@ -262,11 +262,21 @@ forecasting-skills tahmo-fetch \
     --end-time 2026-02-13 \
     --output /tmp/tahmo.zarr
 
-forecasting-skills plot-compare \
-    -i /tmp/tahmo.zarr \
-    -i /tmp/imerg_dekadal_precip.zarr \
-    --variable precip \
-    --output /tmp/sat_vs_stations.png
+forecasting-skills aggregate-temporal \
+    --input /tmp/tahmo.zarr \
+    --period dekadal \
+    --method mean \
+    --output /tmp/tahmo_dekadal.zarr
+forecasting-skills convert-to-totals \
+    --input /tmp/tahmo_dekadal.zarr \
+    --output /tmp/tahmo_dekadal_totals.zarr
+
+# Stations on top of the satellite field, one panel per dekad
+forecasting-skills plot \
+    --layer heatmap:/tmp/imerg_dekadal_precip.zarr \
+    --layer scatter:/tmp/tahmo_dekadal_totals.zarr \
+    --output /tmp/sat_vs_stations.png \
+    --spec '{"data": [{"uid": "b", "marker": {"size": 8}}]}' 
 ```
 
 In practice a user just states the goal in natural language and the agent

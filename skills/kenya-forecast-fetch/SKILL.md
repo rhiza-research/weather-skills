@@ -116,7 +116,7 @@ realign with `coarsen --reference-grid` or `downscale --reference-grid`.
 The archive grid is daily S2S `tp` (fetch writes per-step rates). The product
 figure (`weekly_precip.png` in the archive) is six weekly totals on the
 Kenya product extent `7/32/-6/43`, drawn with plot's default precip palette.
-Replicate it with weekly aggregation + totals, then plot (omit `theme.colormap` so the default precip palette applies):
+Replicate it with weekly aggregation + totals, then plot (leave `colorscale` and `meta.palette` unset so the default precip palette applies):
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset precip \
@@ -129,7 +129,7 @@ uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/kenya_weekly.zarr -o /tmp/kenya_weekly_mm.zarr
 
 uv run skills/plot/scripts/plot.py -i /tmp/kenya_weekly_mm.zarr -o /tmp/kenya_weekly.png \
-    --spec '{"inputs":[{"variable":"tp"}],"geo":{"bbox":[7,32,-6,43]}}'
+    --spec '{"layout": {"meta": {"geo": {"bbox": [7, 32, -6, 43]}}}}'
 ```
 
 High-resolution weekly downscale (already weekly; fetch stamps
@@ -143,8 +143,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset precip_downscaled \
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/kenya_tp_ds.zarr -o /tmp/kenya_tp_ds_mm.zarr
 
-uv run skills/plot/scripts/plot.py -i /tmp/kenya_tp_ds_mm.zarr -o /tmp/kenya_weekly_downscaled.png \
-    --spec '{"inputs":[{"variable":"tp"}]}'
+uv run skills/plot/scripts/plot.py -i /tmp/kenya_tp_ds_mm.zarr -o /tmp/kenya_weekly_downscaled.png
 ```
 
 High-resolution daily downscale (ensemble-mean GeoTIFF; fetch writes per-step
@@ -163,6 +162,5 @@ uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/kenya_tp_ds_daily_weekly.zarr -o /tmp/kenya_tp_ds_daily_weekly_mm.zarr
 
 uv run skills/plot/scripts/plot.py -i /tmp/kenya_tp_ds_daily_weekly_mm.zarr \
-    -o /tmp/kenya_daily_downscaled.png \
-    --spec '{"inputs":[{"variable":"tp"}]}'
+    -o /tmp/kenya_daily_downscaled.png
 ```
