@@ -305,12 +305,18 @@ def test_detect_first_rejects_probability_and_cumulative(tmp_path, indicator_fn)
     assert exc.value.code == 2
 
 
-def test_non_daily_is_refused(tmp_path, indicator_fn):
+@pytest.mark.parametrize(
+    "times",
+    [
+        ["2026-01-01T00", "2026-01-01T12", "2026-01-02T00"],  # sub-daily
+        ["2026-01-01", "2026-02-01", "2026-03-01"],  # monthly, uneven
+        ["2026-01-01", "2026-01-08", "2026-01-22"],  # weekly with a gap
+    ],
+)
+def test_non_whole_day_or_uneven_step_is_refused(tmp_path, indicator_fn, times):
     ds = make_gridded(n_time=3, lats=(1.0,), lons=(10.0,), fill=4.0)
-    ds = ds.assign_coords(
-        time=np.array(["2026-01-01", "2026-01-08", "2026-01-15"], dtype="datetime64[ns]")
-    )
-    src = write_zarr(ds, tmp_path / "weekly.zarr")
+    ds = ds.assign_coords(time=np.array(times, dtype="datetime64[ns]"))
+    src = write_zarr(ds, tmp_path / "in.zarr")
     with pytest.raises(SystemExit) as exc:
         run_skill(
             indicator_fn,
@@ -322,6 +328,121 @@ def test_non_daily_is_refused(tmp_path, indicator_fn):
             "precip sum 1d >= 1",
         )
     assert exc.value.code == 2
+
+
+def _weekly(rates, units="mm day-1", name="precip"):
+    """Weekly series at one cell; ``rates`` are the per-week values."""
+    ds = make_gridded(n_time=len(rates), lats=(1.0,), lons=(10.0,), name=name)
+    times = np.datetime64("2026-10-04") + np.arange(len(rates)) * np.timedelta64(7, "D")
+    ds = ds.assign_coords(time=times.astype("datetime64[ns]"))
+    ds[name].values[:, 0, 0] = rates
+    ds[name].attrs[DATA_INTERVAL_ATTR] = "7 day"
+    ds[name].attrs["units"] = units
+    if units == "mm":
+        ds[name].attrs.pop("standard_name", None)
+    return ds
+
+
+def test_parse_week_window(indicator_mod):
+    weeks = indicator_mod.parse_rule("precip sum 2w <= 10 within 1w")
+    days = indicator_mod.parse_rule("precip sum 14d <= 10 within 7d")
+    assert weeks.clauses == days.clauses
+
+
+def test_weekly_rates_compare_as_weekly_totals(tmp_path, indicator_fn):
+    # mm day-1 rates: 1 → 7 mm/week, 2 → 14 mm/week, 8 → 56 mm/week.
+    src = write_zarr(_weekly([1.0, 2.0, 8.0]), tmp_path / "in.zarr")
+    run_skill(
+        indicator_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(tmp_path / "dry.zarr"),
+        "--rule",
+        "precip sum 1w <= 10",
+    )
+    assert _cell(tmp_path / "dry.zarr").values.tolist() == [1, 0, 0]
+    run_skill(
+        indicator_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(tmp_path / "wet.zarr"),
+        "--rule",
+        "precip sum 7d >= 50",
+    )
+    assert _cell(tmp_path / "wet.zarr").values.tolist() == [0, 0, 1]
+
+
+def test_weekly_totals_pass_through(tmp_path, indicator_fn):
+    src = write_zarr(_weekly([7.0, 14.0, 56.0], units="mm"), tmp_path / "in.zarr")
+    run_skill(
+        indicator_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(tmp_path / "out.zarr"),
+        "--rule",
+        "precip sum 1w <= 10",
+    )
+    assert _cell(tmp_path / "out.zarr").values.tolist() == [1, 0, 0]
+
+
+def test_weekly_multi_week_window_left_labeled(tmp_path, indicator_fn):
+    src = write_zarr(_weekly([7.0, 14.0, 56.0], units="mm"), tmp_path / "in.zarr")
+    run_skill(
+        indicator_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(tmp_path / "out.zarr"),
+        "--rule",
+        "precip sum 2w >= 60",
+    )
+    hit = _cell(tmp_path / "out.zarr").values
+    # Weeks 1–2 = 21 mm, weeks 2–3 = 70 mm, week 3 has no full 2-week window.
+    assert hit[0] == pytest.approx(0)
+    assert hit[1] == pytest.approx(1)
+    assert np.isnan(hit[2])
+
+
+def test_weekly_window_must_be_whole_weeks(tmp_path, indicator_fn):
+    src = write_zarr(_weekly([1.0, 2.0, 8.0]), tmp_path / "in.zarr")
+    for rule in ("precip sum 10d <= 9", "precip sum 1w <= 10 within 3d"):
+        with pytest.raises(SystemExit) as exc:
+            run_skill(
+                indicator_fn,
+                "-i",
+                str(src),
+                "-o",
+                str(tmp_path / "out.zarr"),
+                "--rule",
+                rule,
+            )
+        assert exc.value.code == 2
+
+
+def test_weekly_step_forecast_probability(tmp_path, indicator_fn):
+    # KMSA-style weekly downscale: init + weekly steps, ensemble members, mm day-1.
+    ds = make_forecast(n_step=4, lats=(1.0,), lons=(10.0,), name="tp", members=4)
+    ds = ds.assign_coords(step=np.arange(4) * np.timedelta64(7, "D"))
+    ds["tp"].attrs.update(units="mm day-1", **{DATA_INTERVAL_ATTR: "7 day"})
+    # Week 1: members at 0.5, 1, 2, 3 mm/day → 3.5, 7, 14, 21 mm; two are ≤ 10 mm.
+    ds["tp"].values[:, 0, 0, 0] = [0.5, 1.0, 2.0, 3.0]
+    ds["tp"].values[:, 1:, 0, 0] = 10.0  # 70 mm/week afterwards
+    src = write_zarr(ds, tmp_path / "fc.zarr")
+    run_skill(
+        indicator_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(tmp_path / "out.zarr"),
+        "--rule",
+        "tp sum 1w <= 10",
+        "--probability",
+    )
+    prob = _cell(tmp_path / "out.zarr", "probability").values
+    assert prob.tolist() == pytest.approx([0.5, 0.0, 0.0, 0.0])
 
 
 def test_missing_variable(tmp_path, indicator_fn):

@@ -7,7 +7,7 @@
 #   "xarray>=2026.4",
 # ]
 # ///
-"""Apply a boolean indicator (or ensemble probability) to a daily standard dataset."""
+"""Apply a boolean indicator (or ensemble probability) to a daily or weekly standard dataset."""
 
 from __future__ import annotations
 
@@ -16,8 +16,17 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 from weather_skills_core import Dataset, UsageError, weather_skill
-from weather_skills_core.units import data_interval_of, infer_timestep, parse_aggregation_period
+from weather_skills_core.units import (
+    data_interval_of,
+    format_duration,
+    infer_timestep,
+    kind_from_units,
+    parse_aggregation_period,
+    rate_to_total,
+    variable_units,
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
@@ -56,32 +65,59 @@ def _axis(ds, time_dim: str | None) -> str:
     )
 
 
-def _require_daily(ds, dim: str) -> None:
+_NOT_WHOLE_DAYS = (
+    "indicator requires a uniform step of whole days (daily or weekly); {what}. "
+    "Run aggregate-temporal --period daily or --period weekly first."
+)
+
+
+def _step_days(ds, dim: str) -> int:
+    """Spacing of ``dim`` in whole days (1 = daily, 7 = weekly); refuse anything else."""
     stamped = data_interval_of(ds)
     if stamped:
         days = float(parse_aggregation_period(stamped).to("day").magnitude)
-        if abs(days - 1.0) > 1e-6:
+        what = f"data_interval is {stamped!r}"
+    elif ds.sizes.get(dim, 0) < 2:
+        raise UsageError(
+            "indicator needs a step it can measure; stamp data_interval (e.g. '1 day', "
+            "'7 day') or pass a series with at least two samples."
+        )
+    else:
+        dt = infer_timestep(ds, dim)
+        days = float(dt.to("day").magnitude)
+        what = f"spacing on {dim!r} is {format_duration(dt)}"
+    if days < 1 - 1e-6 or abs(days - round(days)) > 1e-6:
+        raise UsageError(_NOT_WHOLE_DAYS.format(what=what))
+    step = round(days)
+    if ds.sizes.get(dim, 0) >= 2:
+        # Windows are counted in samples, so every gap must equal the step.
+        ticks = np.asarray(ds[dim].values)
+        kind = "datetime64" if np.issubdtype(ticks.dtype, np.datetime64) else "timedelta64"
+        try:
+            gaps = np.diff(ticks.astype(f"{kind}[ns]").astype(np.int64))
+        except (TypeError, ValueError) as exc:
+            raise UsageError(f"{dim!r} must be a datetime or timedelta axis: {exc}") from None
+        if not np.all(gaps == step * 86_400 * 10**9):
             raise UsageError(
-                f"indicator requires daily data; data_interval is {stamped!r}. "
-                "Run aggregate-temporal --period daily "
-                "(then convert-to-totals if you need mm totals)."
+                _NOT_WHOLE_DAYS.format(what=f"{dim!r} is not evenly spaced at {step} day")
             )
-        return
-    if ds.sizes.get(dim, 0) < 2:
-        raise UsageError(
-            "indicator requires daily data; stamp data_interval '1 day' or pass a "
-            "series with at least two daily samples."
-        )
-    dt = infer_timestep(ds, dim)
-    days = float(dt.to("day").magnitude)
-    if abs(days - 1.0) > 0.05:
-        from weather_skills_core.units import format_duration
+    return step
 
-        raise UsageError(
-            f"indicator requires daily data; spacing on {dim!r} is "
-            f"{format_duration(dt)}. Run aggregate-temporal --period daily "
-            "(then convert-to-totals if you need mm totals)."
-        )
+
+def _per_step_amounts(ds, names, step_days: int):
+    """Precip rates → amount per step (mm), so thresholds read as totals per window.
+
+    Daily ``mm day-1`` is unchanged; weekly ``mm day-1`` becomes mm per week.
+    Amounts and non-precip variables pass through.
+    """
+    for name in names:
+        if name not in ds or kind_from_units(variable_units(ds[name]) or "") != "precip":
+            continue
+        attrs = dict(ds[name].attrs)
+        total = rate_to_total(ds[name], f"{step_days} day").pint.dequantify()
+        attrs["units"] = total.attrs.get("units", "mm")
+        ds[name] = total.assign_attrs(attrs)
+    return ds
 
 
 @weather_skill(
@@ -98,7 +134,7 @@ def _require_daily(ds, dim: str) -> None:
     ),
 )
 @weather_skill.argument("--variable", "-v", help="Override the variable named in --rule.")
-@weather_skill.argument("--time-dim", help="Daily axis (default: time, else step).")
+@weather_skill.argument("--time-dim", help="Daily or weekly axis (default: time, else step).")
 @weather_skill.argument(
     "--detect",
     choices=["first", "any"],
@@ -116,11 +152,13 @@ def _require_daily(ds, dim: str) -> None:
     help="Ensemble fraction True (mean over number). No-op if there is no number dim.",
 )
 def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **kwargs):
-    """Apply a boolean indicator (or ensemble probability) to a daily standard dataset."""
+    """Apply a boolean indicator (or ensemble probability) to a daily or weekly dataset."""
     spec = parse_rule(rule)
     dim = _axis(ds, time_dim)
-    _require_daily(ds, dim)
-    mask = _ops.evaluate_spec(ds, spec, dim, variable)
+    step_days = _step_days(ds, dim)
+    names = {variable or clause.variable for clause in spec.clauses}
+    ds = _per_step_amounts(ds, names, step_days)
+    mask = _ops.evaluate_spec(ds, spec, dim, variable, step_days)
     out = _ops.apply_reductions(
         mask, dim, cumulative=bool(cumulative), detect=detect, probability=bool(probability)
     )

@@ -1,12 +1,13 @@
 ---
 name: indicator
 description: >-
-  Apply a boolean indicator to a daily weather-skills standard dataset Zarr
-  (windowed precip thresholds, sequential onset rules) and optionally reduce to
-  ensemble probability. Use for ICPAC/CHC rainy-season onset, ad-hoc rules like
-  >25 mm in 8 days or <9 mm in 10 days, wet/dry spells, and the probability that
-  an indicator is true. Input must be daily (time or step). Apply per ensemble
-  member; do not average precip first.
+  Apply a boolean indicator to a daily or weekly weather-skills standard
+  dataset Zarr (windowed precip thresholds, sequential onset rules) and
+  optionally reduce to ensemble probability. Use for ICPAC/CHC rainy-season
+  onset, ad-hoc rules like >25 mm in 8 days or <9 mm in 10 days, dry or very
+  wet weeks (≤10 mm or ≥50 mm in a week), wet/dry spells, and the probability
+  that an indicator is true. Input must be daily or weekly (time or step).
+  Apply per ensemble member; do not average precip first.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py *)
@@ -17,7 +18,7 @@ metadata:
 
 # indicator
 
-Source-agnostic daily **indicator**: a 0/1 mask from one `--rule` string, then
+Source-agnostic **indicator** on daily or weekly data: a 0/1 mask from one `--rule` string, then
 optional reductions. Apply the rule **per ensemble member** (do not average
 `number` first). Plot `--detect first` onset dates (or daily 0/1 /
 `--probability` fields) with `plot`. Do not average `number` before mapping
@@ -36,26 +37,40 @@ when you want a mean onset day-of-year.
 - First day the indicator is true (`--detect first`), or whether it happens
   at least once (`--detect any`).
 
-**Daily input.** Native `data_interval` of `1 day`, or inferred 1-day spacing
-on `time` / `step`. Otherwise run `aggregate-temporal --period daily` (then
-`convert-to-totals` if you need mm totals). Daily `mm day-1` rates and daily
-`mm` totals are treated as equivalent. Classic forecasts may stay on `step`;
-run `step-to-time` when you need calendar onset dates. Restrict the search
-window with `select` first (MAM/OND is not built in).
+- Weekly thresholds on weekly data (e.g. the KMSA weekly downscale): “dry
+  week ≤ 10 mm” is `precip sum 1w <= 10`.
+
+**Daily or weekly input.** The step is the stamped `data_interval`, or the
+spacing on `time` / `step`. It must be a whole number of days (`1 day`,
+`7 day`) and evenly spaced. Otherwise run `aggregate-temporal --period daily`
+or `--period weekly` first. Classic forecasts may stay on `step`; run
+`step-to-time` when you need calendar onset dates. Restrict the search window
+with `select` first (MAM/OND is not built in).
+
+**Precip rates become per-step totals.** A precip rate (`mm day-1`, `m s-1`,
+…) is multiplied by the step before the rule runs, so thresholds are mm per
+step and window sums are mm per window. Daily `mm day-1` is unchanged; weekly
+`mm day-1` becomes mm per week. Inputs already in `mm` (e.g. after
+`convert-to-totals`) are used as-is. Daily rules (`<9 mm in 10d`, `>50 mm in
+one day`) need daily data; they cannot be applied to weekly totals.
 
 ## `--rule` grammar
 
 ```text
-[not] <variable> <agg> <window> <op> <threshold> [after <Nd>] [within <Nd>]
+[not] <variable> <agg> <window> <op> <threshold> [after <window>] [within <window>]
   ( and | or  [not] … )*
 ```
 
+`<window>` is `Nd` days or `Nw` weeks (`1w` = `7d`) and must be a whole
+number of steps: on weekly data `1w`, `2w` and `14d` work, `10d` is refused.
+
 `agg`: `sum` | `mean` | `count-above` | `count-below` | `consecutive-above` |
-`consecutive-below`. Count/consecutive aggs take a **daily** threshold before
-the window (`precip count-below 1 10d >= 7`). Consecutive clauses have no
-`<op> <threshold>` — they are true when every day in the window matches.
-`after Nd` shifts the clause N days later. `within Nd` is true if the clause
-is true on **any** of the next N days (incomplete look-ahead is NaN). `not`
+`consecutive-below`. Count/consecutive aggs take a **per-step** threshold (per
+day on daily data, per week on weekly data) before the window
+(`precip count-below 1 10d >= 7`). Consecutive clauses have no
+`<op> <threshold>` — they are true when every step in the window matches.
+`after 10d` shifts the clause 10 days later. `within 21d` is true if the
+clause is true on **any** of the next 21 days (incomplete look-ahead is NaN). `not`
 inverts that clause. `after` and `within` cannot appear on the same clause.
 
 ### Aliases
@@ -98,11 +113,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \
 
 ### Arguments
 
-- `--input`, `-i` — daily standard dataset Zarr.
+- `--input`, `-i` — daily or weekly standard dataset Zarr.
 - `--output`, `-o` — output Zarr.
 - `--rule` — alias or clause string (required, once).
 - `--variable`, `-v` — override the variable named in every clause.
-- `--time-dim` — daily axis (default `time` if length > 1, else `step`).
+- `--time-dim` — daily or weekly axis (default `time` if length > 1, else
+  `step`).
 - `--detect` — `first` or `any`.
 - `--cumulative` — running OR along the daily axis.
 - `--probability` — ensemble fraction.
@@ -114,6 +130,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \
 uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \
     -i /tmp/daily.zarr -o /tmp/wet8.zarr \
     --rule "precip sum 8d >= 25" --probability
+
+# Weekly forecast (e.g. KMSA weekly downscale, mm day-1): P(dry week, ≤ 10 mm)
+uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \
+    -i /tmp/weekly.zarr -o /tmp/dry_week.zarr \
+    --rule "tp sum 1w <= 10" --probability
 
 # ICPAC onset date per member
 uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \

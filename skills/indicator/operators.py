@@ -1,4 +1,4 @@
-"""Evaluate an IndicatorSpec on a daily DataArray (per-member, then reduce)."""
+"""Evaluate an IndicatorSpec on a daily or weekly DataArray (per-member, then reduce)."""
 
 from __future__ import annotations
 
@@ -14,8 +14,14 @@ _OPS = {
 }
 
 
-def evaluate_spec(ds, spec, dim: str, variable_override: str | None) -> xr.DataArray:
-    """Return a 0/1/NaN mask aligned to ``dim`` (ensemble ``number`` kept)."""
+def evaluate_spec(
+    ds, spec, dim: str, variable_override: str | None, step_days: int = 1
+) -> xr.DataArray:
+    """Return a 0/1/NaN mask aligned to ``dim`` (ensemble ``number`` kept).
+
+    Clause windows are in days; ``step_days`` is the spacing of ``dim``, and
+    every window must be a whole number of steps.
+    """
     masks = []
     for clause in spec.clauses:
         name = variable_override or clause.variable
@@ -23,7 +29,7 @@ def evaluate_spec(ds, spec, dim: str, variable_override: str | None) -> xr.DataA
             raise UsageError(
                 f"variable {name!r} missing from --input. Available: {list(ds.data_vars)}"
             )
-        masks.append(_evaluate_clause(ds[name], clause, dim))
+        masks.append(_evaluate_clause(ds[name], clause, dim, step_days))
     out = masks[0]
     combine = spec.combinator or "and"
     for other in masks[1:]:
@@ -73,43 +79,54 @@ def _strip_pint(da: xr.DataArray) -> xr.DataArray:
     return da
 
 
-def _evaluate_clause(da: xr.DataArray, clause, dim: str) -> xr.DataArray:
+def _steps(days: int, step_days: int, what: str) -> int:
+    """Convert a day count from ``--rule`` to a whole number of samples on ``dim``."""
+    if days % step_days:
+        raise UsageError(
+            f"{what} {days}d is not a whole number of {step_days}-day steps; "
+            f"use a multiple of {step_days}d" + (" (e.g. 1w, 2w)" if step_days == 7 else "")
+        )
+    return days // step_days
+
+
+def _evaluate_clause(da: xr.DataArray, clause, dim: str, step_days: int = 1) -> xr.DataArray:
     da = _strip_pint(da)
-    core = _core_mask(da, clause, dim)
+    window = _steps(clause.window, step_days, "window")
+    core = _core_mask(da, clause, dim, window)
     if clause.after is not None:
-        core = core.shift({dim: -int(clause.after)})
+        core = core.shift({dim: -_steps(clause.after, step_days, "after")})
     if clause.within is not None:
-        core = _within(core, dim, int(clause.within))
+        core = _within(core, dim, _steps(clause.within, step_days, "within"))
     if clause.negate:
         core = xr.where(core.isnull(), np.nan, 1.0 - core)
     return core.astype("float32")
 
 
-def _core_mask(da: xr.DataArray, clause, dim: str) -> xr.DataArray:
+def _core_mask(da: xr.DataArray, clause, dim: str, window: int) -> xr.DataArray:
     agg = clause.agg
     if agg in ("sum", "mean"):
-        rolled = _left_roll(da, dim, clause.window, agg)
+        rolled = _left_roll(da, dim, window, agg)
         compared = _OPS[clause.op](rolled, clause.threshold)
         return xr.where(rolled.isnull(), np.nan, compared.astype("float32"))
     daily = clause.daily_threshold
     if agg == "count-above":
         flag = xr.where(da.isnull(), np.nan, (da > daily).astype("float32"))
-        rolled = _left_roll(flag, dim, clause.window, "sum")
+        rolled = _left_roll(flag, dim, window, "sum")
         compared = _OPS[clause.op](rolled, clause.threshold)
         return xr.where(rolled.isnull(), np.nan, compared.astype("float32"))
     if agg == "count-below":
         flag = xr.where(da.isnull(), np.nan, (da < daily).astype("float32"))
-        rolled = _left_roll(flag, dim, clause.window, "sum")
+        rolled = _left_roll(flag, dim, window, "sum")
         compared = _OPS[clause.op](rolled, clause.threshold)
         return xr.where(rolled.isnull(), np.nan, compared.astype("float32"))
     if agg == "consecutive-above":
         flag = xr.where(da.isnull(), np.nan, (da > daily).astype("float32"))
-        rolled = _left_roll(flag, dim, clause.window, "sum")
-        return xr.where(rolled.isnull(), np.nan, (rolled == clause.window).astype("float32"))
+        rolled = _left_roll(flag, dim, window, "sum")
+        return xr.where(rolled.isnull(), np.nan, (rolled == window).astype("float32"))
     if agg == "consecutive-below":
         flag = xr.where(da.isnull(), np.nan, (da < daily).astype("float32"))
-        rolled = _left_roll(flag, dim, clause.window, "sum")
-        return xr.where(rolled.isnull(), np.nan, (rolled == clause.window).astype("float32"))
+        rolled = _left_roll(flag, dim, window, "sum")
+        return xr.where(rolled.isnull(), np.nan, (rolled == window).astype("float32"))
     raise UsageError(f"unsupported agg {agg!r}")
 
 
@@ -127,29 +144,18 @@ def _left_roll(da: xr.DataArray, dim: str, window: int, method: str) -> xr.DataA
         out = rolled.mean(skipna=False)
     else:
         raise UsageError(f"unsupported rolling method {method!r}")
+    # Relabel each trailing window by its first sample (left edge). Positional,
+    # so it holds for any uniform spacing (daily, weekly).
     out = out.isel({dim: slice(window - 1, None)})
-    step_shift = window - 1
-    dtype = axis.dtype
-    if np.issubdtype(dtype, np.timedelta64):
-        steps = np.asarray(axis.values)
-        diffs = np.diff(steps.astype("timedelta64[ns]").astype(np.int64))
-        median_ns = int(np.median(diffs)) if diffs.size else 0
-        shift = np.timedelta64(step_shift * median_ns, "ns")
-    elif np.issubdtype(dtype, np.datetime64):
-        shift = np.timedelta64(step_shift, "D")
-    else:
-        raise UsageError(
-            f"rolling requires datetime64 or timedelta64 on {dim!r}; got dtype {dtype}"
-        )
-    out = out.assign_coords({dim: out[dim] - shift})
+    out = out.assign_coords({dim: axis.values[: out.sizes[dim]]})
     return out.reindex({dim: axis})
 
 
-def _within(mask: xr.DataArray, dim: str, days: int) -> xr.DataArray:
-    """True if ``mask`` is True on any of the next ``days`` labels; NaN if incomplete."""
-    if days < 1:
-        raise UsageError(f"within window must be >= 1d; got {days}")
-    shifted = [mask.shift({dim: -k}) for k in range(1, days + 1)]
+def _within(mask: xr.DataArray, dim: str, steps: int) -> xr.DataArray:
+    """True if ``mask`` is True on any of the next ``steps`` labels; NaN if incomplete."""
+    if steps < 1:
+        raise UsageError(f"within window must be >= 1 step; got {steps}")
+    shifted = [mask.shift({dim: -k}) for k in range(1, steps + 1)]
     stack = xr.concat(shifted, dim="_look")
     complete = stack.notnull().all("_look")
     hit = (stack == 1).any("_look")
