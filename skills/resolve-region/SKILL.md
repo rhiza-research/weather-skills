@@ -1,6 +1,6 @@
 ---
 name: resolve-region
-description: "Resolve an ISO 3166-1 alpha-3 country code, a Natural Earth multi-country region (East Africa, Western Africa), a custom forecast box (Kenya OND region, Indian Ocean basin), a sub-national region (state, province, county), or a leftover landmark name to a lat/lon bbox and optionally a boundary polygon GeoJSON. Use when you need to turn a country, county, or named place into a bbox (or a polygon mask) for clip-region, ecmwf-fetch, or plot. Prefer ISO3 / country-admin1 / Natural Earth region names / custom forecast boxes; Nominatim is the fallback for landmarks. Do not send Indian Ocean to Nominatim — it is the basin box 30/20/-40/120. Not for river basins or catchments (e.g. Tana River basin): Nominatim returns an unrelated basin; use resolve-chc-region (CHC skills) instead."
+description: "Resolve an ISO 3166-1 alpha-3 country code, a Natural Earth multi-country region (East Africa, Western Africa), a custom forecast box (Kenya OND region, Indian Ocean basin), a sub-national region (state, province, county), or a leftover landmark name to a lat/lon bbox and optionally a boundary polygon GeoJSON. Use when you need to turn a country, county, or named place into a bbox (or a polygon mask) for clip-region, ecmwf-fetch, or plot. Prefer ISO3 / country-admin1 / Natural Earth region names / custom forecast boxes; Nominatim is the fallback for landmarks. Do not send Indian Ocean to Nominatim — it is the basin box 30/20/-40/120. Not for river basins or catchments (e.g. Tana River basin): Nominatim returns an unrelated basin. For basins, catchments, or official national/local boundaries, first check whether another installed skill provides more specific regions for that use case."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py *)
@@ -56,12 +56,13 @@ Philippines. Do not pass basin or catchment names here.
 |---|---|
 | A country, multi-country region, county / state, or landmark | `resolve-region` (this skill) |
 | Tana River **County** (the administrative unit) | `resolve-region kenya-tana_river` |
-| Tana River **basin** / Tana basin / Tana catchment | `resolve-chc-region "Tana River basin"` (CHC skills) |
-| Any other river basin or catchment | Neither — ask the user for a boundary file and pass it to `clip-region --geojson` |
+| A river basin or catchment, or an official national / local boundary dataset | Not this skill — see below |
 
-`resolve-chc-region` ships with the CHC skills plugin and prints the same
-`N/W/S/E` bbox and `--geojson` FeatureCollection as this skill. If that
-plugin is not installed, say so rather than falling back to Nominatim.
+For those, first check whether another installed skill provides more
+specific regions for the use case (for example a domain or country plugin
+with basin polygons or official boundaries) and prints the same `N/W/S/E`
+bbox and `--geojson` FeatureCollection. If none does, ask the user for a
+boundary file and pass it to `clip-region --geojson`.
 
 `Indian Ocean basin` below is an **ocean** box, not a river basin, and does
 belong here.
