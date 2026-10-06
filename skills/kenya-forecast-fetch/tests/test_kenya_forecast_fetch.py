@@ -319,7 +319,9 @@ def test_fetch_precip_downscaled_keeps_ensemble_members(tmp_path, fetch_mod, mon
 
     with xr.open_zarr(out, consolidated=True) as ds:
         assert ds.sizes["number"] == 3
-        np.testing.assert_allclose(ds["tp"].isel(step=0, latitude=0, longitude=0).values, [1.0, 2.0, 3.0])
+        np.testing.assert_allclose(
+            ds["tp"].isel(step=0, latitude=0, longitude=0).values, [1.0, 2.0, 3.0]
+        )
 
 
 def test_store_key_precip_downscaled_is_weekly_netcdf(fetch_mod):
