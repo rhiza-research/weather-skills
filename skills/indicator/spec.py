@@ -26,14 +26,11 @@ _COUNT_OR_CONSEC = frozenset(
 _CONSEC = frozenset({"consecutive-above", "consecutive-below"})
 _OPS = (">=", "<=", ">", "<")
 _WINDOW_RE = re.compile(r"^(\d+)([dw])$", re.IGNORECASE)
-_UNIT_DAYS = {"d": 1, "w": 7}
 _SPLIT_RE = re.compile(r"\s+(and|or)\s+", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
 class Clause:
-    """One parsed clause. ``window``, ``after`` and ``within`` are in days."""
-
     negate: bool
     variable: str
     agg: str
@@ -87,7 +84,7 @@ def _parse_window(token: str, source: str) -> int:
     match = _WINDOW_RE.fullmatch(token)
     if not match:
         raise UsageError(f"window {token!r} in --rule {source!r} must look like '8d' or '1w'")
-    days = int(match.group(1)) * _UNIT_DAYS[match.group(2).lower()]
+    days = int(match.group(1)) * (7 if match.group(2).lower() == "w" else 1)
     if days < 1:
         raise UsageError(f"window must be >= 1d in --rule {source!r}")
     return days
@@ -131,20 +128,18 @@ def _parse_clause(text: str, source: str) -> Clause:
     if agg in _COUNT_OR_CONSEC:
         if i >= len(tokens):
             raise UsageError(
-                f"clause {text!r} in --rule {source!r} needs a per-step threshold after {agg}"
+                f"clause {text!r} in --rule {source!r} needs a daily threshold after {agg}"
             )
         try:
             daily_threshold = float(tokens[i])
         except ValueError as exc:
             raise UsageError(
-                f"per-step threshold {tokens[i]!r} in --rule {source!r} is not a number"
+                f"daily threshold {tokens[i]!r} in --rule {source!r} is not a number"
             ) from exc
         i += 1
 
     if i >= len(tokens):
-        raise UsageError(
-            f"clause {text!r} in --rule {source!r} is missing a window (e.g. 8d or 1w)"
-        )
+        raise UsageError(f"clause {text!r} in --rule {source!r} is missing a window (e.g. 8d)")
     window = _parse_window(tokens[i], source)
     i += 1
 

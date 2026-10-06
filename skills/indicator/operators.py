@@ -1,4 +1,4 @@
-"""Evaluate an IndicatorSpec on a daily or weekly DataArray (per-member, then reduce)."""
+"""Evaluate an IndicatorSpec on a daily DataArray (per-member, then reduce)."""
 
 from __future__ import annotations
 
@@ -19,8 +19,7 @@ def evaluate_spec(
 ) -> xr.DataArray:
     """Return a 0/1/NaN mask aligned to ``dim`` (ensemble ``number`` kept).
 
-    Clause windows are in days; ``step_days`` is the spacing of ``dim``, and
-    every window must be a whole number of steps.
+    Clause windows are in days; ``step_days`` is the spacing of ``dim``.
     """
     masks = []
     for clause in spec.clauses:
@@ -79,24 +78,19 @@ def _strip_pint(da: xr.DataArray) -> xr.DataArray:
     return da
 
 
-def _steps(days: int, step_days: int, what: str) -> int:
-    """Convert a day count from ``--rule`` to a whole number of samples on ``dim``."""
+def _steps(days: int, step_days: int) -> int:
     if days % step_days:
-        raise UsageError(
-            f"{what} {days}d is not a whole number of {step_days}-day steps; "
-            f"use a multiple of {step_days}d" + (" (e.g. 1w, 2w)" if step_days == 7 else "")
-        )
+        raise UsageError(f"window {days}d is not a whole number of {step_days}-day steps")
     return days // step_days
 
 
-def _evaluate_clause(da: xr.DataArray, clause, dim: str, step_days: int = 1) -> xr.DataArray:
+def _evaluate_clause(da: xr.DataArray, clause, dim: str, step_days: int) -> xr.DataArray:
     da = _strip_pint(da)
-    window = _steps(clause.window, step_days, "window")
-    core = _core_mask(da, clause, dim, window)
+    core = _core_mask(da, clause, dim, _steps(clause.window, step_days))
     if clause.after is not None:
-        core = core.shift({dim: -_steps(clause.after, step_days, "after")})
+        core = core.shift({dim: -_steps(clause.after, step_days)})
     if clause.within is not None:
-        core = _within(core, dim, _steps(clause.within, step_days, "within"))
+        core = _within(core, dim, _steps(clause.within, step_days))
     if clause.negate:
         core = xr.where(core.isnull(), np.nan, 1.0 - core)
     return core.astype("float32")
@@ -144,18 +138,17 @@ def _left_roll(da: xr.DataArray, dim: str, window: int, method: str) -> xr.DataA
         out = rolled.mean(skipna=False)
     else:
         raise UsageError(f"unsupported rolling method {method!r}")
-    # Relabel each trailing window by its first sample (left edge). Positional,
-    # so it holds for any uniform spacing (daily, weekly).
     out = out.isel({dim: slice(window - 1, None)})
+    # Label each window by its first sample (works for any uniform step).
     out = out.assign_coords({dim: axis.values[: out.sizes[dim]]})
     return out.reindex({dim: axis})
 
 
-def _within(mask: xr.DataArray, dim: str, steps: int) -> xr.DataArray:
-    """True if ``mask`` is True on any of the next ``steps`` labels; NaN if incomplete."""
-    if steps < 1:
-        raise UsageError(f"within window must be >= 1 step; got {steps}")
-    shifted = [mask.shift({dim: -k}) for k in range(1, steps + 1)]
+def _within(mask: xr.DataArray, dim: str, days: int) -> xr.DataArray:
+    """True if ``mask`` is True on any of the next ``days`` labels; NaN if incomplete."""
+    if days < 1:
+        raise UsageError(f"within window must be >= 1d; got {days}")
+    shifted = [mask.shift({dim: -k}) for k in range(1, days + 1)]
     stack = xr.concat(shifted, dim="_look")
     complete = stack.notnull().all("_look")
     hit = (stack == 1).any("_look")
