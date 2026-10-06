@@ -62,8 +62,7 @@ For those, first check whether another installed skill provides more
 specific regions for the use case (for example a domain or country plugin
 with basin polygons or official boundaries) and prints the same `N/W/S/E`
 bbox and `--geojson` FeatureCollection. If none does, ask the user for a
-boundary file and pass it to `clip-region --geojson`. Never fall back to
-Nominatim for a basin.
+boundary file and pass it to `clip-region --geojson`.
 
 `Indian Ocean basin` below is an **ocean** box, not a river basin, and does
 belong here.
