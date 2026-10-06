@@ -1,11 +1,11 @@
 ---
 name: indicator
 description: >-
-  Apply a boolean indicator to a daily weather-skills standard dataset Zarr
+  Apply a boolean indicator to a daily or weekly weather-skills standard dataset Zarr
   (windowed precip thresholds, sequential onset rules) and optionally reduce to
   ensemble probability. Use for ICPAC/CHC rainy-season onset, ad-hoc rules like
   >25 mm in 8 days or <9 mm in 10 days, wet/dry spells, and the probability that
-  an indicator is true. Input must be daily (time or step). Apply per ensemble
+  an indicator is true. Input must be daily or weekly (time or step). Apply per ensemble
   member; do not average precip first.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
@@ -36,10 +36,12 @@ when you want a mean onset day-of-year.
 - First day the indicator is true (`--detect first`), or whether it happens
   at least once (`--detect any`).
 
-**Daily input.** Native `data_interval` of `1 day`, or inferred 1-day spacing
-on `time` / `step`. Otherwise run `aggregate-temporal --period daily` (then
-`convert-to-totals` if you need mm totals). Daily `mm day-1` rates and daily
-`mm` totals are treated as equivalent. Classic forecasts may stay on `step`;
+**Daily or weekly input.** A whole-day step from `data_interval` or the
+spacing on `time` / `step` (e.g. `1 day`, `7 day`). Windows are `Nd` or `Nw`
+and must be a whole number of steps (`1w`, not `10d`, on weekly data). Precip
+rates are multiplied by the step, so thresholds are mm per step: weekly
+`mm day-1` becomes mm per week. Daily `mm day-1` rates and `mm` totals are
+treated as equivalent. Classic forecasts may stay on `step`;
 run `step-to-time` when you need calendar onset dates. Restrict the search
 window with `select` first (MAM/OND is not built in).
 
@@ -114,6 +116,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \
 uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \
     -i /tmp/daily.zarr -o /tmp/wet8.zarr \
     --rule "precip sum 8d >= 25" --probability
+
+# Weekly data: P(dry week, <= 10 mm)
+uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \
+    -i /tmp/weekly.zarr -o /tmp/dry_week.zarr \
+    --rule "tp sum 1w <= 10" --probability
 
 # ICPAC onset date per member
 uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \

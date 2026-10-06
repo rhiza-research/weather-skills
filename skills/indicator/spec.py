@@ -25,7 +25,7 @@ _COUNT_OR_CONSEC = frozenset(
 )
 _CONSEC = frozenset({"consecutive-above", "consecutive-below"})
 _OPS = (">=", "<=", ">", "<")
-_WINDOW_RE = re.compile(r"^(\d+)d$", re.IGNORECASE)
+_WINDOW_RE = re.compile(r"^(\d+)([dw])$", re.IGNORECASE)
 _SPLIT_RE = re.compile(r"\s+(and|or)\s+", re.IGNORECASE)
 
 
@@ -83,8 +83,8 @@ def parse_rule(raw: str) -> IndicatorSpec:
 def _parse_window(token: str, source: str) -> int:
     match = _WINDOW_RE.fullmatch(token)
     if not match:
-        raise UsageError(f"window {token!r} in --rule {source!r} must look like '8d'")
-    days = int(match.group(1))
+        raise UsageError(f"window {token!r} in --rule {source!r} must look like '8d' or '1w'")
+    days = int(match.group(1)) * (7 if match.group(2).lower() == "w" else 1)
     if days < 1:
         raise UsageError(f"window must be >= 1d in --rule {source!r}")
     return days

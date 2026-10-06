@@ -305,12 +305,12 @@ def test_detect_first_rejects_probability_and_cumulative(tmp_path, indicator_fn)
     assert exc.value.code == 2
 
 
-def test_non_daily_is_refused(tmp_path, indicator_fn):
+def test_sub_daily_is_refused(tmp_path, indicator_fn):
     ds = make_gridded(n_time=3, lats=(1.0,), lons=(10.0,), fill=4.0)
     ds = ds.assign_coords(
-        time=np.array(["2026-01-01", "2026-01-08", "2026-01-15"], dtype="datetime64[ns]")
+        time=np.array(["2026-01-01T00", "2026-01-01T12", "2026-01-02T00"], dtype="datetime64[ns]")
     )
-    src = write_zarr(ds, tmp_path / "weekly.zarr")
+    src = write_zarr(ds, tmp_path / "subdaily.zarr")
     with pytest.raises(SystemExit) as exc:
         run_skill(
             indicator_fn,
@@ -367,3 +367,28 @@ def test_step_forecast_axis(tmp_path, indicator_fn):
     out = xr.open_zarr(tmp_path / "out.zarr", consolidated=True)
     assert "step" in out.dims
     assert out["indicator"].isel(step=0, latitude=0, longitude=0).values == pytest.approx(1)
+
+
+def test_weekly_rates_probability(tmp_path, indicator_fn):
+    # Weekly forecast in mm day-1: rates are compared as mm per week.
+    ds = make_forecast(n_step=3, lats=(1.0,), lons=(10.0,), name="tp", members=4)
+    ds = ds.assign_coords(step=np.arange(3) * np.timedelta64(7, "D"))
+    ds["tp"].attrs.update(units="mm day-1", **{DATA_INTERVAL_ATTR: "7 day"})
+    ds["tp"].values[:, :, 0, 0] = 10.0  # 70 mm/week
+    ds["tp"].values[:, 0, 0, 0] = [0.5, 1.0, 2.0, 3.0]  # week 1: 3.5, 7, 14, 21 mm
+    src = write_zarr(ds, tmp_path / "fc.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        indicator_fn, "-i", str(src), "-o", str(out), "--rule", "tp sum 1w <= 10", "--probability"
+    )
+    assert _cell(out, "probability").values.tolist() == pytest.approx([0.5, 0.0, 0.0])
+    with pytest.raises(SystemExit):
+        run_skill(
+            indicator_fn,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "bad.zarr"),
+            "--rule",
+            "tp sum 10d <= 9",
+        )
