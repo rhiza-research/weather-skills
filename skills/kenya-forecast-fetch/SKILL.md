@@ -1,6 +1,6 @@
 ---
 name: kenya-forecast-fetch
-description: Fetch a forecast grid from the public Kenya forecasts archive (gs://kenya-forecasting-data/<date>/data/). Native ECMWF S2S is the low-resolution Zarr (`--dataset precip`, ~1.5°); the CHIRPS-resolution weekly downscale is `--dataset precip_downscaled` (~0.05°, data_weekly_Kenya_downscaled.nc); the daily downscale is `--dataset precip_downscaled_daily` (~0.05°, daily_downscaled_kenya.tif, ensemble mean). Also GEFS, medium-range precip, temps, and winds. Use for clipping, aggregation, comparison, or plotting via plot / plot-timeseries / plot-mediogram.
+description: Fetch a forecast grid from the public Kenya forecasts archive (gs://kenya-forecasting-data/<date>/data/). Native ECMWF S2S is the low-resolution Zarr (`--dataset precip`, ~1.5°); the CHIRPS-resolution weekly downscale is `--dataset precip_downscaled` (~0.05°, data_weekly_Kenya_downscaled.nc, all 101 ensemble members on `number`); the daily downscale is `--dataset precip_downscaled_daily` (~0.05°, daily_downscaled_kenya.tif, ensemble mean). Also GEFS, medium-range precip, temps, and winds. Use for clipping, aggregation, comparison, or plotting via plot / plot-timeseries / plot-mediogram.
 license: MIT
 compatibility: Requires Python 3.12 and uv. Opens public consolidated Zarr (native S2S / GEFS / medium-range), the weekly downscaled NetCDF, or the daily downscaled GeoTIFF over HTTPS from Google Cloud Storage bucket kenya-forecasting-data; no credentials required. Older init folders may only have GRIB/NetCDF under data/ and no Zarr.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -27,7 +27,7 @@ Layout:
 
 ```
 YYYY-MM-DD/data/ECMWF_s2s_precip_YYYY-MM-DD.zarr/     # native S2S ~1.5°
-YYYY-MM-DD/data/data_weekly_Kenya_downscaled.nc       # CHIRPS-resolution weekly ~0.05° (may be half-cell offset)
+YYYY-MM-DD/data/data_weekly_Kenya_downscaled.nc       # CHIRPS-resolution weekly ~0.05°, 101 members (may be half-cell offset)
 YYYY-MM-DD/data/daily_downscaled_kenya.tif            # same grid, daily leads, ensemble mean
 YYYY-MM-DD/data/medium_range_precip.zarr/
 YYYY-MM-DD/data/gefs/gefs_kenya.zarr/
@@ -49,6 +49,38 @@ than downloading the archive's pre-rendered PNGs.
 - Native S2S precip (`--dataset precip`) vs the statistically downscaled
   weekly precip (`--dataset precip_downscaled`) or the daily disaggregation
   of that downscale (`--dataset precip_downscaled_daily`) for the same init.
+- Ensemble spread or member-based probabilities from the KMSA forecast —
+  see [Ensemble members](#ensemble-members) for which products carry
+  `number`.
+
+## Ensemble members
+
+| `--dataset` | Members | Cadence | Grid |
+|---|---|---|---|
+| `precip` | 101 (`number` 0–100) | daily | ~1.5° |
+| `precip_downscaled` | 101 (`number` 0–100) | weekly | ~0.05° |
+| `precip_downscaled_daily` | none — ensemble mean | daily | ~0.05° |
+
+The weekly downscale is **not** a single forecast: every member is
+downscaled, so you can take weekly probabilities at ~0.05°. Only the daily
+GeoTIFF is the ensemble mean. Its `GRIB_totalNumber = 101` attribute is
+inherited metadata, not a member axis.
+
+Pick the product by the event's time window:
+
+- **Daily-window events** (dry spells such as `<9 mm in 10 days` or
+  `7+ consecutive days <1 mm`, or `>50 mm in one day`) need daily
+  members. Use `--dataset precip` with `indicator --probability`. The
+  daily downscale is a mean, so it gives only yes/no maps, never
+  probabilities. `indicator` refuses the weekly downscale because it is
+  not daily.
+- **Weekly-total events and spread** (for example, the share of members
+  with a week-2 total under 10 mm, the member std, or a percentile band)
+  can use `--dataset precip_downscaled` at ~0.05°. Run
+  `convert-to-totals`, then reduce over `number`.
+
+Keep `number` until the final reduction. Averaging the members first
+turns a probability into a yes/no field.
 
 Prefer `dynamical-fetch` when you need a live global GEFS / IFS / GFS / S2S
 fetch (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` for ER). Use this
@@ -70,7 +102,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [dataset-id]
 | `--dataset` | Store under `<date>/data/` | Typical vars |
 |---|---|---|
 | `precip` (default) | `ECMWF_s2s_precip_<date>.zarr` | `tp` — native S2S, ~1.5°, daily ensemble |
-| `precip_downscaled` | `data_weekly_Kenya_downscaled.nc` | `tp` — CHIRPS-resolution weekly totals, ~0.05°, no `number` |
+| `precip_downscaled` | `data_weekly_Kenya_downscaled.nc` | `tp` — CHIRPS-resolution weekly, ~0.05°, 101 members (`number` 0–100) |
 | `precip_downscaled_daily` | `daily_downscaled_kenya.tif` | `tp` — same ~0.05° grid, daily leads, ensemble mean, no `number` |
 | `daily_vars` | `ECMWF_s2s_daily_vars_<date>.zarr` | `t2m`, `d2m`, `cape`, `tcw` |
 | `Tminmax` | `ECMWF_s2s_Tminmax_<date>.zarr` | `mn2t6`, `mx2t6` |
