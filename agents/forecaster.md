@@ -165,6 +165,7 @@ Required names (from each skill's `metadata.openclaw.requires.env`):
 - `imerg-fetch` / `smap-fetch` — `EARTHDATA_USERNAME`, `EARTHDATA_PASSWORD`
 - `tahmo-fetch` — `TAHMO_API_USERNAME`, `TAHMO_API_PASSWORD`
 - `openaq-fetch` — `OPENAQ_API_KEY`
+- `cams-fetch` — `ADS_API_KEY` (not needed for `--probe-latest`)
 
 `--probe-latest` still needs credentials when the probe talks to a keyed
 API (`openaq-fetch`, `tahmo-fetch`, `imerg-fetch`, `smap-fetch`). ECMWF
