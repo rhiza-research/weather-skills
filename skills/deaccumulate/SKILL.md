@@ -1,10 +1,11 @@
 ---
 name: deaccumulate
-description: Convert a leftover cumulative-since-init forecast variable along its `step` axis into per-step rates (precip → mm day-1). Fetchers (`ecmwf-fetch`, `dynamical-fetch`, `kenya-forecast-fetch`) already write rates — do not run this after them. Use on older cumulative archives that still have amount units.
+description: Convert a leftover cumulative-since-init forecast variable along its `step` axis into per-step rates (precip → mm day-1). Fetchers (`ecmwf-fetch`, `dynamical-fetch`, `kenya-forecast-fetch`, `cumulus-fetch`, `neuralgcm-fetch`) already write rates — do not run this after them. Use on older cumulative archives that still have amount units.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/deaccumulate.py *)
 metadata:
+  version: "0.0.2"
   catalog-group: transforms
 ---
 
@@ -26,7 +27,9 @@ per-step increments via `arr[i+1] - arr[i]`, clipped at zero.
 ## When not to use
 
 - **Current fetcher outputs** (`ecmwf-fetch` `tp`, `dynamical-fetch`
-  `precipitation_surface`, `kenya-forecast-fetch` precip) — already rates
+  `precipitation_surface`, `kenya-forecast-fetch` precip / precip_downscaled /
+  precip_downscaled_daily,
+  `cumulus-fetch` `tp`, `neuralgcm-fetch` `tp`) — already rates
   (`mm day-1`). The skill refuses them. For period amounts, run
   `aggregate-temporal` then `convert-to-totals`.
 - CHIRPS, IMERG, station precip, and any variable whose `units` are per-time
@@ -67,8 +70,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/deaccumulate.py --input <in.zarr> --output <o
 ### Output
 
 Same dims and coords as the input EXCEPT the `step` axis is one shorter: the
-first input step is dropped, and the remaining step coord values are
-preserved. Values are `arr[i+1] - arr[i]` clipped at zero. For precip amount
+last input step is dropped, and remaining cells are labeled at each
+interval's **left** edge (`step = 0` is the first period). Values are
+`arr[i+1] - arr[i]` clipped at zero. For precip amount
 inputs, the increment is divided by the step interval and stamped as
 `mm day-1` (`lwe_precipitation_rate`). Other variables keep their input attrs.
 

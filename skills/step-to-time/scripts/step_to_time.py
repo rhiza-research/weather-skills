@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@main",
+#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 #   "cftime>=1.6",
 #   "numpy>=2.4",
 # ]
@@ -18,7 +18,9 @@ _SKILL_VERSION = "0.0.2"
     name="step-to-time",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("forecast"), required=True)
+@weather_skill.argument(
+    "-i", "--input", type=Dataset("init_time, prediction_timedelta"), required=True
+)
 def step_to_time(ds, **kwargs):
     """Realize forecast step as wall-clock time (time = init + step)."""
     import cftime

@@ -5,6 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/difference.py *)
 metadata:
+  version: "0.0.2"
   catalog-group: transforms
 ---
 
@@ -20,11 +21,17 @@ join on shared dims, broadcasting over dims present on only one side — so a
 
 - Anomaly vs climatology: a field minus its baseline mean (e.g. SST
   anomalies as `sst.zarr` minus a `summarize-dim --dim time --method mean`
-  baseline).
+  baseline, or CHIRPS minus `clim-fetch`). When plotting rainfall
+  anomalies, omit `theme.colormap` so the default diverging millimetre classes
+  apply.
 - Scenario minus historical: a change map (e.g. a CMIP6 SSP time-mean minus
   the historical time-mean = projected change by 2050).
 - Any cell-by-cell difference of two datasets on a shared grid (forecast
-  minus observations, model A minus model B).
+  minus observations, model A minus model B). If the lat/lon coordinates
+  differ, `coarsen` or `downscale` first so the inner join hits the same
+  points. That alignment is for this subtraction. To draw them, pass two
+  heatmap traces to `plot`: each panel keeps its own lat/lon. `--layer`
+  stacks both on one map.
 
 ## Usage
 
@@ -51,11 +58,14 @@ where `--output` resolves to either `--input` path.
 ### Alignment
 
 Shared dims are aligned with an inner join, so only overlapping coordinate
-values participate; dims present on only one input broadcast. When a variable
-ends up empty along a dim the skill exits non-zero (no output is written) and
-distinguishes the two causes: a dim that was already empty in an input before
-alignment, versus a dim left empty because alignment found no overlapping
-coordinate values.
+labels are kept; dims present on only one input broadcast. Floating-point
+near-misses (e.g. coarsened `5.9500000001` vs IMERG `5.95`) drop cells — put
+both fields on one product's exact grid with `coarsen --reference-grid` (or
+`downscale --reference-grid` if the target is finer) before differencing.
+When a variable ends up empty along a dim the skill exits non-zero (no output
+is written) and distinguishes the two causes: a dim that was already empty in
+an input before alignment, versus a dim left empty because alignment found no
+overlapping coordinate values.
 
 A shared dim that has no index coordinate cannot be label-aligned, so it is
 paired positionally (element *i* of A minus element *i* of B). If the two
@@ -91,14 +101,14 @@ One data variable per differenced variable, holding A − B on the aligned
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: an append-only array
-of per-step entries `{skill, version, args, input}` (the `version` recorded in
-this skill's own entry is the value printed by its `--help`; inherited upstream
-entries carry their own versions). Because difference takes two inputs, its entry's `input`
-is a list with one item per input (A then B), each carrying that input's full
-upstream chain, so both branches are recorded; the top-level chain is the first
-input's chain followed by the difference entry. Inspect a written output's
-lineage with the `provenance` skill.
+The output stamps a JSON-encoded `weather_skills_history` DAG. Difference is a
+join: the top-level array is this difference entry, and `input` is a list
+with one item per input (A then B), each carrying that input's full
+upstream subgraph, so both branches are recorded equally. The entry also
+records the git `commit` of the skill that ran (the `version` is the value
+printed by `--help`; inherited upstream entries carry their own versions
+and commits). Inspect a written output's lineage with the `provenance`
+skill.
 
 Re-running with identical arguments against unchanged inputs and an existing
 output is a cheap no-op — reuse the same output path. A cache hit requires the

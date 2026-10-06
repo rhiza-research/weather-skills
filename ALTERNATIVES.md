@@ -2,7 +2,7 @@
 
 This doc captures the landscape survey for CLI tools that overlap with the
 generic middle-pipeline skills in `skills/` (`clip-region`,
-`aggregate-temporal`, `downscale`, `concat`, `plot`, `plot-compare`).
+`aggregate-temporal`, `downscale`, `concat`, `plot`).
 Recorded for future reference so we don't re-survey from scratch when
 scaling up or deciding what to swap in.
 
