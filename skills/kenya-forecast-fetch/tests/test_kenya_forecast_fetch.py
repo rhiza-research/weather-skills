@@ -296,6 +296,34 @@ def test_fetch_precip_downscaled_converts_to_weekly_totals(tmp_path, fetch_mod, 
         assert ds.sizes["step"] == 2
 
 
+def test_fetch_precip_downscaled_keeps_ensemble_members(tmp_path, fetch_mod, monkeypatch):
+    """The live weekly downscale carries 101 members on ``number``; fetch must keep them."""
+    out = tmp_path / "downscaled_members.zarr"
+    members = xr.concat(
+        [_downscaled_weekly() * (m + 1) for m in range(3)],
+        dim=xr.DataArray(np.arange(3), dims="number", name="number"),
+    )
+    members["tp"].attrs.update(units="kg m-2", long_name="Total Precipitation")
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda key: True)
+    monkeypatch.setattr(fetch_mod, "_open_remote", lambda key: members)
+
+    run_skill(
+        fetch_mod.fetch,
+        "--dataset",
+        "precip_downscaled",
+        "--date",
+        "2026-08-30",
+        "-o",
+        str(out),
+    )
+
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds.sizes["number"] == 3
+        np.testing.assert_allclose(
+            ds["tp"].isel(step=0, latitude=0, longitude=0).values, [1.0, 2.0, 3.0]
+        )
+
+
 def test_store_key_precip_downscaled_is_weekly_netcdf(fetch_mod):
     key = fetch_mod._store_key("precip_downscaled", "2026-08-30")
     assert key == "2026-08-30/data/data_weekly_Kenya_downscaled.nc"
