@@ -190,7 +190,8 @@ def _weighted_mean(ds, dim, indices, weights):
     # turns unpublished GEFS long leads (all-NaN weeks 4–5) into fake dry zeros.
     numer = (sub * wda).sum(dim=dim, skipna=True, keep_attrs=True)
     denom = (sub.notnull() * wda).sum(dim=dim)
-    return numer / denom
+    # A cell missing samples other cells have is NaN, not a mean of what it has.
+    return (numer / denom).where(denom >= denom.max())
 
 
 def _empty_bins_message(spec, dim):
@@ -257,7 +258,12 @@ def _assign_coverage(out, dim, coverages):
 
 def _reduce(grouped, method, dim=None):
     fn = {"mean": grouped.mean, "max": grouped.max, "min": grouped.min}[method]
-    return fn(dim=dim, keep_attrs=True) if dim is not None else fn(keep_attrs=True)
+    if dim is None:
+        return fn(keep_attrs=True)
+    # A cell missing samples other cells have is NaN, not a mean of what it has:
+    # convert-to-totals would scale that mean up to the full period.
+    count = grouped.notnull().sum(dim=dim)
+    return fn(dim=dim, keep_attrs=True).where(count >= count.max())
 
 
 def _group_indices(group, size: int):

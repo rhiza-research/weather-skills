@@ -5,7 +5,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 import xarray as xr
-from conftest import load_skill, make_forecast, make_gridded, run_skill, write_zarr
+from conftest import (
+    load_skill,
+    make_forecast,
+    make_gridded,
+    make_point_obs,
+    run_skill,
+    write_zarr,
+)
 from weather_skills_core.provenance import load_history
 
 
@@ -442,3 +449,56 @@ def test_weekly_period_on_weekly_step_keeps_values(tmp_path, aggregate):
     np.testing.assert_allclose(weekly["tp"].values[:, 0, 0], [1, 4, 9, 16, 25, 36])
     assert weekly["tp"].attrs.get("aggregation_period") == "7 day"
     assert weekly["tp"].attrs.get("data_interval") == "7 day"
+
+
+def _tahmo_like_week():
+    """3 stations x 7 days; S1 reported only 2 days (like TA00442), S2 none."""
+    ds = make_point_obs(n_time=7, n_points=3, fill=4.0, start="2026-09-28")
+    ds["precip"].values[1, 2:] = np.nan
+    ds["precip"].values[2, :] = np.nan
+    return ds
+
+
+@pytest.mark.parametrize("extra", [[], ["--end-time", "2026-10-05"]])
+def test_partial_station_week_is_nan_not_extrapolated(tmp_path, aggregate, extra):
+    """A station missing days gets NaN; complete stations keep their weekly rate."""
+    src = write_zarr(_tahmo_like_week(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--period", "weekly", *extra)
+
+    weekly = xr.open_zarr(out, consolidated=True)
+    vals = weekly["precip"].sel(point_id=["S0", "S1", "S2"]).values.reshape(3)
+    assert vals[0] == pytest.approx(4.0)
+    assert np.isnan(vals[1])
+    assert np.isnan(vals[2])
+    assert float(weekly["aggregation_coverage"].values[0]) == pytest.approx(1.0)
+
+
+def test_partial_station_week_totals_never_scale_missing_days(tmp_path, aggregate):
+    """End to end: S1's 2 measured days must never become a 7-day total."""
+    convert = load_skill("convert-to-totals", "convert_to_totals").convert_to_totals
+    src = write_zarr(_tahmo_like_week(), tmp_path / "in.zarr")
+    weekly = tmp_path / "weekly.zarr"
+    totals = tmp_path / "totals.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(weekly), "--period", "weekly")
+    run_skill(convert, "-i", str(weekly), "-o", str(totals))
+
+    out = xr.open_zarr(totals, consolidated=True)
+    vals = out["precip"].sel(point_id=["S0", "S1"]).values.reshape(2)
+    assert vals[0] == pytest.approx(28.0)
+    assert np.isnan(vals[1])
+
+
+def test_partial_grid_cell_is_nan(tmp_path, aggregate):
+    """Same rule on grids: a cell missing one day is NaN; a land-mask hole stays NaN."""
+    ds = make_gridded(n_time=7, fill=2.0)
+    ds["precip"].values[3, 0, 1] = np.nan
+    ds["precip"].values[:, 0, 0] = np.nan
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--period", "weekly")
+    weekly = xr.open_zarr(out, consolidated=True)["precip"].values[0]
+    assert np.isnan(weekly[0, 1])
+    assert np.isnan(weekly[0, 0])
+    assert weekly[1, 1] == pytest.approx(2.0)
+    assert int(np.isnan(weekly).sum()) == 2

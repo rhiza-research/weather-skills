@@ -191,7 +191,15 @@ def _station_frame(api, station_id: str, start: str, end: str):
     agg_spec = {c: DAILY_AGG[c] for c in wide.columns if c in DAILY_AGG}
     if not agg_spec:
         return None
-    daily = wide.resample("D").agg(agg_spec)
+    resampler = wide.resample("D")
+    # A day with no records is missing, not 0 mm: plain ``sum`` turns an
+    # outage into a dry day. ``min_count=1`` keeps it NaN.
+    daily = pd.DataFrame(
+        {
+            c: resampler[c].sum(min_count=1) if how == "sum" else resampler[c].agg(how)
+            for c, how in agg_spec.items()
+        }
+    )
     daily["station_id"] = station_id
     return daily
 

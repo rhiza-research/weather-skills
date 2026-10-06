@@ -299,3 +299,20 @@ def test_station_ids_take_precedence_over_bbox(tmp_path, mod, fetch):
         )
 
     assert fetched == ["TA00002"]
+
+
+def test_station_day_without_records_is_nan_not_zero(mod):
+    """An outage day inside the range must stay NaN; summing it would invent 0 mm."""
+    raw = pd.DataFrame(
+        {
+            "time": ["2026-01-01T06:00:00Z", "2026-01-01T07:00:00Z", "2026-01-03T06:00:00Z"],
+            "variable": ["pr", "pr", "pr"],
+            "value": [1.0, 0.5, 2.0],
+            "quality": [1, 1, 1],
+        }
+    )
+    with patch.object(mod, "_fetch_raw", return_value=raw):
+        daily = mod._station_frame(MagicMock(), "TA00001", "2026-01-01", "2026-01-03")
+    assert daily["precip"].iloc[0] == pytest.approx(1.5)
+    assert pd.isna(daily["precip"].iloc[1])
+    assert daily["precip"].iloc[2] == pytest.approx(2.0)

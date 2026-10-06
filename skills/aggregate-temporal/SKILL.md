@@ -67,6 +67,15 @@ Exactly one of `--period` or `--window` is required.
   from fetch / resolve-time. No effect on `step` or `--window`.
 - `--start-time` — with `--period` and `--end-time`: optional earliest coverage floor. Requires `--end-time`.
 
+### Missing data is never filled
+
+A cell or station missing samples in a bin that other cells have is **NaN**
+for that bin, not a mean of the days it did report (a station with 2 of 7
+days gets no weekly value; convert-to-totals would otherwise scale it to 7
+days). Gaps shared by every cell are left to `aggregation_coverage`. Do not
+work around this by hand (`skipna` sums, `fillna`, interpolation, "mean ×
+days"); report incomplete stations as missing.
+
 ### Metadata stamped
 
 On each aggregated data variable:

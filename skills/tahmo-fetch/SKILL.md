@@ -27,7 +27,13 @@ TAHMO **deployment API** (`getStations()`): list them in a bounding box, pick
 ids, then fetch. For each `(time, variable)` it picks the best-quality sensor
 (lowest TAHMO quality flag, filtering to flags <= 2), resamples to daily (sum
 for `precip`, mean for `temperature`/`humidity`/`pressure`), and writes a
-point_obs Zarr store.
+point_obs Zarr store. A day with no records is NaN, not 0 mm.
+
+Stations often miss days. Never fill or extrapolate them (no interpolation,
+`fillna`, or scaling a partial week's mean to 7 days). For multi-day totals,
+use `aggregate-temporal` → `convert-to-totals`: stations with any missing day
+in the period come out NaN. Report how many stations were complete and how
+many were excluded.
 
 Do not pass a country name. Resolve a place to `--bbox N/W/S/E` with
 `resolve-region`, list stations in that box, then fetch the ids you want — or
