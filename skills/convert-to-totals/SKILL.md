@@ -45,15 +45,6 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/convert_to_totals.py \
 - `--variable`, `-v` — limit to named data vars (default: all).
 - `--time-dim` — time/step dim for the overlap gate (default: CF time or `step`).
 
-Refuses variables stamped `aggregation_partial_cells: kept`
-(`aggregate-temporal --keep-partial-cells`): their rates come from fewer
-samples than the period, so a total would extrapolate the missing ones.
-
-**Totals are sums of measured values only.** Never lower `--min-coverage`, or
-compute totals by hand (`skipna` sums or means × days, `fillna`,
-interpolation), to get a value for a station or cell that is missing days.
-Leave it missing and report how many were excluded.
-
 There is no `--aggregation-period` override. The period comes from the
 stamped attr.
 

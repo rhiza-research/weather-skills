@@ -28,7 +28,7 @@ Autodetects which dim is present. For forecasts, aggregates ensemble members (`n
   that product is stamped on fetch.
 - Rolling N-step means (`--window`) with optional `--align` / `--stride`.
 - Selecting weekly or dekadal subsets of a forecast initialized at multiple steps.
-- For period **totals** (`mm`), run `convert-to-totals` afterward (non-overlapping bins only; rolling series with Δt &lt; `aggregation_period` are refused — `select` the times you want first). A single remaining bin is allowed. Incomplete bins are kept and stamped with `aggregation_coverage` &lt; 1; convert-to-totals `--min-coverage` (default 1.0) drops them. Individual cells/stations with missing days are NaN (see *Missing data is never filled*).
+- For period **totals** (`mm`), run `convert-to-totals` afterward (non-overlapping bins only; rolling series with Δt &lt; `aggregation_period` are refused — `select` the times you want first). A single remaining bin is allowed. Incomplete bins are kept and stamped with `aggregation_coverage` &lt; 1; convert-to-totals `--min-coverage` (default 1.0) drops them.
 
 ## Usage
 
@@ -66,26 +66,15 @@ Exactly one of `--period` or `--window` is required.
   `[2026-08-24, 2026-08-31)` labeled `2026-08-24`. Copy the `YYYY-MM-DD`
   from fetch / resolve-time. No effect on `step` or `--window`.
 - `--start-time` — with `--period` and `--end-time`: optional earliest coverage floor. Requires `--end-time`.
-- `--keep-partial-cells` — with `--period`: keep cells/stations that are missing
-  samples other cells have (see below). Stamps `aggregation_partial_cells: kept`;
-  `convert-to-totals` refuses such variables. Never use it for totals.
 
 ### Missing data is never filled
 
-A cell or station that is missing samples in a bin **that other cells have**
-becomes **NaN** for that bin. It does not get a mean of the days it did report.
-Example: a TAHMO station that reported 2 of 7 days gets no weekly value. If
-it got the mean of those 2 days, `convert-to-totals` would multiply it by
-7 days and invent rain that no gauge measured. Stderr reports how many
-cell-bins were masked. Gaps shared by every cell (an unpublished lead, a
-trailing partial week) are left to `aggregation_coverage` and the
-convert-to-totals `--min-coverage` gate. Cells that are NaN for the whole bin
-(land mask) stay NaN. Rolling `--window` needs a full window per cell
-(`min_periods = window`).
-
-Do not work around this by hand: no `skipna` sums or means, `fillna`,
-interpolation, or "mean × days" in ad-hoc code. Report stations or cells
-with missing days as missing, and say how many were dropped.
+A cell or station missing samples in a bin that other cells have is **NaN**
+for that bin, not a mean of the days it did report (a station with 2 of 7
+days gets no weekly value; convert-to-totals would otherwise scale it to 7
+days). Gaps shared by every cell are left to `aggregation_coverage`. Do not
+work around this by hand (`skipna` sums, `fillna`, interpolation, "mean ×
+days"); report incomplete stations as missing.
 
 ### Metadata stamped
 

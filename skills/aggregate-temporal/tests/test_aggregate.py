@@ -460,7 +460,7 @@ def _tahmo_like_week():
 
 
 @pytest.mark.parametrize("extra", [[], ["--end-time", "2026-10-05"]])
-def test_partial_station_week_is_nan_not_extrapolated(tmp_path, aggregate, capsys, extra):
+def test_partial_station_week_is_nan_not_extrapolated(tmp_path, aggregate, extra):
     """A station missing days gets NaN; complete stations keep their weekly rate."""
     src = write_zarr(_tahmo_like_week(), tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
@@ -472,8 +472,6 @@ def test_partial_station_week_is_nan_not_extrapolated(tmp_path, aggregate, capsy
     assert np.isnan(vals[1])
     assert np.isnan(vals[2])
     assert float(weekly["aggregation_coverage"].values[0]) == pytest.approx(1.0)
-    assert "aggregation_partial_cells" not in weekly["precip"].attrs
-    assert "set 1 cell-bins to NaN" in capsys.readouterr().err
 
 
 def test_partial_station_week_totals_never_scale_missing_days(tmp_path, aggregate):
@@ -504,25 +502,3 @@ def test_partial_grid_cell_is_nan(tmp_path, aggregate):
     assert np.isnan(weekly[0, 0])
     assert weekly[1, 1] == pytest.approx(2.0)
     assert int(np.isnan(weekly).sum()) == 2
-
-
-def test_keep_partial_cells_is_refused_by_convert_to_totals(tmp_path, aggregate):
-    convert = load_skill("convert-to-totals", "convert_to_totals").convert_to_totals
-    src = write_zarr(_tahmo_like_week(), tmp_path / "in.zarr")
-    weekly = tmp_path / "weekly.zarr"
-    run_skill(
-        aggregate,
-        "-i",
-        str(src),
-        "-o",
-        str(weekly),
-        "--period",
-        "weekly",
-        "--keep-partial-cells",
-    )
-    ds = xr.open_zarr(weekly, consolidated=True)
-    assert ds["precip"].attrs["aggregation_partial_cells"] == "kept"
-    assert float(ds["precip"].sel(point_id="S1").values.reshape(-1)[0]) == pytest.approx(4.0)
-    with pytest.raises(SystemExit) as exc:
-        run_skill(convert, "-i", str(weekly), "-o", str(tmp_path / "totals.zarr"))
-    assert exc.value.code == 2

@@ -38,7 +38,6 @@ PERIOD_DAYS = {"daily": 1, "weekly": 7, "dekadal": 10}
 RESAMPLE_FREQ = {"daily": "1D", "weekly": "7D", "dekadal": "10D", "monthly": "MS"}
 ANCHOR_PERIOD_DAYS = {"daily": 1, "weekly": 7, "dekadal": 10, "monthly": 30}
 _METHOD_TO_CF = {"mean": "mean", "max": "maximum", "min": "minimum"}
-PARTIAL_CELLS_ATTR = "aggregation_partial_cells"
 _NAMED_PERIODS = tuple(PERIOD_TO_AGGREGATION)
 
 
@@ -176,56 +175,6 @@ def _drop_bounds(ds, dim):
     return ds
 
 
-def _mask_partial_cells(reduced, sub, dim, weights=None):
-    """NaN out cells with fewer finite samples in the bin than the best cell.
-
-    A station (or grid cell) that reported 2 of 7 days must not get a weekly
-    rate from those 2 days: convert-to-totals would multiply it by 7 days and
-    invent rain no gauge measured. Bin-wide gaps (no cell has the sample) are
-    left to ``aggregation_coverage``; cells NaN for the whole bin stay NaN.
-    Returns ``(reduced, n_masked)``.
-    """
-    import numpy as np
-    import xarray as xr
-
-    n_masked = 0
-    for name in reduced.data_vars:
-        if name not in sub.data_vars or dim not in sub[name].dims:
-            continue
-        da = sub[name]
-        if getattr(da, "pint", None) is not None and da.pint.units is not None:
-            da = da.pint.dequantify()
-        finite = da.notnull()
-        if weights is not None:
-            w = xr.DataArray(np.asarray(weights, dtype=float), dims=[dim], coords={dim: da[dim]})
-            have = (finite * w).sum(dim=dim)
-        else:
-            have = finite.sum(dim=dim)
-        best = float(have.max()) if have.size else 0.0
-        if best <= 0:
-            continue
-        partial = (have > 0) & (have < best * (1 - 1e-9))
-        n = int(partial.sum())
-        if n:
-            n_masked += n
-            reduced[name] = reduced[name].where(~partial)
-    return reduced, n_masked
-
-
-def _reduce_bin(ds, dim, indices, method, totals, weights=None):
-    """Reduce one bin, masking cells with partial coverage (see _mask_partial_cells)."""
-    sub = ds.isel({dim: indices})
-    if method == "mean" and weights is not None:
-        out = _weighted_mean(ds, dim, indices, weights)
-    else:
-        out = _reduce(sub, method=method, dim=dim)
-    if totals.get("keep"):
-        return out
-    out, n = _mask_partial_cells(out, sub, dim, weights)
-    totals["masked"] = totals.get("masked", 0) + n
-    return out
-
-
 def _weighted_mean(ds, dim, indices, weights):
     import numpy as np
     import xarray as xr
@@ -241,14 +190,15 @@ def _weighted_mean(ds, dim, indices, weights):
     # turns unpublished GEFS long leads (all-NaN weeks 4–5) into fake dry zeros.
     numer = (sub * wda).sum(dim=dim, skipna=True, keep_attrs=True)
     denom = (sub.notnull() * wda).sum(dim=dim)
-    return numer / denom
+    # A cell missing samples other cells have is NaN, not a mean of what it has.
+    return (numer / denom).where(denom >= denom.max())
 
 
 def _empty_bins_message(spec, dim):
     return f"no {spec['key']} bins contained samples on {dim}"
 
 
-def _aggregate_from_bounds(ds, dim, spec, method, bins, totals):
+def _aggregate_from_bounds(ds, dim, spec, method, bins):
     """Duration-weight samples into ``bins`` of ``(left, right, label)``."""
     import numpy as np
     import xarray as xr
@@ -272,7 +222,10 @@ def _aggregate_from_bounds(ds, dim, spec, method, bins, totals):
             continue
         covered = float((overlap * present)[idx].sum())
         coverage = min(1.0, covered / period_ns)
-        chunks.append(_reduce_bin(work, dim, idx, method, totals, weights=overlap[idx]))
+        if method == "mean":
+            chunks.append(_weighted_mean(work, dim, idx, overlap[idx]))
+        else:
+            chunks.append(_reduce(work.isel({dim: idx}), method=method, dim=dim))
         labels.append(label)
         coverages.append(coverage)
     if not chunks:
@@ -305,7 +258,12 @@ def _assign_coverage(out, dim, coverages):
 
 def _reduce(grouped, method, dim=None):
     fn = {"mean": grouped.mean, "max": grouped.max, "min": grouped.min}[method]
-    return fn(dim=dim, keep_attrs=True) if dim is not None else fn(keep_attrs=True)
+    if dim is None:
+        return fn(keep_attrs=True)
+    # A cell missing samples other cells have is NaN, not a mean of what it has:
+    # convert-to-totals would scale that mean up to the full period.
+    count = grouped.notnull().sum(dim=dim)
+    return fn(dim=dim, keep_attrs=True).where(count >= count.max())
 
 
 def _group_indices(group, size: int):
@@ -355,7 +313,7 @@ def _expected_from_interval(spec, label, native_interval, timestep_days: float) 
     return _expected_samples(spec["key"], label, timestep_days, period_days=period_days)
 
 
-def _aggregate_time_resample(ds, dim, spec, method, totals):
+def _aggregate_time_resample(ds, dim, spec, method):
     """Forward calendar resample; stamp ``aggregation_coverage`` on every bin with samples."""
     import numpy as np
     import xarray as xr
@@ -376,7 +334,7 @@ def _aggregate_time_resample(ds, dim, spec, method, totals):
                 left = np.datetime64(label)
                 right = left + np.timedelta64(spec["anchor_days"], "D")
             bins.append((left, right, left if hasattr(label, "calendar") else np.datetime64(label)))
-        return _aggregate_from_bounds(ds, dim, spec, method, bins, totals)
+        return _aggregate_from_bounds(ds, dim, spec, method, bins)
 
     timestep_days = _timestep_days(ds, dim)
     native_interval = _coverage_cell(ds)
@@ -389,7 +347,7 @@ def _aggregate_time_resample(ds, dim, spec, method, totals):
         if not indices:
             continue
         expected = _expected_from_interval(spec, label, native_interval, timestep_days)
-        chunks.append(_reduce_bin(ds, dim, indices, method, totals))
+        chunks.append(_reduce(ds.isel({dim: indices}), method=method, dim=dim))
         labels.append(np.datetime64(label) if not hasattr(label, "calendar") else label)
         coverages.append(_coverage_fraction(int(present[indices].sum()), expected))
     if not chunks:
@@ -398,7 +356,7 @@ def _aggregate_time_resample(ds, dim, spec, method, totals):
     return _assign_coverage(out, dim, coverages)
 
 
-def _aggregate_time_anchored(ds, dim, spec, method, end_time, totals, *, start_time=None):
+def _aggregate_time_anchored(ds, dim, spec, method, end_time, *, start_time=None):
     """Backward fixed-width bins whose last right edge is ``end_time``.
 
     Same geometry as forecast ``step`` buckets: half-open ``[left, right)``,
@@ -461,14 +419,14 @@ def _aggregate_time_anchored(ds, dim, spec, method, end_time, totals, *, start_t
     bins.reverse()
     if _cf_bounds(ds, dim) is not None:
         bound_bins = [(left, right, label(left)) for left, right in bins]
-        return _aggregate_from_bounds(ds, dim, spec, method, bound_bins, totals)
+        return _aggregate_from_bounds(ds, dim, spec, method, bound_bins)
     chunks, labels, coverages = [], [], []
     for left, right in bins:
         keep = np.nonzero((raw >= left) & (raw < right))[0]
         if keep.size == 0:
             continue
         expected = _expected_from_interval(spec, left, native_interval, timestep_days)
-        chunks.append(_reduce_bin(ds, dim, keep, method, totals))
+        chunks.append(_reduce(ds.isel({dim: keep}), method=method, dim=dim))
         labels.append(label(left))
         coverages.append(_coverage_fraction(int(present[keep].sum()), expected))
     if not chunks:
@@ -477,7 +435,7 @@ def _aggregate_time_anchored(ds, dim, spec, method, end_time, totals, *, start_t
     return _assign_coverage(out, dim, coverages)
 
 
-def _aggregate_step(ds, spec, method, totals):
+def _aggregate_step(ds, spec, method):
     import numpy as np
     import pandas as pd
     import xarray as xr
@@ -494,7 +452,7 @@ def _aggregate_step(ds, spec, method, totals):
         for left in edges[:-1]:
             right = left + window
             bins.append((left, right, left))
-        return _aggregate_from_bounds(ds, "step", spec, method, bins, totals)
+        return _aggregate_from_bounds(ds, "step", spec, method, bins)
     native_interval = _coverage_cell(ds)
     timestep_days = _timestep_days(ds, "step")
     present = _finite_along(ds, "step")
@@ -506,7 +464,7 @@ def _aggregate_step(ds, spec, method, totals):
             continue
         n_present = int(present[mask].sum())
         expected = _expected_from_interval(spec, right, native_interval, timestep_days)
-        chunks.append(_reduce_bin(ds, "step", np.where(mask)[0], method, totals))
+        chunks.append(_reduce(ds.isel(step=np.where(mask)[0]), method=method, dim="step"))
         labels.append(left)
         coverages.append(_coverage_fraction(n_present, expected))
     if not chunks:
@@ -586,14 +544,6 @@ def _rolling_aggregation_period(ds, dim, window, interval):
     default=None,
     help="With --period and --end-time: optional earliest coverage floor.",
 )
-@weather_skill.argument(
-    "--keep-partial-cells",
-    action="store_true",
-    help=(
-        "With --period: keep cells/stations that miss samples other cells have "
-        "(default: NaN them). Marks the output; convert-to-totals refuses it."
-    ),
-)
 def aggregate(
     ds,
     output,
@@ -606,7 +556,6 @@ def aggregate(
     method,
     end_time,
     start_time,
-    keep_partial_cells=False,
     **kwargs,
 ):
     """Temporal aggregation of rates: calendar resample, rolling, or step buckets."""
@@ -703,9 +652,8 @@ def aggregate(
         if n:
             out = _assign_coverage(out, dim, np.ones(n, dtype=float))
         return _stamp_attrs(out, dim, spec["agg"], method, interval, data_interval=native_interval)
-    totals = {"keep": keep_partial_cells}
     if dim == "step":
-        out = _aggregate_step(ds, spec, method, totals)
+        out = _aggregate_step(ds, spec, method)
         if end_time is not None or start_time is not None:
             print(
                 "--start-time/--end-time have no effect on step aggregation",
@@ -718,28 +666,12 @@ def aggregate(
             spec,
             method,
             end_time,
-            totals,
             start_time=start_time,
         )
     else:
-        out = _aggregate_time_resample(ds, dim, spec, method, totals)
+        out = _aggregate_time_resample(ds, dim, spec, method)
 
-    out = _stamp_attrs(out, dim, spec["agg"], method, interval, data_interval=spec["agg"])
-    masked = totals.get("masked", 0)
-    if masked:
-        print(
-            f"aggregate-temporal: set {masked} cell-bins to NaN that were missing "
-            f"samples other cells had (partial {spec['key']} coverage; not filled)",
-            file=sys.stderr,
-        )
-    for name in out.data_vars:
-        attrs = dict(out[name].attrs)
-        if keep_partial_cells:
-            attrs[PARTIAL_CELLS_ATTR] = "kept"
-        else:
-            attrs.pop(PARTIAL_CELLS_ATTR, None)
-        out[name].attrs = attrs
-    return out
+    return _stamp_attrs(out, dim, spec["agg"], method, interval, data_interval=spec["agg"])
 
 
 if __name__ == "__main__":
