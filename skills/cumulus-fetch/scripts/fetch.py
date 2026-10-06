@@ -6,9 +6,6 @@
 #   "zarr>=3",
 #   "cftime",
 #   "adlfs",
-#   "h5netcdf",
-#   "h5py",
-#   "netcdf4",
 #   "numpy",
 #   "pint-xarray>=0.6",
 # ]
@@ -19,7 +16,6 @@ from __future__ import annotations
 
 import re
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
@@ -41,19 +37,21 @@ _SKILL_VERSION = "0.0.1"
 _ACCOUNT = "italynorthdata"
 _CONTAINER = "data"
 _RUN_PREFIX = "live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9"
-_STREAM = "pf"
+_ZARR_DIR = "zarr"
 _SAS_ENV = "AZURE_STORAGE_SAS_TOKEN"
 _DEFAULT_DATASET = "precip"
 # The run publishes IMERG-trained precip at both native 1° and regridded
-# 0.25°, under separate folders with the same file layout. Default to 0.25°.
+# 0.25°, as separate variable folders under zarr/. Default to 0.25°.
 _NATIVE_PRECIP_0P25 = "total_precipitation_24h_acc_imerg_0p25"
 _NATIVE_PRECIP_1DEG = "total_precipitation_24h_acc_imerg"
+_NATIVE_PRECIP_ERA5 = "total_precipitation_24h_acc_era5"
+_NATIVE_PRECIPS = (_NATIVE_PRECIP_0P25, _NATIVE_PRECIP_1DEG, _NATIVE_PRECIP_ERA5)
 _NATIVE_PRECIP = _NATIVE_PRECIP_0P25
 _OUTPUT_PRECIP = "tp"
 DEFAULT_WORKERS = 8
 _SIG_RE = re.compile(r"(sig=)[^&\s'\"<>]+", re.IGNORECASE)
 
-# --dataset aliases → product folder under .../pf/<folder>/data/
+# --dataset aliases → variable folder under .../zarr/<variable>/
 _DATASET_ALIASES = {
     "precip": _NATIVE_PRECIP_0P25,
     "tp": _NATIVE_PRECIP_0P25,
@@ -62,6 +60,8 @@ _DATASET_ALIASES = {
     _NATIVE_PRECIP_0P25: _NATIVE_PRECIP_0P25,
     "precip_1deg": _NATIVE_PRECIP_1DEG,
     _NATIVE_PRECIP_1DEG: _NATIVE_PRECIP_1DEG,
+    "precip_era5": _NATIVE_PRECIP_ERA5,
+    _NATIVE_PRECIP_ERA5: _NATIVE_PRECIP_ERA5,
 }
 _VAR_ALIASES = {
     "tp": _OUTPUT_PRECIP,
@@ -70,19 +70,25 @@ _VAR_ALIASES = {
     "total_precipitation": _OUTPUT_PRECIP,
     _NATIVE_PRECIP_0P25: _OUTPUT_PRECIP,
     _NATIVE_PRECIP_1DEG: _OUTPUT_PRECIP,
+    _NATIVE_PRECIP_ERA5: _OUTPUT_PRECIP,
     _OUTPUT_PRECIP: _OUTPUT_PRECIP,
 }
 
-# YYYY-MM-DD-HH-LLLL.nc  (init date, init hour, lead hours)
-_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-(\d{2})-(\d{4})\.nc$")
+# YYYY-MM-DD-HH.zarr  (init date, init hour) — one store per init, all leads
+_STORE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-(\d{2})\.zarr$")
+# Lead-time dim names the store may use instead of ``step``.
+_LEAD_DIMS = ("step", "lead_time", "prediction_timedelta", "lead")
+# Init-time dim names (length 1 per store) dropped in favour of a scalar ``time``.
+_INIT_DIMS = ("init_time", "forecast_reference_time", "time")
+_MEMBER_DIMS = ("ensemble_member", "member", "realization")
 
 
 def _blob_root() -> str:
-    return f"{_CONTAINER}/{_RUN_PREFIX}/{_STREAM}"
+    return f"{_CONTAINER}/{_RUN_PREFIX}/{_ZARR_DIR}"
 
 
 def _data_prefix(dataset: str) -> str:
-    return f"{_blob_root()}/{dataset}/data"
+    return f"{_blob_root()}/{dataset}"
 
 
 def _display_prefix(dataset: str | None = None) -> str:
@@ -128,11 +134,11 @@ def _canonical_dataset(dataset: str) -> str:
     return _DATASET_ALIASES.get(key, key)
 
 
-def _parse_name(name: str) -> tuple[str, str, int] | None:
-    match = _FILE_RE.fullmatch(name)
+def _parse_name(name: str) -> tuple[str, str] | None:
+    match = _STORE_RE.fullmatch(name)
     if not match:
         return None
-    return match.group(1), match.group(2), int(match.group(3))
+    return match.group(1), match.group(2)
 
 
 def _filesystem():
@@ -187,7 +193,7 @@ def _list_names(prefix: str) -> list[str]:
 
 
 def _list_objects(dataset: str) -> list[str]:
-    """Basenames under the product ``data/`` prefix."""
+    """Basenames (``YYYY-MM-DD-HH.zarr`` stores) under the variable prefix."""
     return _list_names(_data_prefix(dataset))
 
 
@@ -220,64 +226,70 @@ def _resolve_date(date, dataset: str) -> str:
         available = _list_datasets()
         hint = f" Available --dataset folders: {', '.join(available)}." if available else ""
         raise DataError(
-            f"no YYYY-MM-DD NetCDF files under {_display_prefix(dataset)}.{hint}".rstrip()
+            f"no YYYY-MM-DD-HH.zarr stores under {_display_prefix(dataset)}.{hint}".rstrip()
         )
     return dates[-1]
 
 
-def _list_lead_keys(dataset: str, iso: str) -> list[tuple[int, str]]:
-    keys: list[tuple[int, str]] = []
-    prefix = _data_prefix(dataset)
-    for name in _list_objects(dataset):
-        parsed = _parse_name(name)
-        if parsed is None:
-            continue
-        date_s, _hour, lead = parsed
-        if date_s == iso:
-            keys.append((lead, f"az://{prefix}/{name}"))
-    keys.sort()
-    return keys
+def _store_url(dataset: str, iso: str) -> str:
+    """URL of the init's Zarr store; the latest init hour wins if several exist."""
+    hours = sorted(
+        parsed[1]
+        for name in _list_objects(dataset)
+        if (parsed := _parse_name(name)) and parsed[0] == iso
+    )
+    if not hours:
+        raise DataError(f"no Zarr store for init {iso} under {_display_prefix(dataset)}")
+    return f"az://{_data_prefix(dataset)}/{iso}-{hours[-1]}.zarr"
 
 
-def _open_lead(url: str, lead_hours: int, bbox) -> object:
+def _normalize_lead_axis(ds, iso: str):
+    """Put the lead axis on a timedelta ``step`` dim, members on ``number``, and drop init dims."""
     import numpy as np
-    import xarray as xr
 
+    for name in _LEAD_DIMS[1:]:
+        if name in ds.dims and "step" not in ds.dims:
+            ds = ds.rename({name: "step"})
+    for name in _MEMBER_DIMS:
+        if name in ds.dims and "number" not in ds.dims:
+            ds = ds.rename({name: "number"})
+    if "time" in ds.dims and "step" not in ds.dims and ds.sizes["time"] > 1:
+        # Valid-time axis: express it as lead from the init.
+        init = np.datetime64(iso, "ns")
+        ds = ds.assign_coords(step=("time", ds["time"].values - init))
+        ds = ds.swap_dims({"time": "step"})
+    for name in _INIT_DIMS:
+        if name in ds.dims:
+            ds = ds.isel({name: 0})
+    ds = ds.drop_vars([c for c in (*_INIT_DIMS, "valid_time") if c in ds.coords])
+    if "step" in ds.coords and not np.issubdtype(ds["step"].dtype, np.timedelta64):
+        units = str(ds["step"].attrs.get("units", "hours")).split()[0].lower()
+        unit = {"days": "D", "day": "D", "hours": "h", "hour": "h"}.get(units, "h")
+        ds = ds.assign_coords(
+            step=ds["step"].values.astype(f"timedelta64[{unit}]").astype("timedelta64[ns]")
+        )
+    return ds
+
+
+def _open_init(dataset: str, iso: str, bbox, workers: int):
+    import xarray as xr
+    import zarr
+
+    url = _store_url(dataset, iso)
+    print(f"Opening Cumulus store {url.rsplit('/', 1)[-1]} for {iso}", file=sys.stderr)
     try:
-        with xr.open_dataset(url, engine="h5netcdf", storage_options=_storage_options()) as opened:
-            ds = bbox_subset(opened, bbox) if bbox is not None else opened
-            ds = ds.load()
+        with zarr.config.set({"async.concurrency": max(1, int(workers))}):
+            with xr.open_zarr(
+                url, storage_options=_storage_options(), chunks=None, decode_timedelta=True
+            ) as opened:
+                ds = bbox_subset(opened, bbox) if bbox is not None else opened
+                ds = ds.load()
     except (DataError, UsageError):
         raise
     except Exception as exc:  # noqa: BLE001
         raise _azure_error(exc, f"failed to open {url}") from None
-    step = np.timedelta64(lead_hours, "h").astype("timedelta64[ns]")
-    return ds.expand_dims(step=[step])
-
-
-def _open_leads(keys: list[tuple[int, str]], bbox, workers: int):
-    import xarray as xr
-
-    if not keys:
-        raise DataError("no lead files to open for this Cumulus init.")
-    n_workers = max(1, int(workers))
-    opened: dict[int, object] = {}
-    with ThreadPoolExecutor(max_workers=min(n_workers, len(keys))) as pool:
-        futures = {pool.submit(_open_lead, url, lead, bbox): lead for lead, url in keys}
-        for fut in as_completed(futures):
-            lead = futures[fut]
-            opened[lead] = fut.result()
-    parts = [opened[lead] for lead, _ in sorted(keys)]
-    ds = xr.concat(parts, dim="step")
-    return ds.sortby("step")
-
-
-def _open_init(dataset: str, iso: str, bbox, workers: int):
-    keys = _list_lead_keys(dataset, iso)
-    if not keys:
-        raise DataError(f"no lead files for init {iso} under {_display_prefix(dataset)}")
-    print(f"Opening {len(keys)} Cumulus lead files for {iso}", file=sys.stderr)
-    return _open_leads(keys, bbox, workers)
+    ds = _normalize_lead_axis(ds, iso)
+    return ds.sortby("step") if "step" in ds.dims else ds
 
 
 def _shift_step_origin_to_zero(ds):
@@ -301,7 +313,7 @@ def _shift_step_origin_to_zero(ds):
 def _prepare_dataset(ds, iso: str):
     import numpy as np
 
-    for native in (_NATIVE_PRECIP_0P25, _NATIVE_PRECIP_1DEG):
+    for native in _NATIVE_PRECIPS:
         if native in ds.data_vars:
             ds = ds.rename({native: _OUTPUT_PRECIP})
             break
@@ -349,7 +361,7 @@ def _select_variables(ds, variable):
 @weather_skill.argument(
     "--dataset",
     default=_DEFAULT_DATASET,
-    help=(f"Product folder under pf/ (default precip → {_NATIVE_PRECIP})."),
+    help=(f"Variable folder under zarr/ (default precip → {_NATIVE_PRECIP})."),
 )
 @weather_skill.argument("--date")
 @weather_skill.argument("--bbox")
@@ -358,7 +370,7 @@ def _select_variables(ds, variable):
     "--workers",
     type=int,
     default=DEFAULT_WORKERS,
-    help=f"Max concurrent lead-file download threads (default {DEFAULT_WORKERS}).",
+    help=f"Max concurrent Zarr chunk requests (default {DEFAULT_WORKERS}).",
 )
 @weather_skill.argument(
     "--probe-latest",
@@ -375,11 +387,10 @@ def _select_variables(ds, variable):
 def fetch(dataset, date, bbox, variable, output, **kwargs):
     """Fetch a Cumulus AI operational ensemble forecast and write a weather-skills standard dataset.
 
-    Opens per-lead NetCDFs under
-    ``az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/pf/<dataset>/data/``
-    with the SAS in ``AZURE_STORAGE_SAS_TOKEN``, concatenates them along
-    ``step``, optionally subsets by ``--bbox`` / ``--variable``, and returns
-    a Dataset for the decorator to write.
+    Opens the init's Zarr store
+    ``az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr/<variable>/YYYY-MM-DD-HH.zarr``
+    with the SAS in ``AZURE_STORAGE_SAS_TOKEN``, optionally subsets by
+    ``--bbox`` / ``--variable``, and returns a Dataset for the decorator to write.
     """
     dsid = _canonical_dataset(kwargs["probe_latest"] or dataset)
     if kwargs.get("probe_latest") is not None:

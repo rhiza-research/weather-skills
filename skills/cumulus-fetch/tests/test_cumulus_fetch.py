@@ -1,4 +1,4 @@
-"""Correctness tests for cumulus-fetch (network / remote NetCDF mocked)."""
+"""Correctness tests for cumulus-fetch (network / remote Zarr mocked)."""
 
 from pathlib import Path
 
@@ -32,9 +32,58 @@ def _native_forecast(*, fill=5.0, n_step=3, members=3, negatives=False):
 
 
 def test_parse_name(fetch_mod):
-    assert fetch_mod._parse_name("2026-09-18-00-0024.nc") == ("2026-09-18", "00", 24)
-    assert fetch_mod._parse_name("2026-09-18-00-1104.nc") == ("2026-09-18", "00", 1104)
+    assert fetch_mod._parse_name("2026-09-18-00.zarr") == ("2026-09-18", "00")
+    assert fetch_mod._parse_name("2026-09-18-12.zarr") == ("2026-09-18", "12")
+    assert fetch_mod._parse_name("2026-09-18-00-0024.nc") is None
     assert fetch_mod._parse_name("readme.txt") is None
+
+
+def test_data_prefix_points_at_zarr_variable_folder(fetch_mod):
+    assert fetch_mod._data_prefix("total_precipitation_24h_acc_imerg_0p25") == (
+        "data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/"
+        "zarr/total_precipitation_24h_acc_imerg_0p25"
+    )
+
+
+def test_store_url_picks_init(fetch_mod, monkeypatch):
+    names = ["2026-09-11-00.zarr", "2026-09-18-00.zarr", "2026-09-18-12.zarr", "x.txt"]
+    monkeypatch.setattr(fetch_mod, "_list_objects", lambda dataset: names)
+    url = fetch_mod._store_url("v", "2026-09-18")
+    assert url.endswith("/zarr/v/2026-09-18-12.zarr")
+    assert fetch_mod._init_dates_from_names(names) == ["2026-09-11", "2026-09-18"]
+    with pytest.raises(fetch_mod.DataError):
+        fetch_mod._store_url("v", "2026-09-25")
+
+
+def test_normalize_lead_axis_renames_and_drops_init_time(fetch_mod):
+    remote = _native_forecast().rename({"step": "lead_time"})
+    remote = remote.expand_dims(time=[np.datetime64("2026-09-18", "ns")])
+    out = fetch_mod._normalize_lead_axis(remote, "2026-09-18")
+    assert "step" in out.dims and "lead_time" not in out.dims
+    assert "time" not in out.dims and "time" not in out.coords
+
+
+def test_normalize_lead_axis_matches_live_store_layout(fetch_mod):
+    """Live stores: (init_time, lead_time, ensemble_member, lat, lon) + valid_time."""
+    remote = _native_forecast().rename({"step": "lead_time", "number": "ensemble_member"})
+    init = np.datetime64("2026-10-06", "ns")
+    remote = remote.expand_dims(init_time=[init])
+    remote = remote.assign_coords(
+        valid_time=(("init_time", "lead_time"), (init + remote["lead_time"].values)[None, :])
+    )
+    out = fetch_mod._normalize_lead_axis(remote, "2026-10-06")
+    assert set(out.dims) == {"number", "step", "latitude", "longitude"}
+    assert not {"init_time", "valid_time", "lead_time", "ensemble_member"} & set(out.coords)
+
+
+def test_normalize_lead_axis_from_valid_time(fetch_mod):
+    remote = _native_forecast()
+    init = np.datetime64("2026-09-18", "ns")
+    remote = remote.assign_coords(time=("step", init + remote["step"].values))
+    remote = remote.swap_dims({"step": "time"}).drop_vars("step")
+    out = fetch_mod._normalize_lead_axis(remote, "2026-09-18")
+    hours = out["step"].values.astype("timedelta64[h]").astype(int)
+    assert list(hours) == [24, 48, 72]
 
 
 def test_canonical_dataset_aliases(fetch_mod):
