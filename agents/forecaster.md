@@ -166,6 +166,7 @@ Required names (from each skill's `metadata.openclaw.requires.env`):
 - `tahmo-fetch` — `TAHMO_API_USERNAME`, `TAHMO_API_PASSWORD`
 - `openaq-fetch` — `OPENAQ_API_KEY`
 - `cams-fetch` — `ADS_API_KEY` (not needed for `--probe-latest`)
+- `kmsa-wrf-fetch` — none for the default public bucket; `--source ssh` needs `KMSA_WRF_SSH_HOST` and `KMSA_WRF_SSH_PASSWORD` or `KMSA_WRF_SSH_KEY` (plus `KMSA_WRF_REMOTE_DIR` unless `--remote-dir` is passed)
 
 `--probe-latest` still needs credentials when the probe talks to a keyed
 API (`openaq-fetch`, `tahmo-fetch`, `imerg-fetch`, `smap-fetch`). ECMWF
