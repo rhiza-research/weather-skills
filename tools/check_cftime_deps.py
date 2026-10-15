@@ -108,7 +108,8 @@ def check(path: Path) -> str | None:
     if not _opens_dataset(tree):
         return None
     declared = {_normalize(d) for d in deps}
-    if "cftime" in declared:
+    # weather-skills-core depends on cftime, so declaring core is enough.
+    if "cftime" in declared or "weather_skills_core" in declared:
         return None
     return f"{path}: opens a dataset but does not declare cftime"
 

@@ -30,6 +30,19 @@ IMPORT_TO_PACKAGE = {
     "ecmwfapi": "ecmwf-api-client",
 }
 
+# Runtime deps of weather-skills-core (its pyproject `dependencies`, plus pint via
+# pint-xarray). Skills that declare weather-skills-core get these without listing them.
+CORE_PROVIDES = [
+    "cf-xarray",
+    "cftime",
+    "numpy",
+    "pillow",
+    "pint",
+    "pint-xarray",
+    "xarray",
+    "zarr",
+]
+
 
 def _parse_pep723_deps(src: str) -> list[str] | None:
     """Return the list of declared deps, or None if this isn't a PEP 723 script."""
@@ -87,6 +100,8 @@ def check(path: Path) -> list[str]:
     if deps is None:
         return []
     tree = ast.parse(src, filename=str(path))
+    if "weather-skills-core" in deps:
+        deps = deps + CORE_PROVIDES
     declared = {_normalize(IMPORT_TO_PACKAGE.get(d, d)) for d in deps}
 
     missing = []
