@@ -69,6 +69,9 @@ def test_convert_to_totals_rewrites_rate_display_names(tmp_path, convert_to_tota
             AGGREGATION_PERIOD_ATTR: "1 day",
             "long_name": "precipitation rate",
             "GRIB_name": "Precipitation rate",
+            "comment": "Average precipitation rate since the previous forecast step.",
+            "short_name": "prate",
+            "step_type": "avg",
         }
     )
     src = write_zarr(ds, tmp_path / "in.zarr")
@@ -81,6 +84,8 @@ def test_convert_to_totals_rewrites_rate_display_names(tmp_path, convert_to_tota
     assert result["precip"].attrs["standard_name"] == STANDARD["precip_amount"]["standard_name"]
     assert result["precip"].attrs["long_name"] == PRECIP_AMOUNT_LONG_NAME
     assert result["precip"].attrs["GRIB_name"] == PRECIP_AMOUNT_LONG_NAME
+    for key in ("comment", "short_name", "step_type"):
+        assert key not in result["precip"].attrs
 
 
 def test_convert_to_totals_refuses_finer_than_period(tmp_path, convert_to_totals):

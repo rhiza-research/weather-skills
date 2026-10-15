@@ -17,6 +17,7 @@ from weather_skills_core.units import (
     AGGREGATION_PERIOD_ATTR,
     DATA_INTERVAL_ATTR,
     data_interval_of,
+    dequantify_dataset,
     expected_samples_in_period,
     format_cell_methods,
     format_duration,
@@ -120,7 +121,11 @@ def _cf_bounds(ds, dim):
 
 def _as_ns(val):
     import numpy as np
+    import pandas as pd
 
+    # Anchored and monthly bin edges are pd.Timestamp; np.asarray makes those object dtype.
+    if isinstance(val, (pd.Timestamp, pd.Timedelta)):
+        val = val.to_numpy()
     arr = np.asarray(val)
     if arr.dtype.kind == "m":
         return arr.astype("timedelta64[ns]").astype(np.int64)
@@ -181,11 +186,8 @@ def _weighted_mean(ds, dim, indices, weights):
     import xarray as xr
 
     w = np.asarray(weights, dtype=float)
-    sub = _drop_bounds(ds.isel({dim: indices}), dim)
-    for name in sub.data_vars:
-        da = sub[name]
-        if getattr(da, "pint", None) is not None and da.pint.units is not None:
-            sub[name] = da.pint.dequantify()
+    # dequantify_dataset keeps the standard spelling (mm day-1, not millimeter / day).
+    sub = dequantify_dataset(_drop_bounds(ds.isel({dim: indices}), dim))
     wda = xr.DataArray(w, dims=[dim], coords={dim: sub[dim].values})
     # Weight only finite samples. Dividing by sum(weights) treats NaN as 0, which
     # turns unpublished GEFS long leads (all-NaN weeks 4–5) into fake dry zeros.

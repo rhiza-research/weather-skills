@@ -169,10 +169,11 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
         attrs["units"] = STANDARD["precip_amount"]["units"]
         attrs["standard_name"] = STANDARD["precip_amount"]["standard_name"]
         attrs["long_name"] = PRECIP_AMOUNT_LONG_NAME
-        # Product rate descriptions ("Average precipitation rate…", "prate")
-        # no longer describe a period total.
+        # Product rate descriptions ("Average precipitation rate…", "prate",
+        # step_type "avg") no longer describe a period total.
         attrs.pop("comment", None)
         attrs.pop("short_name", None)
+        attrs.pop("step_type", None)
         if looks_like_rate_display_name(attrs.get("GRIB_name")):
             attrs["GRIB_name"] = PRECIP_AMOUNT_LONG_NAME
         attrs["cell_methods"] = format_cell_methods(_sum_cell_methods_dim(da, dim), "sum")

@@ -173,8 +173,10 @@ fields (precip, 46-day daily means such as `average_temperature_2m`) at the
 lead 0 is all-NaN. When every selected field is NaN at lead 0, this skill
 drops that lead and relabels each remaining step to the previous step's
 value, so `step = 0` is the first interval (the init day for 46-day daily
-precip; the first 3 h for GEFS). This matches `ecmwf-fetch`, `step-to-time`,
-and `aggregate-temporal` weekly bins (week 1 = `[0d, 7d)`). Fetching an
+precip; the first 3 h for GEFS). Where leads change spacing (GEFS and IFS
+ENS go from 3- to 6-hourly), fetch also writes `step_bounds` = `[step, next
+lead)`, which `step-to-time` carries over as `time_bounds`. This matches
+`ecmwf-fetch`, `step-to-time`, and `aggregate-temporal` weekly bins (week 1 = `[0d, 7d)`). Fetching an
 instant field (GEFS `temperature_2m`, winds, pressure levels) alongside keeps
 lead 0 and the catalog labels; fetch averaged and instant fields separately
 when you need interval-start steps. Known precip is converted to `mm day-1` and known air

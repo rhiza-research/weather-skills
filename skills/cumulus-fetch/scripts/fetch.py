@@ -121,6 +121,11 @@ def _to_standard(ds):
     ds["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
     # Each lead is the 24h total ending at init + lead; label it by the period start.
     ds = ds.assign_coords(step=ds["step"] - np.timedelta64(24, "h"))
+    # The store's comment ("...24 hours ending at valid_time") describes the old label.
+    ds["tp"].attrs["comment"] = (
+        "24 h precipitation from init + step to init + step + 24 h "
+        "(cumulus-fetch relabelled store leads from period end to period start)."
+    )
     return ds.transpose("number", "step", "latitude", "longitude")
 
 

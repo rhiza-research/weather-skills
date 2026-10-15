@@ -136,6 +136,44 @@ def test_aggregate_end_time_keeps_incomplete_leading(tmp_path, aggregate, capsys
     assert "dropped" not in capsys.readouterr().err
 
 
+def _time_bounds_forecast():
+    """step-to-time output for GEFS-like leads: 3 h cells for 2 days, then 6 h, with time_bounds."""
+    start = np.datetime64("2026-08-24T00", "ns")
+    hours = np.concatenate([np.arange(0, 48, 3), np.arange(48, 14 * 24 + 1, 6)])
+    edges = start + hours.astype("timedelta64[h]")
+    rate = np.where(edges[:-1] < start + np.timedelta64(2, "D"), 1.0, 4.0)
+    ds = xr.Dataset(
+        {"precip": (("time", "latitude", "longitude"), rate[:, None, None], {"units": "mm day-1"})},
+        coords={
+            "time": edges[:-1],
+            "time_bounds": (("time", "nv"), np.stack([edges[:-1], edges[1:]], axis=1)),
+            "latitude": [1.0],
+            "longitude": [10.0],
+        },
+    )
+    ds["time"].attrs.update(standard_name="time", axis="T", bounds="time_bounds")
+    ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north", axis="Y")
+    ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east", axis="X")
+    return ds
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [["--end-time", "2026-09-07"], ["--start-time", "2026-08-24", "--end-time", "2026-09-07"]],
+)
+def test_end_time_weekly_on_time_bounds(tmp_path, aggregate, extra):
+    """Anchored bins on a time_bounds axis weight each cell by its duration."""
+    src = write_zarr(_time_bounds_forecast(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--period", "weekly", *extra)
+    ds = xr.open_zarr(out, consolidated=True)
+    assert [str(t)[:10] for t in ds.time.values] == ["2026-08-24", "2026-08-31"]
+    # Week 1: 2 days at 1 mm/day + 5 days at 4 mm/day; week 2: all 4 mm/day.
+    np.testing.assert_allclose(ds["precip"].values.ravel(), [22 / 7, 4.0])
+    np.testing.assert_allclose(ds["aggregation_coverage"].values, [1.0, 1.0])
+    assert ds["precip"].attrs["units"] == "mm day-1"
+
+
 def test_end_time_weekly_left_edge_matches_forecast_week(tmp_path, aggregate):
     """Obs week [Aug 24, Aug 31) is labeled Aug 24, same as forecast step 0 after step-to-time."""
     src = write_zarr(

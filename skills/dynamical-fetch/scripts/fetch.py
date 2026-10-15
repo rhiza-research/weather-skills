@@ -361,10 +361,19 @@ def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, **k
     if is_forecast and ds.sizes.get("step", 0) > 1 and len(ds.data_vars) > 0:
         first = ds.isel(step=0)
         if all(bool(first[name].isnull().all()) for name in ds.data_vars):
-            starts = ds["step"].values[:-1]
-            ds = ds.isel(step=slice(1, None)).assign_coords(step=starts)
+            leads = ds["step"].values
+            ds = ds.isel(step=slice(1, None)).assign_coords(step=leads[:-1])
+            # GEFS / IFS ENS go 3- to 6-hourly. Write each cell's [start, end]
+            # here: stamp_data_interval would infer bounds as if steps were ends.
+            if len(set(np.diff(leads))) > 1:
+                pairs = np.stack([leads[:-1], leads[1:]], axis=1)
+                ds = ds.assign_coords(step_bounds=(("step", "nv"), pairs))
+                ds["step"].attrs["bounds"] = "step_bounds"
             for name in ds.data_vars:
-                note = "dynamical-fetch relabelled steps to interval start (step = window start)."
+                note = (
+                    "dynamical-fetch relabelled steps to interval start: "
+                    "step s covers [s, next lead)."
+                )
                 ds[name].attrs["comment"] = f"{ds[name].attrs.get('comment', '')} {note}".strip()
             print(
                 "Dropped all-NaN lead 0 and relabelled steps to interval start.",

@@ -378,6 +378,9 @@ def test_end_labelled_lead0_dropped_and_relabelled_to_start(tmp_path, mod, fetch
         ds["precipitation_surface"].values[0, 1:],
     )
     assert "interval start" in written["precipitation_surface"].attrs["comment"]
+    # Uneven leads carry bounds for the relabelled cells, not end-labelled ones.
+    bounds = (written["step_bounds"].values / np.timedelta64(1, "h")).tolist()
+    assert bounds == [[0, 3], [3, 6], [6, 12]]
 
 
 def test_lead0_kept_when_any_requested_field_is_finite(tmp_path, mod, fetch):
