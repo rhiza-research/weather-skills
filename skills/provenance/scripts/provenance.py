@@ -272,7 +272,9 @@ def _runner(step: dict, state: _ScriptState) -> tuple[list[str], list[str]]:
     """
     skill = step.get("skill", "?")
     repo, ref = _repo_and_ref(step, state)
-    if repo.rstrip("/").removesuffix(".git").endswith("/" + PLOTTING_REPO.rsplit("/", 1)[-1]):
+    repo_name = repo.rstrip("/").removesuffix(".git").rsplit("/", 1)[-1]
+    # Prefix match so weather-skills-plotting-plotly steps also run from a checkout.
+    if repo_name.startswith("weather-skills-plotting"):
         setup = []
         var = state.checkouts.get((repo, ref))
         if var is None:
@@ -407,9 +409,11 @@ def _preamble(state: _ScriptState) -> list[str]:
     if state.checkouts:
         lines += [
             "",
-            "# Plotting skills run from a local checkout of their repo.",
+            "# Plotting skills run from a local checkout of their repo, removed on exit.",
+            '_CHECKOUTS="$(mktemp -d)"',
+            "trap 'rm -rf \"$_CHECKOUTS\"' EXIT",
             "_checkout() {",
-            '  local dir; dir="$(mktemp -d)"',
+            '  local dir; dir="$(mktemp -d "$_CHECKOUTS/XXXXXX")"',
             '  git clone -q "$1" "$dir" && git -C "$dir" checkout -q "$2" && echo "$dir"',
             "}",
         ]
