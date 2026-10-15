@@ -67,8 +67,8 @@ def test_integrates_to_viwve(tmp_path, zmt):
     ds = xr.open_zarr(out, consolidated=True)
     assert "viwve" in ds.data_vars
     assert "vertical" not in ds.dims
-    # q*u = 0.1; p = 1000, 850, 500 hPa → trapz in Pa, then /g
-    expected = abs(np.trapezoid(np.full(3, 0.1), x=np.array([1000.0, 850.0, 500.0]) * 100.0)) / G
+    # q*u = 0.1; p = 500, 850, 1000 hPa ascending → trapz in Pa, then /g
+    expected = np.trapezoid(np.full(3, 0.1), x=np.array([500.0, 850.0, 1000.0]) * 100.0) / G
     assert ds["viwve"].values == pytest.approx(expected)
     assert ds["viwve"].attrs["units"] == "kg m-1 s-1"
     assert load_history(out)[-1]["skill"] == "zonal-moisture-transport"
@@ -96,7 +96,7 @@ def test_two_inputs_humidity_then_wind(tmp_path, zmt):
     run_skill(zmt, "-i", str(q), "-i", str(u), "-o", str(out))
 
     ds = xr.open_zarr(out, consolidated=True)
-    expected = abs(np.trapezoid(np.full(3, 0.1), x=np.array([1000.0, 850.0, 500.0]) * 100.0)) / G
+    expected = np.trapezoid(np.full(3, 0.1), x=np.array([500.0, 850.0, 1000.0]) * 100.0) / G
     assert ds["viwve"].values == pytest.approx(expected)
 
 
@@ -109,9 +109,46 @@ def test_inner_join_overlapping_levels(tmp_path, zmt):
 
     run_skill(zmt, "-i", str(q_path), "-i", str(u_path), "-o", str(out))
 
-    expected = abs(np.trapezoid(np.full(3, 0.1), x=np.array([1000.0, 850.0, 500.0]) * 100.0)) / G
+    expected = np.trapezoid(np.full(3, 0.1), x=np.array([500.0, 850.0, 1000.0]) * 100.0) / G
     ds = xr.open_zarr(out, consolidated=True)
     assert ds["viwve"].values == pytest.approx(expected)
+
+
+def test_westward_wind_gives_negative_viwve(tmp_path, zmt):
+    """Eastward and westward wind of the same magnitude must have opposite signs."""
+    eastward = write_zarr(make_qu(u_fill=10.0), tmp_path / "eastward.zarr")
+    westward = write_zarr(make_qu(u_fill=-10.0), tmp_path / "westward.zarr")
+    east_out = tmp_path / "east_out.zarr"
+    west_out = tmp_path / "west_out.zarr"
+
+    run_skill(zmt, "-i", str(eastward), "-o", str(east_out))
+    run_skill(zmt, "-i", str(westward), "-o", str(west_out))
+
+    east = xr.open_zarr(east_out, consolidated=True)["viwve"].values
+    west = xr.open_zarr(west_out, consolidated=True)["viwve"].values
+    assert (east > 0).all()
+    assert (west < 0).all()
+    np.testing.assert_allclose(west, -east)
+
+
+def test_viwve_is_independent_of_level_order(tmp_path, zmt):
+    """The same physical column must integrate to the same value regardless of
+    whether the source file lists levels ascending or descending."""
+    descending = write_zarr(
+        make_qu(levels=(1000.0, 850.0, 500.0)), tmp_path / "descending.zarr"
+    )
+    ascending = write_zarr(
+        make_qu(levels=(500.0, 850.0, 1000.0)), tmp_path / "ascending.zarr"
+    )
+    descending_out = tmp_path / "descending_out.zarr"
+    ascending_out = tmp_path / "ascending_out.zarr"
+
+    run_skill(zmt, "-i", str(descending), "-o", str(descending_out))
+    run_skill(zmt, "-i", str(ascending), "-o", str(ascending_out))
+
+    descending_value = xr.open_zarr(descending_out, consolidated=True)["viwve"].values
+    ascending_value = xr.open_zarr(ascending_out, consolidated=True)["viwve"].values
+    assert descending_value == pytest.approx(ascending_value)
 
 
 def test_integrate_requires_two_levels(tmp_path, zmt):
