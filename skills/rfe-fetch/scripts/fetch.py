@@ -2,16 +2,18 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
+#   "rasterio",
 # ]
 # ///
 """Fetch NOAA CPC African Rainfall Estimate (RFE2) daily precipitation and write a weather-skills standard dataset Zarr."""
 
-import gzip
+import io
 import re
 import sys
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
@@ -23,18 +25,15 @@ from weather_skills_core.units import stamp_data_interval, to_standard_units
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
 
-_BASE_URL = "https://ftp.cpc.ncep.noaa.gov/fews/fewsdata/africa/rfe2/bin/"
+_BASE_URL = "https://ftp.cpc.ncep.noaa.gov/fews/fewsdata/africa/rfe2/geotiff/"
 _START = date(2001, 1, 1)
-# RFE_readme.txt: one big-endian float32 record of 751 x 801 cells, 0.1 deg,
-# 20W-55E by 40S-40N, rows south to north (checked against the GeoTIFFs,
-# whose rows run north to south). Missing data is -999.0.
-_N_LON, _N_LAT = 751, 801
+_MISSING = -999.0  # RFE_readme.txt's missing-data value; the GeoTIFFs declare no nodata
 _WORKERS = 8
 _RETRIES = 3
 
 
 def _url(day: date) -> str:
-    return f"{_BASE_URL}all_products.bin.{day:%Y%m%d}.gz"
+    return f"{_BASE_URL}africa_rfe.{day:%Y%m%d}.tif.zip"
 
 
 def _read(url: str) -> bytes | None:
@@ -56,9 +55,9 @@ def _read(url: str) -> bytes | None:
 
 def _latest_day() -> date:
     listing = _read(_BASE_URL)
-    days = re.findall(rb"all_products\.bin\.(\d{8})\.gz", listing or b"")
+    days = re.findall(rb"africa_rfe\.(\d{8})\.tif\.zip", listing or b"")
     if not days:
-        raise DataError(f"no all_products.bin.YYYYMMDD.gz files listed at {_BASE_URL}")
+        raise DataError(f"no africa_rfe.YYYYMMDD.tif.zip files listed at {_BASE_URL}")
     latest = max(days).decode()
     return date(int(latest[:4]), int(latest[4:6]), int(latest[6:]))
 
@@ -90,16 +89,11 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
         return
 
     import numpy as np
+    import rasterio
     import xarray as xr
 
     if start_time < _START:
         raise UsageError(f"--start-time {start_time} is before RFE2's first day {_START}.")
-    if bbox is not None:
-        n, w, s, e = bbox
-        if n < -40 or s > 40 or w > 55 or e < -20:
-            raise UsageError(
-                f"--bbox {n:g}/{w:g}/{s:g}/{e:g} does not overlap the RFE2 grid 40N/20W/40S/55E."
-            )
 
     days = [start_time + timedelta(d) for d in range((end_time - start_time).days + 1)]
     print(
@@ -109,22 +103,25 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
     with ThreadPoolExecutor(_WORKERS) as pool:
         bodies = list(pool.map(_read, [_url(d) for d in days]))
 
-    lat = np.round(-40.0 + 0.1 * np.arange(_N_LAT), 1)
-    lon = np.round(-20.0 + 0.1 * np.arange(_N_LON), 1)
     pieces, missing = [], []
     for day, body in zip(days, bodies, strict=True):
         if body is None:
             missing.append(day)
             continue
-        grid = np.frombuffer(gzip.decompress(body), dtype=">f4").astype("float32")
-        if grid.size != _N_LAT * _N_LON:
-            raise DataError(f"{_url(day)} holds {grid.size} values, expected {_N_LAT * _N_LON}.")
-        grid = np.where(grid == -999.0, np.nan, grid).reshape(1, _N_LAT, _N_LON)
+        with zipfile.ZipFile(io.BytesIO(body)) as zf:
+            tif = zf.read(f"africa_rfe.{day:%Y%m%d}.tif")
+        with rasterio.MemoryFile(tif) as mem, mem.open() as src:
+            grid = src.read(1).astype("float32")
+            t = src.transform
+        # Cell centres from the file's own geotransform. Its float32 origin and
+        # spacing carry ~1e-8 noise, so round to 1e-4 degrees for clean labels.
+        lat = np.round(t.f + t.e * (np.arange(grid.shape[0]) + 0.5), 4)
+        lon = np.round(t.c + t.a * (np.arange(grid.shape[1]) + 0.5), 4)
         da = xr.DataArray(
-            grid,
+            np.where(grid == _MISSING, np.nan, grid)[None],
             dims=("time", "latitude", "longitude"),
             coords={"time": [np.datetime64(day, "ns")], "latitude": lat, "longitude": lon},
-        )
+        ).sortby("latitude")
         # Subset each day as it arrives so a long window never holds the full grid.
         pieces.append(bbox_subset(da, bbox) if bbox is not None else da)
 
@@ -140,7 +137,12 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
             file=sys.stderr,
         )
 
-    precip = xr.concat(pieces, dim="time").rename("precip")
+    try:
+        precip = xr.concat(pieces, dim="time", join="exact").rename("precip")
+    except ValueError as exc:
+        raise DataError(
+            f"RFE2 files in {start_time} -> {end_time} are not on one grid: {exc}"
+        ) from exc
     precip.attrs = {"units": "mm day-1", "long_name": "NOAA CPC RFE2 daily rainfall estimate"}
     out = to_standard_units(precip.to_dataset(), variables=["precip"])
     out.attrs.update(Conventions="CF-1.13", weather_skills_source="noaa-cpc-rfe2")

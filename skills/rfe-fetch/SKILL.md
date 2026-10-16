@@ -15,9 +15,8 @@ metadata:
 
 Downloads NOAA Climate Prediction Center (CPC) Rainfall Estimator version 2
 (RFE2) daily rainfall for Africa from the FEWS NET archive
-(`https://ftp.cpc.ncep.noaa.gov/fews/fewsdata/africa/rfe2/bin/`, one gzipped
-binary file per day). The archive also has a GeoTIFF copy of each day, with the
-same values. RFE2 merges GTS rain gauges with GPI (infrared), SSM/I and AMSU
+(`https://ftp.cpc.ncep.noaa.gov/fews/fewsdata/africa/rfe2/geotiff/`, one zipped
+GeoTIFF per day). The grid comes from each file's own geotransform. RFE2 merges GTS rain gauges with GPI (infrared), SSM/I and AMSU
 (microwave) satellite estimates. The skill writes a standard-dataset Zarr with
 one `precip` variable. No credentials or registration.
 
@@ -55,7 +54,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 
 - `--start-time`, `--end-time` — inclusive range of file dates (`YYYY-MM-DD`).
 - `--bbox` — `N/W/S/E` subset of the Africa grid. Omit for the whole grid
-  (801 × 751 cells). A box that misses 40N/20W/40S/55E entirely exits 2. Use
+  (801 × 751 cells). A box that misses 40N/20W/40S/55E entirely exits 1. Use
   `resolve-region` to turn a country into this value.
 - `--probe-latest` — print the latest published `YYYY-MM-DD` on stdout and
   exit. It reads only the directory listing. Takes no argument and no `-o`.
@@ -65,8 +64,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 
 Zarr with dims `(time, latitude, longitude)` and data variable `precip`
 (`mm day-1`). The source values are 24 h totals in mm, so they are already
-daily rates. The grid is 0.1°, with cell centres on whole tenths (e.g. 33.9,
--4.6). Latitude is ascending. CPC's missing marker (-999) is NaN. Ocean cells
+daily rates. The grid is 0.1°, read from each GeoTIFF's geotransform, with
+cell centres on whole tenths (e.g. 33.9, -4.6). Latitude is ascending. CPC's
+missing marker (-999) is NaN. If CPC's grid ever differs between days in the
+range, the skill exits 1 rather than mixing grids. Ocean cells
 have values (satellite only, no gauges). Stamped with
 `weather_skills_source=noaa-cpc-rfe2` and `data_interval` `1 day`.
 
@@ -76,8 +77,8 @@ convention, documented for its sibling ARC2 product. The day is labeled like
 CHIRPS days, so the two line up on `time` for `difference` or `verify`. The
 two windows are still offset by six hours.
 
-**Missing days.** A day CPC has no file for (archive gaps such as 2004-07-24,
-2007-11-13, 2019-06-16, or days after the latest published one) is an absent
+**Missing days.** A day CPC has no file for (archive gaps such as 2007-11-13,
+2023-07-25, 2023-12-28, 2024-08-06, or days after the latest published one) is an absent
 row, never filled. Stderr lists every one. If no day in the range is
 published, the skill exits 1. After `aggregate-temporal`, a window with a
 missing day has `aggregation_coverage` < 1, so `convert-to-totals` (default
@@ -88,7 +89,7 @@ missing day has `aggregation_coverage` < 1, so `convert-to-totals` (default
 
 ### Performance
 
-Each day is a ~0.5 MB download, fetched 8 at a time. Three months over Kenya
+Each day is a ~0.7 MB download, fetched 8 at a time. Three months over Kenya
 take about 15 s. Each day is clipped to `--bbox` as it arrives, so long
 windows over a small region stay small in memory.
 

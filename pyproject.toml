@@ -33,6 +33,7 @@ dev = [
     "cartopy",
     "nc-time-axis",
     "pillow",
+    "rasterio",
     "scipy",
 ]
 
