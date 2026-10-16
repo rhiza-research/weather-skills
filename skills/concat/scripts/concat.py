@@ -81,6 +81,20 @@ def concat(ds, dim, coords, **kwargs):
             if len(seen) > 1:
                 raise UsageError(f"{name!r} has different {key} across inputs: {sorted(seen)}")
 
+    # A standard and a model calendar (noleap, 360_day) cannot share one axis.
+    calendars = set()
+    for item in dss:
+        if dim in item.coords and item[dim].dtype.kind in "MO":
+            try:
+                calendars.add(item[dim].dt.calendar)
+            except (AttributeError, TypeError):
+                pass
+    if len(calendars) > 1:
+        raise UsageError(
+            f"{dim!r} uses different calendars across inputs ({', '.join(sorted(calendars))}); "
+            "put them on one calendar first with convert-calendar"
+        )
+
     if not all(has_dim):
         if coords:
             vals = _coerce([c.strip() for c in coords.split(",")])

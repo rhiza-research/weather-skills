@@ -23,7 +23,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/downscale.py -i IN.zarr -o OUT.zarr --algorit
 - `--input`, `-i` — input Zarr with lat and lon.
 - `--output`, `-o` — output Zarr.
 - `--algorithm` — required. `linear-interpolation` interpolates onto the target grid. `q-q` interpolates, then maps each value through quantile mapping (see Details).
-- `--factor`, `-f` — integer >= 1; new spacing is input spacing / factor.
+- `--factor`, `-f` — integer >= 1; new spacing is input spacing / factor. `1` keeps the input grid exactly.
 - `--target-resolution` — target spacing in degrees.
 - `--reference-grid` — Zarr whose lat/lon values become the target, kept to the input's extent plus half an input cell.
 - `--variable`, `-v` — process only this data variable. Default: all.

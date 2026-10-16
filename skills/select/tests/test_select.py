@@ -167,3 +167,15 @@ def test_select_value_cftime_360_day(tmp_path, select):
     out = tmp_path / "out.zarr"
     run_skill(select, "-i", str(src), "-o", str(out), "--dim", "time", "--value", "2026-02-30")
     assert float(xr.open_zarr(out, consolidated=True)["tas"]) == 2.0
+
+
+def test_select_refuses_repeated_dim(tmp_path, select, capsys):
+    # From #155 (H1nokam1Kagura): argparse used to keep the last --dim silently.
+    src = write_zarr(make_gridded(n_time=3), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    argv = ["-i", str(src), "-o", str(out), "--dim", "time", "--dim", "latitude", "--index", "0"]
+    with pytest.raises(SystemExit) as exc:
+        run_skill(select, *argv)
+    assert exc.value.code == 2
+    assert "--dim may be given once" in capsys.readouterr().err
+    assert not out.exists()

@@ -122,8 +122,8 @@ def downscale(
             if missing:
                 raise UsageError(
                     f"{flag} has no variable {missing} (has {list(other.data_vars)}); "
-                    "rename one side (rename skill) so the names match, or limit the "
-                    "input with --variable"
+                    "give one side the other's name with edit-coords --rename, or limit "
+                    "the input with --variable"
                 )
             for v in ds.data_vars:
                 want = ds[v].attrs.get("units") or format(ds[v].pint.units or "", "~cf")
@@ -155,6 +155,11 @@ def downscale(
                 file=sys.stderr,
             )
     in_lat, in_lon = _spacing(ds, lat_dim), _spacing(ds, lon_dim)
+    if not (in_lat > 0 and in_lon > 0):
+        raise UsageError(
+            f"input grid spacing is zero (lat {in_lat}, lon {in_lon}); each latitude and "
+            "longitude must appear once"
+        )
 
     if reference_grid is not None:
         ref = xr.open_zarr(reference_grid, consolidated=False)
@@ -194,8 +199,13 @@ def downscale(
             if target_resolution <= 0 or too_coarse:
                 raise UsageError("--target-resolution must be finer-or-equal to input")
             lat_sp = lon_sp = target_resolution
-        new_lat = _target_coord(ds[lat_dim].values, lat_sp)
-        new_lon = _target_coord(ds[lon_dim].values, lon_sp)
+        if factor == 1:
+            # Identity: keep the input coords exactly. Rebuilding them as
+            # vmin + spacing * k drifts on float32 grids such as CHIRPS.
+            new_lat, new_lon = ds[lat_dim].values, ds[lon_dim].values
+        else:
+            new_lat = _target_coord(ds[lat_dim].values, lat_sp)
+            new_lon = _target_coord(ds[lon_dim].values, lon_sp)
 
     target = xr.Dataset(
         coords={

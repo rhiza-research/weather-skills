@@ -102,11 +102,17 @@ def _parse_value(raw, coord_vals, dim):
     version=_SKILL_VERSION,
 )
 @weather_skill.argument("-i", "--input", type=Dataset("any"), required=True)
-@weather_skill.argument("--dim", required=True)
+@weather_skill.argument(
+    "--dim", required=True, action="append", help="Dimension to select along (once)."
+)
 @weather_skill.argument("--index", action="append", help="Integer position (repeatable).")
 @weather_skill.argument("--value", action="append", help="Coord value (repeatable).")
 def select(ds, dim, index, value, **kwargs):
     """Select along one dim by --index or --value."""
+    # action="append" so a second --dim is refused instead of silently replacing the first.
+    if len(dim) > 1:
+        raise UsageError(f"--dim may be given once; got {dim}. Select one dim per run")
+    dim = dim[0]
     import numpy as np
 
     if (index is None) == (value is None):

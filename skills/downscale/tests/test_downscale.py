@@ -261,3 +261,72 @@ def test_reference_grid_trimmed_and_own_dim_names(tmp_path, downscale):
     res = xr.open_zarr(out)
     assert res["latitude"].values.min() >= -0.5 and res["latitude"].values.max() <= 2.5
     assert res["longitude"].values.min() >= 9.5 and res["longitude"].values.max() <= 12.5
+
+
+# From #155 (H1nokam1Kagura): CHIRPS-like float32 grids, zero spacing.
+def _float32_grid(path, fill_offset=0.0):
+    import numpy as np
+
+    lats = (-4.675 + 0.05 * np.arange(204)).astype(np.float32)
+    lons = (33.925 + 0.05 * np.arange(3)).astype(np.float32)
+    ds = make_gridded(n_time=3, lats=tuple(lats.tolist()), lons=tuple(lons.tolist()))
+    ds["precip"].values[:] = np.arange(3)[:, None, None] + 1.0 + fill_offset
+    ds = ds.assign_coords(latitude=lats, longitude=lons)
+    ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north", axis="Y")
+    ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east", axis="X")
+    return write_zarr(ds, path)
+
+
+def test_downscale_factor_one_is_identity_on_float32_grid(tmp_path, downscale):
+    import numpy as np
+
+    src = _float32_grid(tmp_path / "src.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        downscale, "-i", str(src), "-o", str(out), "--algorithm", "linear-interpolation", "-f", "1"
+    )
+    a, b = xr.open_zarr(src), xr.open_zarr(out)
+    assert np.array_equal(a["latitude"].values, b["latitude"].values)
+    assert np.array_equal(a["precip"].values, b["precip"].values)
+
+
+def test_downscale_qq_factor_one_accepts_reference_on_input_grid(tmp_path, downscale):
+    import numpy as np
+
+    src = _float32_grid(tmp_path / "src.zarr")
+    ref = _float32_grid(tmp_path / "ref.zarr", fill_offset=10.0)
+    out = tmp_path / "out.zarr"
+    run_skill(
+        downscale,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--algorithm",
+        "q-q",
+        "-f",
+        "1",
+        "--qq-reference",
+        str(ref),
+    )
+    ds = xr.open_zarr(out)
+    np.testing.assert_allclose(ds["precip"].isel(latitude=0, longitude=0).values, [11, 12, 13])
+
+
+@pytest.mark.parametrize("factor", ["1", "2"])
+def test_downscale_refuses_zero_spacing_grid(tmp_path, downscale, factor, capsys):
+    src = write_zarr(make_gridded(lats=(0.0, 0.0, 0.0), lons=(10.0, 11.0)), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            downscale,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "out.zarr"),
+            "--algorithm",
+            "linear-interpolation",
+            "-f",
+            factor,
+        )
+    assert exc.value.code == 2
+    assert "spacing is zero" in capsys.readouterr().err
