@@ -55,6 +55,7 @@ credentialed or source-specific fetcher only when it does not.
 | `edit-coords` | Rename data variables, coordinates, or dims (`--rename OLD=NEW`) and re-index a dim by another 1-D coordinate (`--swap-dims OLD=NEW`); refuses edits that lose an ontology dim |
 | `drop` | Drop named data variables or non-index coordinates (`--name`) — e.g. stray `valid_time` / `spatial_ref` before `concat` |
 | `concat` | Join Zarr stores along a named dim (incl. new dims with coord values) |
+| `merge` | Combine the variables of several Zarrs into one dataset on their shared coordinates |
 | `summarize-dim` | Summarize named dims with a statistic (mean/std/min/max/sum/median) — e.g. ensemble spread as the std across `number`, or a time-mean baseline |
 | `point-value` | Sample a gridded dataset at point locations (station Zarr, `--point LAT,LON[,ID]`, or CSV) into a `station_id` point_obs dataset — nearest, bilinear, or N×N cell-mean — for grid-vs-station `difference` / `verify` |
 | `local-extrema` | Find the local highs or lows of a gridded field (pressure centres, rainfall maxima) into a `station_id` point_obs dataset of locations and central values — for H / L map labels or listing centres |
