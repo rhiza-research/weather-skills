@@ -30,21 +30,21 @@ credentialed or source-specific fetcher only when it does not.
 | `ecmwf-fetch` | ECDS **fallback** for ECMWF S2S / ER (pre-2026, ocean, unmapped fields). Prefer `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` for 2026+ catalog fields. |
 | `chirps-fetch` | Default CHIRPS source: dynamical.org final + prelim fallback → `precip` Zarr |
 | `imerg-fetch` | Earthdata **daily** IMERG Late/Final fallback (`GPM_3IMERGDL` / `GPM_3IMERGDF`) → Zarr. Default IMERG is `dynamical-fetch`, not this skill. |
-| `clim-fetch` | Climatology (mean + std) for a `--dataset` (`imerg_final`, `era5`, `chirps`, `ecmwf_ifs`, `oisst`, …) via Sheerwater's public GCS mirror, at a selected `--prediction-timedelta` lead and `--window` (days; correctly rolled up, centered, with circular padding if not pre-mirrored), expanded to a `--start-time`/`--end-time` window → Zarr. OISST SST is `--dataset oisst --variable sst`. |
+| `clim-fetch` | Climatology (mean + std) for a `--dataset` (`imerg_final`, `era5`, `chirps`, `ecmwf_ifs`, `oisst`, …), at a selected `--prediction-timedelta` lead and `--window` (days; correctly rolled up, centered, with circular padding if not pre-mirrored), expanded to a `--start-time`/`--end-time` window → Zarr. OISST SST is `--dataset oisst --variable sst`. |
 | `tahmo-fetch` | TAHMO station observations (daily-aggregated) → Zarr |
-| `cumulus-fetch` | Cumulus AI operational ensemble precip (Aurora S2S run) from private Azure Blob — 30 members, 46 daily leads, 0.25° or 1° global (`--dataset precip`, `precip_1deg`, `precip_era5`) → Zarr. Requires `AZURE_STORAGE_SAS_TOKEN`. |
-| `neuralgcm-fetch` | NeuralGCM S2S ensemble from the Tomorrow Now 2026 realtime archive (IMERG precip `tp`, ERA5 surface `t2m`/`d2m`) — up to 50 members, 6-hour leads to 60 days, ~2.8° → Zarr. Requires GCS credentials. |
-| `weathernext-fetch` | Google WeatherNext 2 ensemble from the realtime archive (2025 on) — 64 members, 6-hour leads to 15 days, 0.25° global, 13 pressure levels → Zarr. Pass `-v` and `--member` (full cube ~1 TB). Requires GCS credentials. |
-| `pbc-fetch` | PBC / StillLearning AI Weather Quest precip **quintile probabilities** from the private Sheerwater datalake (`era5-p_pr_19` week 3, `era5-p_pr_26` week 4), 1.5° global → Zarr. Requires Google Cloud service-account credentials. |
-| `ecmwf-hres-fetch` | Deterministic ECMWF HRES forecast from the free ECMWF Open Data feed — 0.25°, out to 15 days, surface and pressure-level fields → Zarr. No credentials; needs the eccodes system library. |
-| `arco-era5-fetch` | ERA5 hourly reanalysis from Google's public ARCO-ERA5 Zarr → Zarr. No credentials. |
-| `cmip6-fetch` | One CMIP6 model run (historical 1850–2014 or `ssp*` to 2100) from the public Pangeo CMIP6 catalog on Google Cloud → Zarr. No credentials. |
+| `cumulus-fetch` | Cumulus AI operational ensemble precip (Aurora S2S run) — 30 members, 46 daily leads, 0.25° or 1° global (`--dataset precip`, `precip_1deg`, `precip_era5`) → Zarr. Requires credentials. |
+| `neuralgcm-fetch` | NeuralGCM S2S ensemble (IMERG precip `tp`, ERA5 surface `t2m`/`d2m`) — up to 50 members, 6-hour leads to 60 days, ~2.8° → Zarr. Requires credentials. |
+| `weathernext-fetch` | Google WeatherNext 2 ensemble (2025 on) — 64 members, 6-hour leads to 15 days, 0.25° global, 13 pressure levels → Zarr. Pass `-v` and `--member` (full cube ~1 TB). Requires credentials. |
+| `pbc-fetch` | PBC / StillLearning AI Weather Quest precip **quintile probabilities** (`era5-p_pr_19` week 3, `era5-p_pr_26` week 4), 1.5° global → Zarr. Requires credentials. |
+| `ecmwf-hres-fetch` | Deterministic ECMWF HRES forecast — 0.25°, out to 15 days, surface and pressure-level fields → Zarr. No credentials; needs the eccodes system library. |
+| `arco-era5-fetch` | ERA5 hourly reanalysis (ARCO-ERA5) → Zarr. No credentials. |
+| `cmip6-fetch` | One CMIP6 model run (historical 1850–2014 or `ssp*` to 2100) → Zarr. No credentials. |
 | `rfe-fetch` | NOAA CPC African Rainfall Estimate (RFE2) — daily, 0.1° over Africa, from 2001 → Zarr. No credentials. |
-| `gsmap-fetch` | JAXA GSMaP v6 gauge-corrected hourly 0.1° precip (from April 2025, 60°N–60°S) from JAXA's public Earth API → Zarr. No credentials. |
-| `oisst-fetch` | NOAA OISST v2.1 daily 0.25° sea-surface temperature (1981-09 on) from NOAA PSL OPeNDAP → Zarr. No credentials. |
-| `smap-fetch` | NASA SMAP Enhanced L3 (`SPL3SMP_E`) daily 9 km surface soil moisture → Zarr. Requires an Earthdata login. |
+| `gsmap-fetch` | JAXA GSMaP v6 gauge-corrected hourly 0.1° precip (from April 2025, 60°N–60°S) → Zarr. No credentials. |
+| `oisst-fetch` | NOAA OISST v2.1 daily 0.25° sea-surface temperature (1981-09 on) → Zarr. No credentials. |
+| `smap-fetch` | NASA SMAP Enhanced L3 (`SPL3SMP_E`) daily 9 km surface soil moisture → Zarr. Requires credentials. |
 | `ghcn-daily-fetch` | NOAA GHCN-Daily station observations (daily precip and max/min/mean temperature, ~130,000 stations) → station Zarr. No credentials. |
-| `openaq-fetch` | OpenAQ air-quality station observations (daily mean PM2.5, PM10, NO2, O3, SO2, CO) → station Zarr. Requires a free `OPENAQ_API_KEY`. |
+| `openaq-fetch` | OpenAQ air-quality station observations (daily mean PM2.5, PM10, NO2, O3, SO2, CO) → station Zarr. Requires credentials. |
 
 ### Generic middle (operate on any standard dataset)
 | Skill | What it does |
