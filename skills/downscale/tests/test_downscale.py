@@ -261,3 +261,102 @@ def test_reference_grid_trimmed_and_own_dim_names(tmp_path, downscale):
     res = xr.open_zarr(out)
     assert res["latitude"].values.min() >= -0.5 and res["latitude"].values.max() <= 2.5
     assert res["longitude"].values.min() >= 9.5 and res["longitude"].values.max() <= 12.5
+
+
+def _float32_grid(path, fill_offset=0.0):
+    """CHIRPS-like 0.05° grid stored as float32, so its spacing is not exactly 0.05."""
+    import numpy as np
+
+    lats = (-4.675 + 0.05 * np.arange(204)).astype(np.float32)
+    lons = (33.925 + 0.05 * np.arange(3)).astype(np.float32)
+    ds = make_gridded(n_time=3, lats=tuple(lats.tolist()), lons=tuple(lons.tolist()))
+    # Values change across the grid, so shifted output points would show.
+    ds["precip"].values[:] = (
+        np.arange(3)[:, None, None]
+        + 0.1 * np.arange(204)[None, :, None]
+        + 0.01 * np.arange(3)[None, None, :]
+        + 1.0
+        + fill_offset
+    )
+    ds = ds.assign_coords(latitude=lats, longitude=lons)
+    ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north", axis="Y")
+    ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east", axis="X")
+    return write_zarr(ds, path)
+
+
+def test_downscale_factor_one_keeps_the_float32_grid(tmp_path, downscale):
+    import numpy as np
+
+    src = _float32_grid(tmp_path / "src.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        downscale, "-i", str(src), "-o", str(out), "--algorithm", "linear-interpolation", "-f", "1"
+    )
+    a, b = xr.open_zarr(src), xr.open_zarr(out)
+    assert np.array_equal(a["latitude"].values, b["latitude"].values)
+    assert np.array_equal(a["longitude"].values, b["longitude"].values)
+    np.testing.assert_allclose(b["precip"].values, a["precip"].values, rtol=0, atol=1e-5)
+
+
+def test_downscale_factor_two_keeps_the_input_points(tmp_path, downscale):
+    import numpy as np
+
+    src = _float32_grid(tmp_path / "src.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        downscale, "-i", str(src), "-o", str(out), "--algorithm", "linear-interpolation", "-f", "2"
+    )
+    a, b = xr.open_zarr(src), xr.open_zarr(out)
+    assert b.sizes["latitude"] == 2 * 204 - 1 and b.sizes["longitude"] == 2 * 3 - 1
+    # Every second output point is an input point, with the input's value.
+    np.testing.assert_allclose(b["latitude"].values[::2], a["latitude"].values, atol=1e-6)
+    np.testing.assert_allclose(b["longitude"].values[::2], a["longitude"].values, atol=1e-6)
+    np.testing.assert_allclose(
+        b["precip"].values[:, ::2, ::2], a["precip"].values, rtol=0, atol=1e-5
+    )
+    # The points between lie halfway, evenly spaced to the far edge.
+    np.testing.assert_allclose(np.diff(b["latitude"].values), 0.025, atol=1e-5)
+    mid = (a["precip"].values[:, :-1, :] + a["precip"].values[:, 1:, :]) / 2
+    np.testing.assert_allclose(b["precip"].values[:, 1::2, ::2], mid, rtol=0, atol=1e-5)
+
+
+def test_downscale_qq_factor_one_accepts_reference_on_input_grid(tmp_path, downscale):
+    import numpy as np
+
+    src = _float32_grid(tmp_path / "src.zarr")
+    ref = _float32_grid(tmp_path / "ref.zarr", fill_offset=10.0)
+    out = tmp_path / "out.zarr"
+    run_skill(
+        downscale,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--algorithm",
+        "q-q",
+        "-f",
+        "1",
+        "--qq-reference",
+        str(ref),
+    )
+    ds = xr.open_zarr(out)
+    np.testing.assert_allclose(ds["precip"].isel(latitude=0, longitude=0).values, [11, 12, 13])
+
+
+@pytest.mark.parametrize("factor", ["1", "2"])
+def test_downscale_refuses_zero_spacing_grid(tmp_path, downscale, factor, capsys):
+    src = write_zarr(make_gridded(lats=(0.0, 0.0, 0.0), lons=(10.0, 11.0)), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            downscale,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "out.zarr"),
+            "--algorithm",
+            "linear-interpolation",
+            "-f",
+            factor,
+        )
+    assert exc.value.code == 2
+    assert "spacing is zero" in capsys.readouterr().err

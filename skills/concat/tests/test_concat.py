@@ -198,3 +198,18 @@ def test_concat_stitches_adjacent_boxes_and_refuses_a_gap(tmp_path, concat, caps
         )
     assert exc.value.code == 2
     assert "not evenly spaced" in capsys.readouterr().err
+
+
+def test_concat_refuses_mixed_calendars(tmp_path, concat, capsys):
+    import cftime
+
+    noleap = make_gridded(n_time=2, start="2026-01-05")
+    noleap = noleap.assign_coords(time=[cftime.DatetimeNoLeap(2026, 1, 5 + i) for i in range(2)])
+    a = write_zarr(make_gridded(), tmp_path / "a.zarr")
+    b = write_zarr(noleap, tmp_path / "b.zarr")
+    out = tmp_path / "out.zarr"
+    with pytest.raises(SystemExit) as exc:
+        run_skill(concat, "-i", str(a), "-i", str(b), "-o", str(out), "--dim", "time")
+    assert exc.value.code == 2
+    assert "convert-calendar" in capsys.readouterr().err
+    assert not out.exists()

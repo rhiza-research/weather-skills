@@ -39,7 +39,7 @@ Pass `--index` or `--value`, not both.
 - Other dims, coords, variables, and attrs are unchanged.
 
 ### Notes
-- These exit 2 with no output: an unknown `--dim`; an out-of-range or repeated position (`0` and `-4` on a size-4 dim are the same); a value not on the coord (the error lists the first few); a value matching duplicate labels; `--value` on a dim with no coordinate values. Use `--index` for the last two.
+- These exit 2 with no output: an unknown or repeated `--dim`; an out-of-range or repeated position (`0` and `-4` on a size-4 dim are the same); a value not on the coord (the error lists the first few); a value matching duplicate labels; `--value` on a dim with no coordinate values. Use `--index` for the last two.
 
 ### Example
 ```bash

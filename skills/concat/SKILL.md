@@ -35,6 +35,7 @@ One dataset with `--dim` extended, sorted ascending when the inputs came out of 
   - `--dim` on some inputs but not others, or `--coords` with a dim that already exists;
   - inputs with different variables, or a variable whose `data_interval` or `aggregation_period` differs between inputs;
   - incompatible units (`K` against `mm day-1`);
+  - dates on different calendars (standard against `noleap`; use convert-calendar);
   - a stitched `latitude` / `longitude` that is not evenly spaced (a gap between boxes, or different grids).
 - Single-time inputs stacked along a new `time` dim have no dates unless you pass them with `--coords`.
 
