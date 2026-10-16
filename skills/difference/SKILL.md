@@ -27,7 +27,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/difference.py -i A.zarr -i B.zarr -o OUT.zarr
 ### Output
 - One variable per differenced name, holding A − B on the aligned dims. Variables not differenced are dropped.
 - Each variable keeps A's attrs only (B's `aggregation_period`, `cell_methods` are not copied); dataset attrs come from A.
-- `long_name` gains ` anomaly` when B is a climatology (a `climatology*` dataset attr or a climatology `long_name`), else ` difference`: `Sea Surface Temperature difference`. `standard_name` is kept.
+- `long_name` gains ` difference`: `Sea Surface Temperature difference`, also when B is a climatology. To call it an anomaly, set that in the figure's colorbar title. `standard_name` is kept.
 - B is converted to A's units before subtracting (°C minus K works). A temperature difference is written in `delta_degC`, the unit of a temperature change (1 delta_degC = 1 K).
 - Boolean and unsigned-integer inputs become signed integers, so negative results stay negative.
 

@@ -144,9 +144,9 @@ def test_difference_relabels_long_name(tmp_path, difference):
     assert r["sst"].attrs["long_name"] == "Sea Surface Temperature difference"
     assert r["sst"].attrs["standard_name"] == "sea_surface_temperature"
 
-    b.attrs["climatology_dataset"] = "oisst"  # B is a climatology
+    b.attrs["climatology_dataset"] = "oisst"  # a climatology B is still A - B
     r = _run(tmp_path / "clim", difference, a, b)
-    assert r["sst"].attrs["long_name"] == "Sea Surface Temperature anomaly"
+    assert r["sst"].attrs["long_name"] == "Sea Surface Temperature difference"
 
 
 def test_difference_no_shared_variable_names_the_rename(tmp_path, difference, capsys):
