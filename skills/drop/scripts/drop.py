@@ -8,7 +8,6 @@
 """Drop named data variables or non-index coordinates."""
 
 from weather_skills_core import Dataset, UsageError, weather_skill
-from weather_skills_core.cf import bounds_of, drop_cf_refs
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
@@ -41,9 +40,7 @@ def drop(ds, name, **kwargs):
     if set(ds.data_vars) <= set(names):
         raise UsageError("dropping these names would leave no data variables")
 
-    names += [b for b in bounds_of(ds, names).values() if b not in names and b not in ds.dims]
-    ds = ds.drop_vars(names)
-    return drop_cf_refs(ds, names)
+    return ds.drop_vars(names)
 
 
 if __name__ == "__main__":

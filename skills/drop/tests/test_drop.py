@@ -1,6 +1,5 @@
 """Correctness tests for drop."""
 
-import numpy as np
 import pytest
 import xarray as xr
 from conftest import load_skill, make_gridded, run_skill, write_zarr
@@ -41,23 +40,6 @@ def test_drop_data_var_and_coords_together(tmp_path, drop):
     assert "valid_time" not in ds.variables
     assert "precip" in ds.data_vars
     assert load_history(out)[-1]["skill"] == "drop"
-
-
-def test_drop_spatial_ref_removes_grid_mapping(tmp_path, drop):
-    ds, _ = _run(drop, tmp_path, _with_leftovers(), "spatial_ref")
-    assert "spatial_ref" not in ds.variables
-    assert "grid_mapping" not in ds["precip"].attrs
-
-
-def test_drop_coord_takes_its_bounds(tmp_path, drop):
-    base = make_gridded()
-    base = base.assign_coords(
-        valid_time=("time", base.time.values),
-        vt_bounds=(("time", "nv"), np.stack([base.time.values] * 2, axis=1)),
-    )
-    base["valid_time"].attrs["bounds"] = "vt_bounds"
-    ds, _ = _run(drop, tmp_path, base, "valid_time")
-    assert "vt_bounds" not in ds.variables
 
 
 def test_dropped_output_concats_with_a_clean_dataset(tmp_path, drop):

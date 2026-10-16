@@ -1,6 +1,6 @@
 ---
 name: drop
-description: Drop named data variables or non-index coordinates from a weather-skills standard dataset Zarr (repeatable --name). Use to strip leftovers that block concat or difference — e.g. valid_time, surface, heightAboveGround, spatial_ref — or to keep only the variables a later step needs. Cleans up CF bounds and grid_mapping/coordinates references. Refuses dimension index coordinates (use select or summarize-dim) and dropping every data variable.
+description: Drop named data variables or non-index coordinates from a weather-skills standard dataset Zarr (repeatable --name). Use to strip leftovers that block concat or difference — e.g. valid_time, surface, heightAboveGround, spatial_ref — or to keep only the variables a later step needs. Refuses dimension index coordinates (use select or summarize-dim) and dropping every data variable.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/drop.py *)
@@ -40,10 +40,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/drop.py --input <in.zarr> --output <out.zarr>
 
 ### Output
 
-The input without the named variables. A dropped coordinate's CF `bounds`
-variable is dropped with it. The dropped names are removed from every
-`coordinates`, `bounds`, and `ancillary_variables` attribute, and a
-`grid_mapping` that named a dropped variable (e.g. `spatial_ref`) is removed.
+The input without the named variables; attributes pass through unchanged.
+A coordinate's CF `bounds` variable is not dropped with it — list it with
+`--name` too.
 
 The skill exits with code 2 and a clear message when: a name does not exist
 (the message lists the data variables and coordinates); a name is a

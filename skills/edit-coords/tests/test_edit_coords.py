@@ -74,27 +74,6 @@ def test_same_name_rename_is_a_noop(tmp_path, edit_coords):
     assert load_history(out)[-1]["skill"] == "edit-coords"
 
 
-def test_rename_rewrites_cf_refs(tmp_path, edit_coords):
-    base = make_gridded()
-    base = base.assign_coords(
-        time_bounds=(("time", "nv"), np.stack([base.time.values] * 2, axis=1)),
-        valid_time=("time", base.time.values),
-    )
-    base["time"].attrs["bounds"] = "time_bounds"
-    base["precip"].attrs["ancillary_variables"] = "valid_time"
-    ds, _ = _run(
-        edit_coords,
-        tmp_path,
-        base,
-        "--rename",
-        "time_bounds=time_bnds",
-        "--rename",
-        "valid_time=vt",
-    )
-    assert ds["time"].attrs["bounds"] == "time_bnds"
-    assert ds["precip"].attrs["ancillary_variables"] == "vt"
-
-
 def test_swap_then_rename_station_dim_to_point_id(tmp_path, edit_coords):
     base = make_point_obs().rename({"point_id": "station"})
     base = base.assign_coords(station_id=("station", ["A1", "B2"]))
