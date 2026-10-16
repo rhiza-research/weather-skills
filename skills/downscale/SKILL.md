@@ -99,7 +99,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/downscale.py --input <in.zarr> --output <out.
 
 Every input variable must exist under the same name and in the same units
 in `--qq-reference` (and `--qq-model`), or the skill errors before
-interpolating — `rename` / `unit-convert` one side, or limit the input with
+interpolating — `edit-coords` / `unit-convert` one side, or limit the input with
 `--variable`.
 
 ### Output
