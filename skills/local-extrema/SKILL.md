@@ -1,6 +1,6 @@
 ---
 name: local-extrema
-description: Find the local highs or lows of a gridded weather-skills standard dataset Zarr — pressure centres in MSLP or geopotential, rainfall or temperature maxima, SST warm and cold spots — and write their locations and central values as a point_obs (station_id) dataset. One --kind (high or low) per run; --radius sets the minimum distance between centres. Non-spatial dims (time, step, number) are kept, one map at a time. Use for H / L labels on a weather map (draw the output as a text layer over the field), or to list or compare centres (ids are not tracks).
+description: "Find the local highs or lows of a gridded field (pressure centres in MSLP or geopotential, rainfall or temperature maxima, SST warm and cold spots) and write their locations and central values as a station-style point dataset. Use for H / L labels on a weather map, or to list and compare centres."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py *)
@@ -11,73 +11,43 @@ metadata:
 
 # local-extrema
 
-Finds the centres of highs (`--kind high`) or lows (`--kind low`) in each map
-of a gridded field and writes them as a CF-1.13 `timeSeries` point_obs
-dataset, the same shape the station fetchers write.
+Finds the centres of highs or lows in each map of a gridded field and writes them as points.
 
 ## Usage
 
-```
-uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i <grid.zarr> -o <centres.zarr> \
-    --kind high|low [--radius DEG] [--variable VAR]
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i GRID.zarr -o CENTRES.zarr --kind high|low [--radius DEG] [-v VAR]
 ```
 
+### Arguments
 - `--input`, `-i` — gridded Zarr (lat/lon dims).
 - `--kind` — `high` (local maxima) or `low` (local minima). Run twice for both.
-- `--radius` — degrees (default 10). At most one centre of this kind within
-  this distance; raise it for fewer, larger systems, lower it for more.
-- `--variable`, `-v` — the field to search; required when the input has
-  more than one variable.
+- `--radius` — degrees; at most one centre of this kind within this distance. Raise it for fewer, larger systems. Default: 10.
+- `--variable`, `-v` — the field to search; required when the input has more than one variable.
+- `--output`, `-o` — output Zarr.
 
-## How a centre is found
+### Output
+A point_obs dataset on `(station_id, …)`, one point per cell that is a centre in any map, ids `H1`, `H2`, … (or `L1`, …), strongest first. Other input dims (time, step, number) are kept; a point is NaN in maps where it is not a centre, so drop NaN points before labelling one map. The variable keeps its name, units and attrs, plus `extremum_kind` and `extremum_radius_deg`. No centres gives an empty `station_id` dim and a note on stderr.
 
+### Notes
+- Ids are not tracks: a centre that moves more than one cell between maps becomes a new point.
+- MSLP over high ground (Tibet, the Andes, Greenland) can show false highs and lows; treat centres there with care.
+
+### Example
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i ecmwf_msl.zarr -o msl_lows.zarr --kind low --radius 8
+```
+Writes the low-pressure centres of each forecast step, at least 8° apart, with their central pressure.
+
+## Details
+
+### How a centre is found
 For each map (every combination of the non-spatial dims):
 
-1. The field is box-smoothed over a quarter of `--radius`, so small bumps
-   and single noisy cells do not count.
-2. A high is a cell that is the largest smoothed value within `--radius`
-   (a low, the smallest), whose window spans at least 5% of that map's
-   range, so flat areas have no centres.
-3. Cells whose smoothing box runs off the map edge or onto missing cells
-   (NaN, e.g. land in SST) are skipped: a field still rising off the map or
-   toward a coast has no centre there.
+1. The field is box-smoothed over a quarter of `--radius`, so small bumps and single noisy cells do not count.
+2. A high is a cell that is the largest smoothed value within `--radius` (a low, the smallest), whose window spans at least 5% of that map's range, so flat areas have no centres.
+3. Cells whose smoothing box runs off the map edge or onto missing cells (NaN, e.g. land in SST) are skipped.
 4. Of several centres within one radius, the strongest is kept.
 5. The value written is the raw (unsmoothed) extreme under the smoothing box.
 
-A global grid wraps around in longitude, so a centre on the dateline (or
-on 0° for a 0–360 grid) is found once. A bbox that crosses the dateline is
-searched as one contiguous map.
-
-MSLP over high ground (Tibet, the Andes, Greenland) is reduced to sea level
-and can show broad false highs and lows there that smoothing does not
-remove. Treat centres over high terrain with care.
-
-## Output
-
-- Dims `(station_id, ...)`: every grid cell that is a centre in any map is
-  one point (ids `H1`, `H2`, … or `L1`, …, strongest first). Non-spatial
-  input dims are kept; a point is NaN in maps where it is not a centre. A
-  centre one grid cell from a point found in an earlier map reuses that
-  point (its `latitude` / `longitude` stay at the first cell), so a system
-  that jitters by a cell keeps its id; one that moves further is a new
-  point. Drop the NaN points before labelling a map.
-- The variable keeps its name, units, and attrs, plus `extremum_kind` and
-  `extremum_radius_deg`.
-- Coords `latitude` / `longitude` (the point's first cell), and any non-spatial
-  coords of the input (`time`, `step`, `valid_time`, …).
-- No centres: an empty `station_id` dim, with a note on stderr.
-
-## Examples
-
-```bash
-# Highs and lows of an MSLP forecast
-uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i /tmp/msl.zarr -o /tmp/highs.zarr --kind high
-uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i /tmp/msl.zarr -o /tmp/lows.zarr --kind low
-
-# Rainfall maxima at least 3 degrees apart
-uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i /tmp/imerg_week.zarr -o /tmp/wet.zarr \
-    --kind high --radius 3 --variable precip
-```
-
-To label a map, draw the output as a text scatter layer whose `texttemplate`
-prints the letter and `%{customdata}` (the central value).
+A centre one cell from a point found in an earlier map reuses that point (its `latitude` / `longitude` stay at the first cell). A global grid wraps in longitude, so a centre on the dateline is found once; a bbox crossing the dateline is searched as one map.
