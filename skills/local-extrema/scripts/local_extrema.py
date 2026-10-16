@@ -22,10 +22,17 @@ _SKILL_VERSION = "0.0.1"
 MIN_CONTRAST = 0.05
 
 
-def _window(z, kx, ky, fn, fill):
-    """``fn`` (np.maximum, np.minimum, np.add) over a (2ky+1) x (2kx+1) window at every cell."""
+def _window(z, kx, ky, fn, fill, wrap=False):
+    """``fn`` (np.maximum, np.minimum, np.add) over a (2ky+1) x (2kx+1) window at every cell.
+
+    ``wrap`` joins the last longitude to the first, for a grid that circles the globe.
+    """
     ny, nx = z.shape
-    pad = np.pad(z, ((ky, ky), (kx, kx)), constant_values=fill)
+    pad = np.pad(z, ((ky, ky), (0, 0)), constant_values=fill)
+    if wrap:
+        pad = np.pad(pad, ((0, 0), (kx, kx)), mode="wrap")
+    else:
+        pad = np.pad(pad, ((0, 0), (kx, kx)), constant_values=fill)
     rows = pad[:, :nx].copy()
     for i in range(1, 2 * kx + 1):
         fn(rows, pad[:, i : i + nx], out=rows)
@@ -44,7 +51,7 @@ def _window(z, kx, ky, fn, fill):
 @weather_skill.argument("--variable", "-v", help="Field to search (default: the only variable).")
 def local_extrema(ds, kind, radius, variable, **kwargs):
     """Find the local highs or lows of a gridded field, writing a point_obs dataset."""
-    if radius <= 0:
+    if not np.isfinite(radius) or radius <= 0:
         raise UsageError("--radius must be a positive number of degrees")
     if variable is None:
         if len(ds.data_vars) != 1:
@@ -54,50 +61,78 @@ def local_extrema(ds, kind, radius, variable, **kwargs):
         raise UsageError(f"--variable {variable!r} not in the input; have {sorted(ds.data_vars)}")
     lat_dim, lon_dim = detect_spatial_dims(ds)
     ds = dequantify_dataset(ensure_normalized_longitude(ds, lon_dim))
-    da = ds[variable]
+    da = ds[variable].sortby(lon_dim)
+    lon = da[lon_dim].values.astype(float)
+    gaps = np.diff(lon, append=lon[0] + 360)
+    dlon = np.median(gaps)
+    # A grid with no gap wider than a cell circles the globe, so windows wrap around it.
+    wrap = lon.size > 1 and gaps.max() < 1.5 * dlon
+    if not wrap:
+        # Start after the widest gap, so a bbox across the dateline is one contiguous map.
+        da = da.roll({lon_dim: -((np.argmax(gaps) + 1) % lon.size)}, roll_coords=True)
     other = [d for d in da.dims if d not in (lat_dim, lon_dim)]
     da = da.transpose(*other, lat_dim, lon_dim)
     lat, lon = da[lat_dim].values.astype(float), da[lon_dim].values.astype(float)
     ny, nx = lat.size, lon.size
-    kx = max(1, round(radius / abs(lon[1] - lon[0]))) if nx > 1 else 1
-    ky = max(1, round(radius / abs(lat[1] - lat[0]))) if ny > 1 else 1
-    # Smoothing over a quarter radius keeps small bumps (MSLP over mountains) out.
+    kx = max(1, round(radius / dlon))
+    ky = max(1, round(radius / np.median(np.abs(np.diff(lat))))) if ny > 1 else 1
+    # Smoothing over a quarter radius keeps single noisy cells and small bumps out.
     sx, sy = max(1, kx // 4), max(1, ky // 4)
     sign = 1.0 if kind == "high" else -1.0
 
-    maps = np.asarray(da.values, dtype=float).reshape(-1, ny, nx)
-    found = np.full(maps.shape, np.nan)
+    maps = da.values.reshape(-1, ny, nx)
+    anchors = []  # each point's grid cell, the first place it was found
+    cells = {}  # anchor cell -> point index
+    found = {}  # (map index, point index) -> central value
     for k, z in enumerate(maps):
         # Search sign * z for maxima, so a low is a high of -z.
-        z = sign * z
+        z = sign * z.astype(float)
         finite = np.isfinite(z)
         if not finite.any():
             continue
-        total = _window(np.where(finite, z, 0.0), sx, sy, np.add, 0.0)
-        count = _window(finite.astype(float), sx, sy, np.add, 0.0)
+        total = _window(np.where(finite, z, 0.0), sx, sy, np.add, 0.0, wrap)
+        count = _window(finite.astype(float), sx, sy, np.add, 0.0, wrap)
         smooth = np.where(finite, total / np.maximum(count, 1), -np.inf)
-        hi = _window(smooth, kx, ky, np.maximum, -np.inf)
-        lo = _window(np.where(finite, smooth, np.inf), kx, ky, np.minimum, np.inf)
+        hi = _window(smooth, kx, ky, np.maximum, -np.inf, wrap)
+        lo = _window(np.where(finite, smooth, np.inf), kx, ky, np.minimum, np.inf, wrap)
         span = smooth[finite].max() - smooth[finite].min()
-        hit = finite & (smooth == hi) & (hi - lo >= max(MIN_CONTRAST * span, np.finfo(float).tiny))
-        # A field still rising off the map edge has no centre there.
-        edge = np.ones_like(hit)
-        edge[sy:-sy, sx:-sx] = False
-        hit &= ~edge
-        peak = _window(np.where(finite, z, -np.inf), sx, sy, np.maximum, -np.inf)
+        # The smoothing box must lie wholly on the map and on data: a field still
+        # rising off the map edge, or toward masked land, has no centre there.
+        full = count == (2 * sx + 1) * (2 * sy + 1)
+        hit = full & (smooth == hi) & (hi - lo >= max(MIN_CONTRAST * span, np.finfo(float).tiny))
+        peak = _window(np.where(finite, z, -np.inf), sx, sy, np.maximum, -np.inf, wrap)
         iy, ix = np.nonzero(hit)
         kept = []
         for i in np.argsort(-smooth[iy, ix], kind="stable"):
-            if all(abs(iy[i] - a) > ky or abs(ix[i] - b) > kx for a, b in kept):
-                kept.append((iy[i], ix[i]))
-                found[k, iy[i], ix[i]] = sign * peak[iy[i], ix[i]]
+            y, x = int(iy[i]), int(ix[i])
+            near = False
+            for a, b in kept:
+                dx = abs(x - b)
+                near |= abs(y - a) <= ky and min(dx, nx - dx if wrap else dx) <= kx
+            if near:
+                continue
+            kept.append((y, x))
+            # A centre one cell from a point found in an earlier map is that point,
+            # so a system that jitters by a cell keeps its id.
+            ring = [
+                (y + a, (x + b) % nx if wrap else x + b) for a in (-1, 0, 1) for b in (-1, 0, 1)
+            ]
+            p = next((cells[c] for c in ring if c in cells and (k, cells[c]) not in found), None)
+            if p is None:
+                p = len(anchors)
+                anchors.append((y, x))
+                cells.setdefault((y, x), p)
+            found[(k, p)] = sign * peak[y, x]
 
-    # One point per grid cell that is a centre in any map, strongest first.
-    iy, ix = np.nonzero(np.isfinite(found).any(axis=0))
-    order = np.argsort(-np.nanmax(sign * found[:, iy, ix], axis=0), kind="stable")
-    iy, ix = iy[order], ix[order]
+    # One point per anchor cell, strongest first.
+    values = np.full((len(maps), len(anchors)), np.nan)
+    for (k, p), v in found.items():
+        values[k, p] = v
+    order = np.argsort(-np.nanmax(sign * values, axis=0), kind="stable")
+    iy = np.array([anchors[p][0] for p in order], dtype=int)
+    ix = np.array([anchors[p][1] for p in order], dtype=int)
     letter = "H" if kind == "high" else "L"
-    values = found[:, iy, ix].reshape(*(da.sizes[d] for d in other), iy.size)
+    values = values[:, order].reshape(*(da.sizes[d] for d in other), iy.size)
     coords = {c: da[c] for c in da.coords if not {lat_dim, lon_dim} & set(da[c].dims)}
     out = xr.DataArray(
         values,

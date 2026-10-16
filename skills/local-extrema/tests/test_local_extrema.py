@@ -84,3 +84,68 @@ def test_needs_variable_when_several(tmp_path, local_extrema):
     ds["t2m"] = ds["msl"] * 0
     with pytest.raises(SystemExit):
         _run(local_extrema, tmp_path, ds, "--kind", "high")
+
+
+def _bump(lats, lons, centres, sign=-1, w=50.0):
+    """MSLP (hPa) of 1010 plus a 20 hPa bump per (lat, lon) centre, one map per entry."""
+    lat, lon = np.meshgrid(lats, lons, indexing="ij")
+    maps = []
+    for clat, clon in centres:
+        dlon = (lon - clon + 180) % 360 - 180  # great-circle-ish distance across the dateline
+        maps.append(1010 + sign * 20 * np.exp(-((lat - clat) ** 2 + dlon**2) / w))
+    ds = xr.Dataset(
+        {"msl": (("time", "latitude", "longitude"), np.stack(maps))},
+        coords={
+            "time": np.arange(len(maps)) * np.timedelta64(1, "D")
+            + np.datetime64("2026-01-01", "ns"),
+            "latitude": lats,
+            "longitude": lons,
+        },
+    )
+    ds["msl"].attrs["units"] = "hPa"
+    ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north")
+    ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east")
+    return ds
+
+
+def test_global_grid_wraps_at_the_dateline(tmp_path, local_extrema):
+    ds = _bump(np.arange(-90.0, 90.5, 1.0), np.arange(-180.0, 180.0, 1.0), [(45, 180)])
+    _, out = _run(local_extrema, tmp_path, ds, "--kind", "low")
+    assert out.sizes["station_id"] == 1
+    assert (float(out["latitude"][0]), abs(float(out["longitude"][0]))) == (45.0, 180.0)
+
+
+def test_bbox_across_the_dateline_is_one_map(tmp_path, local_extrema):
+    lats, lons = np.arange(-20.0, 20.5, 0.5), np.arange(160.0, 200.5, 0.5)
+    _, low = _run(local_extrema, tmp_path, _bump(lats, lons, [(0, 180)]), "--kind", "low")
+    assert low.sizes["station_id"] == 1 and abs(float(low["longitude"][0])) == 180.0
+    # A high centred west of the bbox is still rising at its west edge (160E): no centre.
+    off = _bump(lats, lons, [(0, 155)], sign=1, w=80)
+    _, high = _run(local_extrema, tmp_path, off, "--kind", "high")
+    assert high.sizes["station_id"] == 0
+
+
+def test_no_centre_against_masked_cells(tmp_path, local_extrema):
+    # SST rising toward a NaN land mask east of 30E: the warmest water is at the coast.
+    ds = _bump(np.arange(-20.0, 20.5, 0.5), np.arange(0.0, 40.5, 0.5), [(0, 0)])
+    lon = ds["longitude"].values
+    ds["msl"].values[0] = np.where(lon > 30, np.nan, 25 + 0.2 * lon)
+    _, out = _run(local_extrema, tmp_path, ds, "--kind", "high", "--radius", "5")
+    assert out.sizes["station_id"] == 0
+
+
+def test_centre_moving_one_cell_keeps_its_id(tmp_path, local_extrema):
+    lats, lons = np.arange(-20.0, 20.5, 0.5), np.arange(0.0, 40.5, 0.5)
+    ds = _bump(lats, lons, [(0, 20), (0, 20.5), (0, 25)])
+    _, out = _run(local_extrema, tmp_path, ds, "--kind", "low")
+    # Days 1 and 2 are one point at the first cell; day 3 is 5 degrees on, a new point.
+    assert out.sizes["station_id"] == 2
+    first = int(np.argmin(np.abs(out["longitude"].values - 20)))
+    assert float(out["longitude"][first]) == 20.0
+    assert np.isfinite(out["msl"].values[first, :2]).all() and np.isnan(out["msl"].values[first, 2])
+
+
+@pytest.mark.parametrize("radius", ["0", "-1", "nan", "inf"])
+def test_radius_must_be_positive_and_finite(tmp_path, local_extrema, radius):
+    with pytest.raises(SystemExit):
+        _run(local_extrema, tmp_path, _pressure(), "--kind", "high", "--radius", radius)
