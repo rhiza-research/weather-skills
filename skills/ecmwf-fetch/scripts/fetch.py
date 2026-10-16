@@ -894,7 +894,9 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
                 pf = _promote_vertical(_concat_lon(pf_parts))
                 ens = xr.concat([pf, cf], dim="number").sortby("number")
             else:
-                ens = cf
+                # Control-only fields keep a length-1 number axis so the merge
+                # below leaves members 1..50 NaN instead of dropping `number`.
+                ens = cf.expand_dims("number")
             if key[0] == "daily":
                 # cfgrib labels a 24 h mean at its window end; relabel to the
                 # window start so step 0 is the first 24 h, like tp.
@@ -907,8 +909,6 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
             else xr.merge(family_ensembles, join="outer", compat="override")
         )
         ds = ds[names]
-        if "number" not in ds.dims:
-            ds = ds.expand_dims("number")
         ds.attrs.update(Conventions="CF-1.13", weather_skills_source="ecmwf-s2s")
         ds = _standardize(ds)
         # Materialize while GRIB files in the temp dir still exist.
