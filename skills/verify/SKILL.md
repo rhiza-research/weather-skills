@@ -95,7 +95,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py \
 To verify a grid against stations, sample the grid at the stations with
 `point-value --points <stations.zarr>` first, then pass the sampled Zarr and
 the station Zarr as `--forecast` / `--obs` (same variable name and units;
-`rename` / `unit-convert` if not). Pairs inner-join on `station_id` and
+`edit-coords` / `unit-convert` if not). Pairs inner-join on `station_id` and
 `time`, so only days both report are scored. The printed score is the plain
 mean over every station and time with both values (there is no latitude
 grid to weight). Do not pass a raw grid with a station Zarr: the two have no

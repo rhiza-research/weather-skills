@@ -49,7 +49,7 @@ destroys that input.
 - `--variable`, `-v` — repeatable; restricts the difference to the named data
   variable(s), each in BOTH inputs (otherwise exits non-zero listing each
   input's variables). Default (unset) differences every data variable the two
-  inputs share; inputs sharing none exit non-zero (`rename` one first). Data
+  inputs share; inputs sharing none exit non-zero (`edit-coords --rename` one first). Data
   variables not differenced are dropped from the output.
 
 ### Alignment
