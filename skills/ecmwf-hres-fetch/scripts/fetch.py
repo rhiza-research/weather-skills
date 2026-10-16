@@ -119,7 +119,6 @@ _GRIB_EXTRAS = {
     "10u": "u10",
     "10v": "v10",
     "10fg": "gust10",
-    "z": "gh",  # cfgrib sometimes decodes HRES gh as geopotential `z` (m2 s-2)
 }
 _GRIB_ALIASES = {name: name for name in VARIABLES} | _GRIB_EXTRAS
 
@@ -238,15 +237,6 @@ def _rename_to_short(ds, requested: list[str]):
             rename[name] = short
     if rename:
         ds = ds.rename(rename)
-    if rename.get("z") == "gh":
-        # Geopotential (m2 s-2) to geopotential height (gpm).
-        attrs = {k: v for k, v in ds["gh"].attrs.items() if not k.startswith("GRIB_")}
-        attrs.update(
-            units="gpm", standard_name="geopotential_height", long_name="Geopotential height"
-        )
-        gh = ds["gh"] / 9.80665
-        gh.attrs = attrs
-        ds["gh"] = gh
     extra = [name for name in ds.data_vars if name not in requested]
     if extra:
         ds = ds.drop_vars(extra)

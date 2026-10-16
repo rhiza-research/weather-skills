@@ -170,15 +170,3 @@ def test_variables_match_open_data_catalog(mod):
     req = mod._build_request("2026-10-15", 0, ["t"], "pl", mod.PRESSURE_LEVELS)
     assert "600" in req["levelist"]
     assert {"1000", "50"} <= set(req["levelist"])
-
-
-def test_rename_geopotential_z_to_gh_divides_by_g(mod):
-    import xarray as xr
-
-    ds = xr.Dataset(
-        {"z": ("vertical", [9.80665 * 5500.0], {"units": "m**2 s**-2", "GRIB_units": "m**2 s**-2"})}
-    )
-    out = mod._rename_to_short(ds, ["gh"])
-    assert float(out["gh"].values[0]) == pytest.approx(5500.0)
-    assert out["gh"].attrs["units"] == "gpm"
-    assert "GRIB_units" not in out["gh"].attrs
