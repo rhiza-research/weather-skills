@@ -1,6 +1,6 @@
 ---
 name: clip-region
-description: "Clip a gridded or station Zarr to a lat/lon bbox, a named region (country, country-admin1, Natural Earth region), or a GeoJSON polygon. Use to restrict any dataset to an area before aggregation, verification, or plotting. For towns, landmarks, or river basins, get a polygon from resolve-region or resolve-chc-region and pass --geojson. Polygon clips keep every cell that overlaps the boundary, at full value."
+description: "Clip a gridded or station Zarr to a lat/lon box, a named region (country, province or county, multi-country region), or a GeoJSON polygon. Use to restrict any dataset to an area of interest."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py *)

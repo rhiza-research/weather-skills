@@ -1,6 +1,6 @@
 ---
 name: dynamical-fetch
-description: "Fetch a dynamical.org catalog dataset (GFS, GEFS, ECMWF IFS-ENS 15- and 46-day, AIFS, ICON-EU, MRMS, IMERG, CHIRPS) for a forecast init date or an analysis date range into a weather-skills Zarr. Credential-free. The default fetcher whenever the catalog has the product, including IMERG (`nasa-imerg-analysis-late`) and ECMWF S2S/ER (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`); use imerg-fetch or ecmwf-fetch only for what the catalog lacks. For CHIRPS final+preliminary merged as `precip`, use chirps-fetch. Precip is written as a rate (`mm day-1`): do not deaccumulate."
+description: "Fetch a forecast or analysis from the dynamical.org catalog (GFS, GEFS, ECMWF IFS-ENS and AIFS, ICON-EU, MRMS, IMERG, CHIRPS) for an init date or date range over a region, as a weather-skills Zarr. No credentials needed. Use it first for any of these products."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
