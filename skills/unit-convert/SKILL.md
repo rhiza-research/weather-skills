@@ -1,6 +1,6 @@
 ---
 name: unit-convert
-description: "Convert data variables in a weather-skills Zarr to target units (any UDUNITS / CF string), or put recognized air-temperature and precipitation variables in the standard units degree_Celsius, mm day-1 and mm. Use to put two datasets on one units basis before comparing or combining them."
+description: "Convert data variables in a weather-skills Zarr to target units (any UDUNITS / CF string), or put recognized air-temperature, precipitation and pressure variables in the standard units degree_Celsius, mm day-1, mm and hPa. Use to put two datasets on one units basis before comparing or combining them."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/unit-convert.py *)
@@ -24,7 +24,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/unit-convert.py -i IN.zarr -o OUT.zarr --to-s
 - `--input`, `-i` — input Zarr.
 - `--output`, `-o` — output Zarr.
 - `--to-units` — target units string (`'mm day-1'`, `degC`, `K`). Every selected variable must have units that convert to it. An unknown unit exits 2.
-- `--to-standard` — convert recognized variables (air temperature → `degree_Celsius`, precip rate → `mm day-1`, precip amount → `mm`, found by `standard_name` or variable name). Others (SST, wind, unitless) are left as they are and listed on stderr.
+- `--to-standard` — convert recognized variables (air temperature → `degree_Celsius`, precip rate → `mm day-1`, precip amount → `mm`, sea-level and surface pressure → `hPa`, found by `standard_name` or variable name). Others (SST, wind, unitless) are left as they are and listed on stderr.
 - `--variable`, `-v` — convert only this variable. Default: all variables (`--to-units`) or all recognized ones (`--to-standard`). A name not in the store, or not recognized with `--to-standard`, exits 2.
 - `--standard-name` — CF `standard_name` to write; only with `--to-units`.
 
