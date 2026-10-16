@@ -1,6 +1,6 @@
 ---
 name: ecmwf-hres-fetch
-description: "Fetches the deterministic ECMWF HRES (IFS `oper`) forecast for an init date and bbox from the free ECMWF Open Data feed, writing a weather-skills standard dataset Zarr. Credential-free, no embargo (~6-9h publication lag). Default `-v tp`. Most used: `tp`, `t2m`, `msl`, `u10`, `v10`. Pressure-level: `-v t` / `-v gh` / `-v u` / `-v v` / `-v q` / `-v r` (13 Open Data levels, 1000-50 hPa). `-v` is the cfgrib short name (`t2m`, `tp`), not ARCO `2m_temperature`. Served at 0.25 degrees — the full native ~9km/0.1 degree archive is not on Open Data (needs MARS/ECDS). Fetch writes `tp` as a per-step rate (`mm day-1`) and known temperatures as `degree_Celsius` — do not run deaccumulate on `tp` after this skill. To fetch over a country, get its bbox from the resolve-region skill first."
+description: "Fetch the deterministic ECMWF HRES (IFS high-resolution, single-member) forecast for one init date and run hour over a lat/lon box from the free ECMWF Open Data feed, as a weather-skills Zarr at 0.25°: precipitation, 2 m temperature, pressure, winds, radiation and pressure-level fields out to 15 days. No credentials needed."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`). No credentials or account required — ECMWF Open Data is a public feed.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -33,130 +33,37 @@ metadata:
 
 # ecmwf-hres-fetch
 
-Retrieves the deterministic ECMWF HRES (`oper` stream, `fc` type) single-level
-and pressure-level fields from the public
-[ECMWF Open Data](https://www.ecmwf.int/en/forecasts/datasets/open-data) feed
-via `ecmwf-opendata`, decodes the GRIB2 with cfgrib, subsets to the requested
-bbox, and writes a consolidated Zarr store. Default field is `tp`.
-
-## When to use
-
-- A task asks for the deterministic ECMWF forecast ("HRES", "the ECMWF
-  deterministic run", "IFS high-res") for a specific init date, out to 15
-  days (00/12 UTC) or 144h (06/18 UTC).
-- Prefer `dynamical-fetch` (`ecmwf-ifs-ens-forecast-15-day-0-25-degree`) if an
-  **ensemble** is acceptable — same underlying model, same free access, and
-  its control member (`number=0`) is close to HRES but not identical
-  (different post-processing pipeline).
-- Prefer `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`
-  for ECMWF **S2S / ER** (subseasonal, 46-day). `ecmwf-fetch` is the ECDS
-  fallback only. This skill does not reach that archive.
-
-Not for reanalysis, climatology, or ensembles. It retrieves the single
-deterministic HRES member only.
-
-## Credentials
-
-None. ECMWF Open Data is a public, unauthenticated feed. `data.ecmwf.int`
-keeps only the last ~4 days of inits; when it 404s, the fetch retries the
-AWS mirror, which holds the archive back to 2023. No
-environment variables, account, or `--probe-latest`-before-first-fetch
-gymnastics are needed.
+Fetches one deterministic ECMWF HRES run from ECMWF Open Data as a weather-skills standard dataset Zarr.
 
 ## Usage
 
-```
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date YYYY-MM-DD --bbox N/W/S/E [--run 0|6|12|18] [-v VAR ...] --output <path.zarr>
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest   # stdout YYYY-MM-DD; stderr: latest --run
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date YYYY-MM-DD --bbox N/W/S/E [--run 0|6|12|18] [-v VAR ...] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
 ### Arguments
-
-- `--date` — forecast init date. Absolute ISO date `YYYY-MM-DD`. Calendar
-  day: `resolve-time latest`. Latest published init: `--probe-latest`
-  (prints `YYYY-MM-DD` for `--date`; stderr names the latest run hour, e.g.
-  `--date 2026-10-13 --run 12`). HRES
-  runs four times daily (00/06/12/18 UTC); requesting a date/run that neither
-  source has exits non-zero with a clear message — publication lags real
-  time by roughly 6-9 hours, there is no fixed multi-day embargo like S2S.
-- `--run` — init hour, `0`/`6`/`12`/`18` UTC. Default `0`. The 00/12 runs
-  publish the full 15-day range (3-hourly to 144h, then 6-hourly to 360h).
-  The 06/18 runs (short cutoff) only publish to 144h, 3-hourly throughout.
-  Every run hour is requested as `stream=oper` — there is no separate `scda`
-  stream on the public feed.
-- `--bbox` — required; `N/W/S/E` decimal degrees. Open Data serves whole-globe
-  GRIB2 files (no server-side area subsetting) — this skill downloads the
-  global grid for every step and clips locally (decoded one step at a time),
-  so a smaller bbox saves memory and output size, not download time (`tp`
-  for a 00/12Z run is ~80 MB; a pressure-level field is ~13x that per
-  field). To fetch over a country, get its bbox from the
-  `resolve-region` skill and pass the value here.
-- `--variable`, `-v` — HRES field to retrieve (repeatable). Default `tp`.
-  Unknown names exit non-zero and print `Available (most used first):`. Use
-  the short names (`t2m`, `tp`) — not ARCO `2m_temperature` /
-  `total_precipitation`.
-- `--output`, `-o` — output Zarr path (overwritten if it exists).
-
-### Variables (most used first)
-
-| `-v` | Field | Notes |
-|---|---|---|
-| `tp` | Total precipitation | **Default.** Cumulative since step 0 on the wire; this skill deaccumulates it to a per-step rate (`mm day-1`), see Output. |
-| `t2m` | 2 m temperature | `degree_Celsius`. Prefer this for "how warm". |
-| `d2m` | 2 m dewpoint temperature | `degree_Celsius`. |
-| `msl` | Mean sea-level pressure | |
-| `u10` / `v10` | 10 m wind components | |
-| `gust10` | 10 m wind gust since previous post-processing step | Window max, left as the raw field — not deaccumulated. |
-| `sp` | Surface pressure | |
-| `tcwv` | Total column water vapour | Not the same quantity as S2S `tcw` (total column water, includes condensate). |
-| `mucape` | Most-unstable CAPE | Open Data has no plain `cape`. |
-| `skt` | Skin temperature | `degree_Celsius`. |
-| `ssrd` / `strd` / `str` / `ttr` | Solar/thermal radiation fluxes | Cumulative since step 0 (J m-2); left as-is — run the `deaccumulate` skill downstream for a rate. |
-| `t` | Temperature on pressure levels | 1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50 hPa (10 hPa is not requested; it exists only since 2026-05-12). `degree_Celsius`. |
-| `gh` | Geopotential height | Same levels, metres. |
-| `u` / `v` | Wind components on pressure levels | Same levels. |
-| `q` | Specific humidity | Same levels. |
-| `r` | Relative humidity | Same levels. |
-
-Mixing a surface field with a pressure-level field (e.g. `-v tp -v t`) issues
-two Open Data requests (one per `levtype`) and merges the results.
+- `--date` — init date. The skill tries `data.ecmwf.int` (last ~4 days) and then the AWS mirror (from 2023).
+- `--run` — init hour UTC: `0`, `6`, `12`, or `18`. Default: `0`. 00/12 runs reach 360 h (3-hourly to 144 h, then 6-hourly); 06/18 runs reach 144 h, 3-hourly.
+- `--bbox` — required for a fetch. `N/W/S/E` decimal degrees. Open Data serves global files, so the full globe is downloaded for every step and clipped locally; a small bbox saves memory, not download time (`tp` for a 00 UTC run is ~80 MB; a pressure-level field is ~13×).
+- `--variable`, `-v` — one field per flag; repeat for several. Default: `tp`. Surface: `tp`, `t2m`, `d2m`, `msl`, `u10`, `v10`, `gust10`, `sp`, `tcwv`, `mucape`, `skt`, `ssrd`, `strd`, `str`, `ttr`. Pressure levels (1000–50 hPa, 13 levels): `t`, `gh`, `u`, `v`, `q`, `r`. Open Data names (`2t`, `10u`) are accepted. An unknown name exits and lists `Available (most used first):`.
+- `--probe-latest [IDENT]` — print the latest init date on stdout and exit; stderr names its run hour. `IDENT` is ignored.
+- `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
+- Dims `(step, latitude, longitude)`, plus `vertical` (hPa) for pressure-level fields. Scalar `time` is the init.
+- `tp` is a rate in `mm day-1` over `[step, next step)`, labelled at the interval start (`step=0` is 0–3 h). The last lead has no interval, so it is dropped — for every field when `tp` is in the request.
+- `t2m`, `d2m`, `skt`, `t` are `degree_Celsius`; `gh` is metres; other units as published.
+- 06/18 runs stamp `data_interval = 3 hour`; 00/12 runs, whose spacing changes at 144 h, get `step_bounds`. Stamped `weather_skills_source=ecmwf-hres`.
 
-A Zarr store with the selected data variables and dims `(step, latitude,
-longitude)` — plus `vertical` (hPa) when a pressure-level field is selected.
-`step` follows the requested run's cadence (3-hourly/6-hourly for 00/12Z,
-3-hourly for 06/18Z). `tp` is the rate over each interval `[step, next
-step)`, labelled at its left edge (`step=0` is 0-3h), so the last lead
-(360h / 144h) is dropped — and when `tp` is mixed with other fields, they
-lose that last lead too. Interval geometry: `data_interval` for even steps
-(06/18Z, `3 hour`), `step_bounds` for the 00/12Z 3h→6h cadence change. `tp` is a precipitation **rate** (`mm day-1`); known temperature fields
-(`t2m`, `d2m`, `skt`, `t`) are `degree_Celsius`. Stamped with
-`weather_skills_source=ecmwf-hres`.
+### Notes
+- `ssrd`, `strd`, `str`, `ttr` stay cumulative since init (J m-2); deaccumulate them for a rate.
+- `gust10` is the maximum gust since the previous output step.
+- `tcwv` is water vapour only; `mucape` is most-unstable CAPE (Open Data has no plain `cape`).
+- An init or run that neither source has exits 1. New runs publish about 6–9 h after their init hour.
 
-### Provenance
-
-The output carries a `weather_skills_history` provenance chain; inspect it
-with the `provenance` skill.
-
-## Examples
-
+### Example
 ```bash
-# Default: total precipitation, over a custom bbox
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-02-15 --bbox 23/-20/-37/59 --output /tmp/hres.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-10-15 --run 0 --bbox 5.5/33.5/-5/42.5 -v tp -v t2m -o hres_kenya.zarr
 ```
-
-```bash
-# 2 m temperature, 12Z run
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-02-15 --run 12 --bbox 5/34/-5/42 -v t2m --output /tmp/hres_t2m.zarr
-```
-
-```bash
-# Temperature on all native pressure levels
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-02-15 --bbox 5/34/-5/42 -v t --output /tmp/hres_t.zarr
-```
-
-```bash
-# Named country: run resolve-region first, then pass the printed N/W/S/E:
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-02-15 --bbox 5/34/-5/42 --output /tmp/hres_kenya.zarr
-```
+Writes 15-day HRES precip rates and 2 m temperature over Kenya from the 00 UTC run.
