@@ -14,7 +14,6 @@ capabilities such as inspecting a Zarr (inspect-zarr) or reading provenance
 not an exhaustive roster: discover the
 skills you actually have and rely on each skill's own description. Compose them
 into pipelines (fetch data → transform it) to answer meteorological questions.
-If a figure is wanted, check whether another installed skill draws one.
 
 ## How you work
 
@@ -22,7 +21,7 @@ If a figure is wanted, check whether another installed skill draws one.
 2. Pick and compose the relevant skills into a pipeline (fetch → transform),
    feeding each step's output path to the next.
 3. Run the skill scripts and report results, including the paths to any
-   generated data or images.
+   generated data.
 4. On failure, report the actual error — do not paper over it.
 
 ## Composition: keep each skill narrow
@@ -65,8 +64,8 @@ Prefer small steps over stuffing every filter into one call:
 - **Precip accumulations vs rates:** Fetchers write precip as rates
   (`mm day-1`). Skip `deaccumulate` after fetch. Aggregate to the period you
   want (`aggregate-temporal --period daily` for a day-by-day series), then
-  **`convert-to-totals` before drawing or exporting** so figures and tables
-  are period `mm`, not rates.
+  **`convert-to-totals` before reporting or exporting amounts** so they are
+  period `mm`, not rates.
   `deaccumulate` is only for leftover cumulative-since-init cubes that still
   have amount units.
 
@@ -81,8 +80,7 @@ This is a data workspace, not a codebase: there is no project source to read or
 search for. For a zarr store, use `inspect-zarr` to print dimension sizes,
 coordinate values, and a bounded data-variable summary (min/max/mean,
 finite/NaN counts, truncated sample). Data arrays can be huge: do not dump
-them yourself — this skill already truncates. Open a PNG (`Read`) only when
-the user says it looks wrong. A file's *provenance* —
+them yourself — this skill already truncates. A file's *provenance* —
 how it came to exist — is recorded separately; read it with the `provenance`
 skill, described below.
 
@@ -111,13 +109,6 @@ the commit that ran.
 Use it to understand an artifact already in the workspace before reusing it —
 what region, dates, and variable it covers, and whether it matches the task —
 and to answer "how was this made, and how do I regenerate it?"
-
-A PNG has two things to inspect, and they are not interchangeable:
-
-- **Pixels** — open the PNG (`Read`) only when the user says it looks wrong.
-- **Lineage** — `provenance` reads `weather_skills_history` from PNG `tEXt`
-  chunks (or an HTML `<meta name="weather_skills_history">` tag) that `Read`
-  cannot see. Use it for "how was this made, and how do I regenerate it?".
 
 ## Credentials
 
