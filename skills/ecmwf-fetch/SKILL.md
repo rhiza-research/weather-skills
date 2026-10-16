@@ -54,7 +54,7 @@ The skill reads the public dynamical.org copy (`ecmwf-ifs-ens-forecast-46-day-da
 ### Notes
 - ECDS refuses inits newer than today − 2 days (real-time embargo); the skill exits 1 before contacting it.
 - Set `ECMWF_DATASTORES_KEY` before the first call that needs ECDS; the catalog path does not read it.
-- From ECDS, pressure-level fields and `pv` are control only. Alone they have `number=[0]`; mixed with ensemble fields they have no `number` dim.
+- From ECDS, pressure-level fields and `pv` are control only: they have data at `number=0` and are NaN for members 1..100.
 - From ECDS, accumulated fields other than `tp` (`cp`, `sf`, `ro`, `sro`, `sshf`, `slhf`, `ssr`, `ssrd`, `str`, `strd`, `ttr`, `ewss`, `nsss`) stay cumulative since init in native units. Requesting them with `tp` exits 2.
 - Ocean fields (`t20d`, `zos`, `ocu`, …) come only from ECDS on a 1.0° grid; atmosphere fields are 1.5°. Fetch them in a separate call.
 - On the catalog path, lead 0 is dropped only when every requested field is empty there (daily means, `tp`). Fetch daily-mean fields apart from instant ones (`u10`, `msl`, levels) to keep both on interval-start steps.
