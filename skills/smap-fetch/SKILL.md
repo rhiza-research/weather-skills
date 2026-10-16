@@ -1,6 +1,6 @@
 ---
 name: smap-fetch
-description: Fetch NASA SMAP SPL3SMP_E daily 9 km volumetric soil moisture for a bounded region and short date range via Earthdata, and write a fully CF-1.13 weather-skills standard dataset Zarr. Use when a task needs gridded land-surface soil-moisture observations, e.g. for drought or agricultural analysis, or comparison against models.
+description: "Fetch NASA SMAP Enhanced L3 (SPL3SMP_E) daily 9 km volumetric surface soil moisture for a region and short date range via NASA Earthdata, as a weather-skills Zarr. Needs an Earthdata login. Use when a task needs gridded soil-moisture observations, e.g. for drought or agricultural analysis, or comparison against models."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Authenticates to NASA Earthdata via the `earthaccess` library — set EARTHDATA_USERNAME and EARTHDATA_PASSWORD in the environment, or use a `.netrc` entry for `urs.earthdata.nasa.gov`.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -19,131 +19,38 @@ metadata:
 
 # smap-fetch
 
-Downloads NASA SMAP Enhanced L3 radiometer soil moisture (`SPL3SMP_E`, 9 km,
-daily) granules from NASA Earthdata via `earthaccess` and writes a gridded Zarr
-store. The product is HDF5 on the global EASE-Grid 2.0 (cylindrical
-equal-area): latitude is constant along rows and longitude along columns, so
-both reduce to exact 1-D coordinate vectors. Longitude is evenly spaced;
-latitude is not (rows are evenly spaced in projected metres, so the degree
-spacing varies — ~0.072° near the equator, wider toward the poles). Each
-requested day is one ~690 MB granule, so this skill is built for a bounded
-`--bbox` over a short window — pass `--bbox`.
-
-## When to use
-
-- A task needs gridded surface soil-moisture observations (daily, 9 km, land)
-  over a bounded region.
-- A downstream skill will clip, aggregate, compare, or plot the result as a weather-skills
-  standard dataset Zarr.
+Downloads one global SMAP granule (data file) per day from NASA Earthdata, keeps the requested box and overpass, and writes a weather-skills standard dataset Zarr.
 
 ## Usage
 
-```
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--bbox N/W/S/E] [--overpass AM|PM] [--quality recommended|all] -o <path.zarr>
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD --bbox N/W/S/E [--overpass AM|PM] [--quality recommended|all] -o OUT.zarr
+# Latest published day (no download)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
-Requires Earthdata credentials in the environment (`EARTHDATA_USERNAME` /
-`EARTHDATA_PASSWORD`) or a `.netrc` entry for `urs.earthdata.nasa.gov`, exactly
-like `imerg-fetch`.
+Needs `EARTHDATA_USERNAME` and `EARTHDATA_PASSWORD` (or `EARTHDATA_TOKEN`) in the environment, or a `urs.earthdata.nasa.gov` entry in `~/.netrc`. Failed login exits 1 with that hint; it never prompts.
 
 ### Arguments
-- `--start-time`, `--end-time` — inclusive date range. Each value is an absolute ISO date
-  `YYYY-MM-DD`. Keep windows short — each day is a separate large granule.
-  Calendar windows: `resolve-time last-2w`. Latest published day: `--probe-latest`.
-- `--probe-latest` — print the latest available `YYYY-MM-DD` on stdout and exit. No `-o`.
-- `--bbox` — spatial subset `N/W/S/E` decimal degrees (optional). Strongly
-  recommended for every run, since each daily granule is the entire ~690 MB
-  global grid. SMAP longitudes are already in [-180, 180), so negative west/east
-  values select directly. A box with west > east is treated as
-  antimeridian-crossing (e.g. `12/170/-6/-170`): it selects the union of the two
-  longitude bands (lon ≥ west or lon ≤ east). To fetch over a country, resolve
-  its bbox with the `resolve-region` skill.
-- `--overpass` — which half-orbit group to read: `AM` (6am descending, default)
-  or `PM` (6pm ascending). One pass per run; AM and PM are never mixed or
-  averaged — fetch each separately if you need both.
-- `--quality` — `recommended` (default) keeps only retrievals whose
-  `retrieval_qual_flag` bit 0 is clear (recommended quality); `all` also keeps
-  not-recommended retrievals (e.g. dense vegetation), roughly doubling coverage
-  in some regions.
-- `--output`, `-o` — output Zarr path (overwritten if it exists).
+- `--start-time`, `--end-time` — inclusive date range.
+- `--bbox` — `N/W/S/E` decimal degrees, longitudes −180..180; W > E crosses the antimeridian. Optional, but omit it only when you need the whole globe.
+- `--overpass` — `AM` (6 am local, descending orbit) or `PM` (6 pm local, ascending). One per run; fetch each separately for both. Default: `AM`.
+- `--quality` — `recommended` keeps only retrievals flagged recommended quality; `all` also keeps lower-quality ones (e.g. dense vegetation), often more coverage. Default: `recommended`.
+- `--probe-latest` — print the latest granule day in the last 21 days (`YYYY-MM-DD`) and exit; needs a login. Takes an optional id that this skill ignores.
+- `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
+- Dims `(time, latitude, longitude)`, daily, on the 9 km EASE-Grid 2.0 cell centres. Latitude is descending and unevenly spaced in degrees (about 0.07° near the equator); longitude is evenly spaced.
+- `soil_moisture` in `m3 m-3` (volume of water per volume of soil), `standard_name=volume_fraction_of_condensed_water_in_soil`, `data_interval="1 day"`. NaN marks ocean, no retrieval, values outside 0.02–0.5, and (with `--quality recommended`) lower-quality retrievals.
+- A `latitude_longitude` grid-mapping variable (WGS84); `weather_skills_source="smap"`.
 
-A consolidated, fully **CF-1.13** weather-skills standard dataset Zarr with dims
-`(time, latitude, longitude)`. The store is CF-compliant first, with
-`weather_skills_history` added on top — the standard dataset is a CF superset, not a separate
-format.
+### Notes
+- Each day is a separate download of about 690 MB, read one at a time, so keep windows to days or a few weeks.
+- Days with no published granule are left out, not filled; stderr lists them as trailing (likely not yet published) or interior gaps. A window with no granule exits 1.
 
-- Global attrs: `Conventions="CF-1.13"`, `title`, `source` (SMAP SPL3SMP_E),
-  `institution`, `references`, `history`, plus `weather_skills_source="smap"` and
-  `weather_skills_history`.
-- `latitude`: `standard_name=latitude`, `units=degrees_north`, `axis=Y`;
-  `longitude`: `standard_name=longitude`, `units=degrees_east`, `axis=X`;
-  `time`: `standard_name=time`, `axis=T`, with udunits `units` + `calendar` in
-  the write encoding.
-- `soil_moisture`:
-  `standard_name="volume_fraction_of_condensed_water_in_soil"`, `units="m3 m-3"`
-  (the file's `cm3/cm3` is a dimensionless volumetric ratio; `m3 m-3` is its
-  udunits-valid, dimensionless CF form — equivalent to a bare `1` but more
-  meaningful to downstream tools; the human form is kept in `long_name`). The
-  granule's own `soil_moisture` units attribute is read and confirmed to be a
-  dimensionless ratio before relabeling; an unexpected value fails the
-  run rather than silently mislabeling. Also carries `long_name`, an explicit NaN
-  `_FillValue`, and a `grid_mapping="latitude_longitude"` reference.
-  NaN marks the `-9999` fill (ocean, no retrieval), values outside the file's
-  `valid_min`..`valid_max` (0.02–0.5), and, with `--quality recommended`,
-  not-recommended retrievals. Missing values are never filled.
-- A `latitude_longitude` `grid_mapping` variable carries the geographic CRS for
-  the lat/lon presentation of the EASE-Grid 2.0 cells, on the WGS84 ellipsoid
-  (EASE-Grid 2.0 is defined on WGS84). Latitude is the EASE-Grid 2.0 vector
-  (non-uniformly spaced, descending), preserved exactly. `--bbox` edges are
-  inclusive on cell centres.
-
-`cf-xarray` resolves the X/Y/T axes from these attrs, and the script runs that
-decode check on write — a stamping regression fails loudly rather than shipping
-a store downstream skills cannot read.
-
-### Auth errors
-
-Earthdata authentication is non-interactive: the script tries the `environment`
-(EARTHDATA_USERNAME/PASSWORD or EARTHDATA_TOKEN) then `netrc` strategy and never
-prompts. If neither yields an authenticated session — or a search/download
-returns 401/403 — it exits non-zero with a single actionable line
-("configure EARTHDATA_USERNAME/EARTHDATA_PASSWORD or a urs.earthdata.nasa.gov
-entry in ~/.netrc"). No credential value is read, printed, or checked, and no
-traceback is shown for the auth path.
-
-### Missing days
-
-If some requested days have no published granule, the script writes the days
-that exist and emits a stderr warning naming the skipped days, rather than
-silently returning a shorter result. The warning distinguishes trailing missing
-days (after the last available day — the usual publication-lag case near the
-present) from interior gaps (a missing day between two available days), so it
-does not assert a false "not yet published" cause for a genuine interior gap.
-
-### Provenance
-
-The output carries a `weather_skills_history` provenance chain; inspect it
-with the `provenance` skill.
-
-### Memory and performance
-
-Each requested day is one ~690 MB granule download, so keep the window short
-and `--bbox` tight. Days are processed one at a time: each granule is read,
-subset, then deleted before the next download, so disk holds one granule and
-peak RSS is ~450 MB regardless of window length (only the subset is kept).
-Run the `clip-region` skill afterward for further trimming.
-
-## Examples
-
+### Example
 ```bash
-# Soil moisture over a Horn-of-Africa bbox for two days (AM overpass)
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox 12/32/-6/52 --start-time 2024-06-01 --end-time 2024-06-02 \
-  -o /tmp/smap.zarr
-
-# One week ending at a recent date, PM overpass
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox 12/32/-6/52 --start-time 2024-05-26 --end-time 2024-06-01 \
-  --overpass PM -o /tmp/smap_pm.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time 2026-10-01 --end-time 2026-10-07 \
+  --bbox 5.5/33.5/-5/42.5 -o smap_kenya.zarr
 ```
+Writes seven daily AM soil-moisture maps (m3 m-3) over Kenya.
