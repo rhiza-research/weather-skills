@@ -6,6 +6,7 @@
 # ///
 """Combine the variables of several Zarrs into one dataset on their shared coordinates."""
 
+import re
 import sys
 
 import numpy as np
@@ -61,22 +62,48 @@ def merge(ds, by_year, **kwargs):
             item["year"].attrs = {"long_name": "calendar year"}
             dss[i] = item
 
+    for i, item in enumerate(dss):
+        for dim, index in item.indexes.items():
+            if index.has_duplicates:
+                raise UsageError(
+                    f"input {i + 1} repeats values along {dim!r}; "
+                    "keep each value once first (select or aggregate-temporal)"
+                )
+        # A forecast's single init `time` would be replaced by another input's
+        # time axis, losing the init.
+        for name, coord in item.coords.items():
+            if coord.ndim == 0 and any(name in other.dims for other in dss):
+                raise UsageError(
+                    f"input {i + 1} has one {name!r} value where another input has a {name!r} "
+                    "axis; for a forecast, turn its steps into times with step-to-time first"
+                )
+
     try:
-        out = xr.merge(dss, join="inner", combine_attrs="drop_conflicts")
+        out = xr.merge(dss, join="inner", compat="no_conflicts", combine_attrs="drop_conflicts")
     except pint.DimensionalityError as exc:
         raise UsageError(f"inputs carry incompatible units on a shared coordinate: {exc}") from None
     except xr.MergeError as exc:
+        found = re.search(r"variable '([^']+)'", str(exc))
+        name = found.group(1) if found else "a coordinate"
         raise UsageError(
-            f"inputs disagree on a coordinate ({exc}); select or drop it on one input first"
+            f"inputs have different values of {name!r} (e.g. two forecast init dates, or one "
+            "station at two locations); merge only inputs that agree on it"
         ) from None
 
+    latlon = {cf_dim(out, "latitude"), cf_dim(out, "longitude")}
     for dim in out.dims:
         largest = max(item.sizes[dim] for item in dss if dim in item.dims)
+        regrid = (
+            "put one on the other's grid with coarsen --reference-grid" if dim in latlon else ""
+        )
         if out.sizes[dim] == 0:
-            raise UsageError(f"the inputs share no {dim!r} values; nothing to merge")
+            raise UsageError(
+                f"the inputs share no {dim!r} values" + (f"; {regrid}" if regrid else "")
+            )
         if out.sizes[dim] < largest:
             print(
-                f"merge: kept the {out.sizes[dim]} of {largest} {dim!r} values every input has",
+                f"merge: kept the {out.sizes[dim]} of {largest} {dim!r} values every input has"
+                + (f"; {regrid} to keep them all" if regrid else ""),
                 file=sys.stderr,
             )
     return out

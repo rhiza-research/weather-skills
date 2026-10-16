@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 import xarray as xr
-from conftest import load_skill, make_gridded, run_skill, write_zarr
+from conftest import load_skill, make_forecast, make_gridded, run_skill, write_zarr
 
 
 @pytest.fixture(scope="module")
@@ -66,8 +66,21 @@ def test_errors(tmp_path, merge, capsys):
         _series("dmi", ["2020-09-01", "2020-09-02"], [1.0, 2.0], "degree_Celsius"),
         tmp_path / "daily.zarr",
     )
+    dup = make_gridded(n_time=3, name="dup")
+    dup = write_zarr(dup.assign_coords(time=dup.time.values[[0, 0, 1]]), tmp_path / "dup.zarr")
+    fc = write_zarr(
+        make_forecast(lats=(1.0, 2.0, 3.0), lons=(10.0, 11.0, 12.0, 13.0)), tmp_path / "fc.zarr"
+    )
+    fc2 = write_zarr(make_forecast(name="t2m", init="2026-01-08"), tmp_path / "fc2.zarr")
+    offset = write_zarr(
+        make_gridded(name="other", lats=(1.5, 2.5), lons=(10.5, 11.5)), tmp_path / "offset.zarr"
+    )
     cases = [
         (["-i", str(rain)], "at least two inputs"),
+        (["-i", str(rain), "-i", str(dup)], "repeats values along 'time'"),
+        (["-i", str(fc), "-i", str(rain)], "step-to-time"),
+        (["-i", str(fc), "-i", str(fc2)], "different values of 'time'"),
+        (["-i", str(rain), "-i", str(offset)], "coarsen --reference-grid"),
         (["-i", str(rain), "-i", str(rain)], "rename skill"),
         (["-i", str(rain), "-i", str(later)], "share no 'time' values"),
         (["-i", str(daily), "-i", str(later), "--by-year"], "several values in year 2020"),
