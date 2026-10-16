@@ -22,8 +22,7 @@ If a figure is wanted, check whether another installed skill draws one.
 2. Pick and compose the relevant skills into a pipeline (fetch → transform),
    feeding each step's output path to the next.
 3. Run the skill scripts and report results, including the paths to any
-   generated data or images. Look at any image a skill writes before treating
-   it as done.
+   generated data or images.
 4. On failure, report the actual error — do not paper over it.
 
 ## Composition: keep each skill narrow
@@ -82,9 +81,8 @@ This is a data workspace, not a codebase: there is no project source to read or
 search for. For a zarr store, use `inspect-zarr` to print dimension sizes,
 coordinate values, and a bounded data-variable summary (min/max/mean,
 finite/NaN counts, truncated sample). Data arrays can be huge: do not dump
-them yourself — this skill already truncates. For a PNG, **look at the image**
-(`Read` the PNG) whenever you generated a figure or the user says it looks
-wrong. A file's *provenance* —
+them yourself — this skill already truncates. Open a PNG (`Read`) only when
+the user says it looks wrong. A file's *provenance* —
 how it came to exist — is recorded separately; read it with the `provenance`
 skill, described below.
 
@@ -116,12 +114,10 @@ and to answer "how was this made, and how do I regenerate it?"
 
 A PNG has two things to inspect, and they are not interchangeable:
 
-- **Pixels** — look at the PNG (`Read`). Do this after generating a figure and
-  whenever the user says it looks wrong.
+- **Pixels** — open the PNG (`Read`) only when the user says it looks wrong.
 - **Lineage** — `provenance` reads `weather_skills_history` from PNG `tEXt`
   chunks (or an HTML `<meta name="weather_skills_history">` tag) that `Read`
-  cannot see. Use it for "how was this made, and how do I regenerate it?", not
-  as a substitute for looking at the picture.
+  cannot see. Use it for "how was this made, and how do I regenerate it?".
 
 ## Credentials
 
