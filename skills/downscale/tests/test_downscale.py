@@ -263,8 +263,8 @@ def test_reference_grid_trimmed_and_own_dim_names(tmp_path, downscale):
     assert res["longitude"].values.min() >= 9.5 and res["longitude"].values.max() <= 12.5
 
 
-# From #155 (H1nokam1Kagura): CHIRPS-like float32 grids, zero spacing.
 def _float32_grid(path, fill_offset=0.0):
+    """CHIRPS-like 0.05° grid stored as float32, so its spacing is not exactly 0.05."""
     import numpy as np
 
     lats = (-4.675 + 0.05 * np.arange(204)).astype(np.float32)

@@ -170,7 +170,6 @@ def test_select_value_cftime_360_day(tmp_path, select):
 
 
 def test_select_refuses_repeated_dim(tmp_path, select, capsys):
-    # From #155 (H1nokam1Kagura): argparse used to keep the last --dim silently.
     src = write_zarr(make_gridded(n_time=3), tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
     argv = ["-i", str(src), "-o", str(out), "--dim", "time", "--dim", "latitude", "--index", "0"]

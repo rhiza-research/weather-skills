@@ -201,7 +201,6 @@ def test_concat_stitches_adjacent_boxes_and_refuses_a_gap(tmp_path, concat, caps
 
 
 def test_concat_refuses_mixed_calendars(tmp_path, concat, capsys):
-    # From #155 (H1nokam1Kagura): standard + noleap used to crash comparing dates.
     import cftime
 
     noleap = make_gridded(n_time=2, start="2026-01-05")
