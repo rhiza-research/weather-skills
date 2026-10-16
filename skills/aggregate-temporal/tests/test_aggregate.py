@@ -740,3 +740,84 @@ def test_monthly_on_model_calendar_with_bounds(tmp_path, aggregate):
     # Each month is its own value, not a blend with its neighbour.
     np.testing.assert_allclose(monthly["precip"].values[:, 0, 0], [1.0, 2.0, 3.0])
     assert monthly[AGGREGATION_COVERAGE_COORD].values.tolist() == pytest.approx([1, 1, 1])
+
+
+def _gfs_like_steps():
+    """GFS-like leads: hourly cells to 12 h, then 3-hourly to 24 h, with step_bounds."""
+    ends = np.array([*range(1, 13), 15, 18, 21, 24])
+    starts = np.array([0, *ends[:-1]])
+    rate = np.array([1.0] * 6 + [2.0] * 6 + [3.0, 5.0, 6.0, 8.0])
+    step = ends.astype("timedelta64[h]").astype("timedelta64[ns]")
+    bounds = np.stack([starts, ends], axis=1).astype("timedelta64[h]").astype("timedelta64[ns]")
+    ds = xr.Dataset(
+        {"precip": (("step", "latitude", "longitude"), rate[:, None, None])},
+        coords={
+            "step": step,
+            "step_bounds": (("step", "nv"), bounds),
+            "time": np.datetime64("2026-10-16T00", "ns"),
+            "latitude": [1.0],
+            "longitude": [10.0],
+        },
+    )
+    ds["precip"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
+    ds["step"].attrs.update(standard_name="forecast_period", bounds="step_bounds")
+    ds["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
+    ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north", axis="Y")
+    ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east", axis="X")
+    return ds
+
+
+def test_six_hour_period_on_irregular_step_bounds(tmp_path, aggregate):
+    """6 h buckets weight hourly and 3-hourly cells by duration; totals follow the period."""
+    convert = load_skill("convert-to-totals", "convert_to_totals").convert_to_totals
+    src = write_zarr(_gfs_like_steps(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--period", "6 hour")
+    ds = xr.open_zarr(out, consolidated=True)
+    hours = (ds.step.values / np.timedelta64(1, "h")).astype(int).tolist()
+    assert hours == [0, 6, 12, 18]
+    # [12, 18) is 3 h at 3 + 3 h at 5; [18, 24) is 3 h at 6 + 3 h at 8.
+    np.testing.assert_allclose(ds["precip"].values.ravel(), [1.0, 2.0, 4.0, 7.0])
+    np.testing.assert_allclose(ds["aggregation_coverage"].values, [1.0, 1.0, 1.0, 1.0])
+    assert ds["precip"].attrs["aggregation_period"] == "6 hour"
+
+    totals = tmp_path / "totals.zarr"
+    run_skill(convert, "-i", str(out), "-o", str(totals))
+    tot = xr.open_zarr(totals, consolidated=True)
+    np.testing.assert_allclose(tot["precip"].values.ravel(), [0.25, 0.5, 1.0, 1.75])
+
+
+def test_six_hour_period_on_hourly_time(tmp_path, aggregate):
+    """Hourly obs → 6 h bins aligned to 00 UTC, complete when all six hours are present."""
+    times = np.arange(
+        np.datetime64("2026-10-16T00", "ns"),
+        np.datetime64("2026-10-17T00", "ns"),
+        np.timedelta64(1, "h"),
+    )
+    rate = (np.arange(24) // 6).astype(float)
+    ds = make_gridded(n_time=1).isel(time=[0] * 24).assign_coords(time=times)
+    ds["precip"] = (
+        ("time", "latitude", "longitude"),
+        np.broadcast_to(rate[:, None, None], ds["precip"].shape).copy(),
+    )
+    ds["precip"].attrs.update(units="mm day-1", standard_name="lwe_precipitation_rate")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--period", "6 hour")
+    res = xr.open_zarr(out, consolidated=True)
+    assert [str(t)[11:13] for t in res.time.values] == ["00", "06", "12", "18"]
+    np.testing.assert_allclose(res["precip"].values[:, 0, 0], [0.0, 1.0, 2.0, 3.0])
+    np.testing.assert_allclose(res["aggregation_coverage"].values, [1.0] * 4)
+    assert res["precip"].attrs["aggregation_period"] == "6 hour"
+
+
+@pytest.mark.parametrize(
+    "make, period",
+    [(lambda: make_gridded(n_time=4), "6 hour"), (_gfs_like_steps, "2 hour")],
+    ids=["daily-time", "3h-step-bounds"],
+)
+def test_period_shorter_than_input_cells_is_refused(tmp_path, aggregate, make, period):
+    src = write_zarr(make(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "out.zarr"), "--period", period)
+    assert exc.value.code == 2

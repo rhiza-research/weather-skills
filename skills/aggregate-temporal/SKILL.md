@@ -1,6 +1,6 @@
 ---
 name: aggregate-temporal
-description: "Roll up a weather-skills Zarr along its time axis or forecast lead (step) axis into fixed windows (daily, weekly, 10-day, calendar monthly, or any whole number of days) or a rolling window, taking the mean, min, or max. Use to turn daily or sub-daily rates into weekly, dekadal, or monthly mean rates; each output window is stamped with its length and how complete it is."
+description: "Roll up a weather-skills Zarr along its time axis or forecast lead (step) axis into fixed windows (sub-daily such as 6 hours, daily, weekly, 10-day, calendar monthly, or any whole number of days) or a rolling window, taking the mean, min, or max. Use to turn hourly rates into 6-hour means, or daily rates into weekly, dekadal, or monthly mean rates; each output window is stamped with its length and how complete it is."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py *)
@@ -25,7 +25,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window 
 ### Arguments
 - `--input`, `-i` — input Zarr with a `time` or `step` axis.
 - `--output`, `-o` — output Zarr.
-- `--period` — `daily`, `weekly` (7 days), `dekadal` (a fixed 10 days back to back, not calendar dekads), `monthly` (calendar months, `time` only, in the input's own calendar), or a whole-day duration such as `21 day` or `3 week`. Pass exactly one of `--period` and `--window`.
+- `--period` — `daily`, `weekly` (7 days), `dekadal` (a fixed 10 days back to back, not calendar dekads), `monthly` (calendar months, `time` only, in the input's own calendar), or a duration such as `21 day`, `3 week`, or sub-daily `6 hour` (bins start at 00 UTC on `time` and at lead 0 on `step`). Pass exactly one of `--period` and `--window`.
 - `--window` — rolling window length in axis rows.
 - `--align` — with `--window`: label each window at its `left` (first) row, `right` (last) row, or `center`. Default: `left`.
 - `--stride` — with `--window`: keep every Nth window (integer), or keep dates by `day`, `week`, `month`, `year`, or weekday names (`Monday`, `Monday/Thursday`).
@@ -42,7 +42,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window 
 
 ### Notes
 - A cell missing samples that other cells have is NaN for that window; values are never averaged over a partial record.
-- Input that is already aggregated must divide evenly into the period (weekly → `14 day`, not `monthly`), else exit 2. Input already at the period is only stamped, not changed.
+- Input that is already aggregated must divide evenly into the period (weekly → `14 day`, not `monthly`), else exit 2. A period shorter than the input's samples (`6 hour` on daily data, or shorter than the widest `step_bounds` cell) also exits 2. Input already at the period is only stamped, not changed.
 - Concatenated segments with gaps (e.g. one week per year) straddle windows; aggregate each segment before concatenating.
 - `--window` is refused on axes with missing rows or CF `{dim}_bounds`; use `--period`.
 
@@ -52,6 +52,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i chirps_kenya.zarr -o chirps_k
   --period weekly --end-time 2026-10-15
 ```
 Writes weekly mean CHIRPS rates (`mm day-1`) whose last week is 2026-10-08 to 2026-10-14, labeled 2026-10-08.
+
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i gfs_precip.zarr -o gfs_precip_6h.zarr --period "6 hour" --time-dim step
+```
+Writes 6-hour mean GFS precip rates; hourly and 3-hourly leads are weighted by their `step_bounds`. Step 42 h is the 42–48 h mean.
 
 ## Details
 

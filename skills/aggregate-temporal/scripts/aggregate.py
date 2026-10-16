@@ -44,7 +44,7 @@ _NAMED_PERIODS = tuple(PERIOD_TO_AGGREGATION)
 
 
 def _resolve_period(period: str) -> dict:
-    """Named period or a whole-day pint duration (e.g. ``21 day``)."""
+    """Named period or a pint duration (``21 day``, ``6 hour``); ``anchor_days`` may be fractional."""
     if period in PERIOD_TO_AGGREGATION:
         return {
             "key": period,
@@ -57,21 +57,29 @@ def _resolve_period(period: str) -> dict:
     except UsageError as exc:
         raise UsageError(
             f"--period {period!r} must be one of {', '.join(_NAMED_PERIODS)} "
-            f"or a pint duration in whole days (e.g. '21 day'): {exc}"
+            f"or a pint duration (e.g. '21 day', '6 hour'): {exc}"
         ) from None
     days = float(quantity.to("day").magnitude)
-    if days <= 0 or abs(days - round(days)) > 1e-6:
+    seconds = days * 86400
+    if days <= 0 or abs(seconds - round(seconds)) > 1e-6:
         raise UsageError(
             f"--period {period!r} must be a named period "
-            f"({', '.join(_NAMED_PERIODS)}) or a whole number of days "
-            "(e.g. '21 day')"
+            f"({', '.join(_NAMED_PERIODS)}) or a positive whole number of seconds "
+            "(e.g. '21 day', '6 hour')"
         )
-    ndays = int(round(days))
+    if abs(days - round(days)) < 1e-6:
+        return {
+            "key": period,
+            "agg": format_duration(quantity),
+            "freq": f"{int(round(days))}D",
+            "anchor_days": int(round(days)),
+        }
+    # Sub-daily: bins of this many seconds, aligned to 00 UTC of the first day.
     return {
         "key": period,
         "agg": format_duration(quantity),
-        "freq": f"{ndays}D",
-        "anchor_days": ndays,
+        "freq": f"{int(round(seconds))}s",
+        "anchor_days": days,
     }
 
 
@@ -360,7 +368,7 @@ def _aggregate_time_resample(ds, dim, spec, method):
                 right = label + _dt.timedelta(days=spec["anchor_days"])
             else:
                 left = np.datetime64(label)
-                right = left + np.timedelta64(spec["anchor_days"], "D")
+                right = left + np.timedelta64(int(round(spec["anchor_days"] * 86400)), "s")
             bins.append((left, right, left if hasattr(label, "calendar") else np.datetime64(label)))
         return _aggregate_from_bounds(ds, dim, spec, method, bins)
 
@@ -542,7 +550,7 @@ def _rolling_aggregation_period(ds, dim, window, interval):
     help=(
         "Calendar/step window: daily, weekly (7 days), dekadal (a fixed 10 days, "
         "not calendar dekads 1-10/11-20/21-end), monthly (calendar months), or "
-        "a pint duration in whole days (e.g. '21 day'). Mutex with --window."
+        "a pint duration (e.g. '21 day', or sub-daily '6 hour'). Mutex with --window."
     ),
 )
 @weather_skill.argument(
@@ -692,6 +700,16 @@ def aggregate(
     # Each input sample covers [t, t + cell). Bins must hold whole cells, or a
     # weekly mean lands entirely in the month of its label and still counts as
     # complete coverage.
+    if has_bounds and spec["key"] != "monthly":
+        bounds = _cf_bounds(ds, dim)
+        widest = float((_as_ns(bounds[:, 1]) - _as_ns(bounds[:, 0])).max()) / 86400e9
+        if spec["anchor_days"] < widest - 1e-9:
+            # A bin shorter than a sample would spread that sample's mean over it.
+            raise UsageError(
+                f"--period {period} is shorter than the widest {dim} interval in the input "
+                f"({widest * 24:g} hour); "
+                "aggregate to that interval or longer"
+            )
     cell = None if has_bounds else _coverage_cell(ds)
     if cell:
         cell_days = float(parse_aggregation_period(cell).to("day").magnitude)
