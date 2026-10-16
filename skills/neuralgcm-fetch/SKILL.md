@@ -140,15 +140,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset era5:surface -v t2m \
 ```
 
 ```bash
-# Weekly totals then plot
+# Weekly totals
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-09-11 --bbox 5/34/-5/42 \
     -o /tmp/neuralgcm.zarr
 uv run skills/aggregate-temporal/scripts/aggregate.py \
     -i /tmp/neuralgcm.zarr -o /tmp/neuralgcm_weekly.zarr --period weekly
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/neuralgcm_weekly.zarr -o /tmp/neuralgcm_weekly_mm.zarr
-# plot lives in the weather-skills-plotting repo
-uv run skills/plot/scripts/plot.py -i /tmp/neuralgcm_weekly_mm.zarr \
     -o /tmp/neuralgcm_weekly.png \
     --spec '{"inputs":[{"variable":"tp"}]}'
 ```

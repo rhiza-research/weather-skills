@@ -36,7 +36,7 @@ has a Zarr.
 
 - A task needs PBC / StillLearning AI Weather Quest precip probabilities
   already synced to the Sheerwater datalake (no AI-WQ portal, no ECDS queue).
-- Downstream `select --dim quintile`, `clip-region`, or `plot`.
+- Downstream `select --dim quintile` or `clip-region`.
 
 Prefer `dynamical-fetch` / `ecmwf-fetch` for physical precip rates. This skill
 does **not** convert probabilities to `mm` — do not run `deaccumulate` or
@@ -67,9 +67,8 @@ Output dims: `(quintile, step, latitude, longitude)` with scalar `time` (init).
 1.5° (latitude 90 → -90, same points as ECMWF 1.5°), longitude wrapped to
 `[-180, 180)`. `pr` has `units="1"` and no `standard_name` (CF has none for
 it); the store has no NaNs (uninformative cells hold 0.2). Native period
-is one week (`data_interval` `7 day`). Plot a single quintile with
-`select --dim quintile --value 0.2` (or `0.4` / `0.6` / `0.8` / `1.0`) then
-`plot`.
+is one week (`data_interval` `7 day`). To map a single quintile, first
+`select --dim quintile --value 0.2` (or `0.4` / `0.6` / `0.8` / `1.0`).
 
 ### Arguments
 

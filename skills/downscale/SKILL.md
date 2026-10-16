@@ -60,8 +60,8 @@ lead before building them. The input keeps all its dims (`step`, `number`,
 ## When to use
 
 - A task needs a finer grid, or a lateral realign onto another dataset's
-  coordinates before `difference` or `verify`. Plotting does not: `plot`
-  with two heatmap traces keeps each input's own lat/lon.
+  coordinates before `difference` or `verify`. Drawing them side by side
+  does not.
 - Matching the (finer) resolution of another dataset via its grid
   (`--reference-grid`).
 - Bias-correcting a forecast against observations on the output grid

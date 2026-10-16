@@ -30,19 +30,18 @@ data samples stay capped. To look at a specific slice, `clip-region` /
 `select` first, then inspect the smaller store.
 
 Use `provenance` when you need the `weather_skills_history` lineage rather than
-the grid itself. Plot skills print a `plot hash` and `data: not null` / `NULL`
-when they write a PNG.
+the grid itself.
 
 ## When to use
 
 - Checking which dims and coordinates a fetch or transform produced.
 - Reading lat/lon/time (or `step` / `number`) values before `select`,
-  `clip-region`, `aggregate-temporal`, or `plot`.
+  `clip-region`, or `aggregate-temporal`.
 - Confirming units on data variables after `unit-convert` or
   `convert-to-totals`, and whether `data_interval` / `aggregation_period` /
   `aggregation_coverage` are present.
 - Checking whether a field is all NaN, all zero, or in a plausible range
-  (especially after a plot skill prints `data: NULL`).
+  (especially when a figure drawn from it comes out empty).
 
 ## Usage
 

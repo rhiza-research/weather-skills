@@ -1,6 +1,6 @@
 ---
 name: point-value
-description: Sample any gridded weather-skills standard dataset Zarr (IMERG, CHIRPS, ERA5, SMAP, ECMWF/GEFS forecasts) at point locations and write a point_obs (station_id) dataset. Points come from a station Zarr (TAHMO, GHCN-Daily, OpenAQ), repeatable --point LAT,LON[,ID], or a CSV. Use before grid-vs-station comparison — after it, difference / verify (bias, MAE, hits per station) / plot-timeseries work against the station data directly. Methods nearest (default, containing cell), bilinear, or cell-mean (N x N neighborhood). Non-spatial dims (time, step, number, vertical) are kept.
+description: Sample any gridded weather-skills standard dataset Zarr (IMERG, CHIRPS, ERA5, SMAP, ECMWF/GEFS forecasts) at point locations and write a point_obs (station_id) dataset. Points come from a station Zarr (TAHMO, GHCN-Daily, OpenAQ), repeatable --point LAT,LON[,ID], or a CSV. Use before grid-vs-station comparison — after it, difference and verify (bias, MAE, hits per station) work against the station data directly. Methods nearest (default, containing cell), bilinear, or cell-mean (N x N neighborhood). Non-spatial dims (time, step, number, vertical) are kept.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/point_value.py *)

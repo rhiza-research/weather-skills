@@ -14,7 +14,7 @@ metadata:
 Terminal conversion: **precipitation rate × stamped `aggregation_period` →
 amount (`mm`)**.
 
-Intended only before plot/export. Converts precipitation-rate variables only
+Intended only before drawing or export. Converts precipitation-rate variables only
 (recognized by CF `standard_name`, or a precip name such as `precip`, `tp`,
 `pr`, or `total_precipitation` with rate units). Other variables
 (temperature, pressure, wind, …) pass through unchanged. Only a mean rate

@@ -131,13 +131,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-09-18 --bbox 5/34/-5/42 
 ```
 
 ```bash
-# Weekly totals then plot
+# Weekly totals
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-09-18 --bbox 5/34/-5/42 \
     -o /tmp/cumulus.zarr
 uv run skills/aggregate-temporal/scripts/aggregate.py \
     -i /tmp/cumulus.zarr -o /tmp/cumulus_weekly.zarr --period weekly
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/cumulus_weekly.zarr -o /tmp/cumulus_weekly_mm.zarr
-uv run skills/plot/scripts/plot.py -i /tmp/cumulus_weekly_mm.zarr -v tp \
     -o /tmp/cumulus_weekly.png
 ```

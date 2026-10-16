@@ -49,8 +49,8 @@ them the skill exits non-zero before contacting TAHMO.
 
 - A task needs recent daily in-situ observations for specific TAHMO stations
   (or every TA station in a region).
-- A downstream skill will compare stations against gridded precip (via
-  `plot --layer`) or aggregate them temporally.
+- A downstream skill will compare stations against gridded precip or
+  aggregate them temporally.
 
 ## Usage
 

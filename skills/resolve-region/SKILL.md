@@ -1,6 +1,6 @@
 ---
 name: resolve-region
-description: "Resolve an ISO 3166-1 alpha-3 country code, a Natural Earth multi-country region (East Africa, Western Africa), a custom box (Indian Ocean basin), a sub-national region (state, province, county), or a leftover landmark name to a lat/lon bbox and optionally a boundary polygon GeoJSON. Use when you need to turn a country, county, or named place into a bbox (or a polygon mask) for clip-region, ecmwf-fetch, or plot. Prefer ISO3 / country-admin1 / Natural Earth region names / custom boxes; Nominatim is the landmark fallback; it pads point landmarks (peaks, towns) by --pad (0.25°) and refuses roads and areas OSM has only as a centre point (Horn of Africa needs an explicit bbox). Country outlines come from geoBoundaries ADM0 (matching county edges); multi-country regions are coarse 1:110m. Do not send Indian Ocean to Nominatim — it is the basin box 30/20/-40/120. Not for river basins or catchments (e.g. Tana River basin): Nominatim returns an unrelated basin. For basins, catchments, or official national/local boundaries, first check whether another installed skill provides more specific regions for that use case."
+description: "Resolve an ISO 3166-1 alpha-3 country code, a Natural Earth multi-country region (East Africa, Western Africa), a custom box (Indian Ocean basin), a sub-national region (state, province, county), or a leftover landmark name to a lat/lon bbox and optionally a boundary polygon GeoJSON. Use when you need to turn a country, county, or named place into a bbox (or a polygon mask) for clip-region, ecmwf-fetch, or a map. Prefer ISO3 / country-admin1 / Natural Earth region names / custom boxes; Nominatim is the landmark fallback; it pads point landmarks (peaks, towns) by --pad (0.25°) and refuses roads and areas OSM has only as a centre point (Horn of Africa needs an explicit bbox). Country outlines come from geoBoundaries ADM0 (matching county edges); multi-country regions are coarse 1:110m. Do not send Indian Ocean to Nominatim — it is the basin box 30/20/-40/120. Not for river basins or catchments (e.g. Tana River basin): Nominatim returns an unrelated basin. For basins, catchments, or official national/local boundaries, first check whether another installed skill provides more specific regions for that use case."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py *)
@@ -37,16 +37,15 @@ key fall through to
 
 ## When to use
 
-- Turning a country into a bbox for `clip-region`, `ecmwf-fetch`, or `plot`.
+- Turning a country into a bbox for `clip-region`, `ecmwf-fetch`, or a map window.
 - Turning a Natural Earth multi-country region (East Africa, Western Africa)
   or a custom box (Indian Ocean basin) into a bbox without hitting
   Nominatim.
 - Turning a county / state / province into a bbox or a boundary polygon.
 - Turning a landmark (a lake, a city that is not an admin unit)
   into a bbox when you do not have an ISO3 / `country-admin1` / named-region key.
-- Producing a boundary polygon (`--geojson`) to feed `plot`'s
-  `geo.mask_geojson` or `clip-region`'s `--geojson` so grid cells outside the
-  region are masked.
+- Producing a boundary polygon (`--geojson`) to feed `clip-region`'s
+  `--geojson` (or a map mask) so grid cells outside the region are masked.
 
 Prefer ISO3, named regions, and hierarchical admin keys when you have them —
 those lookups are offline and do not hit Nominatim.
@@ -248,7 +247,7 @@ a **wrapped** bbox where **west is greater than east** — an RFC 7946 §5.2
 antimeridian-crossing bounding box. For example, Russia's longitude band runs
 from roughly `19` eastward across 180° to roughly `-169`, so `W ≈ 19` and
 `E ≈ -169` with `W > E`. The forecasting skills' `--bbox` consumers
-(`clip-region`, `plot`, `ecmwf-fetch`) honor this: when `W > E`
+(`clip-region`, `ecmwf-fetch`) honor this: when `W > E`
 they select the two longitude bands `lon ≥ W` and `lon ≤ E` rather than the
 empty `slice(W, E)`. A genuinely circumpolar geometry (Antarctica) instead
 returns the full width `-180`/`180`.
@@ -257,7 +256,7 @@ returns the full width `-180`/`180`.
 
 ```bash
 # Resolve a country to a bbox; pass the printed value to a --bbox consumer
-# such as the clip-region, ecmwf-fetch, or plot skill:
+# such as the clip-region or ecmwf-fetch skill:
 BBOX=$(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py KEN)
 
 # Resolve a Kenyan county (geoBoundaries ADM1) and mask with its polygon:
@@ -272,8 +271,8 @@ BBOX=$(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py "Indian Ocean")
 # Landmark bbox (Nominatim). stderr shows the OSM display_name:
 BBOX=$(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py "Lake Victoria")
 
-# Resolve a country to a boundary polygon; pass the file as plot's
-# geo.mask_geojson to mask grid cells outside the country:
+# Resolve a country to a boundary polygon; pass the file as a mask to hide
+# grid cells outside the country:
 uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py KEN --geojson /tmp/ken.json
 ```
 

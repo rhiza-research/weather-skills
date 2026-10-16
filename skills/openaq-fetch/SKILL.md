@@ -35,8 +35,8 @@ point_obs Zarr store.
 
 - A task needs daily air-quality and atmospheric-composition station observations
   (PM2.5, PM10, NO2, O3, SO2, CO) for a region.
-- A downstream skill will compare stations against gridded data (via
-  `plot --layer`) or aggregate them temporally.
+- A downstream skill will compare stations against gridded data or
+  aggregate them temporally.
 
 ## Credentials
 

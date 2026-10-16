@@ -1,6 +1,6 @@
 ---
 name: provenance
-description: Inspect the weather_skills_history provenance chain stamped on a weather-skills artifact (a standard dataset Zarr or a plot PNG, JPEG, or HTML figure) and render it as a human-readable lineage, the raw JSON chain, or a runnable reproduction script. Use when you need to answer "how did this file come to exist, and how do I regenerate it?" — especially for a PNG, whose chain lives in binary tEXt chunks an editor can't open.
+description: Inspect the weather_skills_history provenance chain stamped on a weather-skills artifact (a standard dataset Zarr or a PNG, JPEG, or HTML figure) and render it as a human-readable lineage, the raw JSON chain, or a runnable reproduction script. Use when you need to answer "how did this file come to exist, and how do I regenerate it?" — especially for a PNG, whose chain lives in binary tEXt chunks an editor can't open.
 license: MIT
 compatibility: Requires Python 3.12 and uv. Inspects a zarr directory or a .png/.jpg/.html figure; reads no credentials and writes nothing.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py *)
@@ -12,7 +12,7 @@ metadata:
 # provenance
 
 Read-only inspector for the `weather_skills_history` provenance DAG that every
-zarr-writing skill stamps on its output (and that plot-writers embed in PNG
+zarr-writing skill stamps on its output (and that figure-writing skills embed in PNG
 `tEXt` chunks, JPEG EXIF, or an HTML `<meta>` tag). It does not produce an artifact — every view prints to
 stdout, and the user redirects when they want a file.
 
@@ -24,8 +24,7 @@ stdout, and the user redirects when they want a file.
   script rather than reconstructing the pipeline by hand.
 - The chain is unreadable directly: a zarr keeps it in store attrs, and a PNG
   keeps it in binary `tEXt` chunks.
-- You need lineage, not a visual check — plot skills print `plot hash` and
-  `data: not null` / `NULL`; look at the PNG as well.
+- You need lineage, not a visual check — look at the PNG as well.
 
 Read-only: it takes no `--output` and prints the result to stdout; it never
 writes a file or modifies its input.
@@ -61,10 +60,10 @@ Prints the lineage oldest-first. Each step shows its skill, version, git
 commit (when recorded), input basename, and the args that were set (`None`
 args — flags not passed — are left out). Malformed entries print a note
 instead of failing. A single-input path is a
-flat list. Any multi-input join (`concat`, `difference`, `plot-mediogram`, …)
+flat list. Any multi-input join (`concat`, `difference`, …)
 lists each parent subgraph under its own label (`a`, `b`, …), including
-nested joins. For a two-input PNG that still stores separate tEXt keys
-(`plot-mediogram`), each input branch is printed under its
+nested joins. For a two-input PNG that still stores separate tEXt keys,
+each input branch is printed under its
 own label. If the zarr carries a `weather_skills_source` attr it is printed
 first.
 
@@ -97,7 +96,7 @@ an empty directory. Each step is pinned to its recorded commit:
   `point-value` `--input`/`--points`. A join may sit anywhere on the path
   (a join whose output feeds further steps); nested joins recurse.
 - An older two-input PNG that stores separate tEXt keys reproduces each
-  labeled branch, then emits one final plot command.
+  labeled branch, then emits one final figure command.
 - A branch whose head is not a fetcher still emits the `<UPSTREAM>` caveat
   so you can supply that input yourself. A step recorded with `dirty: true`
   gets a warning comment: the commit may not match what executed.

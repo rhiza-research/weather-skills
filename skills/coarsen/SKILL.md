@@ -1,6 +1,6 @@
 ---
 name: coarsen
-description: "Coarsen or align a weather-skills standard dataset Zarr onto a target grid, by linear interpolation (default; realigns and small ratios) or --method conservative (area-weighted mean of the source cells inside each target cell). Use --method conservative to put fine obs (CHIRPS/IMERG 0.05–0.1°) on a coarse forecast grid (1.5°) before verify or difference — linear samples a few source cells, not the box mean. Missing source cells make the target cell NaN unless --min-fraction is lowered. Prefer --reference-grid PATH to copy another Zarr's exact lat/lon (avoids float mismatch); or --target-resolution with --offset (points at offset + k*resolution). Near-equal resolution is a lateral realign (incl. a half-cell shift). Adds no information. Do not coarsen just to plot: `plot` draws two heatmap traces on their own grids."
+description: "Coarsen or align a weather-skills standard dataset Zarr onto a target grid, by linear interpolation (default; realigns and small ratios) or --method conservative (area-weighted mean of the source cells inside each target cell). Use --method conservative to put fine obs (CHIRPS/IMERG 0.05–0.1°) on a coarse forecast grid (1.5°) before verify or difference — linear samples a few source cells, not the box mean. Missing source cells make the target cell NaN unless --min-fraction is lowered. Prefer --reference-grid PATH to copy another Zarr's exact lat/lon (avoids float mismatch); or --target-resolution with --offset (points at offset + k*resolution). Near-equal resolution is a lateral realign (incl. a half-cell shift). Adds no information. Do not coarsen just to draw two datasets side by side."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/coarsen.py *)
@@ -51,7 +51,7 @@ often lands *near* IMERG/CHIRPS/ECMWF points without matching them exactly.
 - Coarsening to a larger spacing before ensemble aggregation.
 - Producing output on a named sheerwater grid via `(resolution, offset)`.
 
-Not for: `plot`. Two heatmap traces are two panels, each on its own lat/lon. Not for making a grid finer / adding
+Not for: drawing two datasets side by side — a map can keep each on its own lat/lon. Not for making a grid finer / adding
 information — that is the `downscale` skill. Nearest, cubic, and
 most-common regridding are not offered.
 
