@@ -104,7 +104,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest   # stdout YYYY-MM-DD
 | `tp` | Total precipitation | **Default.** Cumulative since step 0 on the wire; this skill deaccumulates it to a per-step rate (`mm day-1`), see Output. |
 | `t2m` | 2 m temperature | `degree_Celsius`. Prefer this for "how warm". |
 | `d2m` | 2 m dewpoint temperature | `degree_Celsius`. |
-| `msl` | Mean sea-level pressure | |
+| `msl` | Mean sea-level pressure | In Pa. For maps and centre values, convert with `unit-convert --variable msl --to-units hPa`. |
 | `u10` / `v10` | 10 m wind components | |
 | `gust10` | 10 m wind gust since previous post-processing step | Window max, left as the raw field — not deaccumulated. |
 | `sp` | Surface pressure | |
