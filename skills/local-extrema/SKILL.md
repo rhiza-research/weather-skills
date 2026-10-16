@@ -29,10 +29,6 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i <grid.zarr> -o <centres.z
 - `--variable`, `-v` — the field to search; required when the input has
   more than one variable.
 
-Values are written in the input's units. For pressure, convert to hPa first
-(`unit-convert --variable msl --to-units hPa`), so a centre reads `1029`, not
-`102900`.
-
 ## How a centre is found
 
 For each map (every combination of the non-spatial dims):
@@ -65,9 +61,9 @@ Windows do not wrap around the dateline.
 ## Examples
 
 ```bash
-# Highs and lows of an MSLP forecast (hPa first: unit-convert --to-units hPa)
-uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i /tmp/msl_hpa.zarr -o /tmp/highs.zarr --kind high
-uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i /tmp/msl_hpa.zarr -o /tmp/lows.zarr --kind low
+# Highs and lows of an MSLP forecast
+uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i /tmp/msl.zarr -o /tmp/highs.zarr --kind high
+uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i /tmp/msl.zarr -o /tmp/lows.zarr --kind low
 
 # Rainfall maxima at least 3 degrees apart
 uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i /tmp/imerg_week.zarr -o /tmp/wet.zarr \

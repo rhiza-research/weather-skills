@@ -1,6 +1,6 @@
 ---
 name: unit-convert
-description: Convert data variables in a weather-skills standard dataset to target units (pint / CF), or normalize recognized temp/precip variables to standard display units (degree_Celsius, mm day-1, mm) via --to-standard.
+description: Convert data variables in a weather-skills standard dataset to target units (pint / CF), or normalize recognized temp/precip/pressure variables to standard display units (degree_Celsius, mm day-1, mm, hPa) via --to-standard.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/unit-convert.py *)
@@ -57,9 +57,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/unit-convert.py -i <in.zarr> -o <out.zarr> \
 
 - `--to-units` — target UDUNITS/CF units string (mutually exclusive with `--to-standard`).
   An unparseable string exits 2.
-- `--to-standard` — convert recognized temp/precip vars (air temperature, precip
-  rate/amount, by CF `standard_name` or variable name) to standard display units.
-  Other variables (SST, wind, pressure, unitless) are left unchanged and listed on stderr.
+- `--to-standard` — convert recognized temp/precip/pressure vars (air temperature,
+  precip rate/amount, sea-level and surface pressure, by CF `standard_name` or
+  variable name) to standard display units.
+  Other variables (SST, wind, unitless) are left unchanged and listed on stderr.
 - `--variable`, `-v` — restrict to one named data var (not in the store → exit 2).
   Omit with `--to-units` to convert every data var (each must have units and
   convert to the target); omit with `--to-standard` to convert all recognized
@@ -79,10 +80,6 @@ with the `provenance` skill.
 # Flux → daily depth rate
 uv run ${CLAUDE_SKILL_DIR}/scripts/unit-convert.py -i /tmp/gfs.zarr -o /tmp/gfs_mm.zarr \
     --variable precipitation_surface --to-units 'mm day-1'
-
-# MSLP Pa → hPa, the unit weather maps show pressure in
-uv run ${CLAUDE_SKILL_DIR}/scripts/unit-convert.py -i /tmp/hres_msl.zarr -o /tmp/msl_hpa.zarr \
-    --variable msl --to-units hPa
 
 # Normalize everything recognized to standard display units
 uv run ${CLAUDE_SKILL_DIR}/scripts/unit-convert.py -i /tmp/raw.zarr -o /tmp/std.zarr \
