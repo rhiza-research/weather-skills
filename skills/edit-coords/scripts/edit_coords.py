@@ -9,7 +9,7 @@
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import rename_cf_refs
-from weather_skills_core.standard_dataset import DIMS, PREDICTION_TIMEDELTA, has_dim
+from weather_skills_core.standard_dataset import DIMS, has_dim
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
@@ -64,7 +64,7 @@ def edit_coords(ds, swap_dims, rename, **kwargs):
     lost = sorted(d for d in before if not has_dim(ds, d))
     if lost:
         hint = ""
-        if PREDICTION_TIMEDELTA in lost:
+        if "prediction_timedelta" in lost:
             hint = " For forecast lead → valid time, use step-to-time."
         raise UsageError(f"edit would remove ontology dim(s) {lost}.{hint}")
     return rename_cf_refs(ds, renames)
