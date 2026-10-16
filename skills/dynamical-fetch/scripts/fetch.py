@@ -3,6 +3,7 @@
 # dependencies = [
 #   "weather-skills-core>=0.1.1",
 #   "dynamical-catalog==1.0.1",
+#   "pandas",
 # ]
 # ///
 """Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
