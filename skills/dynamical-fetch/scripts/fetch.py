@@ -57,6 +57,12 @@ _SURFACE_ALIASES = {
     "2_m_temperature": "average_temperature_2m",
     "sst": "sea_surface_temperature",
     "d2m": "average_dew_point_temperature_2m",
+    "msl": "pressure_reduced_to_mean_sea_level",
+    "sp": "pressure_surface",
+    "u10": "wind_u_10m",
+    "v10": "wind_v_10m",
+    "u100": "wind_u_100m",
+    "v100": "wind_v_100m",
 }
 _PRESSURE_GROUP = "pressure_level"
 
@@ -81,7 +87,8 @@ def _resolve_variables(requested, data_vars, dataset: str):
     (`precip`, `precipitation`, `tp`, `total_precipitation`) map to
     `precipitation_surface` when that field exists. `t2m` / `d2m` map to
     the instant `*_2m` field, else the 46-day daily mean (`average_*_2m`); `sst` to
-    `sea_surface_temperature`.
+    `sea_surface_temperature`; `msl` / `sp` to the sea-level / surface pressure;
+    `u10` / `v10` / `u100` / `v100` to `wind_{u,v}_{10,100}m`.
     """
     if not requested:
         return None

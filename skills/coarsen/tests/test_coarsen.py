@@ -301,3 +301,28 @@ def test_conservative_cell_past_input_edge_is_nan_unless_min_fraction(tmp_path, 
     assert bool(strict.sel(latitude=1.25, longitude=11.25).notnull())
     loose = run(tmp_path / "b.zarr", "--min-fraction", "0.5")
     assert bool(loose.sel(latitude=0.25, longitude=10.25).notnull())
+
+
+def test_conservative_edge_cells_are_reported(tmp_path, coarsen, capsys):
+    """A target cell hanging past the input's edge goes NaN, and stderr says so."""
+    src = write_zarr(_fine_grid(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    # Offset 0.25: the 0.25 row and the 10.25 column are only 75% inside the input.
+    run_skill(
+        coarsen,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--target-resolution",
+        "1.0",
+        "--offset",
+        "0.25",
+        "--method",
+        "conservative",
+    )
+    got = xr.open_zarr(out, consolidated=True)["precip"]
+    assert int(got.isnull().sum()) == 3
+    err = capsys.readouterr().err
+    assert "3 of 4 target cells" in err
+    assert "--min-fraction" in err

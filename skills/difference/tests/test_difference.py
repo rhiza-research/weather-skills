@@ -131,3 +131,19 @@ def test_difference_refuses_mismatched_axes_and_periods(tmp_path, difference, a,
         _run(tmp_path, difference, a, b)
     assert exc.value.code == 2
     assert not (tmp_path / "out.zarr").exists()
+
+
+def test_difference_relabels_long_name(tmp_path, difference):
+    """An SST anomaly's colorbar must not read as the raw quantity."""
+    a = _field("sst", 28.0, "degC")
+    a["sst"].attrs.update(
+        long_name="Sea Surface Temperature", standard_name="sea_surface_temperature"
+    )
+    b = _field("sst", 27.0, "degC")
+    r = _run(tmp_path, difference, a, b)
+    assert r["sst"].attrs["long_name"] == "Sea Surface Temperature difference"
+    assert r["sst"].attrs["standard_name"] == "sea_surface_temperature"
+
+    b.attrs["climatology_dataset"] = "oisst"  # B is a climatology
+    r = _run(tmp_path / "clim", difference, a, b)
+    assert r["sst"].attrs["long_name"] == "Sea Surface Temperature anomaly"

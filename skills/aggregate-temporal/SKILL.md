@@ -28,7 +28,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window 
 - `--period` — `daily`, `weekly` (7 days), `dekadal` (a fixed 10 days back to back, not calendar dekads), `monthly` (calendar months, `time` only, in the input's own calendar), or a duration such as `21 day`, `3 week`, or sub-daily `6 hour` (bins start at 00 UTC on `time` and at lead 0 on `step`). Pass exactly one of `--period` and `--window`.
 - `--window` — rolling window length in axis rows.
 - `--align` — with `--window`: label each window at its `left` (first) row, `right` (last) row, or `center`. Default: `left`.
-- `--stride` — with `--window`: keep every Nth window (integer), or keep dates by `day`, `week`, `month`, `year`, or weekday names (`Monday`, `Monday/Thursday`).
+- `--stride` — with `--window`: keep every Nth window (integer), or keep dates by `day`, `week`, `month`, `year`, or weekday names (`Monday`, `Monday/Thursday`). Date strides need every picked date on the axis (daily data); on weekly data use an integer.
 - `--method` — `mean`, `max`, or `min`. Default: `mean`.
 - `--variable`, `-v` — aggregate only this variable; repeat for several. Default: all.
 - `--time-dim` — axis to aggregate. Default: `time`, or `step` when there is no `time` axis or `time` has one value.

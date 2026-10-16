@@ -168,11 +168,10 @@ def select(ds, dim, index, value, **kwargs):
     if len(positions) == 1:
         pre_scalar = {c for c in ds.coords if ds[c].ndim == 0}
         out = ds.isel({dim: positions[0]})
-        drop = [
-            c
-            for c in out.coords
-            if out[c].ndim == 0 and c not in pre_scalar and c not in _KEEP_SCALAR_COORDS
-        ]
+        # The selected label (and its valid_time) stays as a scalar coord, so
+        # verify and plot still know which date or lead this is.
+        keep = _KEEP_SCALAR_COORDS | {dim, "valid_time"}
+        drop = [c for c in out.coords if out[c].ndim == 0 and c not in pre_scalar and c not in keep]
         out = out.drop_vars(drop)
         # A calendar aggregation_period ("1 month") is a different length per
         # label. The label is dropped here, so stamp this bin's real length.

@@ -8,6 +8,7 @@
 """Put a gridded Zarr onto a coarser or equally spaced lat/lon grid."""
 
 import math
+import sys
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import detect_spatial_dims
@@ -205,9 +206,17 @@ def coarsen(
         lo = np.maximum(new - new_half, src[0] - src_half)
         hi = np.minimum(new + new_half, src[-1] + src_half)
         inside.append(np.clip(hi - lo, 0.0, None) / (2 * new_half))
-    covered = xr.DataArray(
-        np.outer(inside[0], inside[1]) >= min_fraction - 1e-3, dims=(lat_dim, lon_dim)
-    )
+    fraction = np.outer(inside[0], inside[1])
+    covered = xr.DataArray(fraction >= min_fraction - 1e-3, dims=(lat_dim, lon_dim))
+    n_edge = int((~covered.values).sum())
+    if n_edge:
+        half = grid_spacing(np.asarray(new_lat, dtype=float)) / 2 if len(new_lat) > 1 else 0.0
+        print(
+            f"Note: {n_edge} of {fraction.size} target cells hang past the input's edge "
+            f"(under {min_fraction:.0%} covered) and are NaN. Fetch the input half a target "
+            f"cell (~{half:.3g}°) wider on each side, or lower --min-fraction.",
+            file=sys.stderr,
+        )
     return out.assign({v: out[v].where(covered) for v in gridded}).assign(other.data_vars)
 
 

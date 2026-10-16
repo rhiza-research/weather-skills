@@ -37,7 +37,7 @@ One dataset with `--dim` extended, sorted ascending when the inputs came out of 
   - incompatible units (`K` against `mm day-1`);
   - dates on different calendars (standard against `noleap`; use convert-calendar);
   - a stitched `latitude` / `longitude` that is not evenly spaced (a gap between boxes, or different grids).
-- Single-time inputs stacked along a new `time` dim have no dates unless you pass them with `--coords`.
+- Scalar coordinates (the `time` or `step` that select keeps) that differ between inputs become a coordinate along `--dim`; one only some inputs carry is dropped. So single-time inputs stacked along `--dim time` keep their dates; inputs with no time label have none unless you pass them with `--coords`.
 
 ### Example
 ```bash

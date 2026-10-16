@@ -821,3 +821,26 @@ def test_period_shorter_than_input_cells_is_refused(tmp_path, aggregate, make, p
     with pytest.raises(SystemExit) as exc:
         run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "out.zarr"), "--period", period)
     assert exc.value.code == 2
+
+
+def test_date_stride_off_the_axis_is_a_usage_error(tmp_path, aggregate, capsys):
+    """--stride month on weekly data picks dates the axis lacks: exit 2, not KeyError."""
+    ds = make_gridded(n_time=30, start="2026-01-05")
+    weeks = np.datetime64("2026-01-05", "ns") + np.arange(30) * np.timedelta64(7, "D")
+    src = write_zarr(ds.assign_coords(time=weeks), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            aggregate,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "out.zarr"),
+            "--window",
+            "13",
+            "--align",
+            "right",
+            "--stride",
+            "month",
+        )
+    assert exc.value.code == 2
+    assert "integer --stride" in capsys.readouterr().err

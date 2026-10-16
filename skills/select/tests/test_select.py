@@ -178,3 +178,16 @@ def test_select_refuses_repeated_dim(tmp_path, select, capsys):
     assert exc.value.code == 2
     assert "--dim may be given once" in capsys.readouterr().err
     assert not out.exists()
+
+
+def test_select_one_entry_keeps_label_as_scalar_coord(tmp_path, select):
+    """verify and plot need the picked date after the time dim is gone."""
+    src = write_zarr(make_gridded(n_time=3, start="2026-09-14"), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(select, "-i", str(src), "-o", str(out), "--dim", "time", "--value", "2026-09-15")
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert "time" not in ds.dims
+    assert ds["time"].ndim == 0
+    assert str(ds["time"].values)[:10] == "2026-09-15"

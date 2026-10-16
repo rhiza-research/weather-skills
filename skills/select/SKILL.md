@@ -1,6 +1,6 @@
 ---
 name: select
-description: "Pick entries along one dimension of a weather-skills Zarr, by integer position or by coordinate value: an ensemble member, a forecast step, a date, a station. Picking one entry removes that dimension, so outputs from different sources line up for stacking. Works on gridded and station datasets."
+description: "Pick entries along one dimension of a weather-skills Zarr, by integer position or by coordinate value: an ensemble member, a forecast step, a date, a station. Picking one entry removes that dimension but keeps the picked label as a scalar coordinate, so outputs from different sources line up for stacking. Works on gridded and station datasets."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/select_dim.py *)
@@ -34,7 +34,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/select_dim.py -i IN.zarr -o OUT.zarr --dim DI
 Pass `--index` or `--value`, not both.
 
 ### Output
-- One entry: the dim is removed, along with coordinates it leaves scalar (e.g. `valid_time`). Station identity (`station_id`, `point_id`, `name`, `latitude`, `longitude`, `country`) and `aggregation_coverage` stay as scalar coords. A calendar `aggregation_period` such as `1 month` becomes the selected bin's length (`28 day` for February).
+- One entry: the dim is removed and the selected label stays as a scalar coordinate (e.g. `time = 2026-09-28` or `step = 7 days`, plus `valid_time` when present), so verify and plot still know which date or lead it is. Other coordinates it leaves scalar are dropped. Station identity (`station_id`, `point_id`, `name`, `latitude`, `longitude`, `country`) and `aggregation_coverage` stay as scalar coords. A calendar `aggregation_period` such as `1 month` becomes the selected bin's length (`28 day` for February).
 - Several entries: the dim keeps exactly those, in the order given (`--index 2 --index 0` reverses them).
 - Other dims, coords, variables, and attrs are unchanged.
 

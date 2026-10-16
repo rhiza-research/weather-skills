@@ -106,6 +106,16 @@ def difference(ds, variable, **kwargs):
         # Replace, not merge: B's attrs (a baseline's aggregation_period or
         # cell_methods) must not leak onto A's field.
         diff.attrs = dict(ds_a[v].attrs)
+        # Say what the field is now, so a colorbar does not read as the raw
+        # quantity: an anomaly against a climatology, else a difference.
+        # standard_name stays so downstream skills still classify the variable.
+        clim_b = any("climatolog" in str(k).lower() for k in ds_b.attrs) or (
+            "climatolog" in str(b.attrs.get("long_name", "")).lower()
+        )
+        word = "anomaly" if clim_b else "difference"
+        long_name = str(diff.attrs.get("long_name") or v)
+        if word not in long_name.lower():
+            diff.attrs["long_name"] = f"{long_name} {word}"
         out[v] = diff
     return xr.Dataset(out)
 

@@ -213,3 +213,19 @@ def test_concat_refuses_mixed_calendars(tmp_path, concat, capsys):
     assert exc.value.code == 2
     assert "convert-calendar" in capsys.readouterr().err
     assert not out.exists()
+
+
+def test_concat_single_time_inputs_keep_dates(tmp_path, concat):
+    """select keeps a scalar time; stacking along time turns it back into an axis."""
+    a = make_gridded(n_time=1, start="2026-09-14").isel(time=0)
+    b = make_gridded(n_time=1, start="2026-09-21").isel(time=0)
+    b = b.assign_coords(step=np.timedelta64(7, "D"))  # carried by one input only
+    pa = write_zarr(a, tmp_path / "a.zarr")
+    pb = write_zarr(b, tmp_path / "b.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(concat, "-i", str(pa), "-i", str(pb), "--dim", "time", "-o", str(out))
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert [str(t)[:10] for t in ds["time"].values] == ["2026-09-14", "2026-09-21"]
+    assert "step" not in ds.coords

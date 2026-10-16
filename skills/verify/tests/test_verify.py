@@ -292,3 +292,28 @@ def test_ensemble_mean_and_nan_member(tmp_path, verify_fn):
     mae = _verify(tmp_path, verify_fn, fc, obs, "--metric", "mae")["mae"].isel(time=0).values
     assert np.isnan(mae[0, 0])
     np.testing.assert_allclose(mae.ravel()[1:], 1.0)
+
+
+def test_selected_weeks_that_differ_are_refused(tmp_path, verify_fn, capsys):
+    """select keeps the picked week, so mismatched weeks no longer score silently."""
+    select = load_skill("select", "select_dim").select
+    paths = {}
+    for role, week in (("fc", "2026-09-28"), ("obs", "2026-09-14")):
+        src = write_zarr(make_gridded(n_time=1, start=week), tmp_path / f"{role}_all.zarr")
+        paths[role] = tmp_path / f"{role}.zarr"
+        run_skill(select, "-i", str(src), "-o", str(paths[role]), "--dim", "time", "--index", "0")
+
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            verify_fn,
+            "--forecast",
+            str(paths["fc"]),
+            "--obs",
+            str(paths["obs"]),
+            "--metric",
+            "bias",
+            "-o",
+            str(tmp_path / "bias.zarr"),
+        )
+    assert exc.value.code == 2
+    assert "no overlapping time" in capsys.readouterr().err

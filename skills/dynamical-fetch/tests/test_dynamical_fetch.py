@@ -542,3 +542,21 @@ def test_t2m_maps_to_instant_field_when_present(mod):
     assert mod._resolve_variables(["t2m"], ["average_temperature_2m"], "er") == [
         "average_temperature_2m"
     ]
+
+
+def test_resolve_surface_pressure_and_wind_aliases(mod):
+    names = [
+        "pressure_reduced_to_mean_sea_level",
+        "pressure_surface",
+        "wind_u_10m",
+        "wind_v_10m",
+        "wind_u_850hpa",
+    ]
+    got = mod._resolve_variables(["msl", "sp", "u10", "v10"], names, "ifs")
+    assert got == [
+        "pressure_reduced_to_mean_sea_level",
+        "pressure_surface",
+        "wind_u_10m",
+        "wind_v_10m",
+    ]
+    assert mod._resolve_variables(["u"], names, "ifs") == ["wind_u_850hpa"]

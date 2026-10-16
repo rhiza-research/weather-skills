@@ -144,3 +144,24 @@ def test_probe_latest_rejects_ident(capsys, fetch):
 def test_station_csvs_come_from_ncei_not_stale_s3_mirror(mod):
     url = mod._STATION_CSV_URL.format(station_id="USW00094728")
     assert url == "https://www.ncei.noaa.gov/pub/data/ghcn/daily/by_station/USW00094728.csv.gz"
+
+
+def test_fetch_summarizes_stations_and_values(tmp_path, mod, fetch, capsys):
+    """A sparse pull (one station, few values) must say so on stderr."""
+    with (
+        patch.object(mod, "_load_stations", return_value=_stations()),
+        patch.object(mod, "_station_frame", side_effect=_station_frame),
+    ):
+        run_skill(
+            fetch,
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "-v",
+            "precip",
+            "-o",
+            str(tmp_path / "out.zarr"),
+        )
+    err = capsys.readouterr().err
+    assert "Kept 1 of 1 candidate stations; finite station-days: precip 2 of 2" in err

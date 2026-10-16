@@ -95,6 +95,13 @@ def concat(ds, dim, coords, **kwargs):
             "put them on one calendar first with convert-calendar"
         )
 
+    # select keeps the picked label as a scalar coord (time, step). One that
+    # only some inputs carry would be stamped from the first input alone.
+    scalar = [{c for c in item.coords if item[c].ndim == 0} for item in dss]
+    partial = set.union(*scalar) - set.intersection(*scalar)
+    if partial:
+        dss = [item.drop_vars(partial & set(item.coords)) for item in dss]
+
     if not all(has_dim):
         if coords:
             vals = _coerce([c.strip() for c in coords.split(",")])
@@ -107,7 +114,9 @@ def concat(ds, dim, coords, **kwargs):
     # join="exact": every other coordinate must match. The outer join pads a
     # mismatch with NaN instead, which looks like missing data.
     try:
-        out = xr.concat(dss, dim=dim, join="exact")
+        # A scalar coord that differs across inputs (each select's step)
+        # becomes a coord along dim.
+        out = xr.concat(dss, dim=dim, join="exact", coords="different")
     except pint.DimensionalityError as exc:
         raise UsageError(f"inputs carry incompatible units: {exc}") from None
     except xr.AlignmentError as exc:

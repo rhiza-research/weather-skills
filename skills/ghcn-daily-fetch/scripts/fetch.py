@@ -334,6 +334,15 @@ def fetch(start_time, end_time, bbox, workers, variable, probe_latest, **kwargs)
             file=sys.stderr,
         )
 
+    counts = ", ".join(
+        f"{v} {int(ds[v].notnull().sum())} of {ds[v].size}" for v in sorted(ds.data_vars)
+    )
+    print(
+        f"Kept {ds.sizes['station_id']} of {candidate_count} candidate stations; "
+        f"finite station-days: {counts}",
+        file=sys.stderr,
+    )
+
     stamp_cf_dsg(
         ds,
         _var_attrs(ds),
