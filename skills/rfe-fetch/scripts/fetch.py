@@ -74,17 +74,13 @@ def _latest_day() -> date:
 )
 @weather_skill.argument(
     "--probe-latest",
-    nargs="?",
-    const="",
-    metavar="IDENT",
+    action="store_true",
     probe=True,
-    help="Print the latest published YYYY-MM-DD on stdout and exit. Takes no IDENT.",
+    help="Print the latest published YYYY-MM-DD on stdout and exit.",
 )
 def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
     """Fetch NOAA CPC RFE2 daily rainfall over Africa (no credentials required)."""
-    if probe_latest is not None:
-        if probe_latest:
-            raise UsageError(f"--probe-latest takes no argument (got {probe_latest!r}).")
+    if probe_latest:
         print(_latest_day().isoformat())
         return
 
