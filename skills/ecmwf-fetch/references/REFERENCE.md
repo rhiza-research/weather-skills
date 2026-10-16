@@ -70,7 +70,8 @@ Both the control and perturbed retrievals target the `s2s-forecasts` collection 
 `-v` uses cfgrib short names. Instant/accumulated fields share the integer
 `leadtime_hour` list above. Daily-mean fields are a separate ECDS request
 whose `leadtime_hour` values are 24-hour windows aligned to those leads
-(`0` → `0_24`, `24` → `0_24`, `48` → `24_48`, …). Pressure-level fields use
+(`0` → `0_24`, `24` → `0_24`, `48` → `24_48`, …); the skill labels each
+window at its start, so `0_24` is `step = 0`. Pressure-level fields use
 `level_type=pressure_level` and `pressure_level` (1000–10 hPa, or 1000–200
 hPa for `q`). Potential vorticity uses `level_type=potential_temperature`
 and level 320 K. Those vertical fields are control-forecast only.

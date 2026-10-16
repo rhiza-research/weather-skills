@@ -2,19 +2,14 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime",
 #   "dynamical-catalog==1.0.1",
 #   "ecmwf-datastores-client==0.4.2",
 #   "requests",
-#   "xarray",
 #   "cfgrib",
 #   # eccodeslib carries the native libeccodes that cfgrib loads on macOS/Linux;
 #   # eccodes drops this as a transitive dep via PyPI metadata (ecmwf/eccodes-python#150),
 #   # so it is declared directly. Windows bundles the library in eccodes itself.
 #   "eccodeslib",
-#   "zarr",
-#   "numpy",
-#   "pint-xarray>=0.6",
 # ]
 # ///
 """Fetch ECMWF S2S ensemble fields (cf + pf) and write a weather-skills standard dataset Zarr."""
@@ -64,6 +59,7 @@ _ECDS_URL = "https://ecds.ecmwf.int/api"
 
 def _ensure_datastores_url() -> None:
     os.environ.setdefault("ECMWF_DATASTORES_URL", _ECDS_URL)
+
 
 # Embargo detection: match this phrase on the exception chain (MarsRuntimeError
 # is not reliably importable from ecmwf.datastores). Keep narrow so generic
@@ -264,6 +260,12 @@ _GRIB_EXTRAS = {
 }
 _GRIB_ALIASES = {name: name for name in VARIABLES} | _GRIB_EXTRAS
 
+# Cumulative-since-init fields besides `tp`, written as-is (not deaccumulated).
+# Mixing them with `tp` would relabel their steps onto tp's shortened axis.
+_ACCUMULATED = frozenset(
+    {"cp", "sf", "ro", "sro", "sshf", "slhf", "ssr", "ssrd", "str", "strd", "ttr", "ewss", "nsss"}
+)
+
 # Kelvin fields `to_standard_units` does not treat as air temperature.
 _KELVIN_TEMPS = frozenset({"sst", "skt", "d2m", "mx2t6", "mn2t6", "st20", "st100", "mswpt300", "t"})
 
@@ -344,11 +346,18 @@ def _ensure_catalog() -> None:
 def _open_catalog(group: str | None = None):
     import dynamical_catalog
 
-    _ensure_catalog()
     kwargs: dict = {"chunks": None}
     if group:
         kwargs["group"] = group
-    return dynamical_catalog.open(_DATASET, **kwargs)
+    try:
+        _ensure_catalog()
+        return dynamical_catalog.open(_DATASET, **kwargs)
+    except DataError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise DataError(
+            f"could not open {_DATASET} from the dynamical.org catalog ({exc})."
+        ) from None
 
 
 def _catalog_latest_init() -> dt.date | None:
@@ -720,7 +729,6 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
@@ -729,9 +737,9 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(bbox, date, variable, **kwargs):
+def fetch(bbox, date, variable, probe_latest, **kwargs):
     """Fetch ECMWF S2S ensemble fields (cf + pf) and write a weather-skills standard dataset Zarr."""
-    if kwargs.get("probe_latest") is not None:
+    if probe_latest is not None:
         found = _catalog_latest_init()
         if found is not None:
             print(found.isoformat())
@@ -757,9 +765,23 @@ def fetch(bbox, date, variable, **kwargs):
         )
         return _fetch_catalog(date, bbox, names)
 
+    mixed = sorted(_ACCUMULATED.intersection(names))
+    if "tp" in names and mixed:
+        raise UsageError(
+            f"fetch {', '.join(mixed)} in a separate call from tp: they stay cumulative "
+            "since init and would be misaligned with tp's per-step rate."
+        )
+    latest = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=2)
+    if date > latest:
+        raise DataError(
+            f"init {date_iso} is inside the 2-day S2S real-time embargo; "
+            f"the latest init you can request is {latest.isoformat()}."
+        )
+
     require_env("ECMWF_DATASTORES_KEY")
     _ensure_datastores_url()
 
+    import numpy as np
     import xarray as xr
     from ecmwf.datastores import Client
     from ecmwf.datastores.processing import ProcessingFailedError
@@ -846,7 +868,13 @@ def fetch(bbox, date, variable, **kwargs):
 
         for leg in legs:
             print(f"Downloading {leg['grib'].name}...", file=sys.stderr)
-            leg["remote"].download(str(leg["grib"]))
+            try:
+                leg["remote"].download(str(leg["grib"]))
+            except Exception as exc:  # noqa: BLE001
+                raise DataError(
+                    f"ECDS download failed for init {date_iso} ({exc}); "
+                    "this is a transport/auth problem."
+                ) from None
 
         print("Decoding GRIB and writing Zarr...", file=sys.stderr)
         family_ensembles = []
@@ -866,7 +894,14 @@ def fetch(bbox, date, variable, **kwargs):
                 pf = _promote_vertical(_concat_lon(pf_parts))
                 ens = xr.concat([pf, cf], dim="number").sortby("number")
             else:
-                ens = cf
+                # Control-only fields keep a length-1 number axis so the merge
+                # below leaves members 1..50 NaN instead of dropping `number`.
+                ens = cf.expand_dims("number")
+            if key[0] == "daily":
+                # cfgrib labels a 24 h mean at its window end; relabel to the
+                # window start so step 0 is the first 24 h, like tp.
+                ens = ens.drop_vars("valid_time", errors="ignore")
+                ens = ens.assign_coords(step=ens["step"] - np.timedelta64(24, "h"))
             family_ensembles.append(_rename_to_short(ens, group_vars))
         ds = (
             family_ensembles[0]

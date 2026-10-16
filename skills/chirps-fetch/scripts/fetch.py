@@ -2,12 +2,7 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime",
 #   "dynamical-catalog==1.0.1",
-#   "xarray",
-#   "zarr",
-#   "numpy",
-#   "pint-xarray>=0.6",
 # ]
 # ///
 """Fetch CHIRPS precipitation from the dynamical.org catalog (final, prelim fallback) and write a weather-skills standard dataset Zarr."""
@@ -118,28 +113,48 @@ def _latest_day(dataset_id: str) -> date | None:
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Print the latest available YYYY-MM-DD (final or preliminary) on stdout and exit. "
+        "Does not download fields. Takes no IDENT."
     ),
 )
-def fetch(start_time, end_time, bbox, **kwargs):
+def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
     """Fetch CHIRPS precipitation from the dynamical.org catalog (final, prelim fallback) and write a weather-skills standard dataset Zarr."""
-    if kwargs.get("probe_latest") is not None:
-        found = [day for day in (_latest_day(_FINAL_ID), _latest_day(_PRELIM_ID)) if day is not None]
+    if probe_latest is not None:
+        if probe_latest:
+            raise UsageError(
+                f"--probe-latest takes no argument (got {probe_latest!r}); it reports the "
+                "latest day of the final/preliminary merge, and stderr names the product."
+            )
+        final_day = _latest_day(_FINAL_ID)
+        prelim_day = _latest_day(_PRELIM_ID)
+        found = [day for day in (final_day, prelim_day) if day is not None]
         if not found:
             raise DataError("CHIRPS probe found no time coordinate on the dynamical.org catalogs")
-        print(max(found).isoformat())
+        latest = max(found)
+        if final_day is None:
+            print(f"latest={latest.isoformat()} (preliminary); final unavailable", file=sys.stderr)
+        elif latest > final_day:
+            print(
+                f"latest={latest.isoformat()} (preliminary); final through {final_day.isoformat()}",
+                file=sys.stderr,
+            )
+        else:
+            print(f"latest={latest.isoformat()} (final)", file=sys.stderr)
+        print(latest.isoformat())
         return
 
     import xarray as xr
 
     start = start_time.isoformat()
     end = end_time.isoformat()
+    if start_time < date(CHIRPS_START_YEAR, 1, 1):
+        raise UsageError(
+            f"--start-time {start} is before CHIRPS coverage, which starts "
+            f"{CHIRPS_START_YEAR}-01-01."
+        )
     region = f" bbox={bbox[0]:g}/{bbox[1]:g}/{bbox[2]:g}/{bbox[3]:g}" if bbox is not None else ""
     print(
         f"Fetching CHIRPS {start} -> {end} from dynamical.org "

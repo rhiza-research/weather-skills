@@ -28,7 +28,6 @@ uv tool install --force --reinstall ../
 # Africa is a continent, not a country, so the continental extent is passed as an
 # explicit bbox rather than via resolve-region (which is country-level).
 forecasting-skills ecmwf-fetch  --date  "$INIT_DATE"  --bbox=23/-20/-37/59 --output "$OUT/ecmwf.zarr"
-forecasting-skills deaccumulate -i "$OUT/ecmwf.zarr" -o "$OUT/ecmwf_per_step.zarr"
 forecasting-skills imerg-fetch  --start "$START_DATE" --end "$END_DATE" --output "$OUT/imerg.zarr"
 forecasting-skills chirps-fetch --start "$START_DATE" --end "$END_DATE" --output "$OUT/chirps.zarr"
 
@@ -41,7 +40,7 @@ for COUNTRY in "${COUNTRIES[@]}"; do
     # command substitution captures only the bbox).
     BBOX=$(forecasting-skills resolve-region "${ISO[$COUNTRY]}" --geojson "$d/boundary.geojson")
 
-    forecasting-skills clip-region        -i "$OUT/ecmwf_per_step.zarr" -o "$d/ecmwf.zarr"         --bbox="$BBOX"
+    forecasting-skills clip-region        -i "$OUT/ecmwf.zarr"          -o "$d/ecmwf.zarr"         --bbox="$BBOX"
     forecasting-skills aggregate-temporal -i "$d/ecmwf.zarr"    -o "$d/ecmwf_weekly.zarr"  --period weekly  --method mean
     forecasting-skills aggregate-temporal -i "$d/ecmwf.zarr"    -o "$d/ecmwf_dekadal.zarr" --period dekadal --method mean
     forecasting-skills convert-to-totals  -i "$d/ecmwf_weekly.zarr"  -o "$d/ecmwf_weekly_totals.zarr"

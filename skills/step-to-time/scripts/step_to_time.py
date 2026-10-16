@@ -2,8 +2,6 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime>=1.6",
-#   "numpy>=2.4",
 # ]
 # ///
 """Realize forecast step as wall-clock time (time = init + step)."""
@@ -30,7 +28,11 @@ def step_to_time(ds, **kwargs):
         raise UsageError("need forecast shape: scalar time coord + step dim")
     init = ds["time"]
     step = ds["step"]
-    init_scalar = init.values.item() if hasattr(init.values, "item") else init.values
+    init_scalar = init.values.item()
+    if not isinstance(init_scalar, cftime.datetime) and np.isnat(init.values):
+        raise UsageError("forecast init (scalar time coord) is missing (NaT)")
+    if not (np.diff(step.values.astype("timedelta64[ns]").astype(np.int64)) > 0).all():
+        raise UsageError("step must be strictly increasing (no duplicates); sort it first")
     if isinstance(init_scalar, cftime.datetime):
         valid = np.array(
             [init_scalar + td.item() for td in step.values.astype("timedelta64[us]")],
@@ -50,12 +52,13 @@ def step_to_time(ds, **kwargs):
     if isinstance(bound_name, str) and bound_name in out:
         pairs = np.asarray(out[bound_name].values)
         if isinstance(init_scalar, cftime.datetime):
-            time_pairs = np.empty(pairs.shape, dtype=object)
-            for i in range(pairs.shape[0]):
-                for j in range(2):
-                    time_pairs[i, j] = (
-                        init_scalar + np.asarray(pairs[i, j]).astype("timedelta64[us]").item()
-                    )
+            time_pairs = np.array(
+                [
+                    [init_scalar + td.item() for td in row]
+                    for row in pairs.astype("timedelta64[us]")
+                ],
+                dtype=object,
+            )
         else:
             time_pairs = (init.values + pairs).astype("datetime64[ns]")
         out = out.drop_vars(bound_name).assign_coords(time_bounds=(("time", "nv"), time_pairs))

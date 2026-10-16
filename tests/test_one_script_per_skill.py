@@ -16,6 +16,5 @@ def test_each_skill_has_exactly_one_script():
             extras.append(f"{skill_dir.name}: {[p.name for p in scripts]}")
     assert not missing, f"skills with no scripts/*.py: {missing}"
     assert not extras, (
-        "skills must have exactly one scripts/*.py "
-        f"(helpers go in weather-skills-core): {extras}"
+        f"skills must have exactly one scripts/*.py (helpers go in weather-skills-core): {extras}"
     )

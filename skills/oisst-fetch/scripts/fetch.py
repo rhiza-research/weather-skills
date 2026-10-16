@@ -2,13 +2,7 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "xarray",
-#   "zarr",
-#   "numpy",
 #   "netCDF4",
-#   "cf_xarray",
-#   "pint-xarray>=0.6",
-#   "cftime",
 # ]
 # ///
 """Fetch NOAA OISST v2.1 daily sea-surface temperature from NOAA PSL OPeNDAP and write a weather-skills standard dataset Zarr."""
@@ -22,7 +16,6 @@ from weather_skills_core import DataError, SkillError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_coords
 from weather_skills_core.standard_utils import (
     apply_write_encoding,
-    bbox_subset,
     ensure_normalized_longitude,
     is_transient,
     np_to_date,
@@ -73,6 +66,11 @@ _STALE_RANGE_ATTRS = (
 _TIME_UNITS = "days since 1970-01-01 00:00:00"
 _TIME_CALENDAR = "standard"
 _RETRY_SLEEP_S = 2.0
+_PRELIM_DAYS = 15
+_PRELIM_NOTE = (
+    f"Note: OISST days less than {_PRELIM_DAYS} days old are preliminary and may be revised; "
+    "NOAA PSL serves them in the same file without a per-day flag."
+)
 
 
 def _strip_dangling_bounds(ds):
@@ -137,7 +135,14 @@ def _looks_like_html_error(exc: Exception) -> bool:
 def _is_retryable(exc: Exception) -> bool:
     if _is_availability_failure(exc):
         return False
-    return is_transient(exc) or _looks_like_html_error(exc) or _is_undecoded_time(exc)
+    # "NetCDF: Access failure" (errno -77) is an intermittent NOAA PSL OPeNDAP
+    # failure; the same request succeeds on retry.
+    return (
+        is_transient(exc)
+        or _looks_like_html_error(exc)
+        or _is_undecoded_time(exc)
+        or "access failure" in str(exc).lower()
+    )
 
 
 def _is_undecoded_time(exc: Exception) -> bool:
@@ -225,19 +230,22 @@ def _probe_year(year: int):
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Print the latest available YYYY-MM-DD on stdout and exit. "
+        "Does not download fields. Takes no IDENT."
     ),
 )
-def fetch(start_time, end_time, bbox, **kwargs):
+def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
     """Fetch NOAA OISST v2.1 daily sea-surface temperature from NOAA PSL OPeNDAP and write a weather-skills standard dataset Zarr."""
-    if kwargs.get("probe_latest") is not None:
-        today = datetime.now(UTC).date()
+    today = datetime.now(UTC).date()
+    if probe_latest is not None:
+        if probe_latest:
+            raise UsageError(
+                f"--probe-latest takes no argument (got {probe_latest!r}); OISST has one "
+                "product whose most recent days are preliminary."
+            )
         years = [today.year]
         # Early January the current-year file may not exist yet.
         if today.month == 1:
@@ -253,6 +261,7 @@ def fetch(start_time, end_time, bbox, **kwargs):
                     continue
                 # A 502 on the current year is not "use December 31 last year".
                 break
+            print(_PRELIM_NOTE, file=sys.stderr)
             print(latest.isoformat())
             return
         raise DataError(
@@ -272,6 +281,8 @@ def fetch(start_time, end_time, bbox, **kwargs):
         f"Fetching oisst {start_iso}..{end_iso} (years {years[0]}..{years[-1]})",
         file=sys.stderr,
     )
+    if (today - end_time).days < _PRELIM_DAYS:
+        print(_PRELIM_NOTE, file=sys.stderr)
 
     pieces = []
     for year in years:
@@ -282,12 +293,23 @@ def fetch(start_time, end_time, bbox, **kwargs):
                 # No dask chunking: chunked OPeNDAP reads were observed to write zeros.
                 dy = _open_year(year)
                 with dy:
-                    piece = dy[["sst"]].rename({"lat": "latitude", "lon": "longitude"})
-                    piece = ensure_normalized_longitude(piece)
-                    piece = piece.sel(time=time_slice)
+                    src = dy[["sst"]].rename({"lat": "latitude", "lon": "longitude"})
+                    src = src.sel(time=time_slice)
+                    # Read contiguous slices of the native 0..360 grid and wrap after
+                    # loading: an out-of-order longitude indexer (a bbox crossing 0°)
+                    # makes netCDF4 send one OPeNDAP request per longitude column.
+                    lon_slices = [slice(None)]
                     if bbox is not None:
-                        piece = bbox_subset(piece, bbox, lat_dim="latitude", lon_dim="longitude")
-                    piece = piece.load()
+                        north, west, south, east = bbox
+                        src = src.sel(latitude=slice(south, north))
+                        if east - west < 360:
+                            w, e = west % 360, east % 360
+                            lon_slices = (
+                                [slice(w, e)] if w <= e else [slice(w, None), slice(None, e)]
+                            )
+                    piece = xr.concat(
+                        [src.sel(longitude=s).load() for s in lon_slices], dim="longitude"
+                    )
                 break
             except SkillError:
                 raise
@@ -300,6 +322,9 @@ def fetch(start_time, end_time, bbox, **kwargs):
                     )
                     time.sleep(_RETRY_SLEEP_S)
                     continue
+                if _is_availability_failure(exc) and year >= today.year:
+                    # Not published yet: the coverage note below reports the missing days.
+                    break
                 if _is_availability_failure(exc):
                     raise DataError(
                         f"could not open the OISST file for year {year} ({exc}). The year may be "
@@ -320,13 +345,16 @@ def fetch(start_time, end_time, bbox, **kwargs):
                     ) from exc
                 raise UsageError(f"unexpected failure reading OISST year {year}: {exc}.") from exc
         if piece is None:
+            print(f"OISST file for {year} is not published yet; skipping it.", file=sys.stderr)
+            continue
+        if piece.sizes["latitude"] == 0 or piece.sizes["longitude"] == 0:
             raise DataError(
-                f"could not open the OISST file for year {year} ({last_exc}). The year may be "
-                "outside the served range (1981-09 to present), or NOAA PSL's OPeNDAP server is "
-                "unreachable — check the date range."
+                f"--bbox {bbox_label} selects no OISST grid cells; check the extent and "
+                "N/W/S/E order."
             )
         if piece.sizes.get("time", 0) == 0:
             continue
+        piece = ensure_normalized_longitude(piece, lon_dim="longitude")
         _stamp_cf(piece)
         pieces.append(piece)
 
@@ -334,6 +362,16 @@ def fetch(start_time, end_time, bbox, **kwargs):
         raise DataError(f"OISST has no data in {start_iso}..{end_iso}.")
 
     ds = xr.concat(pieces, dim="time") if len(pieces) > 1 else pieces[0]
+    requested = np.arange(
+        np.datetime64(start_iso), np.datetime64(end_iso) + 1, dtype="datetime64[D]"
+    )
+    missing = np.setdiff1d(requested, ds["time"].values.astype("datetime64[D]"))
+    if missing.size:
+        print(
+            f"Note: OISST has no data for {missing.size} of {requested.size} requested days "
+            f"({missing[0]}..{missing[-1]}); they are absent from the output, not filled.",
+            file=sys.stderr,
+        )
     ds.attrs["weather_skills_source"] = "oisst"
     apply_write_encoding(
         ds,

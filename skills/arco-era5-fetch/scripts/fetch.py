@@ -2,13 +2,7 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "xarray",
-#   "zarr",
 #   "gcsfs",
-#   "numpy",
-#   "cf_xarray",
-#   "pint-xarray>=0.6",
-#   "cftime",
 # ]
 # ///
 """Fetch ARCO-ERA5 reanalysis from the public Google Cloud Zarr and write a weather-skills standard dataset Zarr."""
@@ -25,6 +19,7 @@ from weather_skills_core.standard_utils import (
     verify_cf_decode,
 )
 from weather_skills_core.units import (
+    classify_variable,
     precip_amounts_to_rates,
     stamp_data_interval,
     to_standard_units,
@@ -144,7 +139,6 @@ def _stamp_coord_attrs(ds) -> None:
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
@@ -153,12 +147,33 @@ def _stamp_coord_attrs(ds) -> None:
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(start_time, end_time, bbox, variable, **kwargs):
+def fetch(start_time, end_time, bbox, variable, probe_latest, **kwargs):
     """Fetch ARCO-ERA5 reanalysis from the public Google Cloud Zarr and write a weather-skills standard dataset Zarr."""
-    if kwargs.get("probe_latest") is not None:
+    if probe_latest is not None:
         import numpy as np
 
-        print(np_to_date(np.max(_open_arco({})["time"].values)).isoformat())
+        # The store pre-allocates its time axis through 2050, so max(time) is not
+        # the data end. Start from the store's ERA5T stop attr and step back until
+        # one 2m_temperature point at 23 UTC is finite (one chunk read per day).
+        ds = _open_arco({})
+        stop = ds.attrs.get("valid_time_stop_era5t") or ds.attrs.get("valid_time_stop")
+        day = np.datetime64(stop or datetime.now(UTC).date().isoformat(), "D")
+        for _ in range(60):
+            hour = day + np.timedelta64(23, "h")
+            point = ds["2m_temperature"].sel(time=hour).isel(latitude=0, longitude=0)
+            if np.isfinite(point.values):
+                break
+            day -= np.timedelta64(1, "D")
+        else:
+            print("none")
+            return
+        if ds.attrs.get("valid_time_stop"):
+            print(
+                f"Note: days after {ds.attrs['valid_time_stop']} are preliminary ERA5T "
+                "(final ERA5 replaces them ~2-3 months later).",
+                file=sys.stderr,
+            )
+        print(np_to_date(day).isoformat())
         return
 
     import numpy as np
@@ -186,7 +201,32 @@ def fetch(start_time, end_time, bbox, variable, **kwargs):
     if bbox:
         ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
 
-    ds = ds.sel(time=slice(np.datetime64(f"{start_iso}T00:00"), np.datetime64(f"{end_iso}T23:59")))
+    # ERA5 precip accumulations are labelled at the END of their hour (00 UTC
+    # holds 23-24 UTC of the day before); the standard labels an interval at its
+    # start. Read those variables one hour later and relabel them back, so each
+    # day's 00..23 rows are that day's 24 hours. Other variables are instants.
+    hour = np.timedelta64(1, "h")
+    first = np.datetime64(f"{start_iso}T00:00")
+    last = np.datetime64(f"{end_iso}T23:00")
+    accum = [
+        name
+        for name in ds.data_vars
+        if classify_variable(
+            name,
+            units=_fix_units(ds[name].attrs.get("units")),
+            standard_name=ds[name].attrs.get("standard_name"),
+        )
+        == "precip_amount"
+    ]
+    names = list(ds.data_vars)
+    window = ds.drop_vars(accum).sel(time=slice(first, last))
+    if accum:
+        import xarray as xr
+
+        shifted = ds[accum].sel(time=slice(first + hour, last + hour))
+        shifted = shifted.assign_coords(time=shifted["time"] - hour)
+        window = xr.merge([window, shifted], compat="override", join="outer")[names]
+    ds = window
     if ds.sizes.get("time", 0) == 0:
         raise DataError(f"ARCO-ERA5 has no data in {start_iso}..{end_iso}.")
 
@@ -231,6 +271,28 @@ def fetch(start_time, end_time, bbox, variable, **kwargs):
             f"failed while reading from the ARCO-ERA5 store ({type(exc).__name__}: {exc})."
         ) from None
 
+    # Hours past the real data end are all-NaN (pre-allocated axis). Drop that
+    # tail instead of writing empty rows; never fill.
+    finite = np.zeros(ds.sizes["time"], dtype=bool)
+    for name in ds.data_vars:
+        if "time" in ds[name].dims:
+            other = [d for d in ds[name].dims if d != "time"]
+            finite |= ds[name].notnull().any(dim=other).values
+    if not finite.any():
+        raise DataError(
+            f"ARCO-ERA5 has no data yet in {start_iso}..{end_iso} "
+            "(the store's time axis runs ahead of the data). Run --probe-latest."
+        )
+    last = int(np.flatnonzero(finite)[-1])
+    if last < ds.sizes["time"] - 1:
+        print(
+            f"Warning: ARCO-ERA5 data ends {str(ds['time'].values[last])[:13]}; dropped "
+            f"{ds.sizes['time'] - 1 - last} all-NaN trailing hour(s). Effective end is "
+            "earlier than --end-time.",
+            file=sys.stderr,
+        )
+        ds = ds.isel(time=slice(0, last + 1))
+
     apply_write_encoding(
         ds,
         time_units=f"hours since {start_time.isoformat()} 00:00:00",
@@ -238,6 +300,7 @@ def fetch(start_time, end_time, bbox, variable, **kwargs):
     )
     ds = to_standard_units(ds)
     ds = precip_amounts_to_rates(ds, interval="1 hour")
+    _stamp_coord_attrs(ds)  # unit conversion respells level "hPa" as "hectopascal"
     return stamp_data_interval(ds, period="1 hour")
 
 

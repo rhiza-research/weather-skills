@@ -2,13 +2,8 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "xarray",
-#   "zarr>=3",
-#   "cftime",
 #   "fsspec",
 #   "aiohttp",
-#   "numpy",
-#   "pint-xarray>=0.6",
 #   "netcdf4",
 #   "rioxarray",
 # ]
@@ -45,6 +40,12 @@ _HTTP_TIMEOUT = 60
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DEFAULT_DATASET = "precip"
 
+# Precipitation products. Only these get precip amount -> rate handling: other
+# stores carry non-precip kg m-2 fields (daily_vars ``tcw``, total column water)
+# that must keep their values and step axis.
+_PRECIP_DATASETS = frozenset(
+    {"precip", "gefs", "medium_range_precip", "precip_downscaled", "precip_downscaled_daily"}
+)
 # Per-step amounts already (not cumulative-since-init). Convert by dividing
 # by the step interval; do not deaccumulate.
 _ALREADY_PERIOD_PRECIP = frozenset(
@@ -209,7 +210,9 @@ def _open_remote_geotiff(url: str):
 
 def _prepare_downscaled(ds):
     """CHIRPS-grid weekly downscale: lon-first NetCDF → (step, lat, lon) cube."""
-    drop = [name for name in ("rank", "year", "surface") if name in ds.variables]
+    # ``init`` in newer files is the hindcast init (a year earlier), not the
+    # forecast init — keep only ``time``.
+    drop = [name for name in ("rank", "year", "surface", "init") if name in ds.variables]
     if drop:
         ds = ds.drop_vars(drop)
     spatial = [d for d in ("step", "number", "latitude", "longitude") if d in ds.dims]
@@ -333,7 +336,6 @@ def _shift_step_origin_to_zero(ds):
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
@@ -342,7 +344,7 @@ def _shift_step_origin_to_zero(ds):
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(dataset, date, bbox, variable, output, **kwargs):
+def fetch(dataset, date, bbox, variable, probe_latest, **kwargs):
     """Fetch a Kenya forecasts archive grid and write a weather-skills standard dataset.
 
     Opens a store under ``gs://kenya-forecasting-data/<date>/data/`` over HTTPS
@@ -351,8 +353,8 @@ def fetch(dataset, date, bbox, variable, output, **kwargs):
     subsets by ``--bbox`` and ``--variable``, normalizes units/CF attrs, and
     returns a Dataset for the decorator to write.
     """
-    if kwargs.get("probe_latest") is not None:
-        dsid = kwargs["probe_latest"] or dataset
+    if probe_latest is not None:
+        dsid = probe_latest or dataset
         if dsid not in _DATASETS:
             raise UsageError(f"unknown --dataset {dsid!r}; choose one of: {', '.join(_DATASETS)}")
         print(_resolve_date(None, dsid))
@@ -392,11 +394,12 @@ def fetch(dataset, date, bbox, variable, output, **kwargs):
         weather_skills_source=f"kenya-forecasting-data:{key}",
     )
     stamp_cf_attrs(ds)
-    stamp_precip_amounts(ds)
+    if dataset in _PRECIP_DATASETS:
+        stamp_precip_amounts(ds)
     ds = to_standard_units(ds)
     if dataset in _ALREADY_PERIOD_PRECIP:
         ds = precip_amounts_to_rates(ds, interval=_step_interval_stamp(ds), deaccumulate=False)
-    else:
+    elif dataset in _PRECIP_DATASETS:
         ds = precip_amounts_to_rates(ds)
     if dataset in _SHIFT_STEP_TO_ZERO:
         ds = _shift_step_origin_to_zero(ds)

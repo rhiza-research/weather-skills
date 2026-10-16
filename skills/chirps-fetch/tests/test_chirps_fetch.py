@@ -1,6 +1,5 @@
 """Correctness tests for chirps-fetch (mocked catalog)."""
 
-from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -99,7 +98,9 @@ def test_probe_latest_uses_catalog_time(capsys, fetch, mod):
 
     with patch.object(mod, "_open_catalog", side_effect=open_catalog):
         run_skill(fetch, "--probe-latest")
-    assert capsys.readouterr().out.strip() == "2026-09-15"
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "2026-09-15"
+    assert "latest=2026-09-15 (preliminary); final through 2026-08-31" in captured.err
 
 
 def test_catalog_ids(mod):
@@ -216,3 +217,55 @@ def test_workers_flag_still_accepted(tmp_path, mod, fetch):
             str(out),
         )
     assert Path(out).exists()
+
+
+def test_probe_latest_labels_preliminary_when_final_unavailable(capsys, fetch, mod):
+    def open_catalog(dataset_id: str):
+        if dataset_id.endswith("preliminary"):
+            return _chirps_like("2026-09-10", n_time=6)
+        raise OSError("final catalog unreachable")
+
+    with patch.object(mod, "_open_catalog", side_effect=open_catalog):
+        run_skill(fetch, "--probe-latest")
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "2026-09-15"
+    assert "latest=2026-09-15 (preliminary); final unavailable" in captured.err
+    assert "(final)" not in captured.err
+
+
+def test_probe_latest_rejects_ident(capsys, fetch, mod):
+    def open_catalog(dataset_id: str):
+        if dataset_id.endswith("preliminary"):
+            return _chirps_like("2026-09-10", n_time=6)
+        return _chirps_like("2026-08-01", n_time=31)
+
+    with patch.object(mod, "_open_catalog", side_effect=open_catalog):
+        with pytest.raises(SystemExit) as exc:
+            run_skill(fetch, "--probe-latest", "final")
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "takes no argument" in captured.err
+
+
+def test_start_before_1981_is_a_coverage_error(tmp_path, capsys, mod, fetch):
+    def open_catalog(dataset_id: str):
+        if dataset_id.endswith("preliminary"):
+            return _chirps_like("2025-01-01", n_time=0)
+        return _chirps_like("1981-01-01", n_time=5)
+
+    with patch.object(mod, "_open_catalog", side_effect=open_catalog):
+        with pytest.raises(SystemExit) as exc:
+            run_skill(
+                fetch,
+                "--start-time",
+                "1980-12-28",
+                "--end-time",
+                "1981-01-03",
+                "-o",
+                str(tmp_path / "out.zarr"),
+            )
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "before CHIRPS coverage, which starts 1981-01-01" in err
+    assert "server-side data gap" not in err

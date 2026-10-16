@@ -2,10 +2,7 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime>=1.6",
-#   "numpy>=2.4",
 #   "scipy",
-#   "xarray>=2026.4",
 # ]
 # ///
 """Sample a gridded dataset at point locations, writing a point_obs dataset."""
@@ -66,7 +63,7 @@ def _load_points(points, point, points_csv):
 @weather_skill.argument(
     "--point",
     action="append",
-    help="LAT,LON[,ID] (repeatable). Use --point=-1.29,36.82 for a negative latitude.",
+    help="LAT,LON[,ID] (repeatable), e.g. --point -1.29,36.82,nairobi.",
 )
 @weather_skill.argument("--points-csv", type=Path, help="CSV with columns id,lat,lon[,name].")
 @weather_skill.argument("--method", choices=["nearest", "bilinear", "cell-mean"], default="nearest")
@@ -94,8 +91,11 @@ def point_value(
     plat, plon = pts[lat_name].values.astype(float), pts[lon_name].values.astype(float)
 
     lat_dim, lon_dim = detect_spatial_dims(ds)
-    ds = dequantify_dataset(ensure_normalized_longitude(ds, lon_dim)).sortby([lat_dim, lon_dim])
+    ds = dequantify_dataset(ensure_normalized_longitude(ds, lon_dim))
     ds = ds[variable] if variable else ds
+    # sortby copies the whole grid; skip it when the axes already ascend.
+    if not all(ds.indexes[d].is_monotonic_increasing for d in (lat_dim, lon_dim)):
+        ds = ds.sortby([lat_dim, lon_dim])
     glat, glon = ds[lat_dim].values.astype(float), ds[lon_dim].values.astype(float)
 
     # Anchor cell: the one containing the point (kept if within half a cell of it),
@@ -109,14 +109,14 @@ def point_value(
         )
         keep = (np.abs(glat[ilat] - plat) <= half_lat) & (np.abs(glon[ilon] - plon) <= half_lon)
     else:
-        valid = ds.to_array().notnull()
-        valid = valid.any([d for d in valid.dims if d not in (lat_dim, lon_dim)])
-        valid = valid.transpose(lat_dim, lon_dim).values
         keep = np.zeros(plat.size, bool)
         for p in range(plat.size):
             rows = np.flatnonzero(np.abs(glat - plat[p]) <= max_distance)
             cols = np.flatnonzero(np.abs(glon - plon[p]) <= max_distance)
-            ii, jj = np.nonzero(valid[np.ix_(rows, cols)])
+            # Cells with any finite value, checked only in this point's window.
+            valid = ds.isel({lat_dim: rows, lon_dim: cols}).to_array().notnull()
+            valid = valid.any([d for d in valid.dims if d not in (lat_dim, lon_dim)])
+            ii, jj = np.nonzero(valid.transpose(lat_dim, lon_dim).values)
             dist = np.hypot(glat[rows[ii]] - plat[p], glon[cols[jj]] - plon[p])
             if dist.size and dist.min() <= max_distance:
                 k = dist.argmin()
@@ -127,8 +127,21 @@ def point_value(
         at = {lat_dim: xr.DataArray(plat, dims=dim), lon_dim: xr.DataArray(plon, dims=dim)}
         out = ds.interp(at, method="linear")
     elif method == "cell-mean":
-        window = {lat_dim: neighborhood, lon_dim: neighborhood}
-        out = ds.rolling(window, center=True, min_periods=1).mean(keep_attrs=True).isel(anchor)
+        # Gather only the N x N window around each anchor cell (not a rolling
+        # mean over the whole grid); cells past the grid edge are left out.
+        offsets = np.arange(neighborhood) - neighborhood // 2
+        rows, cols = ilat[:, None] + offsets, ilon[:, None] + offsets
+        on_grid = ((rows >= 0) & (rows < glat.size))[:, :, None] & (
+            (cols >= 0) & (cols < glon.size)
+        )[:, None, :]
+        window = ds.isel(
+            {
+                lat_dim: xr.DataArray(rows.clip(0, glat.size - 1), dims=(dim, "_wlat")),
+                lon_dim: xr.DataArray(cols.clip(0, glon.size - 1), dims=(dim, "_wlon")),
+            }
+        )
+        on_grid = xr.DataArray(on_grid, dims=(dim, "_wlat", "_wlon"))
+        out = window.where(on_grid).mean(["_wlat", "_wlon"], skipna=True, keep_attrs=True)
         for v in out.data_vars:
             cm = f"area: mean ({neighborhood}x{neighborhood} grid-cell neighborhood)"
             out[v].attrs["cell_methods"] = " ".join(
@@ -137,12 +150,16 @@ def point_value(
     else:
         out = ds.isel(anchor)
 
-    out = out.drop_vars([lat_dim, lon_dim]).where(xr.DataArray(keep, dims=dim))
+    out = out.drop_vars([lat_dim, lon_dim], errors="ignore").where(xr.DataArray(keep, dims=dim))
+    # Where each value was sampled. Plain "degrees", not degrees_north/east, so
+    # CF latitude/longitude detection still finds only the point's own lat/lon.
+    grid_lat = {"long_name": "latitude of the sampled grid cell centre", "units": "degrees"}
+    grid_lon = {"long_name": "longitude of the sampled grid cell centre", "units": "degrees"}
     out = out.assign_coords(
         {
             **pts.coords,
-            "grid_latitude": (dim, np.where(keep, glat[ilat], np.nan), {"units": "degrees_north"}),
-            "grid_longitude": (dim, np.where(keep, glon[ilon], np.nan), {"units": "degrees_east"}),
+            "grid_latitude": (dim, np.where(keep, glat[ilat], np.nan), grid_lat),
+            "grid_longitude": (dim, np.where(keep, glon[ilon], np.nan), grid_lon),
         }
     ).transpose(dim, ...)
     out[dim].attrs["cf_role"] = "timeseries_id"

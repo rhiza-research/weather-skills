@@ -1,6 +1,6 @@
 ---
 name: step-to-time
-description: Realize a forecast dataset's `step` lead-time axis as wall-clock valid times (`time = init + step`), replacing the `step` dim with a `time` dim. Use it to compare a forecast against observations — e.g. before plot, plot-timeseries, difference, or verify against a time-based dataset.
+description: Realize a forecast dataset's `step` lead-time axis as wall-clock valid times (`time = init + step`), replacing the `step` dim with a `time` dim. Use it to compare a forecast against observations — e.g. before difference, verify, or a time-series figure against a time-based dataset.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/step_to_time.py *)
@@ -18,12 +18,13 @@ dim (`datetime64`). Skills that compare the two need both inputs on the same
 kind of axis. This skill computes `valid_time = init + step` and rewrites the
 standard dataset with the `step` dim replaced by a `time` dim labeled with those valid
 times. After fetch, interval fields are left-labeled, so `step = 0` becomes
-the init calendar date (the first 24h of rain for daily precip).
+the init calendar date (the first 24h of rain for daily precip). `step_bounds`
+(written for uneven leads) become `time_bounds`.
 
 ## When to use
 
 - To compare a forecast against observations: run it on the forecast before
-  feeding both inputs to `plot`, `plot-timeseries`, `difference`, or `verify`
+  feeding both inputs to `difference`, `verify`, or a time-series figure
   against a time-based dataset (e.g. CHIRPS, IMERG, station data).
 - Whenever a downstream consumer needs the forecast's values labeled by the
   date they are valid for rather than by lead time.
@@ -37,8 +38,8 @@ a scalar (0-d) `time` coord holding the forecast init date. Spatial dims
 `datetime64` or, for a non-standard model calendar (`noleap`, `360_day`), an
 object-dtype `cftime` datetime. An input that already has a `time` dim is
 already on a wall-clock axis and is rejected; an input that has BOTH a `time`
-dim and a `step` dim (a multi-init/hindcast cube) is rejected with a message to
-select a single init first.
+dim and a `step` dim (a multi-init/hindcast cube) is rejected; `select` a
+single init first.
 
 ## Usage
 
@@ -66,30 +67,16 @@ init coord and the `step` coord are dropped, as is any pre-existing
 axis); the init date is written to the dataset attr `weather_skills_forecast_init`
 (ISO 8601, the `cftime` ISO string for a non-standard-calendar init).
 
-If the input lacks a `step` dim, the `step` dim is empty, the `step` values are
-not `timedelta64`, the input already has a `time` dim (or both a `time` and a
-`step` dim), there is no scalar `time` init coord, the init is neither
-`datetime64` nor `cftime`, the init is missing/NaT, or the realized valid times
-are not strictly increasing, the skill exits with code 2 and a clear message. A
-path that exists but is not a readable Zarr store also exits 2 with a clear
-message.
+The skill exits 2 with a message when the input has no `step` dim or no
+scalar `time` init coord (core's input check reports this as a missing
+`init_time`), already has a `time` dim — including a multi-init cube with
+both `time` and `step`, which needs `select` on one init first — has a
+missing (NaT) init, or has `step` values that are not strictly increasing.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: the input's chain plus
-an entry for this run, each entry `{skill, version, args, input}` (the
-`version` recorded in this skill's own entry is the value printed by its
-`--help`; inherited upstream entries carry their own versions). Flag values in
-`args` are recorded under underscored names (e.g. a flag `--time-dim` is
-recorded as `time_dim`); translate underscore → hyphen when reconstructing a
-CLI invocation. Inspect a written output's lineage with the `provenance` skill.
-
-Re-running with identical arguments against an unchanged input and an existing
-output is a cheap no-op — reuse the same output path. A cache hit requires the
-same skill `version`, the same flags, the same input name, the same input
-content, and the same upstream history; any modification to the input forces a
-recompute (a renamed-but-unchanged input misses, and a modified same-named
-input misses).
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ## Example
 

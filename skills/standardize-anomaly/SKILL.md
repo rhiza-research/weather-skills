@@ -1,10 +1,11 @@
 ---
 name: standardize-anomaly
-description: Compute a standardized anomaly (z-score) — (ds[var] - clim[var_avg]) / clim[var_std] — for one or more --variable names, given a data Zarr and a climatology Zarr (e.g. from clim-fetch) with matching dims. Dimensionless output, refuses (does not just warn) on units mismatch between the field and its climatology. Use for anomaly detection, SPI/SPEI-style standardized indices, or comparing a value's unusualness across variables/locations on the same scale. Not for a plain physical-unit anomaly (field minus mean, no division) — use difference for that.
+description: Compute a standardized anomaly (z-score) — (ds[var] - clim[var_avg]) / clim[var_std] — for one or more --variable names, given a data Zarr and a climatology Zarr (e.g. from clim-fetch) with matching dims. Dimensionless output, converts the climatology to the field's units and refuses incompatible units. The climatology must cover every input timestamp and cell; run step-to-time on a forecast first. Use for anomaly detection, SPI/SPEI-style standardized indices, or comparing a value's unusualness across variables/locations on the same scale. Not for a plain physical-unit anomaly (field minus mean, no division) — use difference for that.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/standardize_anomaly.py *)
 metadata:
+  version: "0.0.1"
   catalog-group: transforms
 ---
 
@@ -22,8 +23,7 @@ are genuinely different quantities:
 
 For each `--variable NAME`, reads `NAME` from `--input` and `NAME_avg` /
 `NAME_std` from `--climatology` (e.g. `clim-fetch`'s own output naming),
-aligns them (xarray inner join on shared dims, same as `difference`), and
-writes `NAME_anomaly`.
+aligns them on shared dims (see "Alignment"), and writes `NAME_anomaly`.
 
 ## When to use
 
@@ -64,39 +64,43 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/standardize_anomaly.py \
 
 ### Alignment
 
-Same as `difference`: an xarray-aligned inner join on shared dims (e.g.
-`time`, `lat`, `lon`), broadcasting over dims present on only one side. A
-`--climatology` at a coarser resolution than `--input` (e.g. `clim-fetch
---window 7`) still works — the climatology's fewer, coarser-grained days just
-align to whichever `--input` days share the exact same coordinate value.
+Labels are matched exactly on shared dims (e.g. `time`, `latitude`,
+`longitude`) — `time` by timestamp, not by calendar day — and the result
+must cover all of `--input`:
 
-Before aligning, if **both** `--input` and `--climatology` have a spatial dim
-(detected via `detect_spatial_dims`, the same CF-metadata/name-based lookup
-used elsewhere in this ecosystem — neither input is required to have one, two
-plain time series work fine), each is renamed onto `latitude`/`longitude` on
-both sides regardless of what either one originally called it (e.g.
-`--input`'s `latitude` and `--climatology`'s `lat` both become `latitude` —
-otherwise xarray broadcasts them as two unrelated dims instead of aligning,
-growing the output's dimensionality instead of computing a real anomaly);
-then cast to `float64` and rounded to 4 decimal places on both sides. Without
-the rounding, two sources on "the same" grid but stored with different
-coordinate dtypes (`float32` vs `float64`) can fail xarray's exact-equality
-alignment on some cells but not others — not an error, just a
-silently smaller-than-expected, still-plausible-looking output. `time` isn't
-touched by either step (no naming synonyms to resolve, and it's `datetime64`,
-not exposed to the float32/float64 problem).
+- Every `--input` label must have a climatology match. A climatology covering
+  only part of the input's window or grid, sub-daily input against a daily
+  climatology, or noon vs midnight stamps exits non-zero (fetch the
+  climatology over the input's window and grid; `aggregate-temporal` sub-daily
+  input to daily; `clip-region` / `coarsen` the input first). Extra
+  climatology labels are dropped.
+- The climatology may not add dims `--input` lacks (a multi-day climatology
+  against a single map would broadcast the map across every day) —
+  `select` one entry of the climatology first. Dims only on `--input` (e.g.
+  `member`) broadcast.
+- A forecast with a lead dim (`step` / `prediction_timedelta`) exits non-zero
+  unless the climatology has the same dim — it would otherwise align on init
+  time. Run `step-to-time` first so it aligns on valid time (and fetch the
+  climatology at the matching `--prediction-timedelta`).
+
+`clim-fetch` writes one value per calendar day at midnight (also with
+`--window N`, which rolls each day's stats over N days), so a daily
+`--input` stamped at midnight lines up day by day.
+
+If both inputs have spatial dims, they are renamed onto `latitude`/`longitude`
+on both sides (`--input`'s `latitude` and `--climatology`'s `lat` would
+otherwise broadcast as two unrelated dims). Lat/lon values are rounded on
+open, so float32 vs float64 storage of the same grid aligns.
 
 ### Units
 
-Both sides are pint-quantified on open, so unit compatibility is checked by
-pint itself, not by comparing `units` strings: dimensionally compatible but
-differently-scaled units (`mm/day` vs `cm/day`) are converted and combined
-correctly, automatically. A genuine mismatch (e.g. `mm/day` vs
-`degree_Celsius`) **errors** — this is stricter than `difference`, which only
-warns on a `units` mismatch and proceeds. The reason: a difference with
-mismatched units is wrong-scale but still a coherent number; a z-score built
-from mismatched units isn't a valid ratio at all, so proceeding would produce
-a number that looks fine but means nothing.
+The climatology is converted to the field's units before combining: the mean
+as a value (`K` → `degree_Celsius` subtracts 273.15) and the std as a spread,
+as a difference, never with an offset (a 1 K, 1 °C or 1 `delta_degC` std is
+the same spread, never 274.15). So `mm day-1` against `kg m-2 s-1`, or a °C
+field against a K climatology, give the same z-score.
+Incompatible units (`mm day-1` against `K`), or units on only some of the
+three variables, exit non-zero.
 
 ### Output
 
@@ -107,16 +111,15 @@ first input's attrs (appropriate there since a difference of two rates is
 still a rate; a z-score isn't a rate at all, so nothing physical carries
 over). If a spatial dim was present, its output name is always
 `latitude`/`longitude` regardless of what either input called it — see
-"Alignment" above. A cell where `NAME_std` is exactly `0` (e.g. a bone-dry
-precip window with no historical variability) has an undefined z-score and
-is masked to `NaN` rather than a division artifact.
+"Alignment" above. A cell where `NAME_std` is `0` (e.g. a bone-dry precip
+window with no historical variability) has an undefined z-score and is
+masked to `NaN`; nothing is added to the std to avoid the division. A `NaN`
+in the field, mean or std gives `NaN` in that cell; nothing is filled.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr, same shape as
-`difference`'s: entry `input` is a list with one item per input (`--input`
-then `--climatology`), each carrying that input's own upstream chain.
-Inspect with the `provenance` skill.
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ## Example
 
@@ -134,8 +137,6 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/standardize_anomaly.py \
 
 ### Recipe: standardizing a weekly total against its climatology
 
-`--climatology` doesn't have to be daily — a `--climatology` built at a
-coarser resolution than `--input` still aligns fine (see "Alignment" above).
 To standardize an observed weekly rainfall *total* against its climatological
 weekly-total mean/std, build the climatology side with `clim-fetch`'s own
 "weekly accumulation climatology" recipe (`clim-fetch --window 7` → `select`

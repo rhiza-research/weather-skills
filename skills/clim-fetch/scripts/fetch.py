@@ -2,15 +2,10 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime",
 #   "fsspec",
 #   "aiohttp",
 #   "dask",
-#   "xarray",
-#   "zarr",
-#   "numpy",
 #   "pandas",
-#   "pint-xarray>=0.6",
 # ]
 # ///
 """Fetch a cached climatology from Sheerwater's public GCS mirror.
@@ -34,7 +29,11 @@ from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
 from weather_skills_core.standard_dataset import detect_spatial_dims
 from weather_skills_core.standard_utils import bbox_subset, roll_and_agg
-from weather_skills_core.units import AGGREGATION_PERIOD_ATTR, stamp_data_interval, to_standard_units
+from weather_skills_core.units import (
+    AGGREGATION_PERIOD_ATTR,
+    stamp_data_interval,
+    to_standard_units,
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
@@ -68,6 +67,7 @@ def _valid_units(units) -> bool:
         return True
     except Exception:  # noqa: BLE001 — any parse failure means "not usable"
         return False
+
 
 _DEFAULT_VARIABLE = "precip"
 _DEFAULT_LEAD_DAYS = 0
@@ -108,13 +108,40 @@ def _open_remote(dataset: str, variable: str, window: int) -> tuple[xr.Dataset, 
     key = _object_key(dataset, variable, 1)
     daily = _open_zarr_or_none(key)
     if daily is None:
-        raise DataError(f"failed to open remote climatology gs://{_BUCKET}/{key}.")
+        # Most often the dataset/variable pair does not exist (e.g. era5 tmp2m).
+        # List what the bucket does carry so the caller can pick a real pair.
+        import json
+        import urllib.request
+
+        listing_url = (
+            f"https://storage.googleapis.com/storage/v1/b/{_BUCKET}/o"
+            "?prefix=climatologies/&delimiter=/"
+        )
+        try:
+            with urllib.request.urlopen(listing_url, timeout=30) as resp:
+                prefixes = json.load(resp).get("prefixes", [])
+        except Exception:  # noqa: BLE001 — listing is a hint only
+            prefixes = []
+        pairs = []
+        for prefix in prefixes:
+            stem = prefix.removeprefix("climatologies/").removesuffix("_1d.zarr/")
+            for ds_id in _DATASETS:
+                if stem.startswith(ds_id + "_") and prefix.endswith("_1d.zarr/"):
+                    pairs.append(f"--dataset {ds_id} --variable {stem[len(ds_id) + 1 :]}")
+        hint = (
+            "Available climatologies:\n  " + "\n  ".join(pairs)
+            if pairs
+            else "Could not list the bucket to show available pairs."
+        )
+        raise DataError(
+            f"no climatology for --dataset {dataset} --variable {variable} "
+            f"(gs://{_BUCKET}/{key} could not be opened).\n{hint}"
+        )
     return daily, False
 
 
 def _select_lead(clim: xr.Dataset, lead_days: int) -> xr.Dataset:
-    """Select one --prediction-timedelta lead and realize valid time = init_time + lead.
-    """
+    """Select one --prediction-timedelta lead and realize valid time = init_time + lead."""
     available = clim["prediction_timedelta"].values.astype("timedelta64[D]").astype(int).tolist()
     if lead_days not in available:
         raise UsageError(
@@ -122,9 +149,9 @@ def _select_lead(clim: xr.Dataset, lead_days: int) -> xr.Dataset:
             f"available (days): {sorted(available)}"
         )
     clim = clim.isel(prediction_timedelta=available.index(lead_days), drop=True)
-    clim = clim.assign_coords(
-        init_time=clim["init_time"] + np.timedelta64(lead_days, "D")
-    ).rename({"init_time": "time"})
+    clim = clim.assign_coords(init_time=clim["init_time"] + np.timedelta64(lead_days, "D")).rename(
+        {"init_time": "time"}
+    )
     return clim
 
 
@@ -142,7 +169,9 @@ def _pad_circular(clim: xr.Dataset, window: int) -> xr.Dataset:
     return xr.concat([before, clim, after], dim="time")
 
 
-def _roll_climatology(clim: xr.Dataset, mean_name: str, std_name: str, window: int, align: str) -> xr.Dataset:
+def _roll_climatology(
+    clim: xr.Dataset, mean_name: str, std_name: str, window: int, align: str
+) -> xr.Dataset:
     """Roll a daily climatology up to a coarser --window, correctly handling different
     aggregation approach for mean and std.
     """
@@ -163,9 +192,20 @@ def _roll_climatology(clim: xr.Dataset, mean_name: str, std_name: str, window: i
     return out
 
 
+def _doy_1904(times) -> np.ndarray:
+    """Day-of-year of the same month/day in the 1904 leap-year cycle.
+
+    Not the date's own day-of-year: in a non-leap year Mar 1 is day 60, which in
+    1904 is Feb 29, so every date from March on would take the previous day's row.
+    """
+    times = pd.DatetimeIndex(times)
+    same_day = pd.to_datetime({"year": 1904, "month": times.month, "day": times.day})
+    return same_day.dt.dayofyear.to_numpy()
+
+
 def _expand_climatology(clim: xr.Dataset, start, end) -> xr.Dataset:
     """Broadcast day-of-year climatology onto every day in [start, end]."""
-    doy = clim["time"].dt.dayofyear.values
+    doy = _doy_1904(clim["time"].values)
     if sorted(doy.tolist()) != list(range(1, 367)):
         raise DataError(
             "expected a full 1904 leap-year climatology (day_of_year 1..366 "
@@ -176,7 +216,7 @@ def _expand_climatology(clim: xr.Dataset, start, end) -> xr.Dataset:
     clim = clim.drop_vars("time")
 
     target_dates = pd.date_range(start, end, freq="D")
-    target_doy = xr.DataArray(target_dates.dayofyear, dims="time", coords={"time": target_dates})
+    target_doy = xr.DataArray(_doy_1904(target_dates), dims="time", coords={"time": target_dates})
     expanded = clim.sel(day_of_year=target_doy)
     return expanded.drop_vars("day_of_year")
 
@@ -229,7 +269,9 @@ def _expand_climatology(clim: xr.Dataset, start, end) -> xr.Dataset:
     ),
 )
 @weather_skill.argument("--bbox")
-def fetch(dataset, start_time, end_time, variable, prediction_timedelta, window, align, bbox, **kwargs):
+def fetch(
+    dataset, start_time, end_time, variable, prediction_timedelta, window, align, bbox, **kwargs
+):
     """Fetch a cached daily climatology and expand it to the requested date range."""
     if window < 1:
         raise UsageError(f"--window must be >= 1; got {window}")
@@ -275,6 +317,18 @@ def fetch(dataset, start_time, end_time, variable, prediction_timedelta, window,
 
     expanded = _expand_climatology(clim, start_time, end_time).load()
     expanded = expanded.drop_attrs(deep=False)
+
+    # The mirrors keep no value for an init whose valid date runs past Dec 31,
+    # so a lead of N days leaves Jan 1..Jan N empty. Never filled: say so.
+    empty = expanded[mean_name].isnull().all(["latitude", "longitude"])
+    if empty.any():
+        dates = pd.DatetimeIndex(expanded["time"].values[empty.values]).strftime("%Y-%m-%d")
+        print(
+            f"clim-fetch: WARNING: {len(dates)} of {expanded.sizes['time']} dates have "
+            f"no climatology value anywhere in the grid (left NaN, not filled): "
+            f"{', '.join(dates)}",
+            file=sys.stderr,
+        )
 
     expanded.attrs.update(
         Conventions="CF-1.13",

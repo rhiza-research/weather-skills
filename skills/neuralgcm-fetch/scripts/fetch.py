@@ -2,12 +2,7 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "xarray",
-#   "zarr>=3",
-#   "cftime",
 #   "gcsfs",
-#   "numpy",
-#   "pint-xarray>=0.6",
 # ]
 # ///
 """Fetch a NeuralGCM S2S ensemble forecast and write a weather-skills standard dataset."""
@@ -96,9 +91,11 @@ def _filesystem():
         try:
             info = json.loads(creds_json)
         except json.JSONDecodeError as exc:
+            raise DataError(f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
+        if not isinstance(info, dict):
             raise DataError(
-                f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc})."
-            ) from None
+                "NEURAL_GCM_SERVICE_CREDENTIALS must be a service-account key JSON object."
+            )
         try:
             return gcsfs.GCSFileSystem(token=info)
         except Exception as exc:  # noqa: BLE001 — surface ADC failures as DataError
@@ -306,7 +303,6 @@ def _select_variables(ds, variable):
 @weather_skill.argument(
     "--cycle",
     choices=list(_CYCLES),
-    default=None,
     help="Init hour UTC (00 or 12). Default: 00 with --date; latest cycle when --date is omitted.",
 )
 @weather_skill.argument("--bbox")
@@ -315,7 +311,6 @@ def _select_variables(ds, variable):
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
@@ -323,18 +318,17 @@ def _select_variables(ds, variable):
         "Does not download fields. Optional IDENT selects a --dataset id."
     ),
 )
-def fetch(dataset, date, bbox, variable, output, **kwargs):
+def fetch(dataset, date, bbox, variable, cycle, probe_latest, **kwargs):
     """Fetch a NeuralGCM S2S ensemble forecast and write a weather-skills standard dataset.
 
     Opens a consolidated Zarr under
     ``gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/<init>/<dataset>/``
-    with Google Cloud Application Default Credentials, maps dims onto the
+    with the credentials described in SKILL.md, maps dims onto the
     standard forecast cube, optionally subsets by ``--bbox`` / ``--variable``,
     and returns a Dataset for the decorator to write.
     """
-    dsid = _canonical_dataset(kwargs["probe_latest"] or dataset)
-    cycle = kwargs.get("cycle")
-    if kwargs.get("probe_latest") is not None:
+    dsid = _canonical_dataset(probe_latest or dataset)
+    if probe_latest is not None:
         stamps = _list_init_stamps()
         if cycle:
             stamps = [s for s in stamps if s.endswith(f"T{cycle}")]
@@ -358,7 +352,12 @@ def fetch(dataset, date, bbox, variable, output, **kwargs):
     else:
         ds = ensure_normalized_longitude(ds)
 
-    ds = ds.load()
+    try:
+        ds = ds.load()
+    except Exception as exc:  # noqa: BLE001
+        raise _gcs_error(exc, f"failed to read {_store_url(stamp, dataset)}") from None
+    if "number" in ds.dims:
+        print(f"Ensemble members: {ds.sizes['number']}", file=sys.stderr)
     ds.attrs.update(
         Conventions="CF-1.13",
         weather_skills_source=f"neuralgcm:{dataset}:{stamp}",
@@ -370,7 +369,16 @@ def fetch(dataset, date, bbox, variable, output, **kwargs):
         converted, _ = convert_dataarray(ds["d2m"], "degree_Celsius")
         ds["d2m"] = converted
     ds = precip_amounts_to_rates(ds, interval=_PRECIP_INTERVAL, deaccumulate=False)
-    ds = _shift_step_origin_to_zero(ds)
+    # tp is a 6 h period total labelled at its end: relabel it to the period
+    # start. Temperatures are instantaneous at init + step and keep their
+    # leads. With both, the merged axis runs from 0: tp is NaN at the last lead
+    # and the temperatures at 0 (gaps, not filled).
+    if "tp" in ds.data_vars:
+        import xarray as xr
+
+        tp = _shift_step_origin_to_zero(ds[["tp"]])
+        rest = ds.drop_vars("tp")
+        ds = xr.merge([rest, tp], join="outer", compat="override") if rest.data_vars else tp
     return stamp_data_interval(ds)
 
 

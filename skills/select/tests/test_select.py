@@ -109,3 +109,61 @@ def test_select_one_station_keeps_identity_coords(tmp_path, select):
     assert "station_id" not in result.dims
     assert str(result["station_id"].values) == "TA00072"
     assert str(result["name"].values) == "Likoni"
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--dim", "nosuch", "--index", "0"], "not a dimension"),
+        (["--dim", "time", "--index", "3"], "out of range for 'time' (size 3)"),
+        (["--dim", "time", "--index", "-4"], "out of range"),
+        (["--dim", "time", "--value", "garbage"], "not an ISO datetime"),
+        (["--dim", "time", "--value", "2027-01-01"], "values are 2026-01-01, 2026-01-02"),
+    ],
+)
+def test_select_bad_selectors_exit_2(tmp_path, select, capsys, args, message):
+    src = write_zarr(make_gridded(n_time=3), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(select, "-i", str(src), "-o", str(tmp_path / "out.zarr"), *args)
+    assert exc.value.code == 2
+    assert message in capsys.readouterr().err
+
+
+def test_select_value_rejects_dim_without_coord(tmp_path, select, capsys):
+    ds = make_gridded().expand_dims(member=3)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            select,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "out.zarr"),
+            "--dim",
+            "member",
+            "--value",
+            "1",
+        )
+    assert exc.value.code == 2
+    assert "select it with --index" in capsys.readouterr().err
+
+
+def test_select_value_float_label_from_arithmetic(tmp_path, select):
+    ds = make_gridded(lats=(0.1, 0.1 + 0.2, 0.5))  # 0.30000000000000004
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(select, "-i", str(src), "-o", str(out), "--dim", "latitude", "--value", "0.3")
+    assert "latitude" not in xr.open_zarr(out, consolidated=True).dims
+
+
+def test_select_value_cftime_360_day(tmp_path, select):
+    import cftime
+    import numpy as np
+
+    times = [cftime.Datetime360Day(2026, 2, d) for d in (29, 30)]
+    ds = xr.Dataset({"tas": (("time",), np.array([1.0, 2.0]))}, coords={"time": times})
+    ds["tas"].attrs["units"] = "K"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(select, "-i", str(src), "-o", str(out), "--dim", "time", "--value", "2026-02-30")
+    assert float(xr.open_zarr(out, consolidated=True)["tas"]) == 2.0

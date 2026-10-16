@@ -1,6 +1,6 @@
 ---
 name: submit-feedback
-description: Build a prefilled GitHub new-issue link the user clicks to file feedback under their own GitHub account. You supply the title and body; the skill URL-encodes them and checks that the link fits GitHub's length limit. Use when a user wants to report a bug or suggestion about the skills.
+description: Build a prefilled GitHub new-issue link the user clicks to file feedback about the skills under their own GitHub account. You write the title and body; the skill URL-encodes them, checks the link fits GitHub's length limit, and sends nothing itself. Use only when the user asks to report a bug, suggestion, or feedback about a skill — never on your own initiative after an error. Pass --repo for the rhiza-research repo that owns the skill.
 license: MIT
 compatibility: Requires Python 3.12 and uv. Builds a URL string only; reads no credentials, makes no network request, and writes no file.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py *)
@@ -24,8 +24,13 @@ human click.
   or their output.
 - The user says "submit feedback", "report this", "open an issue", or similar.
 
-Do not file on the user's behalf without their action — the skill only builds
-the link; the user is the one who clicks and submits.
+Do not use it unprompted — not after a failed run, and not to log your own
+workarounds — unless the user asks for a report. The skill only builds the
+link; the user is the one who clicks and submits.
+
+The link carries only the title and body you pass: no paths, environment,
+usernames, or file contents are added. Do not put secrets, credentials, or
+personal data in the body.
 
 ## Target your input length first
 
@@ -52,17 +57,25 @@ verifies it fits.
 ## Usage
 
 ```
-uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py --title <title> (--body <text> | --body-file <path>)
+uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py --title <title> (--body <text> | --body-file <path>) \
+    [--repo NAME]
 ```
 
-Issues are always filed to the `rhiza-research/forecasting-skills` repository;
-the target is built in and not configurable.
+Issues go to a `rhiza-research` repository: by default
+`weather-skills`. When the report is about a skill installed from another
+rhiza-research skill repo, pass `--repo` with the repo that owns that skill
+(its name is in the skill's install source or README) so the issue lands in
+the right tracker. Allowed: `weather-skills`, `weather-skills-core`,
+`weather-skills-plotting`, `chc-skills`.
 
 ### Arguments
 - `--title` — the issue title. Required, must not be empty.
-- `--body` — the issue body as a markdown string.
+- `--body` — the issue body as a markdown string. Must not be empty.
 - `--body-file` — a path to read the body from instead. Exactly one of `--body`
   or `--body-file` is required.
+- `--repo` — the rhiza-research repository that owns the skill the report is
+  about. Default `weather-skills`. Any repo outside the allow-list is an
+  input error.
 
 ## Output and exit codes
 
@@ -71,9 +84,10 @@ the target is built in and not configurable.
 - **Body too long (exit 1):** no URL is printed; stderr reports the assembled
   length, the limit, how far over it is, and roughly how many characters to cut
   from the body. Shorten the body and run again.
-- **Input error (exit 2):** an empty title, both or neither body source, a
-  missing / unreadable / non-UTF-8 `--body-file`, or a title so long it alone
-  exceeds the URL limit. The reason goes to stderr.
+- **Input error (exit 2):** an empty title or body, both or neither body
+  source, a title or body that is not valid UTF-8, a missing / unreadable
+  `--body-file`, a `--repo` outside the
+  allow-list, or a title so long it alone exceeds the URL limit. The reason goes to stderr.
 
 ## What to tell the user
 

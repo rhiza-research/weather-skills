@@ -16,19 +16,26 @@ from weather_skills_core import DataError, UsageError, weather_skill
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-# The target repository is fixed so feedback always lands in the right place and
-# the caller cannot direct it elsewhere by guessing a slug.
-REPO = "rhiza-research/forecasting-skills"
+# Feedback goes to one of the rhiza-research skill repos: allow-listed, so the
+# caller cannot direct it elsewhere by guessing a slug.
+OWNER = "rhiza-research"
+REPOS = (
+    "weather-skills",
+    "chc-skills",
+    "weather-skills-plotting",
+    "weather-skills-core",
+)
+DEFAULT_REPO = "weather-skills"
 
 # The clean ceiling GitHub accepts for a prefilled new-issue URL. Above it GitHub
 # starts erroring (500s) well before the hard 414, so this is the usable limit.
 MAX_URL = 6800
 
 
-def build_url(title: str, body: str) -> str:
+def build_url(title: str, body: str, repo: str = DEFAULT_REPO) -> str:
     """Assemble the prefilled new-issue URL with title and body percent-encoded."""
     return (
-        f"https://github.com/{REPO}/issues/new"
+        f"https://github.com/{OWNER}/{repo}/issues/new"
         f"?title={quote(title, safe='')}&body={quote(body, safe='')}"
     )
 
@@ -41,13 +48,19 @@ def build_url(title: str, body: str) -> str:
 @weather_skill.argument("--title", required=True, help="Issue title; must not be empty.")
 @weather_skill.argument("--body", help="Issue body as a markdown string.")
 @weather_skill.argument("--body-file", help="Path to a file holding the issue body.")
-def submit_feedback(title, body, body_file, **kwargs):
+@weather_skill.argument(
+    "--repo",
+    default=DEFAULT_REPO,
+    choices=REPOS,
+    help=f"{OWNER} repository that owns the skill the report is about (default {DEFAULT_REPO}).",
+)
+def submit_feedback(title, body, body_file, repo, **kwargs):
     """Build a length-checked prefilled GitHub "new issue" URL for filing feedback.
 
     Stateless formatter and validator. The caller authors the title and body; this
     script URL-encodes them into a
-    https://github.com/<repo>/issues/new?title=...&body=... link for a fixed target
-    repository and checks the assembled URL against the clean length ceiling GitHub
+    https://github.com/<repo>/issues/new?title=...&body=... link for an allow-listed
+    target repository and checks the assembled URL against the clean length ceiling GitHub
     accepts. Within budget it prints the URL to stdout; over budget it reports the
     overage on stderr so the caller can trim and retry. It never creates an issue,
     holds a credential, or makes a network request -- the user files the issue by
@@ -63,7 +76,7 @@ def submit_feedback(title, body, body_file, **kwargs):
     if body is None:
         body_path = Path(body_file)
         if not body_path.is_file():
-            raise UsageError(f"--body-file {body_path} not found.")
+            raise UsageError(f"--body-file {body_path} is not an existing file.")
         try:
             body = body_path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
@@ -71,14 +84,25 @@ def submit_feedback(title, body, body_file, **kwargs):
         except OSError as exc:
             raise UsageError(f"cannot read --body-file {body_path}: {exc}") from None
 
-    fixed = len(build_url(title, ""))
+    if not body.strip():
+        raise UsageError("the issue body must not be empty.")
+
+    # Arguments carrying invalid UTF-8 arrive as lone surrogates that cannot be
+    # percent-encoded; report that instead of a traceback.
+    try:
+        title.encode("utf-8")
+        body.encode("utf-8")
+    except UnicodeEncodeError:
+        raise UsageError("--title and the body must be valid UTF-8 text.") from None
+
+    fixed = len(build_url(title, "", repo))
     if fixed >= MAX_URL:
         raise UsageError(
             f"the title alone encodes to {fixed} characters, at or above the "
             f"{MAX_URL}-character URL limit; shorten the title."
         )
 
-    url = build_url(title, body)
+    url = build_url(title, body, repo)
     total = len(url)
 
     if total > MAX_URL:
@@ -101,7 +125,7 @@ def submit_feedback(title, body, body_file, **kwargs):
     print(
         f"Within budget: URL is {total}/{MAX_URL} chars. Give this link to the user "
         "and tell them to click it, review the prefilled issue, and press Submit "
-        f"-- it posts to {REPO} under their own GitHub account (GitHub login "
+        f"-- it posts to {OWNER}/{repo} under their own GitHub account (GitHub login "
         "required).",
         file=sys.stderr,
     )

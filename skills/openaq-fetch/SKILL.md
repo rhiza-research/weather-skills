@@ -35,8 +35,8 @@ point_obs Zarr store.
 
 - A task needs daily air-quality and atmospheric-composition station observations
   (PM2.5, PM10, NO2, O3, SO2, CO) for a region.
-- A downstream skill will compare stations against gridded data (via
-  `plot --layer`) or aggregate them temporally.
+- A downstream skill will compare stations against gridded data or
+  aggregate them temporally.
 
 ## Credentials
 
@@ -48,21 +48,28 @@ it is missing, then retry. Never print, log, or echo the value.
 ## Usage
 
 ```
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox N/W/S/E --start-time YYYY-MM-DD --end-time YYYY-MM-DD [-v VAR ...] -o <path.zarr>
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox N/W/S/E --start-time YYYY-MM-DD --end-time YYYY-MM-DD [-v VAR ...] [--min-coverage F] -o <path.zarr>
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
 ### Arguments
 - `--bbox` — spatial subset `N/W/S/E` decimal degrees (required; selects which
-  monitoring locations to fetch). To fetch over a country, get its bbox from the
-  `resolve-region` skill.
-- `--start-time`, `--end-time` — inclusive date range. Each value is an absolute ISO date
-  `YYYY-MM-DD`. Calendar windows: `resolve-time last-2w`. Latest published day: `--probe-latest`.
-- `--probe-latest` — print the latest available `YYYY-MM-DD` on stdout and exit. No `-o`.
+  monitoring locations to fetch). N must be >= S and W <= E (OpenAQ bboxes cannot
+  cross the antimeridian; split such a region into two calls). To fetch over a
+  country, get its bbox from the `resolve-region` skill.
+- `--start-time`, `--end-time` — inclusive date range of station-local calendar days
+  (see Output). Each value is an absolute ISO date `YYYY-MM-DD`. Calendar windows: `resolve-time last-2w`. Latest published day: `--probe-latest`.
+- `--probe-latest` — print the latest UTC date (`YYYY-MM-DD`) any PM2.5 sensor
+  reported in the last 7 days on stdout and exit. No `-o`. That day is usually
+  still partial; see `--min-coverage`.
 - `--variable`, `-v` — restrict to one pollutant; repeat once per variable.
-  Choices: `pm25`, `pm10`, `no2`, `o3`, `so2`, `co`. Omit for all six.
+  Choices: `pm25`, `pm10`, `no2`, `o3`, `so2`, `co` (anything else exits 2). Omit
+  for all six.
+- `--min-coverage` — minimum fraction (0–1) of the 24 hourly values a station-day
+  needs for its daily mean to be kept (default 0.75, i.e. 18 h). Days below it are
+  left missing (NaN), never filled; use `1.0` for complete days only.
 - `--output`, `-o` — output Zarr path (overwritten if it exists).
-- `--workers` — max concurrent per-sensor fetch threads (default 8). A
+- `--workers` — max concurrent per-sensor fetch threads (default 8, >= 1). A
   concurrency knob only, not data: threads overlap response waits only. All
   requests are client-side rate-limited under OpenAQ's published limits (60/minute,
   2,000/hour), with a small margin on the hourly cap, so raising `--workers` does
@@ -74,7 +81,17 @@ A fully CF-1.13 timeSeries Discrete Sampling Geometry (DSG) Zarr with dims
 `(time, station_id)`, coords `latitude(station_id)`, `longitude(station_id)`,
 `name(station_id)`, and data variables among `pm25`, `pm10`, `no2`, `o3`, `so2`,
 `co` — whichever were requested and present. `station_id` is the OpenAQ location
-id.
+id; when one location has several sensors for the same pollutant (and unit), their
+daily values are averaged into one column.
+
+Daily values come from OpenAQ's `/sensors/{id}/days` aggregates: the mean of the
+hourly values over each station's **local** calendar day, so days are not
+aligned across time zones. `time` is that local date (at 00:00, no offset). A
+day is kept only when at least `--min-coverage` of its 24 hourly values exist;
+days below it, days without coverage info, and negative daily means (invalid
+readings or -999-style sentinels) are left missing. stderr reports how many
+station-days were dropped for each reason and how many kept means are from
+partial (< 24 h) days.
 
 CF stamping:
 - Global attrs `Conventions="CF-1.13"`, `featureType="timeSeries"`, plus
@@ -84,8 +101,9 @@ CF stamping:
   units + a calendar in its write encoding.
 - Every pollutant variable carries `coordinates="latitude longitude time"` (the
   load-bearing DSG attr), a `long_name`, `cell_methods="time: mean"` (each daily
-  value is the within-day mean), and a `_FillValue` of NaN for the
-  station-time cells where a sensor did not report.
+  value is the within-day mean), a `comment` stating the local-day and
+  `--min-coverage` rule, and a `_FillValue` of NaN for the station-time cells
+  with no kept value.
 
 Units are forwarded **verbatim** from the OpenAQ API per parameter (µg/m³ for
 particulates, ppm/ppb for gases, as the provider reports) — never normalized or
@@ -107,7 +125,9 @@ stderr note. A sensor that reports a unit differing from the first-seen unit for
 its pollutant is dropped too (its column cannot be merged without mislabeling),
 as is a sensor with a missing/empty units value (a CF data variable cannot carry
 `units=None`). At the end the run prints an aggregate count of all dropped
-sensors to stderr so the loss is visible at a glance.
+sensors to stderr so the loss is visible at a glance. The first-seen unit wins, so
+which unit a pollutant ends up in depends on the API's location order; units are
+never converted.
 
 If a requested `-v` pollutant yields no in-window data — every one of its sensors
 returned nothing or was dropped — it is omitted from the output and named in a
@@ -115,21 +135,24 @@ stderr warning; the run still succeeds with the variables that do have data.
 
 ### Errors
 
-- `OPENAQ_API_KEY` unset: exits 2 with a clear message before any network call;
-  the key value is never read or printed.
+- `OPENAQ_API_KEY` unset, an unknown `-v`, an inverted/antimeridian `--bbox`,
+  `--workers` < 1, or `--min-coverage` outside 0–1: `Error:` and exit 2 before any
+  network call; the key value is never printed.
 - A wrong/expired key (the API returns 401/403), whether on the locations query
   or on a per-sensor daily-values fetch (a key that expires mid-run or lacks
   `/sensors` access): a one-line actionable message and a non-zero exit; the key
   is never echoed. An auth failure is surfaced as fatal rather than counted as a
   routine per-sensor drop.
+- HTTP 429 on the locations query that survives the backoff retry: an `Error:`
+  naming the rate limit, exit 1.
 - No sensors or no observations for the bbox/window: a non-zero exit with a
   clear message.
 
 There is no proactive size guard: `--bbox` is required (a global query would be
 unbounded), but within it the caller decides the window. Request rate, however,
 is guarded proactively (the client-side rate limiter above); a 429 that still
-arrives is retried once after honoring its `Retry-After` header (or a 60 s
-backoff without one), and other transient failures are handled reactively
+arrives is retried once after a 60–300 s backoff (its `Retry-After` header when
+present, else 60 s), and other transient failures are handled reactively
 (retry-once, then drop).
 
 ### Memory and performance
@@ -142,11 +165,8 @@ On tight-memory hosts, narrow the `--bbox` or shorten the window.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: an append-only array of
-per-step entries `{skill, version, args, input}`. For this fetcher it is a
-length-1 array with `skill="openaq-fetch"` and `input=null`; downstream
-zarr-writing skills append their own entry. `args` records `bbox`, the sorted
-`variable` list, and `start`/`end` — `--workers` is not recorded. `version` is the value printed by `--help`. Inspect a written output's provenance with the `provenance` skill.
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ## Examples
 

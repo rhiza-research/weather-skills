@@ -2,7 +2,6 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime>=1.6",
 # ]
 # ///
 """Summarize named dims with a statistic."""
@@ -40,6 +39,9 @@ _SKILL_VERSION = "0.0.2"
 def summarize_dim(ds, variable, dim, method, lat_weighted, **kwargs):
     """Summarize named dims with a statistic."""
     dims = list(dict.fromkeys(dim))
+    for d in dims:
+        if d not in ds.dims:
+            raise UsageError(f"--dim {d!r} not in dataset (have {list(ds.dims)})")
     lat_dim = None
     if lat_weighted:
         if method != "mean":
@@ -50,23 +52,45 @@ def summarize_dim(ds, variable, dim, method, lat_weighted, **kwargs):
 
     # No --variable: whole dataset (vars without the dim are skipped by rdims).
     selected = list(dict.fromkeys(variable)) if variable else list(ds.data_vars)
+    for var in selected:
+        if var not in ds.data_vars:
+            raise UsageError(f"--variable {var!r} not in dataset (have {list(ds.data_vars)})")
     out = ds.copy()
     for var in selected:
         da = ds[var]
         rdims = [d for d in dims if d in da.dims]
         if not rdims:
             continue
-        if method == "median" and da.chunks is not None and set(rdims) == set(da.dims):
-            da = da.load()
         if method == "sum":
             # min_count=1: all-NaN → NaN, not 0
             out[var] = da.sum(dim=rdims, keep_attrs=True, min_count=1)
         elif method == "std":
             out[var] = da.std(dim=rdims, keep_attrs=True, ddof=1)
         elif method == "mean" and lat_weighted and lat_dim in rdims:
-            out[var] = da.weighted(latitude_weights(ds[lat_dim])).mean(dim=rdims, keep_attrs=True)
+            out[var] = (
+                da.pint.dequantify()
+                .weighted(latitude_weights(ds[lat_dim]))
+                .mean(dim=rdims, keep_attrs=True)
+            )
         else:
             out[var] = getattr(da, method)(dim=rdims, keep_attrs=True)
+        # Record the statistic (CF cell_methods). A spread or a sum is not the
+        # input quantity, so its long_name must not read "Total precipitation".
+        attrs = dict(out[var].attrs)
+        cf_method = {"std": "standard_deviation", "min": "minimum", "max": "maximum"}
+        step = f"{': '.join(rdims)}: {cf_method.get(method, method)}"
+        attrs["cell_methods"] = (
+            f"{attrs['cell_methods']} {step}" if attrs.get("cell_methods") else step
+        )
+        if method in ("std", "sum"):
+            label = "Standard deviation" if method == "std" else "Sum"
+            what = attrs.get("long_name") or attrs.get("standard_name") or var
+            attrs["long_name"] = f"{label} of {what} across {', '.join(rdims)}"
+            # standard_name stays: CF encodes a spread as the quantity's
+            # standard_name plus a cell_methods statistic.
+            for key in ("GRIB_name", "short_name", "comment"):
+                attrs.pop(key, None)
+        out[var].attrs = attrs
 
     for d in dims:
         if d in out.dims and all(d not in out[v].dims for v in out.data_vars):

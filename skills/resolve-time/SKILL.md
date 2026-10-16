@@ -1,6 +1,6 @@
 ---
 name: resolve-time
-description: Resolve a relative date query (the last two weeks, today, latest, last 30 days, now-3d) to absolute `--start-time`/`--end-time` or `--date` values from the current UTC date. Use before any fetch when the user said a relative window rather than YYYY-MM-DD. Does not know product lag — for the latest published day, run that fetcher with `--probe-latest`.
+description: Resolve a relative date query (the last two weeks, today, latest, last 30 days, now-3d) to absolute `--start-time`/`--end-time` or `--date` values from the current UTC date. Use before any fetch when the user said a relative window rather than YYYY-MM-DD. Does not know product lag — for observations (CHIRPS, IMERG, ERA5, stations), run the fetcher's `--probe-latest` first and pass it as `--as-of` so the window is complete. In zsh, pass `--emit iso` values as "${T%/*}" / "${T#*/}" rather than splicing an unquoted $TIME.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py *)
@@ -28,8 +28,28 @@ day), then pass the printed flags through.
 
 For the latest day a **product** has published, do not use this skill's
 `latest` token. Run that fetcher with `--probe-latest` (stdout is
-`YYYY-MM-DD` or `none`). To end a rolling window on that day, pass it as
-`--as-of`.
+`YYYY-MM-DD` or `none`) and pass it as `--as-of`. That works for rolling
+windows (`last-2w`) and calendar periods (`last-week`, `last-dekad`,
+`last-month`) alike: the window then ends on or before the last published
+day.
+
+## Observations: probe, then resolve (common path)
+
+Observation products lag real time (CHIRPS 2-7 days, ARCO-ERA5 ~6 days).
+Resolving "the last two weeks" against today and fetching cuts the tail:
+the fetch exits 0 with fewer days than asked. End the window on the
+probed day instead:
+
+```bash
+END=$(uv run skills/chirps-fetch/scripts/fetch.py --probe-latest)
+T=$(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py last-2w --as-of "$END" --emit iso)
+uv run skills/chirps-fetch/scripts/fetch.py --start-time "${T%/*}" --end-time "${T#*/}" -o chirps.zarr
+```
+
+`--emit iso` plus `"${T%/*}"` / `"${T#*/}"` works in bash and zsh. Splicing
+the default `flags` output as an unquoted `$TIME` word-splits in bash but
+**not** in zsh (the macOS default shell), where the fetcher then reports
+missing `--start-time`.
 
 ## Division of labor
 
@@ -47,6 +67,7 @@ deterministic calendar math and the UTC clock.
 | 3 days ago | `now-3d` |
 | this week (ISO, Mon–Sun, so far) | `this-week` |
 | last week (previous complete ISO week) | `last-week` |
+| this dekad so far / last complete dekad (days 1–10, 11–20, 21–end) | `this-dekad` / `last-dekad` |
 | this month so far | `this-month` |
 | previous calendar month | `last-month` |
 | this year so far / previous calendar year | `this-year` / `last-year` |
@@ -61,12 +82,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py <QUERY> [--as-of YYYY-MM-DD] \
 ```
 
 ```bash
-# "the last two weeks" on the calendar (UTC today):
-TIME=$(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py last-2w)
-
-# Last two weeks ending on the latest published CHIRPS day:
+# Last two weeks ending on the latest published CHIRPS day (observations):
 END=$(uv run skills/chirps-fetch/scripts/fetch.py --probe-latest)
-TIME=$(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py last-2w --as-of "$END")
+T=$(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py last-2w --as-of "$END" --emit iso)
+
+# "the last two weeks" on the calendar (UTC today) -- forecasts / non-lagged use:
+T=$(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py last-2w --emit iso)
 
 # Latest GFS init — probe the fetcher, do not use resolve-time latest:
 INIT=$(uv run skills/dynamical-fetch/scripts/fetch.py --probe-latest noaa-gfs-forecast)
@@ -74,10 +95,12 @@ INIT=$(uv run skills/dynamical-fetch/scripts/fetch.py --probe-latest noaa-gfs-fo
 
 ### Arguments
 
-- `query` (positional) — token from the table above. Not English.
+- `query` (positional) — token from the table above (any case). Not English.
 - `--as-of` — clock date `YYYY-MM-DD`. Default: today's date in UTC. Pass it
-  to reproduce a window, honor an explicit "as of Friday", or end a rolling
-  window on a probed latest day.
+  to reproduce a window, honor an explicit "as of Friday", or end any window
+  (rolling or `last-week` / `last-dekad` / `last-month`) on or before a
+  probed latest day. `--as-of none` (a probe that found nothing published)
+  exits 2 saying so.
 - `--emit` — `flags` (default; splice onto the next skill), `iso`
   (`YYYY-MM-DD` or `START/END`), or `json`.
 
@@ -102,8 +125,13 @@ Unknown tokens and English phrases exit 2 with an explanation.
 - `last-<N>d|w|m|y` is a rolling inclusive window ending on `as_of`.
   Months/years clamp the day (31 Jan − 1 month → 28/29 Feb).
   "The last month of data" is `last-30d`, not `last-month`.
-- `last-week` / `last-month` / `last-year` are the previous complete
-  calendar period (ISO week, named month, calendar year).
+- `last-week` / `last-dekad` / `last-month` / `last-year` are the previous
+  complete calendar period (ISO week, dekad, named month, calendar year)
+  before the one containing `as_of`. When `as_of` is itself the last day of
+  a period, that period is not returned — pass the next day as `--as-of` if
+  you want it.
+- Dekads are calendar dekads: days 1–10, 11–20, and 21 to month end (8–11
+  days). `this-dekad` is the dekad start through `as_of`.
 - `this-month` / `this-year` are "so far". `YYYY-MM` / `YYYY` are the full
   calendar period (not clipped to today).
 - `now-<N>d|w|m|y` is a single date offset from `as_of`.
@@ -111,9 +139,10 @@ Unknown tokens and English phrases exit 2 with an explanation.
 ## Examples
 
 ```bash
-# Last two calendar weeks, then fetch:
-TIME=$(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py last-2w)
-uv run skills/chirps-fetch/scripts/fetch.py $TIME -o chirps.zarr
+# Last complete dekad of CHIRPS (bash and zsh):
+END=$(uv run skills/chirps-fetch/scripts/fetch.py --probe-latest)
+T=$(uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py last-dekad --as-of "$END" --emit iso)
+uv run skills/chirps-fetch/scripts/fetch.py --start-time "${T%/*}" --end-time "${T#*/}" -o chirps.zarr
 
 # Pin the clock (tests / "as of 1 August"):
 uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py last-7d --as-of 2026-08-01 --emit iso

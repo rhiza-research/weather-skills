@@ -22,8 +22,8 @@ ds = dynamical_catalog.open(id)  # -> lazy, icechunk-backed xarray.Dataset
 ```
 
 `open()` reads only metadata until values are computed, so shape detection,
-`latest` resolution (max `init_time`/`time`), the cache check, and bbox/time/
-variable subsetting all happen before any array bytes are pulled.
+`latest` resolution (max `init_time`/`time`) and variable/time/bbox
+subsetting all happen before any array bytes are pulled.
 
 ## Catalog datasets and native dimensions
 

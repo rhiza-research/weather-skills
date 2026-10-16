@@ -15,7 +15,7 @@ xarray import alias (`import xarray as xr` -> `xr.open_zarr(...)`) or as a bare
 name imported from xarray (`from xarray import open_dataset` -> `open_dataset(...)`).
 
 Usage:
-    uv run tools/check_cftime_deps.py skills/plot/scripts/plot.py
+    uv run tools/check_cftime_deps.py skills/coarsen/scripts/coarsen.py
     uv run tools/check_cftime_deps.py skills              # recurses on dir
 """
 
@@ -108,7 +108,8 @@ def check(path: Path) -> str | None:
     if not _opens_dataset(tree):
         return None
     declared = {_normalize(d) for d in deps}
-    if "cftime" in declared:
+    # weather-skills-core depends on cftime, so declaring core is enough.
+    if "cftime" in declared or "weather_skills_core" in declared:
         return None
     return f"{path}: opens a dataset but does not declare cftime"
 

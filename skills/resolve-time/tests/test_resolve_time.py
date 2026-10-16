@@ -133,3 +133,42 @@ def test_missing_query_is_usage_error(resolve_time):
     with pytest.raises(SystemExit) as exc:
         run_skill(resolve_time, "--as-of", AS_OF)
     assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("as_of", "expected"),
+    [
+        ("2026-10-05", "--start-time 2026-09-21 --end-time 2026-09-30"),
+        ("2026-10-11", "--start-time 2026-10-01 --end-time 2026-10-10"),
+        ("2026-10-31", "--start-time 2026-10-11 --end-time 2026-10-20"),
+        ("2026-03-01", "--start-time 2026-02-21 --end-time 2026-02-28"),
+    ],
+)
+def test_last_dekad_is_previous_calendar_dekad(capsys, resolve_time, as_of, expected):
+    out, _ = _flags(capsys, resolve_time, "last-dekad", "--as-of", as_of)
+    assert out == expected
+
+
+def test_this_dekad_so_far(capsys, resolve_time):
+    out, _ = _flags(capsys, resolve_time, "this-dekad", "--as-of", "2026-10-25")
+    assert out == "--start-time 2026-10-21 --end-time 2026-10-25"
+
+
+def test_tokens_are_case_insensitive(capsys, resolve_time):
+    out, _ = _flags(capsys, resolve_time, "LAST-2W", "--as-of", "2026-10-15")
+    assert out == "--start-time 2026-10-02 --end-time 2026-10-15"
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["last-2w", "--as-of", "none"], "found no published data"),
+        (["0000"], "outside the calendar range"),
+        (["last-99999y", "--as-of", "2026-01-01"], "outside the calendar range"),
+    ],
+)
+def test_bad_clock_or_range_exits_2(capsys, resolve_time, argv, message):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(resolve_time, *argv)
+    assert exc.value.code == 2
+    assert message in capsys.readouterr().err

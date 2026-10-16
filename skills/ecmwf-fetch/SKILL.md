@@ -55,8 +55,8 @@ Not for reanalysis, climatology, or deterministic HRES.
 ## Credentials
 
 The catalog path needs none. The ECDS fallback's store URL
-(`https://ecds.ecmwf.int/api`) is hardcoded in the skill — it is not read
-from the environment. Inject the one remaining secret only on the **first**
+(`https://ecds.ecmwf.int/api`) is hardcoded in the skill — do not inject it
+(an explicit `ECMWF_DATASTORES_URL` still overrides it). Inject the one remaining secret only on the **first**
 invocation that falls back to ECDS:
 
 - `ECMWF_DATASTORES_KEY` — personal ECDS token
@@ -77,7 +77,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
   before that it was Mondays and Thursdays only. The dynamical product starts
   at 2026-01-01. Requesting a date with no published init exits non-zero with
   a clear "no data for this init" message. Recent ECMWF S2S real-time data is
-  access-restricted (embargoed) for **2 days**. Transport and auth failures
+  access-restricted (embargoed) for **2 days**; an ECDS-path init newer than
+  today − 2 days exits 1 with an embargo error before credentials are needed. Transport and auth failures
   are surfaced as clear errors — not raw tracebacks.
 - `--probe-latest` — print the latest init on the catalog (`YYYY-MM-DD`) on stdout and exit. No `-o`. Falls back to a 2-day calendar estimate if the catalog is unreachable.
 - `--bbox` — required; `N/W/S/E` decimal degrees. The retrieval area (smaller bbox = faster retrieval). To fetch over a country, get its bbox from the `resolve-region` skill and pass the value here.
@@ -114,24 +115,26 @@ The skill also accepts the rest of the S2S single-level and ocean parameters
 Ocean fields are ECDS-only (1.0° grid); atmosphere fields are 1.5° — do not
 mix ocean with atmosphere in one call.
 
+ECDS accumulated fields other than `tp` (`cp`, `sf`, `ro`, `sro`, `sshf`,
+`slhf`, `ssr`, `ssrd`, `str`, `strd`, `ttr`, `ewss`, `nsss`) are written as
+cumulative-since-init amounts in native units, not rates; run `deaccumulate`
+on them. Fetch them in a separate call from `tp` (mixing exits 2).
+
 Catalog surface fields that are 24-hour statistics are all-NaN at lead 0
 (no preceding day). This skill drops that empty lead and shifts remaining
 steps so `step = 0` is the first 24 h — the same convention as the ECDS
-`tp` deaccumulation. Instant fields (10 m wind, MSL/surface pressure,
+`tp` deaccumulation and ECDS daily means (`t2m`, `sst`, …), which are relabeled
+from their window end to its start. Instant fields (10 m wind, MSL/surface pressure,
 pressure-level) keep lead 0.
 
 ### Output
 
-A Zarr store with the selected data variables and dims `(number, step, latitude, longitude)` — plus `vertical` when a pressure-level or `pv` field is selected. `number=0` is the control; `number=1..100` are perturbed members. `step` is daily (00Z). `tp` is a precipitation **rate** (`mm day-1`) left-labeled so `step = 0` is the first 24h (`[init, init+1d)`); known temperature fields (`t2m`, `sst`, `t`, …) are `degree_Celsius`. Stamped with `weather_skills_source=ecmwf-s2s`.
+A Zarr store with the selected data variables and dims `(number, step, latitude, longitude)` — plus `vertical` when a pressure-level or `pv` field is selected. `number=0` is the control; `number=1..100` are perturbed members. ECDS control-only fields (pressure-level, `pv`) fetched alone have `number=[0]`; mixed with ensemble fields they carry no `number` dim. `step` is daily (00Z). `tp` is a precipitation **rate** (`mm day-1`) left-labeled so `step = 0` is the first 24h (`[init, init+1d)`); known temperature fields (`t2m`, `sst`, `t`, …) are `degree_Celsius`. Stamped with `weather_skills_source=ecmwf-s2s`.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: an append-only array of
-per-step entries `{skill, version, args, input}`. For a fetcher this is a
-length-1 array; downstream zarr-writing skills append their own entry. `args`
-records the run's flag values under underscored names (e.g. a flag
-`--time-dim` is recorded as `time_dim`); `version` is the value printed by
-`--help`. Inspect a written output's provenance with the `provenance` skill.
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ## Examples
 

@@ -1,6 +1,6 @@
 ---
 name: zonal-moisture-transport
-description: Multiply specific humidity by zonal wind (q·u) and optionally integrate through the pressure column to eastward IVT (`viwve`, kg m-1 s-1). Use after ecmwf-fetch `-v q` and `-v u` (or any standard dataset that holds both fields) when you need zonal moisture transport maps.
+description: Multiply specific humidity by zonal wind (q·u) and optionally integrate through the pressure column to eastward IVT (`viwve`, kg m-1 s-1). Use after dynamical-fetch `--dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree -v q -v u` (46-day `pressure_level` group; writes `specific_humidity` / `wind_u`, auto-detected), or any standard dataset that holds both fields, when you need zonal moisture transport maps. ecmwf-fetch (credentialed) is the fallback.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/zonal_moisture_transport.py *)
@@ -20,9 +20,17 @@ IVT_x = (1/g) ∫ qu dp     g = 9.80665 m s-2,  dp in Pa
 ```
 
 The integral is trapezoidal along the ontology `vertical` dim (also `level`,
-`isobaricInhPa`, …). Pressure coords in hPa are converted to Pa. Shared dims
-are inner-joined, so a 7-level `q` stack and a 10-level `u` stack keep the
-overlapping levels only.
+`isobaricInhPa`, …), over ascending pressure, so the sign does not depend on
+the stored level order. Pressure coords in hPa are converted to Pa; `q` is
+converted to `kg kg-1` (e.g. from `g kg-1`) and `u` to `m s-1` (e.g. from
+`km h-1`) by their `units` attrs. Shared dims are inner-joined, so a 7-level
+`q` stack and a 10-level `u` stack keep the overlapping levels only.
+
+Missing levels are never filled. A level with no finite `q*u` anywhere is
+dropped and named on stderr (`WARNING: dropping vertical levels ...`) — the
+46-day product has no `specific_humidity` above 200 hPa, so its column is
+1000–200 hPa. A level missing in only some columns (e.g. below ground) makes
+those columns NaN.
 
 `--no-integrate` writes the per-level product `qu` (`kg kg-1 m s-1`) instead
 — use that after `select` has already sliced one pressure (e.g. 850 hPa).
@@ -30,7 +38,11 @@ overlapping levels only.
 ## When to use
 
 - Eastward IVT / zonal moisture-transport maps from ECMWF S2S pressure-level
-  `q` and `u` (`ecmwf-fetch` writes those as `q` and `u` on `vertical`).
+  humidity and zonal wind. Fetch them credential-free with `dynamical-fetch
+  --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree -v q -v u` (the
+  46-day `pressure_level` group, 10 levels on `vertical`, written as
+  `specific_humidity` and `wind_u`). `ecmwf-fetch -v q -v u` (ECDS,
+  credentialed; writes `q` and `u`) is the fallback for pre-2026 inits.
 - The same product from any other standard dataset that carries specific
   humidity and zonal wind (ERA5, a reforecast, …).
 - A single-level moisture flux after `select` on `vertical` (`--no-integrate`).
@@ -43,7 +55,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/zonal_moisture_transport.py -i <q_and_or_u.za
     [--humidity-variable VAR] [--wind-variable VAR] [--output-name NAME]
 ```
 
-The output must be a distinct store from every input.
+Write to a new path: `--output` is replaced, so pointing it at an input
+destroys that input.
 
 ### Arguments
 
@@ -52,10 +65,10 @@ The output must be a distinct store from every input.
   exits non-zero.
 - `--output`, `-o` — output Zarr.
 - `--humidity-variable` — specific-humidity name. Default: first of `q`,
-  `specific_humidity`, `hus`, `humidity` found in the inputs. With two
+  `specific_humidity` (dynamical-fetch), `hus`, `humidity` found in the inputs. With two
   inputs and no recognized name, the first input's only data variable is used.
-- `--wind-variable` — zonal-wind name. Default: first of `u`,
-  `u_component_of_wind`, `ua`, `uwnd`, `eastward_wind`. With two inputs and
+- `--wind-variable` — zonal-wind name. Default: first of `u`, `wind_u`
+  (dynamical-fetch), `u_component_of_wind`, `ua`, `uwnd`, `eastward_wind`. With two inputs and
   no recognized name, the second input's only data variable is used.
 - `--integrate` / `--no-integrate` — column-integrate (default) or keep
   per-level `q*u`. `--integrate` exits non-zero unless a pressure dim has at
@@ -71,22 +84,24 @@ The output must be a distinct store from every input.
 | `--no-integrate` | `qu` | `kg kg-1 m s-1` | Per-level eastward moisture flux |
 
 Integrated output drops the vertical dim. Dataset attrs from the first input
-are preserved. Positive `viwve` is eastward transport.
+are preserved. Positive `viwve` is eastward transport, negative westward.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr. Inspect it
+The output carries a `weather_skills_history` provenance chain; inspect it
 with the `provenance` skill.
 
 ## Examples
 
 ```bash
-# ECMWF S2S: fetch humidity and zonal wind (two ECDS legs; q is 7 levels, u is 10),
-# then column-integrate to eastward IVT.
-uv run ${CLAUDE_SKILL_DIR}/../ecmwf-fetch/scripts/fetch.py --date 2026-08-30 \
-    --bbox 5/30/-5/50 -v q -v u --output /tmp/ecmwf_q_u.zarr
+# ECMWF S2S via dynamical.org (credential-free): humidity and zonal wind from the
+# 46-day pressure_level group (specific_humidity / wind_u on 10 levels), then
+# column-integrate to eastward IVT. No --humidity/--wind-variable needed.
+uv run ${CLAUDE_SKILL_DIR}/../dynamical-fetch/scripts/fetch.py \
+    --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree --date 2026-10-11 \
+    --bbox 5/30/-5/50 -v q -v u --output /tmp/er_q_u.zarr
 uv run ${CLAUDE_SKILL_DIR}/scripts/zonal_moisture_transport.py \
-    -i /tmp/ecmwf_q_u.zarr --output /tmp/viwve.zarr
+    -i /tmp/er_q_u.zarr --output /tmp/viwve.zarr
 ```
 
 ```bash

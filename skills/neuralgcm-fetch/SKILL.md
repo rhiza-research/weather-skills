@@ -1,8 +1,8 @@
 ---
 name: neuralgcm-fetch
-description: Fetch a NeuralGCM S2S ensemble forecast from gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/<init>/ (Tomorrow Now 2026 realtime) and write a weather-skills standard dataset Zarr. Default `--dataset imerg:precip` (`-v tp`, native `total_precipitation_6hr`); also `era5:surface` (`t2m`, `d2m`). 48 members, 6-hour leads out to 60 days, ~2.8° grid. Requires GCS credentials — inject NEURAL_GCM_SERVICE_CREDENTIALS (the service-account key JSON itself, no file needed) or GOOGLE_APPLICATION_CREDENTIALS (a key file path). Fetch writes `tp` as a per-step rate (`mm day-1`) — do not run deaccumulate after this skill.
+description: Fetch a NeuralGCM S2S ensemble forecast from gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/<init>/ (Tomorrow Now 2026 realtime) and write a weather-skills standard dataset Zarr. Default `--dataset imerg:precip` (`-v tp`, native `total_precipitation_6hr`); also `era5:surface` (`t2m`, `d2m`). Up to 50 members (count varies per init), 6-hour leads out to 60 days, ~2.8° grid. Requires GCS credentials — inject NEURAL_GCM_SERVICE_CREDENTIALS (the service-account key JSON itself, no file needed) or GOOGLE_APPLICATION_CREDENTIALS (a key file path). Fetch writes `tp` as a per-step rate (`mm day-1`) — do not run deaccumulate after this skill.
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads private consolidated Zarr from gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1 via gcsfs. Requires Google Cloud credentials: NEURAL_GCM_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`.
+compatibility: "Requires Python 3.12 and uv. Reads private consolidated Zarr from gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1 via gcsfs. Requires Google Cloud credentials: NEURAL_GCM_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
@@ -37,10 +37,12 @@ gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/
   YYYYMMDDTHH/era5:surface/     # 2 m temperature and dewpoint
 ```
 
-Inits are **00 and 12 UTC**. 48 ensemble members, 240 six-hour leads (60
-days), ~2.8° global grid (128×64). By default the skill takes the **most
-recent** init that has the requested `--dataset`. Pass `--date` to pin a day
-(default cycle 00 UTC).
+Inits are **00 and 12 UTC**; some are missing from the archive. The ensemble
+size varies per init (seen 1–50; recent inits often 20–50) and is printed to
+stderr. 240 six-hour leads (60 days), ~2.8° global grid (128×64). By default
+the skill takes the **most recent** init that has the requested `--dataset`.
+Pass `--date` to pin a day (default cycle 00 UTC); a missing init is an
+`Error:` (exit 1), never substituted.
 
 ## When to use
 
@@ -108,22 +110,20 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 
 A consolidated weather-skills standard dataset Zarr with dims
 `(number, step, latitude, longitude)` and a scalar `time` coord (the init,
-including 12 UTC when `--cycle 12`). `number` is 0..47. Source precip is a
+including 12 UTC when `--cycle 12`). `number` is 0..N-1 for that init's
+N members. Source precip is a
 6-hour period total in metres — fetch writes `tp` as a per-step **rate**
 (`mm day-1`), **left-labeled** so `step = 0` is the first 6h
-`[init, init+6h)`. Known temperatures are `degree_Celsius`. Clip any small
-negative precip at zero. Do **not** run `deaccumulate`. For daily/weekly
+`[init, init+6h)`. Temperatures (`degree_Celsius`) are instantaneous at
+`init + step`, so their first step is 6 h. Negative precip is clipped
+to zero. Do **not** run `deaccumulate`. For daily/weekly
 `mm`, `aggregate-temporal` then `convert-to-totals`. Stamped with
 `weather_skills_source=neuralgcm:<dataset>:<stamp>`.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: an append-only
-array of per-step entries `{skill, version, args, input}`. For this fetcher it
-is a length-1 array with `skill="neuralgcm-fetch"` and `input=null`. `args`
-records the run's flag values under underscored names; `version` is the value
-printed by `--help`. Inspect a written output's provenance with the
-`provenance` skill.
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ## Examples
 
@@ -140,15 +140,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset era5:surface -v t2m \
 ```
 
 ```bash
-# Weekly totals then plot
+# Weekly totals
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-09-11 --bbox 5/34/-5/42 \
     -o /tmp/neuralgcm.zarr
 uv run skills/aggregate-temporal/scripts/aggregate.py \
     -i /tmp/neuralgcm.zarr -o /tmp/neuralgcm_weekly.zarr --period weekly
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/neuralgcm_weekly.zarr -o /tmp/neuralgcm_weekly_mm.zarr
-# plot lives in the weather-skills-plotting repo
-uv run skills/plot/scripts/plot.py -i /tmp/neuralgcm_weekly_mm.zarr \
     -o /tmp/neuralgcm_weekly.png \
     --spec '{"inputs":[{"variable":"tp"}]}'
 ```

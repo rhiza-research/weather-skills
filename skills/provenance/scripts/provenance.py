@@ -2,15 +2,14 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime",
-#   "xarray",
-#   "zarr",
 #   "pillow",
 # ]
 # ///
-"""Inspect weather_skills_history on a Zarr or plot PNG (stdout only; never writes)."""
+"""Inspect weather_skills_history on a Zarr or plot figure (stdout only; never writes)."""
 
+import html
 import json
+import re
 import shlex
 from pathlib import Path
 
@@ -25,6 +24,21 @@ from weather_skills_core.provenance import (
 
 DEFAULT_REPO = "https://github.com/rhiza-research/weather-skills"
 DEFAULT_CLI = "forecasting-skills"
+# Ref a step runs from when it recorded no commit: the CLI above lives on dev
+# (the default branch names its CLI differently).
+DEFAULT_REF = "dev"
+# Joins whose inputs are not a repeated --input, in the order the decorator
+# records them (declaration order).
+JOIN_FLAGS = {
+    "verify": ["--forecast", "--obs"],
+    "standardize-anomaly": ["--input", "--climatology"],
+    "point-value": ["--input", "--points"],
+}
+_EXIF_USER_COMMENT = 0x9286
+_HTML_META_RE = re.compile(
+    rf'<meta\s+name=["\']{HISTORY_ATTR}["\']\s+content=["\'](.*?)["\']\s*/?>',
+    re.IGNORECASE | re.DOTALL,
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
@@ -44,64 +58,16 @@ def _parent_histories(step: dict) -> list[tuple[str, list]]:
     return out
 
 
-def _load_zarr(path: Path) -> dict:
-    import xarray as xr
+def _read_raw_histories(path: Path) -> tuple[dict, str | None]:
+    """``({location_key: raw_string}, weather_skills_source)`` for every history present.
 
-    try:
-        with xr.open_zarr(path, consolidated=False) as ds:
-            attrs = dict(ds.attrs)
-    except Exception as exc:  # noqa: BLE001
-        raise UsageError(
-            f"Error: could not open {path} as a zarr store: {exc}", prefix=False
-        ) from None
-    chains = {}
-    raw = attrs.get(HISTORY_ATTR)
-    coerced = coerce_chain(raw, path.name) if raw else None
-    if coerced is not None:
-        chains[path.name] = coerced
-    return {"chains": chains, "source": attrs.get(SOURCE_ATTR), "name": path.name}
-
-
-def _load_png(path: Path) -> dict:
-    from PIL import Image
-
-    try:
-        with Image.open(path) as img:
-            info = dict(img.info)
-    except Exception as exc:  # noqa: BLE001
-        raise UsageError(f"Error: could not open {path} as a PNG: {exc}", prefix=False) from None
-    chains = {}
-    for key in sorted(info):
-        if key == HISTORY_ATTR:
-            slot = path.name
-        elif key.startswith(f"{HISTORY_ATTR}_"):
-            slot = key[len(f"{HISTORY_ATTR}_") :]
-        else:
-            continue
-        if info[key] and slot not in chains:
-            coerced = coerce_chain(info[key], f"{path.name} ({key})")
-            if coerced is not None:
-                chains[slot] = coerced
-    return {"chains": chains, "source": None, "name": path.name}
-
-
-def _read_artifact(path: Path) -> dict:
+    A zarr keeps one store attr; a PNG keeps tEXt keys (``weather_skills_history``
+    and, for older two-input plots, ``weather_skills_history_<label>``); a JPEG
+    keeps the EXIF UserComment; an HTML figure keeps a ``<meta>`` tag.
+    """
     if not path.exists():
         raise UsageError(f"Error: {path} not found.", prefix=False)
-    if path.is_dir():
-        return _load_zarr(path)
-    if path.is_file() and path.suffix.lower() == ".png":
-        return _load_png(path)
-    raise UsageError(
-        f"Error: {path} is neither a zarr directory nor a .png file; cannot inspect provenance.",
-        prefix=False,
-    )
-
-
-def _read_raw_histories(path: Path) -> dict:
-    """Return {location_key: raw_string} for every weather_skills_history value present."""
-    if not path.exists():
-        raise UsageError(f"Error: {path} not found.", prefix=False)
+    suffix = path.suffix.lower()
     if path.is_dir():
         import xarray as xr
 
@@ -112,31 +78,52 @@ def _read_raw_histories(path: Path) -> dict:
             raise UsageError(
                 f"Error: could not open {path} as a zarr store: {exc}", prefix=False
             ) from None
-        return {HISTORY_ATTR: attrs[HISTORY_ATTR]} if attrs.get(HISTORY_ATTR) else {}
-    if path.is_file() and path.suffix.lower() == ".png":
+        raw = {HISTORY_ATTR: attrs[HISTORY_ATTR]} if attrs.get(HISTORY_ATTR) else {}
+        return raw, attrs.get(SOURCE_ATTR)
+    if path.is_file() and suffix in (".png", ".jpg", ".jpeg"):
         from PIL import Image
 
         try:
             with Image.open(path) as img:
                 info = dict(img.info)
+                comment = img.getexif().get(_EXIF_USER_COMMENT)
         except Exception as exc:  # noqa: BLE001
             raise UsageError(
-                f"Error: could not open {path} as a PNG: {exc}", prefix=False
+                f"Error: could not open {path} as an image: {exc}", prefix=False
             ) from None
+        if suffix != ".png":
+            if isinstance(comment, bytes):
+                comment = comment.removeprefix(b"ASCII\x00\x00\x00").decode("utf-8", "replace")
+            return ({HISTORY_ATTR: comment} if comment else {}), None
         raw = {}
         for key in sorted(info):
             if (key == HISTORY_ATTR or key.startswith(f"{HISTORY_ATTR}_")) and info[key]:
                 raw[key] = info[key]
-        return raw
+        return raw, None
+    if path.is_file() and suffix in (".html", ".htm"):
+        match = _HTML_META_RE.search(path.read_text(encoding="utf-8", errors="replace"))
+        return ({HISTORY_ATTR: html.unescape(match.group(1))} if match else {}), None
     raise UsageError(
-        f"Error: {path} is neither a zarr directory nor a .png file; cannot inspect provenance.",
+        f"Error: {path} is neither a zarr directory nor a .png/.jpg/.html figure; "
+        "cannot inspect provenance.",
         prefix=False,
     )
 
 
+def _read_artifact(path: Path) -> dict:
+    raw, source = _read_raw_histories(path)
+    chains = {}
+    for key, value in raw.items():
+        slot = path.name if key == HISTORY_ATTR else key[len(f"{HISTORY_ATTR}_") :]
+        coerced = coerce_chain(value, f"{path.name} ({key})")
+        if coerced is not None and slot not in chains:
+            chains[slot] = coerced
+    return {"chains": chains, "source": source, "name": path.name}
+
+
 def _run_check(path: Path) -> tuple[int, str]:
     """Validate schema: 0=valid, 1=absent, 2=invalid."""
-    raw_histories = _read_raw_histories(path)
+    raw_histories, _source = _read_raw_histories(path)
     if not raw_histories:
         return 1, f"no provenance found on {path}"
 
@@ -183,17 +170,20 @@ def _print_step(n: int, step: dict, indent: str) -> None:
     if step_input is None:
         inp = "(none -- fetcher)"
     elif isinstance(step_input, list):
-        inp = "[" + ", ".join(i.get("basename", "?") for i in step_input) + "]"
+        names = [i.get("basename", "?") if isinstance(i, dict) else "?" for i in step_input]
+        inp = "[" + ", ".join(names) + "]"
     elif isinstance(step_input, dict):
         inp = step_input.get("basename", "?")
     else:
         inp = str(step_input)
     print(f"{indent}   input: {inp}")
     args = step.get("args") or {}
-    if args:
-        print(f"{indent}   args: " + ", ".join(f"{k}={v!r}" for k, v in sorted(args.items())))
-    else:
-        print(f"{indent}   args: (none)")
+    if not isinstance(args, dict):
+        print(f"{indent}   args: (malformed: not an object)")
+        return
+    # None means the flag was not passed; leave it out.
+    shown = [f"{k}={v!r}" for k, v in sorted(args.items()) if v is not None]
+    print(f"{indent}   args: " + (", ".join(shown) or "(none)"))
 
 
 def _print_chain(chain: list, indent: str) -> None:
@@ -231,29 +221,36 @@ def _render_human(data: dict) -> None:
         _print_chain(chain, indent)
 
 
-def _uvx_spec(step: dict) -> str:
-    repo = step.get("repo") if isinstance(step.get("repo"), str) and step["repo"] else DEFAULT_REPO
-    commit = step.get("commit")
-    if isinstance(commit, str) and commit:
-        return f"git+{repo}@{commit}"
-    return f"git+{repo}"
-
-
 def _command(step: dict, inputs: list, output: str) -> str:
     skill = step.get("skill", "?")
-    args = step.get("args") or {}
-    parts = ["uvx", "--from", _uvx_spec(step), DEFAULT_CLI, skill]
+    args = step.get("args") if isinstance(step.get("args"), dict) else {}
+    repo = step.get("repo") if isinstance(step.get("repo"), str) and step["repo"] else DEFAULT_REPO
+    commit = step.get("commit")
+    ref = commit if isinstance(commit, str) and commit else DEFAULT_REF
+    # weather-skills (or a fork) has the CLI. Another repo may name its CLI
+    # differently or have none: run the skill's one script from a checkout, as
+    # skills-runner does.
+    if repo.rsplit("/", 1)[-1] == DEFAULT_REPO.rsplit("/", 1)[-1]:
+        parts = ["uvx", "--from", f"git+{repo}@{ref}", DEFAULT_CLI, skill]
+    else:
+        checkout = f'"$(_checkout {shlex.quote(repo)} {shlex.quote(ref)})"'
+        parts = ["uv", "run", "--script", f"{checkout}/skills/{skill}/scripts/*.py"]
     for dest, value in sorted(args.items()):
         flag = "--" + dest.replace("_", "-")
         if value is None or value is False:
             continue
         if value is True:
             parts.append(flag)
-        elif isinstance(value, list):
-            for item in value:
+            continue
+        for item in value if isinstance(value, list) else [value]:
+            if isinstance(item, list):
+                # append + nargs="+" (`-v tp t2m`): one flag, several values.
+                parts += [flag] + [shlex.quote(str(v)) for v in item]
+            elif isinstance(item, dict):
+                # A structured arg (a JSON spec) goes back as JSON, not a repr.
+                parts += [flag, shlex.quote(json.dumps(item, sort_keys=True))]
+            else:
                 parts += [flag, shlex.quote(str(item))]
-        else:
-            parts += [flag, shlex.quote(str(value))]
     for flag, path in inputs:
         parts += [flag, shlex.quote(path)]
     parts += ["--output", shlex.quote(output)]
@@ -266,22 +263,12 @@ def _command(step: dict, inputs: list, output: str) -> str:
     return line
 
 
-def _join_parents(chain: list) -> tuple[list[tuple[str, list]], dict] | None:
-    """Terminal multi-parent join → ``([(letter, history), ...], terminal)``."""
-    if not chain or not isinstance(chain[-1], dict):
-        return None
-    terminal = chain[-1]
-    branches = _parent_histories(terminal)
-    if len(branches) < 2:
-        return None
-    labeled = []
-    for idx, (_basename, history) in enumerate(branches):
-        label = chr(ord("a") + idx) if idx < 26 else str(idx)
-        labeled.append((label, history if isinstance(history, list) else []))
-    return labeled, terminal
+def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
+    """Emit one command per step; a join step first reproduces each parent subgraph.
 
-
-def _emit_linear(chain: list, prefix: str, final_output: str) -> list:
+    A join can sit anywhere on the path (its output feeding later steps), so every
+    step is checked, and nested joins recurse.
+    """
     lines = []
     prev = None
     n = len(chain)
@@ -292,19 +279,39 @@ def _emit_linear(chain: list, prefix: str, final_output: str) -> list:
         skill = step.get("skill", "?")
         step_input = step.get("input")
         output = final_output if i == n else f"{prefix}{i}.zarr"
+        flags = JOIN_FLAGS.get(skill, [])
+        branches = _parent_histories(step)
 
-        if isinstance(step_input, list):
-            ins = []
-            for j, item in enumerate(step_input):
-                if j == 0 and prev is not None:
-                    ins.append(("--input", prev))
+        if len(branches) >= 2:
+            branch_outputs = []
+            for idx, (basename, history) in enumerate(branches):
+                label = chr(ord("a") + idx) if idx < 26 else str(idx)
+                branch_out = f"{prefix}{label}.zarr" if prefix != "step" else f"{label}.zarr"
+                lines.append(f"# --- input branch {label} ---")
+                if history:
+                    lines += _emit_graph(history, f"{prefix}{label}_", branch_out)
                 else:
-                    ins.append(("--input", item.get("basename", "?")))
-            lines.append(_command(step, ins, output))
-            prev = output
-            continue
-
-        if step_input is None:
+                    lines.append(
+                        f"# branch {label} records no steps; "
+                        f"supply {basename} as {branch_out} yourself."
+                    )
+                branch_outputs.append(branch_out)
+                lines.append("")
+            lines.append(f"# --- combine the input branches ({skill}) ---")
+            inputs = [
+                (flags[j] if j < len(flags) else "--input", out)
+                for j, out in enumerate(branch_outputs)
+            ]
+        elif isinstance(step_input, list):
+            inputs = []
+            for j, item in enumerate(step_input):
+                flag = flags[j] if j < len(flags) else "--input"
+                if j == 0 and prev is not None:
+                    inputs.append((flag, prev))
+                else:
+                    name = item.get("basename", "?") if isinstance(item, dict) else "?"
+                    inputs.append((flag, name))
+        elif step_input is None:
             inputs = []
         elif prev is not None:
             inputs = [("--input", prev)]
@@ -318,35 +325,22 @@ def _emit_linear(chain: list, prefix: str, final_output: str) -> list:
     return lines
 
 
-def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
-    """Emit a path or a join (recursing so nested DAGs reproduce)."""
-    joined = _join_parents(chain)
-    if joined is None:
-        return _emit_linear(chain, prefix, final_output)
-
-    branches, terminal = joined
-    lines = []
-    branch_outputs = []
-    for label, history in branches:
-        branch_out = f"{prefix}{label}.zarr" if prefix != "step" else f"{label}.zarr"
-        lines.append(f"# --- input branch {label} ---")
-        if history:
-            lines += _emit_graph(history, prefix=f"{prefix}{label}_", final_output=branch_out)
-        else:
-            lines.append(f"# branch {label} records no steps; supply {branch_out} yourself.")
-        branch_outputs.append((label, branch_out))
-        lines.append("")
-
-    lines.append("# --- combine into the final step ---")
-    labels = [lab for lab, _ in branch_outputs]
-    if set(labels) <= {"forecast", "mclimate"}:
-        order = {"forecast": 0, "mclimate": 1}
-        ordered = sorted(branch_outputs, key=lambda x: order.get(x[0], 99))
-        ins = [("--" + lab, out) for lab, out in ordered]
-    else:
-        ins = [("--input", out) for _, out in branch_outputs]
-    lines.append(_command(terminal, ins, final_output))
-    return lines
+def _with_checkout_helper(lines: list) -> list:
+    """Define ``_checkout`` after the header when a step runs from a repo checkout."""
+    if not any("$(_checkout " in line for line in lines):
+        return lines
+    helper = [
+        "# Clone each repo once per ref into ./_checkouts and print its path.",
+        "_checkout() {",
+        '  local dir="_checkouts/${1##*/}@$2"',
+        '  if [ ! -d "$dir" ]; then',
+        '    git clone -q "$1" "$dir" && git -C "$dir" checkout -q "$2"',
+        "  fi",
+        '  echo "$dir"',
+        "}",
+        "",
+    ]
+    return lines[:4] + helper + lines[4:]
 
 
 def _render_script(data: dict) -> None:
@@ -362,7 +356,7 @@ def _render_script(data: dict) -> None:
     if len(chains) <= 1:
         chain = next(iter(chains.values()))
         lines += _emit_graph(chain, prefix="step", final_output=name)
-        print("\n".join(lines))
+        print("\n".join(_with_checkout_helper(lines)))
         return
 
     terminal = None
@@ -398,7 +392,7 @@ def _render_script(data: dict) -> None:
                 ordered = sorted(branch_outputs, key=lambda x: x[0])
                 ins = [("--input", out) for _, out in ordered]
             lines.append(_command(terminal, ins, name))
-    print("\n".join(lines))
+    print("\n".join(_with_checkout_helper(lines)))
 
 
 @weather_skill(
@@ -410,7 +404,7 @@ def _render_script(data: dict) -> None:
     "-i",
     "--input",
     required=True,
-    help="Artifact to inspect: a zarr dir or a .png file.",
+    help="Artifact to inspect: a zarr dir or a .png, .jpg, or .html figure.",
 )
 @weather_skill.argument(
     "--format",
@@ -424,7 +418,7 @@ def _render_script(data: dict) -> None:
     help="Validate weather_skills_history schema (exit 0/1/2).",
 )
 def provenance(input, format, check, **kwargs):
-    """Inspect weather_skills_history on a Zarr or plot PNG (stdout only; never writes)."""
+    """Inspect weather_skills_history on a Zarr or plot figure (stdout only; never writes)."""
     if check:
         code, report = _run_check(Path(input))
         if code == 0:

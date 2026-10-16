@@ -29,9 +29,8 @@ join on shared dims, broadcasting over dims present on only one side — so a
 - Any cell-by-cell difference of two datasets on a shared grid (forecast
   minus observations, model A minus model B). If the lat/lon coordinates
   differ, `coarsen` or `downscale` first so the inner join hits the same
-  points. That alignment is for this subtraction. To draw them, pass two
-  heatmap traces to `plot`: each panel keeps its own lat/lon. `--layer`
-  stacks both on one map.
+  points. That alignment is for this subtraction; drawing the two
+  side by side does not need it.
 
 ## Usage
 
@@ -40,39 +39,38 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/difference.py -i a.zarr -i b.zarr --output <o
     [--variable VAR ...]
 ```
 
-The output must be a distinct store from both inputs; the skill rejects a run
-where `--output` resolves to either `--input` path.
+Write to a new path: `--output` is replaced, so pointing it at an input
+destroys that input.
 
 ### Arguments
 - `--input`, `-i` — input Zarr; pass exactly twice. The first is A (the
   minuend), the second is B (the subtrahend); any other count exits non-zero.
 - `--output`, `-o` — output Zarr.
 - `--variable`, `-v` — repeatable; restricts the difference to the named data
-  variable(s). Each name must be a data variable of BOTH inputs; a violation
-  exits non-zero and lists each input's data variables. Default (unset)
-  differences every data variable present in both inputs (in the first
-  input's order); inputs sharing no data variable exit non-zero. Data
-  variables not differenced (absent from an input, or unselected) are dropped
-  from the output with a stderr note.
+  variable(s), each in BOTH inputs (otherwise exits non-zero listing each
+  input's variables). Default (unset) differences every data variable the two
+  inputs share; inputs sharing none exit non-zero (`rename` one first). Data
+  variables not differenced are dropped from the output.
 
 ### Alignment
 
 Shared dims are aligned with an inner join, so only overlapping coordinate
-labels are kept; dims present on only one input broadcast. Floating-point
-near-misses (e.g. coarsened `5.9500000001` vs IMERG `5.95`) drop cells — put
-both fields on one product's exact grid with `coarsen --reference-grid` (or
-`downscale --reference-grid` if the target is finer) before differencing.
-When a variable ends up empty along a dim the skill exits non-zero (no output
-is written) and distinguishes the two causes: a dim that was already empty in
-an input before alignment, versus a dim left empty because alignment found no
-overlapping coordinate values.
+labels are kept; dims present on only one input broadcast. Inputs' lat/lon are
+rounded to 5 decimals on open, so float noise (`5.9500000001` vs `5.95`)
+aligns, but grids offset from each other (CHIRPS 0.05° centres vs a 0.1°
+grid) share few or no labels — put both on one product's exact grid with
+`coarsen --reference-grid` (or `downscale --reference-grid` if the target is
+finer) first. If no labels overlap along a dim, the skill exits non-zero
+rather than writing an empty result.
 
-A shared dim that has no index coordinate cannot be label-aligned, so it is
-paired positionally (element *i* of A minus element *i* of B). If the two
-inputs disagree on such a dim's size, the run exits non-zero naming the dim
-(unlabeled rows of different length cannot be aligned); if the sizes are
-equal, the run proceeds but warns on stderr that the pairing is positional, so
-you can confirm the rows actually correspond.
+A shared dim with no index coordinate is paired by position (element *i* of A
+minus element *i* of B); differing sizes exit non-zero.
+
+Broadcasting is one-sided: if A and B each have a dim the other lacks (a
+`time` series minus a `dayofyear` climatology, a `step` forecast minus `time`
+observations) the skill exits non-zero instead of pairing every label of one
+with every label of the other. Put both on the same axis first (`step-to-time`;
+`clim-fetch` expands a climatology onto the field's `time`).
 
 ### Operand dtypes
 
@@ -84,38 +82,27 @@ integer, floating-point, and other dtypes are left untouched.
 
 ### Input units
 
-The output variable keeps the first input's attrs, including its `units`.
-When the two inputs carry a variable's `units` attr in differing values, the
-subtraction would mix incompatible scales, so a warning naming each input (by
-its full path) and its units is printed to stderr and the run proceeds —
-convert the inputs onto one units basis with `unit-convert` first. The check
-keys on the full input path rather than the basename, so two inputs that share
-a filename in different directories are still compared as distinct inputs.
-Only string `units` values are compared, after stripping surrounding
-whitespace; an input that omits `units` is not treated as a difference.
+Values are subtracted with their units: B is converted to A's units first
+(`mm hr-1` from `mm day-1` works; °C minus K works), and the output keeps A's
+attrs. Incompatible units (a rate minus an amount, `mm day-1` minus `mm`) exit
+non-zero. A temperature difference (including K minus K) is written in
+`delta_degC`, the unit of a temperature *difference* (2 delta_degC = 2 K), so
+converting it never adds the 273.15 offset of an absolute temperature.
+Precipitation totals (amount units or `cell_methods` sum) whose
+`aggregation_period` differs (a 7-day total minus a 30-day total) exit
+non-zero; aggregate both to one `--period` first.
 
 ### Output
 
 One data variable per differenced variable, holding A − B on the aligned
-(and broadcast) dims. Dataset attrs from the first input are preserved.
+(and broadcast) dims. Each variable carries A's attrs only (B's
+`aggregation_period`, `cell_methods`, etc. are dropped); dataset attrs come
+from the first input.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` DAG. Difference is a
-join: the top-level array is this difference entry, and `input` is a list
-with one item per input (A then B), each carrying that input's full
-upstream subgraph, so both branches are recorded equally. The entry also
-records the git `commit` of the skill that ran (the `version` is the value
-printed by `--help`; inherited upstream entries carry their own versions
-and commits). Inspect a written output's lineage with the `provenance`
-skill.
-
-Re-running with identical arguments against unchanged inputs and an existing
-output is a cheap no-op — reuse the same output path. A cache hit requires the
-same skill `version`, the same flags, the same input names, the same input
-content, and the same upstream history; any modification to either input forces
-a recompute (a renamed-but-unchanged input misses, and a modified same-named
-input misses).
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ## Examples
 

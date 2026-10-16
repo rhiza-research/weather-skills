@@ -4,6 +4,7 @@ import json
 
 import numpy as np
 import pytest
+import xarray as xr
 from conftest import load_skill, make_forecast, make_gridded, run_skill, write_zarr
 
 
@@ -104,7 +105,7 @@ def test_nan_counts_and_json_nulls(tmp_path, inspect_zarr, capsys):
     assert precip["n_nan"] == 1
     assert precip["n_finite"] == 23
     assert precip["min"] == 1.0
-    assert precip["sample"][0] is None
+    assert None not in precip["sample"]  # the sample shows finite values only
 
 
 def test_data_sample_truncates(tmp_path, inspect_zarr, capsys):
@@ -117,7 +118,7 @@ def test_data_sample_truncates(tmp_path, inspect_zarr, capsys):
     out = capsys.readouterr().out
     assert "finite 320/320" in out
     assert "…" in out
-    assert "(4 of 320 cells)" in out
+    assert "(4 of 320 finite cells)" in out
 
 
 def test_max_values_zero_still_caps_data_sample(tmp_path, inspect_zarr, capsys):
@@ -137,3 +138,35 @@ def test_max_values_zero_still_caps_data_sample(tmp_path, inspect_zarr, capsys):
     numeric = [v for v in precip["sample"] if v != "…"]
     assert len(numeric) == 256
     assert precip["sample"][-1] == "…"
+
+
+def test_timedelta_coords_and_key_attrs_are_readable(tmp_path, inspect_zarr, capsys):
+    ds = make_forecast(n_step=2)
+    ds = ds.assign_coords(step=np.array([0, 3 * 3600], dtype="timedelta64[s]").astype("m8[ns]"))
+    ds = xr.concat([ds, ds.assign_coords(step=ds.step + np.timedelta64(7, "D"))], dim="step")
+    ds["tp"].attrs.update(cell_methods="step: mean", aggregation_period="7 day")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+
+    run_skill(inspect_zarr, "-i", str(src))
+
+    out = capsys.readouterr().out
+    assert "0 days, 0 days 03:00:00, 7 days, 7 days 03:00:00" in out
+    assert "long_name: Total precipitation" in out
+    assert "aggregation_period: 7 day" in out
+    assert "cell_methods: step: mean" in out
+
+
+def test_sample_skips_leading_nan_and_datetime_stats(tmp_path, inspect_zarr, capsys):
+    ds = make_gridded()
+    ds["precip"].values[:, 0, :] = np.nan  # a clipped grid's empty first rows
+    onset = np.full((3, 4), np.datetime64("NaT"), dtype="datetime64[ns]")
+    onset[2, 3] = np.datetime64("2026-03-05")
+    ds["onset"] = (("latitude", "longitude"), onset)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    run_skill(inspect_zarr, "-i", str(src), "--format", "json")
+    by_name = {v["name"]: v for v in json.loads(capsys.readouterr().out)["data_vars"]}
+    assert by_name["precip"]["sample"][:3] == [1.0, 1.0, 1.0]
+    assert by_name["precip"]["n_nan"] == 8
+    assert by_name["onset"]["n_finite"] == 1
+    assert by_name["onset"]["min"] == "2026-03-05"
+    assert by_name["onset"]["mean"] is None

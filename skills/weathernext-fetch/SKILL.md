@@ -130,7 +130,10 @@ A consolidated weather-skills standard dataset Zarr with dims
 `step`) carries each lead's wall-clock datetime. Source precip
 (`total_precipitation_6hr`) is a 6-hour **period total** in metres — fetch
 writes it as `tp`, a per-step **rate** (`mm day-1`), **left-labeled** so
-`step = 0` is the first 6h `[init, init+6h)`. Clip any small negative precip
+`step = 0` is the first 6h `[init, init+6h)`. Every other field is an
+instant at `init + step` and keeps its native leads (6 h .. 360 h). Fetched
+together, the axis runs 0 h .. 360 h: `tp` is NaN at 360 h and the
+instantaneous fields at 0 h (gaps, not filled). Clip any small negative precip
 at zero. Do **not** run `deaccumulate` (it is not cumulative-since-init).
 For daily/weekly `mm`, `aggregate-temporal` then `convert-to-totals`.
 Air/surface temperatures (`2m_temperature`, pressure-level `temperature`)
@@ -142,12 +145,8 @@ sources compare directly. Stamped with
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: an append-only
-array of per-step entries `{skill, version, args, input}`. For this fetcher it
-is a length-1 array with `skill="weathernext-fetch"` and `input=null`. `args`
-records the run's flag values under underscored names; `version` is the value
-printed by `--help`. Inspect a written output's provenance with the
-`provenance` skill.
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ## Examples
 
@@ -167,13 +166,12 @@ uv run skills/select/scripts/select_dim.py -i /tmp/weathernext_z.zarr \
 ```
 
 ```bash
-# Weekly precip totals then plot (single member, for a fast preview)
+# Weekly precip totals (single member, for a fast preview)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox 5/34/-5/42 \
     -v tp --member 0 -o /tmp/weathernext_m0.zarr
 uv run skills/aggregate-temporal/scripts/aggregate.py \
     -i /tmp/weathernext_m0.zarr -o /tmp/weathernext_weekly.zarr --period weekly
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/weathernext_weekly.zarr -o /tmp/weathernext_weekly_mm.zarr
-uv run skills/plot/scripts/plot.py -i /tmp/weathernext_weekly_mm.zarr \
     -o /tmp/weathernext_weekly.png --spec '{"inputs":[{"variable":"tp"}]}'
 ```

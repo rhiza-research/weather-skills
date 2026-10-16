@@ -1,6 +1,6 @@
 ---
 name: tahmo-fetch
-description: Fetch TAHMO station observations for specific station IDs (or all TA stations in a bbox) and write a point_obs weather-skills standard dataset Zarr. Use --list-stations --bbox N/W/S/E first to see deployment stations in a region, then --station TA00025 (repeatable) to fetch chosen ids. Use when a task needs in-situ African station rainfall/temperature/humidity/pressure, e.g. to compare against gridded satellite or forecast data.
+description: Fetch TAHMO station observations for specific station IDs (or all TA stations in a bbox) and write a point_obs weather-skills standard dataset Zarr. Every call, including --list-stations and --probe-latest, needs TAHMO_API_USERNAME and TAHMO_API_PASSWORD in the environment. Use --list-stations --bbox N/W/S/E first to see deployment stations in a region, then --station TA00025 (repeatable) to fetch chosen ids. Use when a task needs in-situ African station rainfall/temperature/humidity/pressure, e.g. to compare against gridded satellite or forecast data.
 license: MIT
 compatibility: Requires Python 3.12 and uv. Installs the TAHMO Python SDK directly from GitHub (git+https://github.com/rhiza-research/tahmo-api) via uv script metadata. Requires TAHMO_API_USERNAME and TAHMO_API_PASSWORD in the environment.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -27,18 +27,30 @@ TAHMO **deployment API** (`getStations()`): list them in a bounding box, pick
 ids, then fetch. For each `(time, variable)` it picks the best-quality sensor
 (lowest TAHMO quality flag, filtering to flags <= 2), resamples to daily (sum
 for `precip`, mean for `temperature`/`humidity`/`pressure`), and writes a
-point_obs Zarr store.
+point_obs Zarr store. A day with no records is NaN, not 0 mm.
+
+Stations often miss days. Never fill or extrapolate them (no interpolation,
+`fillna`, or scaling a partial week's mean to 7 days). For multi-day totals,
+use `aggregate-temporal` → `convert-to-totals`: stations with any missing day
+in the period come out NaN. Report how many stations were complete and how
+many were excluded.
 
 Do not pass a country name. Resolve a place to `--bbox N/W/S/E` with
 `resolve-region`, list stations in that box, then fetch the ids you want — or
 fetch every TA station in the box.
 
+## Credentials
+
+Every call — fetch, `--list-stations`, and `--probe-latest` — needs
+`TAHMO_API_USERNAME` and `TAHMO_API_PASSWORD` in the environment. Without
+them the skill exits non-zero before contacting TAHMO.
+
 ## When to use
 
 - A task needs recent daily in-situ observations for specific TAHMO stations
   (or every TA station in a region).
-- A downstream skill will compare stations against gridded precip (via
-  `plot --layer`) or aggregate them temporally.
+- A downstream skill will compare stations against gridded precip or
+  aggregate them temporally.
 
 ## Usage
 
@@ -50,7 +62,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
 ### Arguments
-- `--list-stations` — query the TAHMO deployment API and print TA stations in
+- `--list-stations` — (needs credentials) query the TAHMO deployment API and print TA stations in
   `--bbox` as TSV on stdout (`station_id`, `name`, `latitude`, `longitude`,
   `country` as ISO 3166-1 alpha-2). No `-o`. Use this so the agent can choose
   which stations to fetch. An empty box prints the header and `0 stations`.
@@ -76,17 +88,8 @@ Stamped with `weather_skills_source=tahmo` and `featureType=timeSeries`.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: an append-only array of
-per-step entries `{skill, version, args, input}`. For a fetcher this is a
-length-1 array; downstream zarr-writing skills append their own entry. `args`
-is the argparse namespace minus the `--input`/`--output` path strings;
-`version` is the `_SKILL_VERSION` constant in `scripts/fetch.py`.
-
-The `args` dict stores argparse dest names (underscored, e.g. `time_dim`,
-`target_resolution`, `end_time`), not the hyphenated CLI flag names
-(`--time-dim`, `--target-resolution`, `--end-time`). A consumer
-reconstructing a `uv run ${CLAUDE_SKILL_DIR}/scripts/<skill>.py <args>` invocation must
-translate underscore → hyphen.
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ## Examples
 

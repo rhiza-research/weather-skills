@@ -305,12 +305,12 @@ def test_detect_first_rejects_probability_and_cumulative(tmp_path, indicator_fn)
     assert exc.value.code == 2
 
 
-def test_non_daily_is_refused(tmp_path, indicator_fn):
+def test_sub_daily_is_refused(tmp_path, indicator_fn):
     ds = make_gridded(n_time=3, lats=(1.0,), lons=(10.0,), fill=4.0)
     ds = ds.assign_coords(
-        time=np.array(["2026-01-01", "2026-01-08", "2026-01-15"], dtype="datetime64[ns]")
+        time=np.array(["2026-01-01T00", "2026-01-01T12", "2026-01-02T00"], dtype="datetime64[ns]")
     )
-    src = write_zarr(ds, tmp_path / "weekly.zarr")
+    src = write_zarr(ds, tmp_path / "subdaily.zarr")
     with pytest.raises(SystemExit) as exc:
         run_skill(
             indicator_fn,
@@ -367,3 +367,163 @@ def test_step_forecast_axis(tmp_path, indicator_fn):
     out = xr.open_zarr(tmp_path / "out.zarr", consolidated=True)
     assert "step" in out.dims
     assert out["indicator"].isel(step=0, latitude=0, longitude=0).values == pytest.approx(1)
+
+
+def test_weekly_rates_probability(tmp_path, indicator_fn):
+    # Weekly forecast in mm day-1: rates are compared as mm per week.
+    ds = make_forecast(n_step=3, lats=(1.0,), lons=(10.0,), name="tp", members=4)
+    ds = ds.assign_coords(step=np.arange(3) * np.timedelta64(7, "D"))
+    ds["tp"].attrs.update(units="mm day-1", **{DATA_INTERVAL_ATTR: "7 day"})
+    ds["tp"].values[:, :, 0, 0] = 10.0  # 70 mm/week
+    ds["tp"].values[:, 0, 0, 0] = [0.5, 1.0, 2.0, 3.0]  # week 1: 3.5, 7, 14, 21 mm
+    src = write_zarr(ds, tmp_path / "fc.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        indicator_fn, "-i", str(src), "-o", str(out), "--rule", "tp sum 1w <= 10", "--probability"
+    )
+    assert _cell(out, "probability").values.tolist() == pytest.approx([0.5, 0.0, 0.0])
+    with pytest.raises(SystemExit):
+        run_skill(
+            indicator_fn,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "bad.zarr"),
+            "--rule",
+            "tp sum 10d <= 9",
+        )
+
+
+@pytest.mark.parametrize(
+    "units, scale", [("mm day-1", 1), ("mm hr-1", 1 / 24), ("kg m-2 s-1", 1 / 86400)]
+)
+def test_precip_threshold_is_mm_whatever_the_stored_rate_units(
+    tmp_path, indicator_fn, units, scale
+):
+    ds = _daily(8)
+    ds["precip"].values[:, 0, 0] = np.array([0, 0, 12, 12, 12, 0, 0, 0]) * scale
+    ds["precip"].attrs["units"] = units
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip sum 3d >= 20")
+    assert _cell(out).values[:6].tolist() == [0.0, 1.0, 1.0, 1.0, 0.0, 0.0]
+
+
+def test_temperature_threshold_is_celsius(tmp_path, indicator_fn):
+    ds = _daily(4, name="t2m")
+    ds["t2m"].values[:, 0, 0] = [300.0, 310.0, 300.0, 310.0]  # 26.85 / 36.85 deg C
+    ds["t2m"].attrs.update(units="K", standard_name="air_temperature")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "t2m mean 1d >= 35")
+    assert _cell(out).values.tolist() == [0.0, 1.0, 0.0, 1.0]
+
+
+def test_detect_first_is_unknown_after_a_gap(tmp_path, indicator_fn):
+    """Missing days before the first observed onset could hide an earlier one."""
+    ds = _daily(10)
+    ds["precip"].values[:, 0, 0] = [np.nan, np.nan, 0, 0, 10, 10, 10, 0, 0, 0]
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        indicator_fn,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--rule",
+        "precip sum 3d >= 20",
+        "--detect",
+        "first",
+    )
+    assert np.isnat(_cell(out, "indicator_time").values)
+
+
+def test_lookahead_tail_is_reported(tmp_path, indicator_fn, capsys):
+    """icpac-onset looks 27 days ahead: say which dates cannot be decided yet."""
+    src = write_zarr(_daily(40, fill=10.0), tmp_path / "in.zarr")
+    run_skill(
+        indicator_fn, "-i", str(src), "-o", str(tmp_path / "out.zarr"),
+        "--rule", "icpac-onset", "--detect", "first",
+    )  # fmt: skip
+    err = capsys.readouterr().err
+    assert "looks 27 day(s) past each date" in err
+    assert "after 2026-01-13" in err  # data end 2026-02-09 minus 27 days
+
+
+def test_backward_free_rule_has_no_tail_note(tmp_path, indicator_fn, capsys):
+    src = write_zarr(_daily(10, fill=10.0), tmp_path / "in.zarr")
+    run_skill(
+        indicator_fn, "-i", str(src), "-o", str(tmp_path / "out.zarr"),
+        "--rule", "precip sum 1d >= 5",
+    )  # fmt: skip
+    assert "looks" not in capsys.readouterr().err
+
+
+def test_nan_day_makes_every_covering_window_unknown(tmp_path, indicator_fn):
+    ds = _daily(8)
+    ds["precip"].values[:, 0, 0] = [0, 0, np.nan, 0, 0, 0, 0, 0]
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip count-below 1 3d >= 3"
+    )
+    got = _cell(out).values  # windows starting days 0-2 cover the gap; days 6-7 are the tail
+    np.testing.assert_array_equal(got, [np.nan, np.nan, np.nan, 1, 1, 1, np.nan, np.nan])
+
+
+def test_cumulative_probability_tail_is_unknown(tmp_path, indicator_fn):
+    """A member that has not hit by the tail is undecided, so P is unknown, not 1."""
+    ds = _daily(6).expand_dims(number=[0, 1]).copy(deep=True)
+    ds["precip"].values[0, :, 0, 0] = [0, 30, 0, 0, 0, 0]  # member 0 onset on day 0
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        indicator_fn, "-i", str(src), "-o", str(out),
+        "--rule", "precip sum 3d >= 20", "--cumulative", "--probability",
+    )  # fmt: skip
+    np.testing.assert_array_equal(
+        _cell(out, "probability").values, [0.5, 0.5, 0.5, 0.5, np.nan, np.nan]
+    )
+
+
+def test_probability_is_unknown_when_a_member_is_missing(tmp_path, indicator_fn):
+    ds = _daily(2).expand_dims(number=[0, 1, 2]).copy(deep=True)
+    ds["precip"].values[:, 0, 0, 0] = [30, np.nan, 0]
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        indicator_fn, "-i", str(src), "-o", str(out),
+        "--rule", "precip sum 1d >= 20", "--probability",
+    )  # fmt: skip
+    np.testing.assert_array_equal(_cell(out, "probability").values, [np.nan, 0.0])
+
+
+def test_detect_any_is_unknown_across_a_gap(tmp_path, indicator_fn):
+    """A missing day is not a dry day: no hit with a gap is unknown, not 0."""
+    gap = _daily(5)
+    gap["precip"].values[:, 0, 0] = [0, np.nan, 0, 0, 0]
+    tail = _daily(5)
+    tail["precip"].values[:, 0, 0] = [0, 0, 0, 0, np.nan]  # trailing run = undecided tail
+    for ds, want in ((gap, np.nan), (tail, 0.0)):
+        src = write_zarr(ds, tmp_path / "in.zarr")
+        out = tmp_path / "out.zarr"
+        run_skill(
+            indicator_fn, "-i", str(src), "-o", str(out),
+            "--rule", "precip sum 1d >= 20", "--detect", "any",
+        )  # fmt: skip
+        np.testing.assert_array_equal(_cell(out).values, want)
+
+
+def test_within_one_true_day_decides_an_incomplete_lookahead(tmp_path, indicator_fn):
+    """A dry spell already seen is a known false start even if later days are undecided."""
+    ds = _daily(7)
+    ds["precip"].values[:, 0, 0] = [0, 0, 0, 0, 0, 5, 5]
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        indicator_fn, "-i", str(src), "-o", str(out),
+        "--rule", "not precip consecutive-below 1 3d within 5d",
+    )  # fmt: skip
+    # Spell mask is 1,1,1,0,0,nan,nan: day 0/1 see a spell; day 2 needs days 5-7.
+    np.testing.assert_array_equal(_cell(out).values, [0, 0] + [np.nan] * 5)

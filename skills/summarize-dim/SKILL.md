@@ -38,24 +38,21 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py --input <in.zarr> --output <
     [--variable VAR ...] [--lat-weighted]
 ```
 
-The output must be a distinct store from the input; the skill rejects a run
-where `--input` and `--output` resolve to the same path.
+Write to a new path: `--output` is replaced, so pointing it at the input
+destroys the input.
 
 ### Arguments
 - `--input`, `-i` — input Zarr.
-- `--output`, `-o` — output Zarr (a distinct path from `--input`).
+- `--output`, `-o` — output Zarr.
 - `--dim` — dimension to summarize. Repeat once per dimension to summarize
   several in one run. Each name must be a dim of the input.
 - `--method` — statistic applied along the summarized dimension(s): `mean`,
   `std`, `min`, `max`, `sum`, or `median`.
 - `--variable`, `-v` — repeatable; restricts the summary to the named data
-  variable(s). Each name must be a data variable of the input and must carry
-  every requested `--dim`; violations exit non-zero. Default (unset) summarizes
-  every data variable that carries at least one of the requested dims, each
-  over the subset of those dims it carries. Unselected or untouched data
-  variables pass through unchanged (a stderr note lists them); summarizing a
-  default selection where no data variable carries any requested dim exits
-  non-zero.
+  variable(s), each a data variable of the input. Default (unset) is every data
+  variable. Each selected variable is summarized over the requested dims it
+  carries; unselected variables, and selected ones carrying none of the dims,
+  pass through unchanged.
 - `--lat-weighted` — with `--method mean`, apply cosine-latitude weights when
   summarizing the latitude dim (must include that dim in `--dim`).
 
@@ -70,6 +67,13 @@ sample in the same sense); this skill performs no unit math or relabeling
 either way — use `unit-convert` to restamp units when needed. (For temporal
 totals specifically, use `aggregate-temporal` then `convert-to-totals`.)
 
+The statistic is appended to CF `cell_methods` (`number: standard_deviation`,
+`latitude: longitude: mean`). `std` and `sum` also rewrite `long_name`
+(`Standard deviation of Total precipitation across number`) and drop the
+product's `GRIB_name` / `short_name` / `comment`, so a plot does not label an
+ensemble spread as the quantity itself. `standard_name` stays, as CF encodes
+a statistic of a quantity with its `standard_name` plus `cell_methods`.
+
 NaNs are skipped (xarray's default `skipna`). Two method-specific
 conventions follow from that:
 
@@ -77,9 +81,8 @@ conventions follow from that:
   not `0`, so "no data" is not silently reported as a real zero total.
 - `std` uses `ddof=1` (the sample standard deviation), matching the
   ensemble-spread convention that spread across members is a sample estimate
-  rather than a population sigma. A `std` over a size-1 dim is therefore zero
-  by construction (a single sample has no spread); the skill warns on stderr
-  in that case.
+  rather than a population sigma. A `std` over a size-1 dim is therefore NaN
+  (a single sample has no sample spread).
 
 ### Output
 
@@ -90,19 +93,8 @@ Remaining dims, coords, and pass-through variables are unchanged.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: the input's chain plus
-an entry for this run, each entry `{skill, version, args, input}` (`version`
-is the value printed by `--help`). Flag values in `args` are recorded under
-underscored names (e.g. a flag `--time-dim` is recorded as `time_dim`);
-translate underscore → hyphen when reconstructing a CLI invocation. Inspect a
-written output's lineage with the `provenance` skill.
-
-Re-running with identical arguments against an unchanged input and an existing
-output is a cheap no-op — reuse the same output path. A cache hit requires the
-same skill `version`, the same flags, the same input name, the same input
-content, and the same upstream history; any modification to the input forces a
-recompute (a renamed-but-unchanged input misses, and a modified same-named
-input misses).
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ## Examples
 

@@ -54,7 +54,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - `--grid` — CMIP6 `grid_label` (e.g. `gn`, `gr1`). Required only when more than
   one grid matches the other facets; otherwise the single match is used.
 - `--start-time`, `--end-time` — inclusive date range. Each value is an absolute ISO date `YYYY-MM-DD`. Future dates are allowed for scenario experiments (which run to
-  2100). Calendar windows: `resolve-time last-2w`. `--probe-latest` prints `none` (no realtime cap).
+  2100). Dates are compared as year/month/day, so `2015-03-31` works on a
+  `360_day` model and `2016-02-29` on a `noleap` one. The window must lie
+  inside the run's time bounds: historical ends 2014-12-31 and `ssp*` start
+  2015-01-01, so a window crossing 2014→2015 is refused (exit 2) — fetch each
+  experiment's part and join them with the `concat` skill along `time`.
+  Calendar windows: `resolve-time last-2w`.
 - `--probe-latest` — print `none` on stdout and exit (CMIP6 has no realtime cap). No `-o`.
 - `--bbox` — spatial subset `N/W/S/E` decimal degrees. Longitudes are normalized
   to the [-180, 180) convention so negative west/east values select correctly.
@@ -62,8 +67,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
   `resolve-region` skill.
 - `--output`, `-o` — output Zarr path (overwritten if it exists).
 
-If the facets match no dataset, the error lists the available experiments,
-variables, and members for the chosen model. Ocean/curvilinear grids (2-D
+If the facets match no dataset, the error lists, for the chosen model, the
+valid experiments, variables, tables, and members — each with the other facets
+held fixed (plus grids when `--grid` was given). Ocean/curvilinear grids (2-D
 latitude/longitude over index dims) are rejected — this fetcher handles only
 regular 1-D lat/lon grids.
 
@@ -85,14 +91,16 @@ mapping onto the standard dataset would otherwise break:
 - **Coordinates.** `latitude`/`longitude`/`time` carry CF `standard_name`,
   `units` (`degrees_north`/`degrees_east`), and `axis` (`Y`/`X`/`T`). cf-xarray
   resolves the X/Y/T axes — verified on the way out.
-- **Bounds integrity.** The weather-skills standard dataset does not carry cell bounds, so the
-  `*_bnds` variables are dropped. The `bounds` attr each coordinate would
-  otherwise still carry (a dangling CF §7.1 reference to an absent variable) is
-  removed, so no coordinate points at a missing variable.
-- **Calendar.** Times are decoded with the dataset's native calendar (often
-  `noleap` or `360_day`); that source calendar and a udunits-valid `units` are
-  carried into the written time encoding and re-verified on the written store, so
-  the non-standard calendar is never silently coerced to `standard`.
+- **Bounds and intervals.** The source `lat_bnds`/`lon_bnds` are dropped with
+  their `bounds` attrs. Time labels are cell centres (daily at 12:00, monthly
+  mid-month). A regular axis (`day`) is stamped `data_interval` (`1 day`); an
+  irregular monthly axis (`Amon`) has no `data_interval` and instead carries
+  `time_bounds` copied from the source cell edges (`[Jan 1, Feb 1)`), so
+  `aggregate-temporal` / `convert-to-totals` weight whole calendar months.
+- **Calendar.** Times are decoded as cftime in the dataset's native calendar
+  (often `noleap` or `360_day`) and written as cftime, so the calendar is never
+  silently coerced to `standard`. Use `convert-calendar` to align with
+  observations. The written time `units` epoch is re-derived, not the source's.
 - **Units.** Known air-temperature (`tas`) and precip (`pr`) kinds are converted
   to standard display units (`degree_Celsius`, `mm day-1`). Other variables
   keep source `units`/`standard_name`/`long_name`; `units` are validated with a
@@ -100,14 +108,14 @@ mapping onto the standard dataset would otherwise break:
 
 ### Memory and performance
 
-The store is opened dask-backed, so the bbox/time selection streams to Zarr
-chunk-by-chunk on write and peak resident memory stays bounded to a few chunks
-regardless of how long the window is. There is no size threshold or refusal —
-what to fetch is your call, from a few months over a small bbox to a global
-multi-decadal pull. `--bbox` restricts the spatial extent; the `clip-region`
-skill can shrink an existing output further. Monthly tables (`Amon`) are compact
-(a full 1850–2014 historical monthly slice is on the order of ~100 MB); daily
-tables (`day`) are correspondingly larger.
+The store is opened lazily (no dask): `--bbox` and the time window are applied
+before any data is read, and only the source chunks the selection touches are
+downloaded. Source chunks typically span the full globe and ~600 time steps (roughly
+50–125 MB each decoded), and the whole selection is held in memory when written.
+A few months over Kenya peaks at ~0.35–0.4 GB RSS, of which ~0.26 GB is the
+80 MB catalog CSV. A global 1° monthly historical record (1850–2014) is ~0.4 GB
+of data; global daily multi-decade pulls are many GB, so pass `--bbox` and keep
+daily windows short. There is no size threshold or refusal.
 
 ### Errors
 
@@ -118,19 +126,16 @@ Failures are reactive and each emits a one-line actionable message:
 - Facets that match no dataset list the available experiments, variables, and
   members for the chosen model and exit 2.
 - Several matching `grid_label`s list the grids and ask for `--grid` (exit 2).
+- A window extending past the run's time bounds reports the covered range
+  (exit 2).
 - An ocean/curvilinear (2-D lat/lon) grid is rejected with a reprojection
   message (exit 2).
 - A store open or write failure surfaces the underlying error.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: an append-only array of
-per-step entries `{skill, version, args, input}`. For this fetcher it is a
-length-1 array with `skill="cmip6-fetch"` and `input=null`. `args` records the
-resolved facets (`model`, `experiment`, `variable`, `member`, `table`, the chosen
-`grid`, and the dataset `data_version`), the `bbox`, and `start`/`end`. `version`
-is this skill's version, also printed by `--help`.
-Inspect a written output's provenance with the `provenance` skill.
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ## Examples
 

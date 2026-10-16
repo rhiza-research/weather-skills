@@ -2,10 +2,6 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime",
-#   "xarray",
-#   "zarr",
-#   "numpy",
 #   "pandas",
 #   "tahmo",
 # ]
@@ -143,9 +139,7 @@ def _select_stations(stations, station_ids, bbox):
     selected = _filter_bbox(_ta_stations(stations), bbox)
     if selected.empty:
         north, west, south, east = bbox
-        raise DataError(
-            f"no TAHMO stations in --bbox {north:g}/{west:g}/{south:g}/{east:g}."
-        )
+        raise DataError(f"no TAHMO stations in --bbox {north:g}/{west:g}/{south:g}/{east:g}.")
     return selected
 
 
@@ -193,7 +187,15 @@ def _station_frame(api, station_id: str, start: str, end: str):
     agg_spec = {c: DAILY_AGG[c] for c in wide.columns if c in DAILY_AGG}
     if not agg_spec:
         return None
-    daily = wide.resample("D").agg(agg_spec)
+    resampler = wide.resample("D")
+    # A day with no records is missing, not 0 mm: plain ``sum`` turns an
+    # outage into a dry day. ``min_count=1`` keeps it NaN.
+    daily = pd.DataFrame(
+        {
+            c: resampler[c].sum(min_count=1) if how == "sum" else resampler[c].agg(how)
+            for c, how in agg_spec.items()
+        }
+    )
     daily["station_id"] = station_id
     return daily
 
@@ -267,7 +269,6 @@ def _ensure_setup(state):
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
@@ -276,20 +277,14 @@ def _ensure_setup(state):
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(start_time, end_time, workers, bbox, station, **kwargs):
+def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_latest, **kwargs):
     """Fetch TAHMO station observations and write a point_obs weather-skills standard dataset Zarr."""
     import pandas as pd
     import xarray as xr
 
-    list_stations = kwargs.get("list_stations")
     if list_stations and bbox is None:
         raise UsageError("--list-stations requires --bbox N/W/S/E.")
-    if (
-        not list_stations
-        and kwargs.get("probe_latest") is None
-        and not station
-        and bbox is None
-    ):
+    if not list_stations and probe_latest is None and not station and bbox is None:
         raise UsageError("pass --station ID (repeatable) and/or --bbox N/W/S/E.")
 
     api, stations, var_meta = _ensure_setup({})
@@ -298,7 +293,7 @@ def fetch(start_time, end_time, workers, bbox, station, **kwargs):
         _print_station_list(_filter_bbox(_ta_stations(stations), bbox))
         return
 
-    if kwargs.get("probe_latest") is not None:
+    if probe_latest is not None:
         from datetime import UTC, datetime, timedelta
 
         end = datetime.now(UTC).date()

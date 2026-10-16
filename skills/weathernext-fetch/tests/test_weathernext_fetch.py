@@ -92,11 +92,15 @@ def test_fetch_writes_zarr_and_stamps_history(tmp_path, fetch_mod, monkeypatch):
         assert ds["tp"].attrs["units"] == "mm day-1"
         assert ds["tp"].attrs.get("data_interval")
         hours = np.asarray(ds["step"].values).astype("timedelta64[h]").astype(int)
-        assert list(hours) == [0, 6, 12, 18]
-        # 0.001 m / 6h = 4 mm day-1
-        np.testing.assert_allclose(ds["tp"].values[0, :, 0, 0], [4.0, 4.0, 4.0, 4.0], rtol=1e-5)
+        # tp moves to period start (0..18 h); t2m keeps its native leads (6..24 h).
+        assert list(hours) == [0, 6, 12, 18, 24]
+        # 0.001 m / 6h = 4 mm day-1; no period after the last lead.
+        np.testing.assert_allclose(
+            ds["tp"].values[0, :, 0, 0], [4.0, 4.0, 4.0, 4.0, np.nan], rtol=1e-5
+        )
         assert ds["2m_temperature"].attrs["units"] == "degree_Celsius"
-        np.testing.assert_allclose(ds["2m_temperature"].values.mean(), 6.85, atol=0.01)
+        assert np.isnan(ds["2m_temperature"].values[0, 0, 0, 0])
+        np.testing.assert_allclose(np.nanmean(ds["2m_temperature"].values), 6.85, atol=0.01)
         assert "weathernext:20260925_06hr_01_preds" in ds.attrs.get("weather_skills_source", "")
         assert "aggregation_period" not in ds["tp"].attrs
         assert ds["valid_time"].dims == ("step",)
@@ -254,3 +258,36 @@ def test_missing_date_exits_1(tmp_path, fetch_mod, monkeypatch):
             str(tmp_path / "unused.zarr"),
         )
     assert exc.value.code == 1
+
+
+def test_t2m_keeps_native_lead_and_tp_moves_to_period_start(tmp_path, fetch_mod, monkeypatch):
+    """t2m is instantaneous at init + step; tp is a 6 h total labelled at its end."""
+    remote = _native_predictions(members=1)
+    hours = np.array([6.0, 12.0, 18.0, 24.0], dtype="float32")
+    remote["2m_temperature"].values[:] = (273.15 + hours)[None, :, None, None]  # degC == lead
+    remote["total_precipitation_6hr"].values[:] = (hours / 1000.0)[None, :, None, None]
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp: True)
+    monkeypatch.setattr(fetch_mod, "_open_remote", lambda *args, **kwargs: remote.copy(deep=True))
+    out = tmp_path / "mixed.zarr"
+    run_skill(fetch_mod.fetch, "--date", "2026-09-25", "-v", "tp", "-v", "t2m", "-o", str(out))
+
+    ds = xr.open_zarr(out, consolidated=True).isel(number=0, lat=0, lon=0)
+    t2m = next(v for v in ds.data_vars if v != "tp")
+    lead_h = ds["step"].values / np.timedelta64(1, "h")
+    np.testing.assert_allclose(lead_h, [0, 6, 12, 18, 24])
+    # t2m sits on its own valid time: the 6 h value at step 6 h, nothing at 0.
+    np.testing.assert_allclose(ds[t2m].values, [np.nan, 6, 12, 18, 24], rtol=1e-5)
+    np.testing.assert_array_equal(ds["valid_time"].values, ds["time"].values + ds["step"].values)
+    # tp's 0-6 h total is labelled at the period start, nothing after the last period.
+    assert np.isnan(ds["tp"].values[-1]) and not np.isnan(ds["tp"].values[0])
+    assert ds["tp"].values[0] < ds["tp"].values[1]
+
+
+def test_t2m_alone_keeps_native_leads(tmp_path, fetch_mod, monkeypatch):
+    remote = _native_predictions(members=1)
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp: True)
+    monkeypatch.setattr(fetch_mod, "_open_remote", lambda *args, **kwargs: remote.copy(deep=True))
+    out = tmp_path / "t2m.zarr"
+    run_skill(fetch_mod.fetch, "--date", "2026-09-25", "-v", "t2m", "-o", str(out))
+    lead_h = xr.open_zarr(out, consolidated=True)["step"].values / np.timedelta64(1, "h")
+    np.testing.assert_allclose(lead_h, [6, 12, 18, 24])

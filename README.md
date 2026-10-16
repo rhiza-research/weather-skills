@@ -9,9 +9,9 @@
 > use in any automated workflow you rely on, and do not assume outputs are
 > scientifically validated. Expect breakage.
 
-Small tools an AI agent can run to fetch weather data, transform it, and make
-plots. Each skill is a command-line script. They share one Zarr file format so
-outputs of one skill can feed into the next — see
+Small tools an AI agent can run to fetch weather data and transform it. Each
+skill is a command-line script. They share one Zarr file format so outputs of
+one skill can feed into the next — see
 [`STANDARD_DATASET.md`](https://github.com/rhiza-research/weather-skills-core/blob/main/docs/weather-skill-authoring/references/STANDARD_DATASET.md).
 
 Built as [Agent Skills](https://agentskills.io) by Rhiza Research.
@@ -32,7 +32,7 @@ credentialed or source-specific fetcher only when it does not.
 | `imerg-fetch` | Earthdata **daily** IMERG Late/Final fallback (`GPM_3IMERGDL` / `GPM_3IMERGDF`) → Zarr. Default IMERG is `dynamical-fetch`, not this skill. |
 | `clim-fetch` | Climatology (mean + std) for a `--dataset` (`imerg_final`, `era5`, `chirps`, `ecmwf_ifs`, `oisst`, …) via Sheerwater's public GCS mirror, at a selected `--prediction-timedelta` lead and `--window` (days; correctly rolled up, centered, with circular padding if not pre-mirrored), expanded to a `--start-time`/`--end-time` window → Zarr. OISST SST is `--dataset oisst --variable sst`. |
 | `tahmo-fetch` | TAHMO station observations (daily-aggregated) → Zarr |
-| `kenya-forecast-fetch` | Kenya forecasts archive grids (`gs://kenya-forecasting-data/<date>/data/`) — native S2S Zarr or CHIRPS-resolution weekly / daily downscaled precip → standard dataset (compose with `plot` for figures) |
+| `kenya-forecast-fetch` | Kenya forecasts archive grids (`gs://kenya-forecasting-data/<date>/data/`) — native S2S Zarr or CHIRPS-resolution weekly / daily downscaled precip → standard dataset |
 | `cumulus-fetch` | Cumulus AI operational ensemble precip (`gs://sheerwater-datalake/cumulus-data/v0.0.1-op/pf/…`) — 1° global, 29 members, 46 daily leads → Zarr. Requires GCS credentials. |
 | `neuralgcm-fetch` | NeuralGCM S2S ensemble from `gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/<init>/` (IMERG precip `tp`, ERA5 surface `t2m`/`d2m`) — 48 members, 6-hour leads to 60 days, ~2.8° → Zarr. Requires GCS credentials. |
 | `weathernext-fetch` | Google WeatherNext 2 ensemble from `gs://weathernext/weathernext_2_0_0/zarr/2025_to_present/<init>/` (realtime archive only) — 64 members, 6-hour leads to 15 days, 0.25° global, 13 pressure levels → Zarr. Pass `-v` and `--member` (full cube ~1 TB). Requires GCS credentials. |
@@ -45,51 +45,24 @@ credentialed or source-specific fetcher only when it does not.
 | `resolve-time` | Resolve relative calendar dates ("the last two weeks", `latest`, `now-3d`) to `--start-time`/`--end-time` or `--date`. Latest published day is the fetcher's `--probe-latest`, not this skill. |
 | `inspect-zarr` | Print dimension sizes, coordinate values, and a bounded data-variable summary (min/max/mean, finite/NaN, truncated sample) of a Zarr (stdout only; never dumps full arrays) |
 | `clip-region` | Subset a gridded Zarr to a `--bbox N/W/S/E` (use `resolve-region` for a country's bbox) |
-| `aggregate-temporal` | Resample rates along `time`/`step` (mean/min/max); duration-weights CF bounds; keeps `data_interval` when uniform; stamps `aggregation_period` + `aggregation_coverage` + `cell_methods` |
+| `aggregate-temporal` | Resample rates along `time`/`step` (mean/min/max); duration-weights CF bounds; stamps `data_interval` = the output spacing (the `--period`), plus `aggregation_period` + `aggregation_coverage` + `cell_methods` |
 | `convert-to-totals` | Terminal: rate × stamped `aggregation_period` → amount (100% coverage default; refuses overlapping Δt < period — `select` first) |
 | `deaccumulate` | Convert a leftover cumulative-since-init forecast variable into per-step diffs along the `step` axis (fetchers already write rates) |
 | `step-to-time` | Realize a forecast's `step` lead-time axis as wall-clock valid times (`time = init + step`) so it can be compared against time-based observations |
 | `unit-convert` | Convert a variable to target `--to-units` (e.g. precip flux `kg m-2 s-1` → depth rate `mm/day` via ÷ liquid-water density) |
-| `downscale` | Spatial downscaling onto a finer grid (by factor, finer resolution, or a reference grid) via `--method` (linear-interpolation or q-q empirical quantile mapping) |
+| `downscale` | Spatial downscaling onto a finer grid (by factor, finer resolution, or a reference grid) via `--algorithm` (`linear-interpolation` or `q-q` empirical quantile mapping) |
 | `coarsen` | Coarsen or align a grid by linear interpolation onto a target `(resolution, offset)` — geometry only, adds no information |
 | `edit-coords` | Rename data variables, coordinates, or dims (`--rename OLD=NEW`) and re-index a dim by another 1-D coordinate (`--swap-dims OLD=NEW`); refuses edits that lose an ontology dim |
 | `drop` | Drop named data variables or non-index coordinates (`--name`), cleaning up CF `grid_mapping` / `coordinates` / bounds references — e.g. stray `valid_time` / `spatial_ref` before `concat` |
 | `concat` | Join Zarr stores along a named dim (incl. new dims with coord values) |
 | `summarize-dim` | Summarize named dims with a statistic (mean/std/min/max/sum/median) — e.g. ensemble spread as the std across `number`, or a time-mean baseline |
 | `point-value` | Sample a gridded dataset at point locations (station Zarr, `--point LAT,LON[,ID]`, or CSV) into a `station_id` point_obs dataset — nearest, bilinear, or N×N cell-mean — for grid-vs-station `difference` / `verify` |
+| `local-extrema` | Find the local highs or lows of a gridded field (pressure centres, rainfall maxima) into a `station_id` point_obs dataset of locations and central values — for H / L map labels or listing centres |
 | `difference` | Subtract one dataset from another (A − B) with inner-join alignment and broadcasting — anomalies vs a baseline, scenario-minus-historical change maps |
 | `standardize-anomaly` | Standardized anomaly aka z-score: `(field − clim_avg) / clim_std` against a climatology (e.g. `clim-fetch`) — dimensionless output, errors on units mismatch. For a plain physical-unit anomaly, use `difference` instead. |
-| `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `ecmwf-fetch -v q -v u` |
-| `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). Plot the output with `plot`. |
-| `indicator` | Daily boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
-| `plot` | Heatmap, filled-contour, timeseries, **xy scatter**, wind-rose, quiver, or **layered** map (repeatable `--layer heatmap:…` / `scatter:…` / `outline:…`) from one or more datasets |
-| `plot-compare` | Side-by-side multi-panel comparison of two datasets (incl. station-vs-grid), optionally clipped to a `--bbox` and masked to a `--mask-geojson` polygon |
-| `plot-compare-forecasts` | N-dataset comparison grid (rows = forecasts and/or gridded obs; columns = union of times); missing times are blank `n/a` cells |
-| `plot-verify` | Lead-week verification **map** grid from pre-computed `verify` Zarrs (one `--verify` per `--forecast`) |
-| `plot-mediogram` | ECMWF-style mediogram PNG comparing a forecast ensemble against an m-climate ensemble at a single lat/lon |
-
-### Figure skills
-
-`plot`, `plot-timeseries`, `plot-verify`, and `plot-mediogram` moved to their
-own repo, [`weather-skills-plotting`](https://github.com/rhiza-research/weather-skills-plotting)
-(`plot-compare` and `plot-compare-forecasts` live elsewhere too). All of them
-write a PNG and print a `plot hash` (sha256 of RGB pixels) plus `data: not
-null` or `data: NULL`. Compare hashes across runs to see whether the figure
-changed; `NULL` means inspect-zarr the input. First runs use CLI flags
-(`--title`, `--variable`, `--figsize`, …). `--dump-spec -` dumps the assembled
-spec as JSON and skips the PNG (`-o` is not required); `--patch` submits
-edits. There is no `*.plot.json` sidecar. A set CLI flag still overlays the
-spec. See [weather-skills-plotting's docs/plotting.md](https://github.com/rhiza-research/weather-skills-plotting/blob/main/docs/plotting.md)
-for the catalog, the shared JSON spec, and remaining limits.
-
-| Skill | Use when |
-|---|---|
-| [`plot`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot/SKILL.md) | One product, or overlays on the same axes (`--layer`) |
-| [`plot-timeseries`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-timeseries/SKILL.md) | Many 1D traces (`--along` spaghetti, `--band`) |
-| [`plot-compare`](skills/plot-compare/SKILL.md) | Exactly two datasets, two rows |
-| [`plot-compare-forecasts`](skills/plot-compare-forecasts/SKILL.md) | N grids vs shared valid times |
-| [`plot-verify`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-verify/SKILL.md) | Lead-week obs / forecast / metric maps |
-| [`plot-mediogram`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-mediogram/SKILL.md) | Ensemble vs m-climate at one lat/lon |
+| `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
+| `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). |
+| `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
 
 ### Agent capabilities
 Capabilities the agent uses alongside pipelines; none of them produces a
@@ -99,7 +72,7 @@ dataset output.
 |---|---|
 | `resolve-time` | Resolve relative calendar dates to absolute `--start-time`/`--end-time` or `--date`. |
 | `inspect-zarr` | Print dims, coordinate values, and a bounded data-variable summary of a Zarr (stdout; no write). Data arrays can be huge — this skill never dumps them in full. |
-| `provenance` | Inspect `weather_skills_history` on a Zarr or plot PNG (DAG lineage, JSON, or a commit-pinned reproduction script). |
+| `provenance` | Inspect `weather_skills_history` on a Zarr or a PNG (DAG lineage, JSON, or a commit-pinned reproduction script). |
 | `submit-feedback` | Build a length-checked prefilled GitHub new-issue URL the user clicks to file feedback under their own account. Holds no token, makes no network call, creates no issue itself. |
 
 ## Install
@@ -212,62 +185,32 @@ See `npx skillkit install --help` for more flags.
 
 ## Composition pattern
 
-Middle-pipeline skills are designed to chain. Example — daily forecast plus
-satellite validation for one country, using the `forecasting-skills` CLI from
+Middle-pipeline skills are designed to chain. Example — a weekly forecast and
+the matching observations for one country, using the `forecasting-skills` CLI from
 the Install section above:
 
 ```bash
-# Over Kenya — dummy bbox 5/34/-5/42; resolve-region prints the real N/W/S/E.
-forecasting-skills ecmwf-fetch \
-    --date 2026-02-13 \
-    --bbox 5/34/-5/42 \
+# Kenya bbox (N/W/S/E) from resolve-region
+forecasting-skills resolve-region KEN
+
+# ECMWF 46-day ensemble forecast, weekly totals
+forecasting-skills dynamical-fetch \
+    --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree \
+    --date 2026-09-14 --bbox 5.5/33.9/-4.7/41.9 -v tp \
     --output /tmp/ecmwf.zarr
 forecasting-skills aggregate-temporal \
-    --input /tmp/ecmwf.zarr \
-    --period weekly \
-    --method mean \
-    --output /tmp/ecmwf_weekly.zarr
+    --input /tmp/ecmwf.zarr --period weekly --output /tmp/ecmwf_weekly.zarr
 forecasting-skills convert-to-totals \
-    --input /tmp/ecmwf_weekly.zarr \
-    --output /tmp/ecmwf_weekly_totals.zarr
-forecasting-skills plot \
-    --input /tmp/ecmwf_weekly_totals.zarr \
-    --variable tp \
-    --output /tmp/weekly.png
+    --input /tmp/ecmwf_weekly.zarr --output /tmp/ecmwf_weekly_totals.zarr
 
-forecasting-skills dynamical-fetch \
-    --dataset nasa-imerg-analysis-late \
-    --start-time 2025-12-24 \
-    --end-time 2026-02-13 \
-    --bbox 5/34/-5/42 \
-    -v precipitation_surface \
-    --output /tmp/imerg.zarr
+# CHIRPS observations for the same weeks
+forecasting-skills chirps-fetch \
+    --start-time 2026-09-14 --end-time 2026-09-20 --bbox 5.5/33.9/-4.7/41.9 \
+    --output /tmp/chirps.zarr
 forecasting-skills aggregate-temporal \
-    --input /tmp/imerg.zarr \
-    --period dekadal \
-    --method mean \
-    --output /tmp/imerg_dekadal.zarr
+    --input /tmp/chirps.zarr --period weekly --output /tmp/chirps_weekly.zarr
 forecasting-skills convert-to-totals \
-    --input /tmp/imerg_dekadal.zarr \
-    --output /tmp/imerg_dekadal_totals.zarr
-forecasting-skills rename \
-    --input /tmp/imerg_dekadal_totals.zarr \
-    --variable precipitation_surface \
-    --to-name precip \
-    --output /tmp/imerg_dekadal_precip.zarr
-
-forecasting-skills tahmo-fetch --list-stations --bbox 5/34/-5/42
-forecasting-skills tahmo-fetch \
-    --station TA00025 \
-    --start-time 2025-12-24 \
-    --end-time 2026-02-13 \
-    --output /tmp/tahmo.zarr
-
-forecasting-skills plot-compare \
-    -i /tmp/tahmo.zarr \
-    -i /tmp/imerg_dekadal_precip.zarr \
-    --variable precip \
-    --output /tmp/sat_vs_stations.png
+    --input /tmp/chirps_weekly.zarr --output /tmp/chirps_weekly_totals.zarr
 ```
 
 In practice a user just states the goal in natural language and the agent
@@ -275,8 +218,8 @@ picks and composes skills from this set.
 
 ## Standard dataset contract
 
-Skills share a simple Zarr contract: fixed dimension names (`lat`, `lon`, `time`,
-`init_time`, …) and short types (`spatial`, `observations`, `forecast`,
+Skills share a simple Zarr contract: fixed dimension names (`latitude`,
+`longitude`, `time`, `step`, `number`, `station_id`, …) and short types (`spatial`, `observations`, `forecast`,
 `vertical_forecast`, `point_obs`, …).
 See
 [`STANDARD_DATASET.md`](https://github.com/rhiza-research/weather-skills-core/blob/main/docs/weather-skill-authoring/references/STANDARD_DATASET.md).

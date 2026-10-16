@@ -246,3 +246,37 @@ def test_filesystem_falls_back_without_credentials_json(fetch_mod, monkeypatch):
     monkeypatch.setattr(gcsfs, "GCSFileSystem", fake_gcs_filesystem)
     assert fetch_mod._filesystem() == "fake-fs"
     assert seen == {}
+
+
+def test_temperature_steps_keep_valid_lead(tmp_path, fetch_mod, monkeypatch):
+    """Temperatures are instants at init + timedelta: the first lead stays 6 h."""
+    out = tmp_path / "neuralgcm_t2m.zarr"
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, dataset: True)
+    monkeypatch.setattr(fetch_mod, "_open_remote", lambda *a, **k: _native_surface())
+
+    run_skill(fetch_mod.fetch, "--dataset", "surface", "--date", "2026-09-11", "-o", str(out))
+
+    with xr.open_zarr(out, consolidated=True) as ds:
+        hours = np.asarray(ds["step"].values).astype("timedelta64[h]").astype(int)
+        assert list(hours) == [6, 12, 18]
+
+
+def test_read_failure_is_data_error(tmp_path, fetch_mod, monkeypatch, capsys):
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, dataset: True)
+    monkeypatch.setattr(fetch_mod, "_open_remote", lambda *a, **k: _native_precip())
+
+    def broken_load(self, **kwargs):
+        raise OSError("connection reset")
+
+    monkeypatch.setattr(xr.Dataset, "load", broken_load)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--date", "2026-09-11", "-o", str(tmp_path / "x.zarr"))
+    assert exc.value.code == 1
+    assert "failed to read gs://neuralgcm-s2s" in capsys.readouterr().err
+
+
+def test_filesystem_rejects_non_object_credentials_json(fetch_mod, monkeypatch):
+    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", '"not-a-key"')
+    monkeypatch.setattr(gcsfs, "GCSFileSystem", lambda **kwargs: pytest.fail("token passed on"))
+    with pytest.raises(fetch_mod.DataError, match="JSON object"):
+        fetch_mod._filesystem()

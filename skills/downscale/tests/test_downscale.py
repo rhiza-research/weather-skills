@@ -154,3 +154,110 @@ def test_downscale_reference_grid_allows_near_equal_mixed_axes(tmp_path, downsca
         str(ref),
     )
     assert Path(out).exists()
+
+
+def _clim(n, scale, name="precip"):
+    """Climatology sample: value k*scale at time k, the same in every cell."""
+    import numpy as np
+
+    ds = make_gridded(n_time=n, lats=(1.0, 2.0), lons=(10.0, 11.0), name=name)
+    ds[name].values[:] = (np.arange(n) * scale)[:, None, None]
+    return ds
+
+
+def test_qq_with_model_climatology_keeps_forecast_signal(tmp_path, downscale, capsys):
+    """A wet forecast stays wet: F_ref^-1(F_model(x)), not the reference climatology."""
+    import numpy as np
+
+    fc = make_gridded(n_time=1, lats=(1.0, 2.0), lons=(10.0, 11.0)).isel(time=0, drop=True)
+    fc = fc.expand_dims(number=[0, 1]).copy(deep=True)
+    fc["precip"].values[:] = np.array([2.0, 9.0])[:, None, None]  # 20th / 90th pct of model
+    src = write_zarr(fc, tmp_path / "fc.zarr")
+    model = write_zarr(_clim(10, 1.0), tmp_path / "model.zarr")  # model 0..9
+    ref = write_zarr(_clim(10, 2.0), tmp_path / "ref.zarr")  # obs 0..18: model is half as wet
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        downscale, "-i", str(src), "-o", str(out), "--algorithm", "q-q", "-f", "1",
+        "--qq-reference", str(ref), "--qq-model", str(model),
+    )  # fmt: skip
+
+    res = xr.open_zarr(out)["precip"].isel(latitude=0, longitude=0)
+    assert res.values == pytest.approx([4.0, 18.0])
+    # The skill's own no-model warning, not any library warning (zarr prints its own).
+    assert "input is its own model climatology" not in capsys.readouterr().err
+
+
+def test_qq_without_model_warns(tmp_path, downscale, capsys):
+    src = write_zarr(_clim(10, 1.0), tmp_path / "in.zarr")
+    ref = write_zarr(_clim(10, 2.0), tmp_path / "ref.zarr")
+    run_skill(
+        downscale, "-i", str(src), "-o", str(tmp_path / "out.zarr"), "--algorithm", "q-q",
+        "-f", "1", "--qq-reference", str(ref),
+    )  # fmt: skip
+    assert "input is its own model climatology" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("case", ["name", "sample_dim"])
+def test_qq_mismatch_errors(tmp_path, downscale, capsys, case):
+    src = write_zarr(_clim(10, 1.0), tmp_path / "in.zarr")
+    ref_ds = _clim(10, 2.0, name="tp") if case == "name" else _clim(1, 2.0).isel(time=0)
+    ref = write_zarr(ref_ds, tmp_path / "ref.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            downscale, "-i", str(src), "-o", str(tmp_path / "out.zarr"), "--algorithm",
+            "q-q", "-f", "1", "--qq-reference", str(ref),
+        )  # fmt: skip
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert ("rename" in err) if case == "name" else ("sample dim" in err)
+
+
+def test_qq_dry_forecast_stays_dry_with_tied_zeros(tmp_path, downscale):
+    """Model dry 60% of the time, obs 40%: a 0 mm forecast must not map to observed rain."""
+    import numpy as np
+
+    fc = make_gridded(n_time=1, lats=(1.0, 2.0), lons=(10.0, 11.0), fill=0.0)
+    src = write_zarr(fc, tmp_path / "fc.zarr")
+    model, ref = _clim(10, 1.0), _clim(10, 1.0)
+    model["precip"].values[:] = np.array([0, 0, 0, 0, 0, 0, 1, 2, 3, 4.0])[:, None, None]
+    ref["precip"].values[:] = np.array([0, 0, 0, 0, 1, 2, 3, 4, 5, 6.0])[:, None, None]
+    out = tmp_path / "out.zarr"
+    run_skill(
+        downscale, "-i", str(src), "-o", str(out), "--algorithm", "q-q", "-f", "1",
+        "--qq-reference", str(write_zarr(ref, tmp_path / "ref.zarr")),
+        "--qq-model", str(write_zarr(model, tmp_path / "model.zarr")),
+    )  # fmt: skip
+    assert (xr.open_zarr(out)["precip"].values == 0.0).all()
+
+
+def test_qq_reference_in_other_units_errors(tmp_path, downscale, capsys):
+    src = write_zarr(_clim(10, 1.0), tmp_path / "in.zarr")
+    ref_ds = _clim(10, 2.0)
+    ref_ds["precip"].attrs["units"] = "m day-1"
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            downscale, "-i", str(src), "-o", str(tmp_path / "out.zarr"), "--algorithm", "q-q",
+            "-f", "1", "--qq-reference", str(write_zarr(ref_ds, tmp_path / "ref.zarr")),
+        )  # fmt: skip
+    assert exc.value.code == 2
+    assert "unit-convert" in capsys.readouterr().err
+
+
+def test_reference_grid_trimmed_and_own_dim_names(tmp_path, downscale):
+    import numpy as np
+
+    src = write_zarr(
+        make_gridded(lats=(0.0, 1.0, 2.0), lons=(10.0, 11.0, 12.0)), tmp_path / "in.zarr"
+    )
+    lat, lon = np.arange(-10, 10.01, 0.5), np.arange(0, 20.01, 0.5)  # far larger than the input
+    ref = xr.Dataset(coords={"lat": ("lat", lat), "lon": ("lon", lon)})
+    ref["mask"] = (("lat", "lon"), np.ones((lat.size, lon.size)))
+    out = tmp_path / "out.zarr"
+    run_skill(
+        downscale, "-i", str(src), "-o", str(out), "--algorithm", "linear-interpolation",
+        "--reference-grid", str(write_zarr(ref, tmp_path / "ref.zarr")),
+    )  # fmt: skip
+    res = xr.open_zarr(out)
+    assert res["latitude"].values.min() >= -0.5 and res["latitude"].values.max() <= 2.5
+    assert res["longitude"].values.min() >= 9.5 and res["longitude"].values.max() <= 12.5

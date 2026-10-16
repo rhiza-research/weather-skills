@@ -2,15 +2,10 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime",
 #   "earthaccess",
 #   "h5netcdf",
 #   "h5py",
 #   "dask",
-#   "xarray",
-#   "zarr",
-#   "numpy",
-#   "pint-xarray>=0.6",
 # ]
 # ///
 """Fetch IMERG live precipitation and write a weather-skills standard dataset Zarr."""
@@ -18,7 +13,7 @@
 import re
 import sys
 import tempfile
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
@@ -33,6 +28,27 @@ SHORTNAMES = {
     "final": "GPM_3IMERGDF",
 }
 _GRANULE_DATE_RE = re.compile(r"\.(\d{8})-S")
+_AUTH_FAIL_MSG = (
+    "Earthdata authentication failed; configure EARTHDATA_USERNAME/"
+    "EARTHDATA_PASSWORD or a urs.earthdata.nasa.gov entry in ~/.netrc, then retry."
+)
+
+
+def _login() -> None:
+    """Authenticate via environment then netrc; never falls through to interactive."""
+    import earthaccess
+    from earthaccess.exceptions import LoginAttemptFailure, LoginStrategyUnavailable
+
+    for strategy in ("environment", "netrc"):
+        try:
+            auth = earthaccess.login(strategy=strategy)
+        except LoginStrategyUnavailable:
+            continue
+        except LoginAttemptFailure:
+            raise DataError(_AUTH_FAIL_MSG) from None
+        if getattr(auth, "authenticated", False):
+            return
+    raise DataError(_AUTH_FAIL_MSG)
 
 
 @weather_skill(
@@ -46,7 +62,6 @@ _GRANULE_DATE_RE = re.compile(r"\.(\d{8})-S")
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
@@ -55,21 +70,21 @@ _GRANULE_DATE_RE = re.compile(r"\.(\d{8})-S")
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(start_time, end_time, version, **kwargs):
+def fetch(start_time, end_time, version, probe_latest, **kwargs):
     """Fetch IMERG live precipitation and write a weather-skills standard dataset Zarr."""
-    if kwargs.get("probe_latest") is not None:
+    if probe_latest is not None:
         import earthaccess
 
-        release = kwargs["probe_latest"] or version or "late"
+        release = probe_latest or version or "late"
         if release not in SHORTNAMES:
             raise UsageError(f"unknown IMERG product {release!r}; choose late or final")
-        earthaccess.login()
-        end = datetime.now(UTC).date()
-        start = end - timedelta(days=150 if release == "final" else 21)
+        _login()
+        # Newest granule first: Final can lag (or stop) far behind any fixed window.
         results = earthaccess.search_data(
             short_name=SHORTNAMES[release],
             cloud_hosted=True,
-            temporal=(start.isoformat(), end.isoformat()),
+            sort_key="-start_date",
+            count=1,
         )
         days = []
         for granule in results:
@@ -80,9 +95,7 @@ def fetch(start_time, end_time, version, **kwargs):
                     days.append(date(int(ymd[:4]), int(ymd[4:6]), int(ymd[6:8])))
                     break
         if not days:
-            raise DataError(
-                f"no IMERG {release} granules in {start.isoformat()}..{end.isoformat()}"
-            )
+            raise DataError(f"no IMERG {release} granules found")
         print(max(days).isoformat())
         return
 
@@ -96,14 +109,17 @@ def fetch(start_time, end_time, version, **kwargs):
 
     print(f"Fetching IMERG {version} ({shortname}) {start} -> {end}", file=sys.stderr)
 
-    earthaccess.login()
+    _login()
     results = earthaccess.search_data(
         short_name=shortname,
         cloud_hosted=True,
         temporal=(start, end),
     )
     if not results:
-        raise RuntimeError(f"No IMERG {version} granules found in {start}..{end}")
+        raise DataError(
+            f"no IMERG {version} granules found in {start}..{end}; "
+            f"run --probe-latest {version} for the latest published day"
+        )
     print(f"Found {len(results)} granules", file=sys.stderr)
 
     requested_span = (end_time - start_time).days + 1
@@ -112,6 +128,11 @@ def fetch(start_time, end_time, version, **kwargs):
         files = earthaccess.download(results, local_path=td)
         ds = xr.open_mfdataset(files, engine="h5netcdf", combine="by_coords")
         ds = ds[["precipitation"]].rename({"precipitation": "precip"})
+        src_units = ds["precip"].attrs.get("units")
+        if src_units != "mm/day":
+            raise DataError(
+                f"unexpected IMERG precipitation units {src_units!r}; expected 'mm/day'"
+            )
         spatial_rename = {
             src: dst
             for src, dst in {"lat": "latitude", "lon": "longitude"}.items()
@@ -125,7 +146,7 @@ def fetch(start_time, end_time, version, **kwargs):
         present_days = [d for d in present_days if start_time <= d <= end_time]
         covered_days = len(present_days)
         if covered_days == 0:
-            raise UsageError(f"no granule day falls within {start}..{end}")
+            raise DataError(f"no granule day falls within {start}..{end}")
         if covered_days < requested_span:
             last_present = present_days[-1]
             expected_tail = [
@@ -137,7 +158,7 @@ def fetch(start_time, end_time, version, **kwargs):
                 {start_time + timedelta(days=i) for i in range(requested_span)} - set(present_days)
             )
             if missing_days != expected_tail:
-                raise UsageError(
+                raise DataError(
                     f"non-trailing missing day(s) "
                     f"{', '.join(d.isoformat() for d in missing_days)} within "
                     f"{start}..{end} — server/data gap, not lag. Refusing to write "
@@ -151,13 +172,19 @@ def fetch(start_time, end_time, version, **kwargs):
                 file=sys.stderr,
             )
 
-        ds = ds.load()
+        # GES DISC daily files are (time, lon, lat); the standard order is (time, lat, lon).
+        ds = ds.transpose("time", "latitude", "longitude").load()
         ds = ds.drop_attrs()
-        ds.attrs.update(Conventions="CF-1.13", weather_skills_source="imerg")
+        ds.attrs.update(
+            Conventions="CF-1.13",
+            weather_skills_source="imerg",
+            source=f"NASA GES DISC {shortname} (IMERG {version.capitalize()} daily, 0.1 degree)",
+            imerg_version=version,
+        )
         ds["precip"].attrs.update(
             units="mm day-1",
             standard_name="lwe_precipitation_rate",
-            long_name="IMERG daily precipitation",
+            long_name=f"IMERG {version.capitalize()} daily mean precipitation rate",
         )
         stamp_cf_attrs(ds)
         ds = ensure_normalized_longitude(ds, lon_dim="longitude")

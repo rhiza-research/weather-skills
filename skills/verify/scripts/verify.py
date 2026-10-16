@@ -2,9 +2,7 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime>=1.6",
-#   "numpy>=2.4",
-#   "xarray>=2026.4",
+#   "pandas",
 # ]
 # ///
 """Forecast vs observation verification: hits, bias, or MAE."""
@@ -12,15 +10,14 @@
 import sys
 
 import numpy as np
+import pandas as pd
+import pint
+import pint_xarray
 import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable
 from weather_skills_core.standard_utils import latitude_weights
-from weather_skills_core.units import (
-    format_units_for_display,
-    units_equal,
-    variable_units,
-)
+from weather_skills_core.units import dequantify_dataset, ureg, variable_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
@@ -59,7 +56,7 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
             )
 
     fc, truth = forecast[fc_name], obs[obs_name]
-    if "step" in fc.dims and "time" not in fc.dims and "time" in truth.dims:
+    if "step" in fc.dims and "step" not in truth.dims:
         raise UsageError(
             "forecast still has a step axis; run step-to-time before verify "
             "so valid times can align with --obs."
@@ -92,34 +89,49 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
 
     pair = []
     for da in (fc, truth):
-        if getattr(getattr(da, "pint", None), "units", None) is not None:
-            da = da.pint.dequantify()
         if "number" in da.dims:
-            da = da.mean("number", keep_attrs=True)
+            # A NaN member leaves the mean NaN (no mean over the members left).
+            da = da.mean("number", skipna=False, keep_attrs=True)
+        # A scalar time (after select) becomes a length-1 dim so the inner join
+        # below checks it against the other input instead of dropping it.
+        if "time" in da.coords and da["time"].ndim == 0:
+            da = da.expand_dims("time")
         pair.append(da)
-    fc, truth = xr.align(*pair, join="inner")
-    if any(size == 0 for size in fc.sizes.values()):
+    fc, truth = pair
+    u_fc, u_obs = variable_units(fc), variable_units(truth)
+    if bool(u_fc) != bool(u_obs):
         raise UsageError(
-            "no overlapping coordinates between --forecast and --obs; "
-            "coarsen --obs --reference-grid <forecast.zarr> and align time "
-            "(step-to-time / aggregate-temporal) first."
+            f"--forecast {fc_name!r} units={u_fc!r} but --obs {obs_name!r} units={u_obs!r}; "
+            "both inputs need units (or neither) to be compared."
         )
-
-    u_fc = variable_units(forecast[fc_name])
-    u_obs = variable_units(obs[obs_name])
-    if (
-        isinstance(u_fc, str)
-        and u_fc.strip()
-        and isinstance(u_obs, str)
-        and u_obs.strip()
-        and not units_equal(u_fc, u_obs)
-    ):
-        print(
-            f"Warning: --forecast {fc_name!r} units={u_fc.strip()!r} and --obs "
-            f"{obs_name!r} units={u_obs.strip()!r} differ. Values are compared "
-            "as stored.",
-            file=sys.stderr,
+    if u_fc and u_obs:
+        # Compare in the forecast's units: deg C against K, mm hr-1 against mm day-1.
+        try:
+            truth = truth.pint.to(fc.pint.units)
+        except (pint.DimensionalityError, pint_xarray.errors.PintExceptionGroup):
+            raise UsageError(
+                f"--forecast {fc_name!r} ({u_fc}) and --obs {obs_name!r} ({u_obs}) carry "
+                "incompatible units (e.g. a total against a rate); put both on one basis "
+                "with aggregate-temporal / convert-to-totals first."
+            ) from None
+    fc, truth = xr.align(fc, truth, join="inner")
+    empty = [d for d, size in fc.sizes.items() if size == 0]
+    if empty:
+        spans = []
+        for d in empty:
+            a, b = pd.Index(pair[0][d].values), pd.Index(pair[1][d].values)
+            spans.append(f"{d}: forecast {a[0]} … {a[-1]} vs obs {b[0]} … {b[-1]}")
+        raise UsageError(
+            f"no overlapping {', '.join(empty)} labels between --forecast and --obs "
+            f"({'; '.join(spans)}). Labels must match exactly: for lat/lon, coarsen "
+            "--obs --reference-grid <forecast.zarr>; for time, run step-to-time on "
+            "the forecast and aggregate both with the same bins (--end-time)."
         )
+    # Differences keep their units (a temperature bias is delta_degC).
+    error = fc - truth
+    if u_fc and u_obs:
+        error = dequantify_dataset(error.to_dataset(name="error"))["error"]
+    fc, truth = (da.pint.dequantify() if da.pint.units is not None else da for da in (fc, truth))
     if metric != "hits" and threshold != 1.0:
         print(
             f"Note: --threshold {threshold} is ignored for --metric {metric}.",
@@ -133,16 +145,16 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
         obs_event = truth >= threshold
         field = xr.where(fc_event & obs_event, 1, xr.where(fc_event != obs_event, -1, 0))
     elif metric == "bias":
-        field = fc - truth
+        field = error
     else:
-        field = np.abs(fc - truth)
+        field = np.abs(error)
     field = field.astype("float32").where(valid)
     field.name = _VAR[metric]
 
     attrs = {
         k: v
         for k, v in forecast[fc_name].attrs.items()
-        if k not in ("standard_name", "GRIB_name", "GRIB_paramId")
+        if k not in ("standard_name", "GRIB_name", "GRIB_paramId", "short_name", "comment")
     }
     attrs["verify_metric"] = metric
     if metric == "hits":
@@ -155,9 +167,11 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
             event_variable=fc_name if fc_name == obs_name else f"{fc_name},{obs_name}",
         )
     elif metric == "bias":
-        attrs["long_name"] = "Forecast bias (forecast − observation)"
+        attrs.update(
+            long_name="Forecast bias (forecast − observation)", units=error.attrs.get("units")
+        )
     else:
-        attrs["long_name"] = "Mean absolute error"
+        attrs.update(long_name="Mean absolute error", units=error.attrs.get("units"))
     field.attrs = attrs
 
     finite = field.notnull()
@@ -171,11 +185,15 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
         )
     else:
         lat = next((n for n in ("latitude", "lat") if n in field.dims), None)
-        u = format_units_for_display(u_fc or u_obs) if (u_fc or u_obs) else ""
+        u = f"{ureg.Unit(u_fc or u_obs):~}" if (u_fc or u_obs) else ""
         u_suffix = f" {u}" if u else ""
         value = None
+        # Gridded: cos-lat weighted mean. Stations (point-value output): plain
+        # mean over every station and time with both values.
+        how = "cos-lat mean" if lat is not None else f"mean of {int(finite.sum())} values"
         if lat is None:
-            summary = f"{metric} n/a  (no latitude dim)"
+            if bool(finite.any()):
+                value = float(field.where(finite).mean())
         else:
             weights = latitude_weights(field[lat]).broadcast_like(field)
             if bool(finite.any()):
@@ -183,13 +201,13 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
                 den = weights.where(finite).sum(skipna=True)
                 if den != 0 and np.isfinite(float(den)):
                     value = float(num / den)
-            if value is None:
-                summary = f"{metric} n/a  (no finite cells)"
-            elif metric == "bias":
-                sign = "+" if value >= 0 else ""
-                summary = f"bias {sign}{value:.2g}{u_suffix}  (cos-lat mean)"
-            else:
-                summary = f"MAE {value:.2g}{u_suffix}  (cos-lat mean)"
+        if value is None:
+            summary = f"{metric} n/a  (no finite cells)"
+        elif metric == "bias":
+            sign = "+" if value >= 0 else ""
+            summary = f"bias {sign}{value:.2g}{u_suffix}  ({how})"
+        else:
+            summary = f"MAE {value:.2g}{u_suffix}  ({how})"
     print(f"verify  {summary}")
 
     out = field.to_dataset()

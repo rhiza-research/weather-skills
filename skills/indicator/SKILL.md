@@ -1,11 +1,11 @@
 ---
 name: indicator
 description: >-
-  Apply a boolean indicator to a daily weather-skills standard dataset Zarr
+  Apply a boolean indicator to a daily or weekly weather-skills standard dataset Zarr
   (windowed precip thresholds, sequential onset rules) and optionally reduce to
   ensemble probability. Use for ICPAC/CHC rainy-season onset, ad-hoc rules like
   >25 mm in 8 days or <9 mm in 10 days, wet/dry spells, and the probability that
-  an indicator is true. Input must be daily (time or step). Apply per ensemble
+  an indicator is true. Input must be daily or weekly (time or step). Apply per ensemble
   member; do not average precip first.
 license: MIT
 compatibility: Requires Python 3.12 and uv.
@@ -19,8 +19,7 @@ metadata:
 
 Source-agnostic daily **indicator**: a 0/1 mask from one `--rule` string, then
 optional reductions. Apply the rule **per ensemble member** (do not average
-`number` first). Plot `--detect first` onset dates (or daily 0/1 /
-`--probability` fields) with `plot`. Do not average `number` before mapping
+`number` first). Do not average `number` before mapping `--detect first`
 onset dates; use `summarize-dim --dim number --method mean` on `indicator_doy`
 when you want a mean onset day-of-year.
 
@@ -36,10 +35,14 @@ when you want a mean onset day-of-year.
 - First day the indicator is true (`--detect first`), or whether it happens
   at least once (`--detect any`).
 
-**Daily input.** Native `data_interval` of `1 day`, or inferred 1-day spacing
-on `time` / `step`. Otherwise run `aggregate-temporal --period daily` (then
-`convert-to-totals` if you need mm totals). Daily `mm day-1` rates and daily
-`mm` totals are treated as equivalent. Classic forecasts may stay on `step`;
+**Daily or weekly input.** A whole-day step from `data_interval` or the
+spacing on `time` / `step` (e.g. `1 day`, `7 day`). Windows are `Nd` or `Nw`
+and must be a whole number of steps (`1w`, not `10d`, on weekly data).
+Thresholds are in standard units whatever the input stores: precipitation in
+**mm per step** (a rate in any units — `mm day-1`, `mm hr-1`, `kg m-2 s-1` —
+is multiplied by the step, so weekly data is mm per week; `mm` totals are used
+as is) and air temperature in **°C** (K input is converted). Other variables
+are compared as stored. Classic forecasts may stay on `step`;
 run `step-to-time` when you need calendar onset dates. Restrict the search
 window with `select` first (MAM/OND is not built in).
 
@@ -55,8 +58,14 @@ window with `select` first (MAM/OND is not built in).
 the window (`precip count-below 1 10d >= 7`). Consecutive clauses have no
 `<op> <threshold>` — they are true when every day in the window matches.
 `after Nd` shifts the clause N days later. `within Nd` is true if the clause
-is true on **any** of the next N days (incomplete look-ahead is NaN). `not`
-inverts that clause. `after` and `within` cannot appear on the same clause.
+is true on **any** of the next N days (one true day decides it; false needs
+all N days decided, else NaN). `not` inverts that clause. Missing input days
+make every window that covers them NaN (never dry or wet); `and`/`or` stay
+decided when one side alone decides them. `after` and `within` cannot appear on the same clause.
+Windows look forward too, so the last dates of the input cannot be decided
+(27 days for `icpac-onset`). The skill prints the last decidable date on
+stderr: after it, NaN means "not yet known", not "no event", and a
+`--detect first` map with no date there may simply be undecided.
 
 ### Aliases
 
@@ -72,10 +81,19 @@ Applied in order. Default: 0/1 `indicator`, all dims kept.
 
 1. `--cumulative` — once True, stay True (“has it happened yet?”).
 2. `--detect first|any` — collapse time. `first` writes `indicator_time`
-   (NaT if none) and `indicator_doy` on a datetime axis. `any` writes 0/1.
+   and `indicator_doy` (datetime axis only); both are NaT/NaN when the rule is
+   never true **or** when missing data comes before the first true day (a gap
+   could hide an earlier onset, so the date is unknown, not later).
+   `indicator_doy` is the calendar day of year, so it wraps at 1 January —
+   do not average it across members whose onsets straddle the year end.
+   `any` writes 0/1: 1 if true on any day; 0 if never true with no gap
+   before the last decided day (the trailing undecidable tail is ignored, so
+   0 means "no event through the last decidable date"); NaN otherwise.
    Mutex with `--cumulative`. `--detect first` cannot combine with
    `--probability` (dates are not 0/1).
 3. `--probability` — mean over `number`. Variable `probability` (`units="1"`).
+   NaN wherever any member is NaN (undecided members are not dropped: with
+   `--cumulative` the tail stays NaN until every member has hit).
    No-op on the ensemble axis if `number` is absent (still 0/1).
 
 | Want | Flags |
@@ -84,25 +102,25 @@ Applied in order. Default: 0/1 `indicator`, all dims kept.
 | Onset date per member | `--detect first` |
 | P(onset has occurred by this date) | `--cumulative --probability` |
 | P(event happens at least once) | `--detect any --probability` |
-| Onset date map | `--detect first`, then `plot` (do not reduce `number` first) |
-| Mean onset day-of-year | `--detect first`, then `summarize-dim --dim number --method mean` on `indicator_doy` |
+| Onset date map | `--detect first`, then map `indicator_doy` (do not reduce `number` first) |
+| Mean onset day-of-year | `--detect first`, then `summarize-dim --dim number --method mean` on `indicator_doy` (not across 1 January) |
 
 ## Usage
 
 ```
 uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \
-    -i <daily.zarr> -o <out.zarr> --rule <alias-or-clauses> \
+    -i <daily-or-weekly.zarr> -o <out.zarr> --rule <alias-or-clauses> \
     [--variable NAME] [--time-dim DIM] \
     [--detect first|any] [--cumulative] [--probability]
 ```
 
 ### Arguments
 
-- `--input`, `-i` — daily standard dataset Zarr.
+- `--input`, `-i` — daily or weekly standard dataset Zarr.
 - `--output`, `-o` — output Zarr.
 - `--rule` — alias or clause string (required, once).
 - `--variable`, `-v` — override the variable named in every clause.
-- `--time-dim` — daily axis (default `time` if length > 1, else `step`).
+- `--time-dim` — daily/weekly axis (default `time` if length > 1, else `step`).
 - `--detect` — `first` or `any`.
 - `--cumulative` — running OR along the daily axis.
 - `--probability` — ensemble fraction.
@@ -114,6 +132,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \
 uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \
     -i /tmp/daily.zarr -o /tmp/wet8.zarr \
     --rule "precip sum 8d >= 25" --probability
+
+# Weekly data: P(dry week, <= 10 mm)
+uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \
+    -i /tmp/weekly.zarr -o /tmp/dry_week.zarr \
+    --rule "tp sum 1w <= 10" --probability
 
 # ICPAC onset date per member
 uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py \

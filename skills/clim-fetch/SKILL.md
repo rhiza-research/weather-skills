@@ -1,10 +1,11 @@
 ---
 name: clim-fetch
-description: Fetch a precomputed daily climatology (avg + std) for a `--dataset` (imerg_final, era5, chirps, ecmwf_ifs, oisst, ...) from Sheerwater's public GCS mirror, select one `--prediction-timedelta` lead, optionally roll it up to a coarser `--window` in days, and expand it onto a requested `--start-time`/`--end-time` calendar window, so timestamps line up with the rest of a pipeline's data. Precipitation sources default to `--variable precip`; OISST sea-surface temperature uses `--dataset oisst --variable sst`. Optional `--bbox N/W/S/E` (compose with resolve-region) subsets before download. Use when a task needs a climatological baseline for anomalies, verification, or comparison — not live observations (use imerg-fetch, dynamical-fetch, arco-era5-fetch, oisst-fetch, etc. for those).
+description: Fetch a precomputed daily climatology (avg + std) for a `--dataset` (imerg_final, era5, chirps, ecmwf_ifs, oisst, ...) from Sheerwater's public GCS mirror, select one `--prediction-timedelta` lead, optionally roll it up to a coarser `--window` in days, and expand it onto a requested `--start-time`/`--end-time` calendar window, so timestamps line up with the rest of a pipeline's data. Precipitation sources default to `--variable precip`; OISST sea-surface temperature uses `--dataset oisst --variable sst`. Optional `--bbox N/W/S/E` (compose with resolve-region) subsets before download. Output vars are `<var>_avg` / `<var>_std` (e.g. `precip_avg`), so rename `precip_avg` to `precip` before `difference` against obs. No ERA5 temperature climatology (era5 is precip only); an unknown pair exits listing the available ones. Use when a task needs a climatological baseline for anomalies, verification, or comparison — not live observations (use dynamical-fetch, chirps-fetch, oisst-fetch, etc.).
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads a static climatology Zarr from the public GCS bucket sheerwater-public-datalake over anonymous HTTPS; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
+  version: "0.0.1"
   catalog-group: fetchers
   variables:
     - precip
@@ -17,16 +18,21 @@ Reads a static day-of-year climatology Zarr mirrored to a public GCS bucket
 (`gs://sheerwater-public-datalake/climatologies/<dataset>_<variable>_<window>d.zarr`
 — daily is `window=1`, one naming convention for every window). The source
 Zarr has dims `init_time`, `prediction_timedelta`, `lat`, `lon` —
-1904 init dates (a leap year, so once a lead is selected it always covers
-day-of-year 1..366 with no gaps). This skill:
+1904 init dates (a leap year, so every day-of-year 1..366 has a row). The
+multi-lead mirrors (`ecmwf_ifs`, `gefs`) hold no value for an init whose
+valid date runs past Dec 31, so at `--prediction-timedelta N` the dates
+Jan 1..Jan N come out NaN (never filled; stderr lists every date with no
+value anywhere in the grid). This skill:
 
 1. Selects one lead via `--prediction-timedelta` (days, default `0`) and
    realizes `time = init_time + prediction_timedelta`.
 2. Optionally rolls the climatology up to a coarser `--window` (days) —
    see "Aggregating to a coarser window" below.
-3. Re-labels each date in `[--start-time, --end-time]` with its day-of-year
-   and gathers the matching climatology row, repeating rows for windows
-   spanning more than one year.
+3. Gives each date in `[--start-time, --end-time]` the climatology row for
+   the same month and day in the 1904 cycle (not the same day-of-year: in a
+   non-leap year Mar 1 is day 60, which in 1904 is Feb 29), repeating rows
+   for windows spanning more than one year. Feb 29 is used only in leap
+   years.
 
 One skill covers every mirrored climatology — the source is selected with
 `--dataset`.
@@ -53,17 +59,21 @@ datasets" below.
 is correct for the precipitation sources below. OISST SST is a different
 variable — pass `--variable sst`.
 
-| `--dataset` | Source |
-| --- | --- |
-| `imerg_final` | IMERG final daily precipitation climatology (`--variable precip`) |
-| `era5` | ERA5 daily climatology (`--variable precip`) |
-| `chirps` | CHIRPS daily precipitation climatology (`--variable precip`) |
-| `ecmwf_ifs` | ECMWF IFS reforecast daily climatology — `precip`, `sst`, `uwind10m`, `vwind10m` |
-| `oisst` | NOAA OISST v2.1 daily sea-surface temperature climatology. Requires `--variable sst`. For live SST observations use `oisst-fetch`, not this skill. |
-| `gefs` | GEFS reforecast daily climatology — `precip`, `tmp2m` (2m temperature) |
+| `--dataset` | Source | Grid | Leads (days) |
+| --- | --- | --- | --- |
+| `imerg_final` | IMERG final daily precipitation climatology (`--variable precip`) | 0.1° | 0 |
+| `era5` | ERA5 daily climatology (`--variable precip`) | 0.25° | 0 |
+| `chirps` | CHIRPS daily precipitation climatology (`--variable precip`); same cell centers as `chirps-fetch` | 0.05° | 0 |
+| `ecmwf_ifs` | ECMWF IFS reforecast daily climatology — `precip`, `sst`, `uwind10m`, `vwind10m` | 1.5° | 0–45 |
+| `oisst` | NOAA OISST v2.1 daily sea-surface temperature climatology. Requires `--variable sst`. For live SST observations use `oisst-fetch`, not this skill. | 0.25° | 0 |
+| `gefs` | GEFS reforecast daily climatology — `precip`, `tmp2m` (2m temperature) | 1° | 0–34 |
 
 More datasets are added by mirroring a new Zarr under the same bucket
-convention — no CLI change needed once added.
+convention — no CLI change needed once added. A `--dataset`/`--variable`
+pair that is not mirrored (e.g. `--dataset era5 --variable tmp2m`) exits
+non-zero and lists every available pair. There is no ERA5 or observed
+temperature climatology; the only 2 m temperature one is the model
+reforecast `--dataset gefs --variable tmp2m`.
 
 ## Usage
 
@@ -97,7 +107,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \
 - `--bbox` — optional `N/W/S/E` bounding box; use `resolve-region` to turn a
   country or named region into this value first. Applied before the
   day-of-year expansion, on the still-lazy remote Zarr, so only the chunks
-  overlapping the bbox are pulled from GCS.
+  overlapping the bbox are pulled from GCS. Each chunk is 300×300 cells
+  × a whole year, so even a small bbox reads whole chunks (a Kenya CHIRPS
+  fetch peaks at ~1.4 GB RSS). Always pass `--bbox` for `chirps` and
+  `imerg_final`: without it the whole global year is read (tens of GB).
 
 ### Aggregating to a coarser window
 
@@ -111,20 +124,20 @@ separate aggregation step itself which is prone to errors:
    up locally with a `--window`-day window, labeled per `--align` (e.g.
    `--window 7 --align left` on day-of-year 100 averages days 100–106):
    - `<variable>_avg` rolls like an ordinary rate.
-   - `<variable>_std` is computed correctly, assuming independent days:
-     `Std(window mean) = sqrt(mean(std_i²)) / sqrt(window)` — squaring,
-     rolling through the same mean machinery used for `_avg`, dividing by
-     `window`, then taking the square root. This independence assumption
-     means the resulting std is an approximation, not exact — a warning to
-     that effect prints to stderr whenever this local-rolling fallback is
-     used (i.e. whenever a pre-aggregated `--window` cache isn't mirrored).
+   - `<variable>_std` is not the mean of the daily stds. It assumes
+     independent days: `Std(window mean) = sqrt(mean(std_i²)) / sqrt(window)`.
+     With the positive day-to-day correlation real rainfall has, this is a
+     lower bound — the true std lies between it and `mean(std_i)`. A
+     warning prints to stderr whenever this local roll-up is used (no
+     pre-aggregated `--window` cache is currently mirrored, so that is
+     every `--window` > 1).
 3. The climatology is circularly padded by `window` days on each end
    before rolling (day 366 wraps to day 1), so days near Jan 1 / Dec 31 get a
    full window instead of coming out `NaN` at the edges.
 
 ### Output
 
-Zarr with dims `(time, latitude, longitude)` where `time` is exactly the requested
+Zarr with dims `latitude`, `longitude`, `time` (in that order) where `time` is exactly the requested
 calendar window (real dates, not the source's 1904 placeholder). Data
 variables are named `<variable>_avg` (climatological mean) and
 `<variable>_std` (climatological standard deviation), where `<variable>`
@@ -137,9 +150,10 @@ units (e.g. `mm day-1` for precip); anything else (e.g. `sst`, `uwind10m`,
 `fetch.py` — `_KNOWN_UNITS` — for mirrors with no usable units metadata,
 whether missing entirely or present but not a parseable unit string, e.g.
 gefs tmp2m's raw `"avg. daily C"`; currently `degree_Celsius` for `sst` and
-`tmp2m`, `m/s` for `uwind10m`/`vwind10m`). Unlike variance, std shares the
-mean's units and converts linearly, so both variables go through the same
-unit-conversion path safely where one applies.
+`tmp2m`, `m/s` for `uwind10m`/`vwind10m`). The precip std is converted with its mean (a pure scale,
+so that is safe). No mirrored temperature source needs a unit conversion;
+a std must never take a temperature offset (`standardize-anomaly` converts
+a std by scale only).
 Global attrs include `weather_skills_source=sheerwater-mirror:<dataset>`,
 `climatology_dataset`, `climatology_variable`,
 `climatology_prediction_timedelta_days`, `climatology_window_days`.
@@ -153,13 +167,28 @@ Two dates far apart within the window but sharing a day-of-year (e.g. two
 different years' June 15) get **identical** climatology values by design —
 that is the point of the day-of-year gather.
 
+### Anomalies against observations: match the variable name
+
+`difference` subtracts variables **by name**, and only names present in
+both inputs. An observation fetcher writes `precip` (or `sst`) while this
+skill writes `precip_avg` / `precip_std`, so the pair shares no variable.
+Rename the climatology mean first, then difference:
+
+```bash
+uv run skills/rename/scripts/rename.py -i clim.zarr -o clim_precip.zarr \
+    --variable precip_avg --to-name precip
+uv run skills/difference/scripts/difference.py -i obs.zarr -i clim_precip.zarr \
+    -v precip -o anom.zarr
+```
+
+Both inputs must be on the same footing first (both rates, or both totals
+over the same window — see the weekly recipe below). For a standardized
+anomaly, `standardize-anomaly --climatology` reads `<var>_avg` / `<var>_std`
+directly; no rename needed.
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: an append-only
-array of per-step entries `{skill, version, args, input}`. For this fetcher it
-is a length-1 array with `skill="clim-fetch"` and `input=null`; downstream
-zarr-writing skills append their own entry. Inspect a written output's
-provenance with the `provenance` skill.
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ## Example
 
@@ -225,7 +254,7 @@ total"), compose with `select` and `convert-to-totals`: `clim-fetch --window
 each row's mean/std rate into a total — this is correct for both `_avg` and
 `_std` since totaling is linear (`Std(sum) = window × Std(mean)`, the same
 relationship `convert-to-totals`'s `rate_to_total` already applies uniformly
-to every variable, mean or std alike):
+to every precipitation variable, mean or std alike):
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py \

@@ -1,6 +1,5 @@
 """Correctness tests for pbc-fetch (network / remote Zarr mocked)."""
 
-import json
 from datetime import date
 from pathlib import Path
 
@@ -53,6 +52,9 @@ def test_fetch_writes_zarr_and_stamps_history(tmp_path, fetch_mod, monkeypatch):
         assert "pr" in ds.data_vars
         assert "forecast" not in ds.data_vars
         assert ds["pr"].attrs["units"] == "1"
+        # "probability" is not a CF standard name.
+        assert "standard_name" not in ds["pr"].attrs
+        assert ds["step"].attrs.get("standard_name") == "forecast_period"
         assert ds["pr"].attrs.get("data_interval") == "7 day"
         assert "aggregation_period" not in ds["pr"].attrs
         assert "time" in ds.coords and "time" not in ds.dims
@@ -104,34 +106,28 @@ def test_fetch_honors_init_date_variable_and_bbox(tmp_path, fetch_mod, monkeypat
         assert float(ds.longitude.max()) <= 12
 
 
-def test_fetch_accepts_folder_date_as_fallback(tmp_path, fetch_mod, monkeypatch):
-    out = tmp_path / "pbc_folder.zarr"
-    seen = {}
+def test_missing_init_is_an_error_not_an_older_folder(tmp_path, fetch_mod, monkeypatch, capsys):
+    # Folders are near-daily, so a folder named like the requested init exists
+    # (20260918) even though init 2026-09-18 (folder 20261006) is not published.
+    # It must not be read as init 2026-08-31.
+    opened = []
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda key: "20260918" in key)
+    monkeypatch.setattr(fetch_mod, "_open_remote", lambda key: opened.append(key) or _pbc_grid())
 
-    def exists(key):
-        # Init 2026-09-18 would look for folder 20261006 (week 3) — missing.
-        return "20260918" in key and "20261006" not in key
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch,
+            "--dataset",
+            "era5-p_pr_19",
+            "--date",
+            "2026-09-18",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
 
-    def fake_open(key):
-        seen["open"] = key
-        return _pbc_grid()
-
-    monkeypatch.setattr(fetch_mod, "_store_exists", exists)
-    monkeypatch.setattr(fetch_mod, "_open_remote", fake_open)
-
-    run_skill(
-        fetch_mod.fetch,
-        "--dataset",
-        "era5-p_pr_19",
-        "--date",
-        "2026-09-18",
-        "-o",
-        str(out),
-    )
-
-    assert seen["open"] == "pbc-data/era5-p_pr_19/20260918/era5-p_pr_19-20260918.zarr"
-    with xr.open_zarr(out, consolidated=True) as ds:
-        assert np.datetime_as_string(ds["time"].values, unit="D") == "2026-08-31"
+    assert exc.value.code != 0
+    assert opened == []
+    assert "20261006" in capsys.readouterr().err
 
 
 def test_probe_latest(capsys, fetch_mod, monkeypatch):
@@ -180,10 +176,8 @@ def test_unknown_variable(tmp_path, fetch_mod, monkeypatch, capsys):
     assert "tas" in capsys.readouterr().err
 
 
-def test_gcs_uses_credentials_json_when_set(fetch_mod, monkeypatch):
+def test_gcs_is_anonymous(fetch_mod, monkeypatch):
     monkeypatch.setattr(fetch_mod, "_FS", None)
-    info = {"type": "service_account", "project_id": "sheerwater", "client_email": "x@y"}
-    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", json.dumps(info))
     seen = {}
 
     def fake_gcs_filesystem(**kwargs):
@@ -192,25 +186,4 @@ def test_gcs_uses_credentials_json_when_set(fetch_mod, monkeypatch):
 
     monkeypatch.setattr(gcsfs, "GCSFileSystem", fake_gcs_filesystem)
     assert fetch_mod._gcs() == "fake-fs"
-    assert seen == {"token": info}
-
-
-def test_gcs_rejects_invalid_credentials_json(fetch_mod, monkeypatch):
-    monkeypatch.setattr(fetch_mod, "_FS", None)
-    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", "{not valid json")
-    with pytest.raises(fetch_mod.DataError, match="not valid JSON"):
-        fetch_mod._gcs()
-
-
-def test_gcs_falls_back_without_credentials_json(fetch_mod, monkeypatch):
-    monkeypatch.setattr(fetch_mod, "_FS", None)
-    monkeypatch.delenv("NEURAL_GCM_SERVICE_CREDENTIALS", raising=False)
-    seen = {}
-
-    def fake_gcs_filesystem(**kwargs):
-        seen.update(kwargs)
-        return "fake-fs"
-
-    monkeypatch.setattr(gcsfs, "GCSFileSystem", fake_gcs_filesystem)
-    assert fetch_mod._gcs() == "fake-fs"
-    assert seen == {}
+    assert seen == {"token": "anon"}

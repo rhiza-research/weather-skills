@@ -36,18 +36,30 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ### Arguments
 - `--start-time`, `--end-time` — inclusive date range. Each value is an absolute ISO date
   `YYYY-MM-DD`. Calendar windows: `resolve-time last-2w`. Latest published day: `--probe-latest`.
-- `--probe-latest` — print the latest available `YYYY-MM-DD` on stdout and exit. No `-o`.
-- `--bbox` — spatial subset `N/W/S/E` decimal degrees. Longitudes are normalized
-  to the [-180, 180) convention so negative west/east values select correctly on
-  OISST's native 0..360 grid. Omit for the full global grid. To fetch over a
-  region, get its bbox from the `resolve-region` skill.
+- `--probe-latest` — print the latest available `YYYY-MM-DD` on stdout and exit. No `-o`;
+  takes no IDENT (exit 2). The latest days are preliminary (see Output).
+- `--bbox` — spatial subset `N/W/S/E` decimal degrees, either longitude convention.
+  West > east crosses the antimeridian (e.g. `2/178/-2/-178`). The box is read as
+  contiguous slices of OISST's native 0..360 grid, so boxes crossing 0° are as
+  cheap as any other. Omit for the full global grid. To fetch over a region, get
+  its bbox from the `resolve-region` skill.
 - `--output`, `-o` — output Zarr path (overwritten if it exists).
 
 ### Output
 
 A consolidated weather-skills standard dataset analysis Zarr with a `time` dimension and dims
-`(time, latitude, longitude)`, carrying `sst` (sea-surface temperature, °C).
-Land cells are NaN. Stamped with `weather_skills_source=oisst`.
+`(time, latitude, longitude)`, carrying `sst` (sea-surface temperature, °C;
+`data_interval="1 day"`). Grid: 0.25° cell centres (…, -0.125, 0.125, …), longitude
+ascending in [-180, 180). Land cells are NaN. Stamped with
+`weather_skills_source=oisst`.
+
+- **Preliminary days**: NOAA revises days less than ~15 days old. PSL serves them
+  in the same yearly file with no per-day flag, so neither the output nor
+  `--probe-latest` can mark them. A window ending in the last 15 days (and every
+  probe) prints a stderr note.
+- **Missing days are never filled**: days before 1981-09-01, past the latest
+  published day, or in a year file that is not published yet are left out, and
+  stderr names how many requested days are missing and their span.
 
 The store is fully **CF-1.13** compliant (the weather-skills standard dataset is a CF superset —
 CF plus the `weather_skills_history` provenance key):
@@ -68,10 +80,11 @@ decode succeeding.
 ### Memory and performance
 
 There is one variable (`sst`); `--bbox` and the window length are the memory
-levers. Each year's bbox selection is loaded, written, and released before the
-next, so peak resident memory is bounded to a single year's selection (the full
-global grid is ~720×1440, roughly 4 MB per day as float32). Keep `--bbox` tight
-and the window short; run the `clip-region` skill afterward to trim further.
+levers. OPeNDAP transfers only the bbox and window (one request per year, two
+for a box crossing 0°), but every year's selection is held in memory until the
+single write at the end. The global grid is ~720×1440, about 4 MB per day as
+float32 (~1.5 GB per global year). Measured peak RSS: ~115 MB for a week over a
+20°×20° box, ~145 MB for one global day. Keep `--bbox` tight and the window short.
 
 ### Errors
 
@@ -84,36 +97,29 @@ provider or the resolver fails:
   (a DAP failure, typically a large `--bbox` over a long window). The message
   names the remedy: reduce `--bbox` and/or shorten the date range; this is not a
   credentials or availability problem, so retrying the same request will not help.
-- **Transient server error** — NOAA PSL returns a 502 / proxy HTML page instead
-  of OPeNDAP data. The skill retries once, then exits. `--probe-latest` treats a
+- **Transient server error** — NOAA PSL returns a 502 / proxy HTML page or an
+  intermittent `NetCDF: Access failure` instead of OPeNDAP data. The skill
+  retries once after 2 s, then exits. `--probe-latest` treats a
   non-datetime `time` axis (the usual symptom of an HTML error page that
   netCDF4 did not raise on) as this case rather than crashing. Distinct from
   the oversized-request case; retrying later may succeed.
-- **Availability** — a year file cannot be opened. The year may be outside the
-  served range (1981-09 to present) or the server is unreachable; check the date
-  range. Distinct from the oversized case.
+- **Availability** — a past year file does not exist (before 1981); check the
+  date range. A current- or next-year file that is not published yet is skipped,
+  not an error.
 - **Empty window** — the requested window is in range but contains no data; exits
   with a "no data in window" message, kept distinct from a failure.
 
-Exit codes: exit `2` covers pre-network argument/parse errors (a malformed
-`--start-time`/`--end-time` date, a reversed range, or a malformed `--bbox`) and
-load-time data-transfer failures on a year's slice (transport, availability, or
-an unexpected read failure). Exit `1` covers the remaining failures: the
-empty-window case, a year-file open failure, a `--bbox` that selects no grid
-cells, and a CF stamping or decode failure.
-
-If a multi-year window fails partway through (a later year's transfer fails after
-an earlier year was written), the partial store is removed before the non-zero
-exit.
+Exit codes: exit `2` covers argument errors (a malformed date, a reversed
+range, a malformed `--bbox`, an IDENT on `--probe-latest`) and the transport /
+oversized or unrecognized read failures. Exit `1` covers the transient,
+availability, and empty-window cases, a `--bbox` that selects no grid cells, and
+a CF stamping or decode failure. Nothing is written until every year has loaded,
+so a failure never leaves a partial store.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: an append-only array of
-per-step entries `{skill, version, args, input}`. For this fetcher it is a
-length-1 array with `skill="oisst-fetch"` and `input=null`; downstream
-zarr-writing skills append their own entry. `args` records the `bbox` and
-`start`/`end`. `version` is this skill's version, also printed
-by `--help`. Inspect a written output's provenance with the `provenance` skill.
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ## Examples
 

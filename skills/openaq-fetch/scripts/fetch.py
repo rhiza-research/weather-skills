@@ -2,14 +2,8 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "xarray",
-#   "zarr",
-#   "numpy",
 #   "pandas",
 #   "requests",
-#   "cf_xarray",
-#   "pint-xarray>=0.6",
-#   "cftime",
 # ]
 # ///
 """Fetch OpenAQ v3 air-quality station observations and write a point_obs weather-skills standard dataset Zarr.
@@ -22,7 +16,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import cf_xarray  # noqa: F401  (fail-fast probe)
 import cf_xarray.units  # noqa: F401  (fail-fast probe; configures pint CF registry)
@@ -31,7 +25,7 @@ import pandas as pd
 import requests
 import xarray as xr
 from pint import application_registry as ureg
-from weather_skills_core import DataError, weather_skill
+from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_dsg, udunits_error, verify_cf_dsg
 from weather_skills_core.standard_utils import apply_write_encoding, is_transient, require_env
 from weather_skills_core.units import stamp_data_interval
@@ -42,6 +36,9 @@ _SKILL_VERSION = "0.0.2"
 _API_BASE = "https://api.openaq.org/v3"
 HTTP_TIMEOUT = 60
 DEFAULT_WORKERS = 8
+DEFAULT_MIN_COVERAGE = 0.75
+_PROBE_PARAMETER_ID = 2  # OpenAQ parameter id for pm25 (µg/m³)
+_PROBE_LOOKBACK_DAYS = 7
 _PAGE_LIMIT = 1000
 
 # Client-side rate limit under OpenAQ's 60/min and 2,000/hour caps (~32 req/min).
@@ -121,6 +118,12 @@ def _classify_api_error(exc: Exception, context: str) -> str:
             "OPENAQ_API_KEY is missing, invalid, or lacks access. Check the key "
             "registered at https://explore.openaq.org/register."
         )
+    if status == 429:
+        return (
+            f"OpenAQ rate limit exceeded while {context} (HTTP 429, still after one "
+            "backoff retry). Wait a few minutes (limits: 60/minute, 2,000/hour per key) "
+            "and rerun, or narrow --bbox / the window."
+        )
     if status is not None:
         return f"OpenAQ request failed while {context} (HTTP {status})."
     return f"OpenAQ request failed while {context} ({exc})."
@@ -193,11 +196,21 @@ def _sensor_daily(session, desc: dict, start_iso: str, end_iso: str):
     rows = []
     for r in _get_pages(session, url, params):
         value = r.get("value")
+        # OpenAQ daily rows are station-local calendar days; the local stamp is that
+        # day's midnight, while the utc stamp is the previous date east of Greenwich.
         period = (r.get("period") or {}).get("datetimeFrom") or {}
-        stamp = period.get("utc")
+        stamp = period.get("local")
         if value is None or not stamp:
             continue
-        rows.append((stamp[:10], float(value)))
+        coverage = r.get("coverage") or {}
+        rows.append(
+            (
+                stamp[:10],
+                float(value),
+                coverage.get("observedCount"),
+                coverage.get("expectedCount"),
+            )
+        )
     return rows or None
 
 
@@ -217,7 +230,7 @@ def _unit_family(units: str):
     return None
 
 
-def _var_attrs(ds, units_by_param: dict) -> dict:
+def _var_attrs(ds, units_by_param: dict, min_coverage: float) -> dict:
     attrs_by_var = {}
     for param in ds.data_vars:
         units = units_by_param[param]
@@ -236,6 +249,10 @@ def _var_attrs(ds, units_by_param: dict) -> dict:
             "units": units,
             "long_name": _LONG_NAME.get(param, param),
             "cell_methods": "time: mean",
+            "comment": (
+                "Mean of hourly values over the station-local calendar day; days with "
+                f"fewer than {min_coverage:.0%} of 24 hourly values are left missing."
+            ),
         }
         family = _unit_family(units)
         if family == "mass":
@@ -257,7 +274,7 @@ def _var_attrs(ds, units_by_param: dict) -> dict:
 @weather_skill.argument("--start-time", required=True)
 @weather_skill.argument("--end-time", required=True)
 @weather_skill.argument("--bbox", required=True)
-@weather_skill.argument("--variable", "-v", action="append")
+@weather_skill.argument("--variable", "-v", action="append", choices=SUPPORTED_PARAMETERS)
 @weather_skill.argument(
     "--workers",
     type=int,
@@ -269,10 +286,19 @@ def _var_attrs(ds, units_by_param: dict) -> dict:
     ),
 )
 @weather_skill.argument(
+    "--min-coverage",
+    type=float,
+    default=DEFAULT_MIN_COVERAGE,
+    help=(
+        "Minimum fraction (0-1) of the 24 hourly values a station-day must have "
+        f"for its daily mean to be kept (default {DEFAULT_MIN_COVERAGE}). Days "
+        "below it are left missing, never filled."
+    ),
+)
+@weather_skill.argument(
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
@@ -281,9 +307,9 @@ def _var_attrs(ds, units_by_param: dict) -> dict:
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(start_time, end_time, bbox, workers, variable, **kwargs):
+def fetch(start_time, end_time, bbox, workers, variable, min_coverage, probe_latest, **kwargs):
     """Fetch OpenAQ v3 air-quality station observations and write a point_obs weather-skills standard dataset Zarr."""
-    if kwargs.get("probe_latest") is not None:
+    if probe_latest is not None:
         (key,) = require_env(
             "OPENAQ_API_KEY",
             message=(
@@ -292,30 +318,45 @@ def fetch(start_time, end_time, bbox, workers, variable, **kwargs):
         )
         session = requests.Session()
         session.headers.update({"X-API-Key": key.strip()})
+        # /locations only sorts by id, so take the newest PM2.5 sensor report of the
+        # last week instead (ignoring clock-skewed stamps after today).
+        today = datetime.now(UTC).date()
+        since = today - timedelta(days=_PROBE_LOOKBACK_DAYS)
         _rate_limit_wait()
         try:
             resp = session.get(
-                f"{_API_BASE}/locations",
-                params={"limit": 1, "order_by": "datetimeLast", "sort_order": "desc"},
+                f"{_API_BASE}/parameters/{_PROBE_PARAMETER_ID}/latest",
+                params={"limit": _PAGE_LIMIT, "datetime_min": since.isoformat()},
                 timeout=HTTP_TIMEOUT,
             )
             resp.raise_for_status()
         except requests.RequestException as exc:
             raise DataError(_classify_api_error(exc, "probing latest observation time")) from None
-        results = resp.json().get("results") or []
-        if not results:
-            raise DataError("OpenAQ probe found no locations")
-        last = results[0].get("datetimeLast") or {}
-        utc = last.get("utc") if isinstance(last, dict) else last
-        if not utc:
-            raise DataError("OpenAQ probe location has no datetimeLast")
-        print(str(utc)[:10])
+        days = []
+        for r in resp.json().get("results") or []:
+            utc = (r.get("datetime") or {}).get("utc")
+            if utc and str(utc)[:10] <= today.isoformat():
+                days.append(str(utc)[:10])
+        if not days:
+            raise DataError(f"OpenAQ probe found no PM2.5 reports since {since.isoformat()}.")
+        print(max(days))
         return
     start_iso = start_time.isoformat()
     end_iso = end_time.isoformat()
     north, west, south, east = bbox
     bbox_label = f"{north}/{west}/{south}/{east}"
-    variables = sorted(variable or list(SUPPORTED_PARAMETERS))
+    variables = sorted(set(variable or SUPPORTED_PARAMETERS))
+    if north < south:
+        raise UsageError(f"--bbox {bbox_label}: N must be >= S.")
+    if west > east:
+        raise UsageError(
+            f"--bbox {bbox_label}: W must be <= E (OpenAQ bboxes cannot cross the "
+            "antimeridian; split it into two calls)."
+        )
+    if workers < 1:
+        raise UsageError(f"--workers must be >= 1 (got {workers}).")
+    if not 0 <= min_coverage <= 1:
+        raise UsageError(f"--min-coverage must be between 0 and 1 (got {min_coverage}).")
 
     (key,) = require_env(
         "OPENAQ_API_KEY",
@@ -366,17 +407,36 @@ def fetch(start_time, end_time, bbox, workers, variable, **kwargs):
     print(f"Fetching {candidate_count} sensors for {start_iso}..{end_iso}", file=sys.stderr)
 
     def _fetch_one(desc):
-        rows = _sensor_daily(session, desc, start_iso, end_iso)
-        if not rows:
-            return None
-        frame = pd.DataFrame(rows, columns=["time", desc["parameter"]])
+        rows = _sensor_daily(session, desc, start_iso, end_iso) or []
+        counts = {"partial_kept": 0, "partial_dropped": 0, "negative": 0}
+        kept = []
+        for day, value, observed, expected in rows:
+            if not start_iso <= day <= end_iso:
+                continue
+            if value < 0:
+                # Concentrations cannot be negative; -999-style sentinels land here.
+                counts["negative"] += 1
+                continue
+            if not observed or not expected:
+                counts["partial_dropped"] += 1
+                continue
+            if observed / expected < min_coverage:
+                counts["partial_dropped"] += 1
+                continue
+            if observed < expected:
+                counts["partial_kept"] += 1
+            kept.append((day, value))
+        if not kept:
+            return None, counts
+        frame = pd.DataFrame(kept, columns=["time", desc["parameter"]])
         frame = frame.groupby("time", as_index=True).mean()
         frame.index = pd.to_datetime(frame.index)
         frame["station_id"] = desc["station_id"]
-        return frame, desc
+        return frame, counts
 
     frames = []
     meta_rows = []
+    counts = {"partial_kept": 0, "partial_dropped": 0, "negative": 0}
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(_fetch_one, d): d for d in sensors}
         for fut in as_completed(futures):
@@ -395,16 +455,18 @@ def fetch(start_time, end_time, bbox, workers, variable, **kwargs):
                     file=sys.stderr,
                 )
                 continue
-            if result is None:
+            frame, sensor_counts = result
+            for k, n in sensor_counts.items():
+                counts[k] += n
+            if frame is None:
                 continue
-            frame, desc = result
             frames.append(frame)
             meta_rows.append(
                 {
-                    "station_id": desc["station_id"],
-                    "latitude": desc["latitude"],
-                    "longitude": desc["longitude"],
-                    "name": desc["name"],
+                    "station_id": d["station_id"],
+                    "latitude": d["latitude"],
+                    "longitude": d["longitude"],
+                    "name": d["name"],
                 }
             )
 
@@ -412,6 +474,25 @@ def fetch(start_time, end_time, bbox, workers, variable, **kwargs):
         print(
             f"Dropped {dropped} sensors (failed fetch + one retry, unit mismatch, "
             "or missing units).",
+            file=sys.stderr,
+        )
+
+    if counts["negative"]:
+        print(
+            f"Dropped {counts['negative']} station-days with a negative daily mean "
+            "(invalid or sentinel values); left missing.",
+            file=sys.stderr,
+        )
+    if counts["partial_dropped"]:
+        print(
+            f"Dropped {counts['partial_dropped']} station-days with fewer than "
+            f"{min_coverage:.0%} of 24 hourly values (--min-coverage); left missing.",
+            file=sys.stderr,
+        )
+    if counts["partial_kept"]:
+        print(
+            f"Note: {counts['partial_kept']} kept daily means are from partial days "
+            f"(>= {min_coverage:.0%} but < 24 of 24 hourly values).",
             file=sys.stderr,
         )
 
@@ -443,7 +524,7 @@ def fetch(start_time, end_time, bbox, workers, variable, **kwargs):
     units_present = {param: units_by_param[param] for param in ds.data_vars}
     stamp_cf_dsg(
         ds,
-        _var_attrs(ds, units_present),
+        _var_attrs(ds, units_present, min_coverage),
         station_id_long_name="OpenAQ location identifier",
         name_long_name="location name",
     )

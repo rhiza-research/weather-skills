@@ -45,15 +45,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/select_dim.py --input <in.zarr> --output <out
 ### Arguments
 
 - `--input`, `-i` — input Zarr.
-- `--output`, `-o` — output Zarr. Must be a distinct path: the same store as
-  the input (or one nested inside the other) is rejected. An existing path
-  here must be a directory (a store to replace); a plain file is rejected.
+- `--output`, `-o` — output Zarr, replaced if it exists. Use a new path;
+  pointing it at the input destroys the input.
 - `--dim` — the dimension to select along (exactly one per run).
-- `--index` — integer position to select. Repeat once per position. Strict
-  integers only (ASCII digits; no floats, signs other than a leading minus,
-  or separators); negative positions count from the end (`-1` is the last
+- `--index` — integer position to select; repeat once per position. Plain
+  integers only; negative positions count from the end (`-1` is the last
   entry). Mutually exclusive with `--value`.
-- `--value` — coordinate value to select. Repeat once per value. Mutually
+- `--value` — coordinate value to select; repeat once per value. Mutually
   exclusive with `--index`.
 
 ### Selector semantics
@@ -68,52 +66,44 @@ position, the dim, and its size.
 | Coord dtype | Literal form | Example |
 | --- | --- | --- |
 | `datetime64` | naive ISO datetime string (no timezone suffix, no `now`/`today`) | `2026-06-01`, `2026-06-01T06:00` |
+| cftime (model calendars: `noleap`, `360_day`, ...) | `YYYY-MM-DD[THH[:MM[:SS]]]`, read in the coord's calendar | `2026-02-30` on `360_day` |
 | `timedelta64` | pandas-style timedelta string | `7D`, `168h` |
 | numeric | int or float literal (no underscores, `nan`, or `inf`) | `0`, `1.5` |
 | string | verbatim, including NumPy `StringDType` (Zarr v3 station ids) | `TA00001` |
 
-Matching is exact (no nearest-neighbor lookup). A value absent from the coord
-errors with a sample of the available values; a value matching more than one
-entry (duplicate coord labels) errors as ambiguous; a literal unparseable for
-the coord's dtype errors naming the dtype and the expected form; two values
-addressing the same element error. A dim that has no coordinate variable
-rejects `--value` with an error directing to `--index`.
+Matching is exact, with no nearest-neighbour lookup. The one exception is float
+coords, which match within 1e-9, so `--value 0.3` finds a label stored as
+`0.30000000000000004`. A value that isn't on the coord errors with the first
+few available values. A value that matches duplicate labels errors and points
+to `--index`, as does `--value` on a dim with no coordinate variable. A literal
+that can't be parsed for the coord's type errors with the expected form.
 
 ### Output
 
 A single selection (one `--index` or one `--value`) collapses the dim — it
 disappears from the output — AND drops leftover scalar coordinates on that dim
 (e.g. `step`, `valid_time`). Point identity is kept as scalar coords:
-`station_id` / `point_id`, `name`, `latitude` / `longitude`, `country`. Other
-coordinates that were already scalar on the input pass through. Multiple selections keep the dim with
+`station_id` / `point_id`, `name`, `latitude` / `longitude`, `country`. The
+selected bin's `aggregation_coverage` is also kept as a scalar coord, so
+`convert-to-totals` still refuses a partial interval after the time/step axis
+is gone. Collapsing a time axis stamped with a calendar `aggregation_period`
+(`1 month`) rewrites it to that bin's real length (`28 day` for February).
+Other coordinates that were already scalar on the input pass through. Multiple selections keep the dim with
 exactly those entries, in the order the flags were given (args order = output
 order; `--index 2 --index 0` reverses those two entries). Selecting by
 `--value` produces the same data as selecting the corresponding positions by
 `--index`.
 
-All other dims, coords, data variables, values, and `weather_skills_*` attrs pass
-through unchanged. On any argument, input, or selection validation error —
-missing or unreadable input, an output path that exists as a plain file,
-unknown dim, bad selector — the skill exits with code 2 and a clear `Error:`
-message; no output is produced.
+All other dims, coords, data variables, values, and `weather_skills_*` attrs
+pass through unchanged. Any argument, input, or selection error exits with
+code 2, prints an `Error:` message, and writes no output. That covers a
+missing input, an unknown `--dim`, an out-of-range `--index`, a bad or absent
+`--value`, and an output path that is an existing plain file.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: the input's chain plus
-an entry for this run, each entry `{skill, version, args, input}` (the
-`version` recorded in this skill's own entry is the value printed by its
-`--help`; inherited upstream entries carry their own versions). Repeated
-`--index`/`--value` flags are recorded as a list in the order given, since
-that order determines the output; index positions are recorded as canonical
-integers (`0` and `00` are the same selection). Inspect a written output's
-lineage with the `provenance` skill.
-
-Re-running with identical arguments against an unchanged input and an existing
-output is a cheap no-op — reuse the same output path. A cache hit requires the
-same skill `version`, the same flags (in the same order), the same input name,
-the same input content, and the same upstream history; any modification to the
-input forces a recompute (a renamed-but-unchanged input misses, and a modified
-same-named input misses).
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ## Example
 

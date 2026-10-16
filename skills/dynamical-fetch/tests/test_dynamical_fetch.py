@@ -329,3 +329,216 @@ def test_merge_pressure_group_renames_vertical(mod):
     assert "vertical" in merged.dims
     assert "pressure_level" not in merged.dims
     assert mod._resolve_variables(["t"], merged.data_vars, "er") == ["temperature"]
+
+
+def _end_labelled_forecast_ds():
+    """GEFS-like uneven leads: precip NaN at lead 0, t2m instant (finite)."""
+    inits = np.array([np.datetime64("2026-01-01")])
+    steps = np.array([0, 3, 6, 12], dtype="timedelta64[h]").astype("timedelta64[ns]")
+    shape = (1, 4, 2, 2)
+    precip = np.arange(np.prod(shape), dtype=float).reshape(shape)
+    precip[:, 0] = np.nan
+    return xr.Dataset(
+        {
+            "precipitation_surface": (
+                ("init_time", "lead_time", "latitude", "longitude"),
+                precip,
+                {"units": "mm day-1"},
+            ),
+            "temperature_2m": (
+                ("init_time", "lead_time", "latitude", "longitude"),
+                np.ones(shape),
+                {"units": "degree_Celsius"},
+            ),
+        },
+        coords={
+            "init_time": inits,
+            "lead_time": steps,
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+
+
+def _fetch_forecast(tmp_path, mod, fetch, ds, *extra):
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "forecast"}):
+        run_skill(fetch, "--dataset", "t", "--date", "2026-01-01", *extra, "-o", str(out))
+    return xr.open_zarr(out, consolidated=True)
+
+
+def test_end_labelled_lead0_dropped_and_relabelled_to_start(tmp_path, mod, fetch):
+    ds = _end_labelled_forecast_ds()
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip")
+    hours = (written["step"].values / np.timedelta64(1, "h")).tolist()
+    # Previous-step relabel: (0,3]->0, (3,6]->3, (6,12]->6 (uneven spacing kept).
+    assert hours == [0, 3, 6]
+    np.testing.assert_array_equal(
+        written["precipitation_surface"].values,
+        ds["precipitation_surface"].values[0, 1:],
+    )
+    assert "interval start" in written["precipitation_surface"].attrs["comment"]
+    # Uneven leads carry bounds for the relabelled cells, not end-labelled ones.
+    bounds = (written["step_bounds"].values / np.timedelta64(1, "h")).tolist()
+    assert bounds == [[0, 3], [3, 6], [6, 12]]
+
+
+def test_lead0_kept_when_any_requested_field_is_finite(tmp_path, mod, fetch):
+    ds = _end_labelled_forecast_ds()
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "-v", "temperature_2m")
+    hours = (written["step"].values / np.timedelta64(1, "h")).tolist()
+    assert hours == [0, 3, 6, 12]
+
+
+def test_end_time_includes_whole_sub_daily_day(tmp_path, mod, fetch):
+    times = np.arange(
+        np.datetime64("2026-01-01T00:00"),
+        np.datetime64("2026-01-03T00:30"),
+        np.timedelta64(30, "m"),
+    )
+    ds = xr.Dataset(
+        {"precipitation_surface": (("time", "latitude", "longitude"), np.ones((len(times), 1, 1)))},
+        coords={"time": times, "latitude": [1.0], "longitude": [10.0]},
+    )
+    ds["precipitation_surface"].attrs["units"] = "mm day-1"
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "analysis"}):
+        run_skill(
+            fetch,
+            "--dataset",
+            "t",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "-o",
+            str(out),
+        )
+    written = xr.open_zarr(out, consolidated=True)
+    assert written.sizes["time"] == 96
+    assert str(written["time"].values[-1])[:16] == "2026-01-02T23:30"
+
+
+def test_window_past_latest_time_is_reported_not_padded(tmp_path, mod, fetch, capsys):
+    # Store ends 2026-01-02T05:30; asking through 2026-01-05 must warn and write
+    # only the published times.
+    times = np.arange(
+        np.datetime64("2026-01-01T00:00"),
+        np.datetime64("2026-01-02T06:00"),
+        np.timedelta64(30, "m"),
+    )
+    ds = xr.Dataset(
+        {"precipitation_surface": (("time", "latitude", "longitude"), np.ones((len(times), 1, 1)))},
+        coords={"time": times, "latitude": [1.0], "longitude": [10.0]},
+    )
+    ds["precipitation_surface"].attrs["units"] = "mm day-1"
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "analysis"}):
+        run_skill(
+            fetch,
+            "--dataset",
+            "t",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-05",
+            "-o",
+            str(out),
+        )
+    err = capsys.readouterr().err
+    assert "covers only 2026-01-01T00:00..2026-01-02T05:30" in err
+    assert xr.open_zarr(out, consolidated=True).sizes["time"] == len(times)
+
+
+def test_complete_window_has_no_partial_warning(tmp_path, mod, fetch, capsys):
+    times = np.arange(
+        np.datetime64("2026-01-01"), np.datetime64("2026-01-04"), np.timedelta64(1, "D")
+    )
+    ds = xr.Dataset(
+        {"precipitation_surface": (("time", "latitude", "longitude"), np.ones((3, 1, 1)))},
+        coords={"time": times, "latitude": [1.0], "longitude": [10.0]},
+    )
+    ds["precipitation_surface"].attrs["units"] = "mm day-1"
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "analysis"}):
+        run_skill(
+            fetch,
+            "--dataset",
+            "t",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "-o",
+            str(out),
+        )
+    assert "covers only" not in capsys.readouterr().err
+
+
+def test_still_publishing_tail_leads_dropped_and_reported(tmp_path, mod, fetch, capsys):
+    ds = _end_labelled_forecast_ds()
+    ds["precipitation_surface"].values[:, 3] = np.nan  # lead 12 h not published yet
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip")
+    err = capsys.readouterr().err
+    assert "no data after catalog lead 6 h (of 12 h" in err
+    hours = (written["step"].values / np.timedelta64(1, "h")).tolist()
+    assert hours == [0, 3]
+    assert not bool(written["precipitation_surface"].isnull().any())
+
+
+def test_init_with_no_data_exits_1(tmp_path, mod, fetch):
+    ds = _end_labelled_forecast_ds()
+    ds["precipitation_surface"].values[:] = np.nan
+    with pytest.raises(SystemExit) as exc:
+        _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip")
+    assert exc.value.code == 1
+
+
+def test_bbox_applied_after_time_selection(tmp_path, mod, fetch):
+    # An antimeridian bbox concatenates two longitude wings, which reads every
+    # value it is given: it must only ever see the requested window.
+    times = np.arange(
+        np.datetime64("2026-01-01"), np.datetime64("2026-03-01"), np.timedelta64(1, "D")
+    )
+    ds = xr.Dataset(
+        {"temperature_2m": (("time", "latitude", "longitude"), np.ones((len(times), 1, 4)))},
+        coords={"time": times, "latitude": [1.0], "longitude": [-175.0, -10.0, 10.0, 175.0]},
+    )
+    seen = []
+    real = mod.bbox_subset
+
+    def _spy(d, *a, **k):
+        seen.append(d.sizes["time"])
+        return real(d, *a, **k)
+
+    out = tmp_path / "out.zarr"
+    with (
+        patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "analysis"}),
+        patch.object(mod, "bbox_subset", _spy),
+    ):
+        run_skill(
+            fetch,
+            "--dataset",
+            "t",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "--bbox",
+            "5/170/-5/-170",
+            "-o",
+            str(out),
+        )
+    assert seen == [2]
+    written = xr.open_zarr(out, consolidated=True)
+    assert sorted(written["longitude"].values.tolist()) == [-175.0, 175.0]
+
+
+def test_t2m_maps_to_instant_field_when_present(mod):
+    assert mod._resolve_variables(["t2m"], ["temperature_2m"], "gfs") == ["temperature_2m"]
+    assert mod._resolve_variables(["d2m"], ["dew_point_temperature_2m"], "ifs") == [
+        "dew_point_temperature_2m"
+    ]
+    assert mod._resolve_variables(["t2m"], ["average_temperature_2m"], "er") == [
+        "average_temperature_2m"
+    ]

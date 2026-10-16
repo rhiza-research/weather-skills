@@ -188,3 +188,30 @@ def test_usage_errors(tmp_path, point_value, extra):
     with pytest.raises(SystemExit) as exc:
         run_skill(point_value, "-i", str(src), "-o", str(tmp_path / "o.zarr"), *extra)
     assert exc.value.code == 2
+
+
+def test_grid_coords_do_not_look_like_latitude(tmp_path, point_value):
+    """Only the point's own lat/lon are CF latitude/longitude (plots find them)."""
+    import cf_xarray  # noqa: F401
+
+    src = _ramp_grid(tmp_path)
+    out = tmp_path / "out.zarr"
+    run_skill(point_value, "-i", str(src), "-o", str(out), "--point", "1.2,11.4,farm")
+    ds = _open(out)
+    assert ds.cf["latitude"].name == "latitude"
+    assert ds.cf["longitude"].name == "longitude"
+    assert ds["grid_latitude"].attrs["units"] == "degrees"
+
+
+def test_southern_hemisphere_point_without_equals(tmp_path, point_value):
+    ds = make_gridded(lats=(-2.0, -1.0, 0.0), lons=(36.0, 37.0), fill=1.0)
+    ds["precip"].values[:, 0, :] = 5.0  # lat -2 row
+    src = write_zarr(ds, tmp_path / "grid.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        point_value, "-i", str(src), "-o", str(out),
+        "--point", "-1.8,36.2,kajiado", "--point", "-.9,37.0",
+    )  # fmt: skip
+    res = _open(out)
+    assert list(res["station_id"].values) == ["kajiado", "P1"]
+    np.testing.assert_allclose(res["precip"].isel(time=0).values, [5.0, 1.0])

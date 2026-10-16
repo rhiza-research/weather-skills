@@ -2,14 +2,8 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "xarray",
-#   "zarr",
-#   "numpy",
 #   "pandas",
 #   "requests",
-#   "cf_xarray",
-#   "pint-xarray>=0.6",
-#   "cftime",
 # ]
 # ///
 """Fetch NOAA GHCN-Daily station observations over HTTPS and write a point_obs weather-skills standard dataset Zarr."""
@@ -19,6 +13,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
+from urllib.error import HTTPError
 
 import cf_xarray  # noqa: F401  (fail-fast probe; core loads lazily at write time)
 import cf_xarray.units  # noqa: F401  (fail-fast probe; configures pint CF registry)
@@ -26,7 +21,7 @@ import numpy as np
 import pandas as pd
 import requests
 import xarray as xr
-from weather_skills_core import DataError, weather_skill
+from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_dsg, udunits_error, verify_cf_dsg
 from weather_skills_core.standard_utils import apply_write_encoding, is_transient
 from weather_skills_core.units import precip_amounts_to_rates, stamp_data_interval
@@ -34,12 +29,19 @@ from weather_skills_core.units import precip_amounts_to_rates, stamp_data_interv
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
 
-_BASE_URL = "https://noaa-ghcn-pds.s3.amazonaws.com"
+# NCEI's own HTTPS tree, not the noaa-ghcn-pds S3 mirror: the mirror's by_station
+# files for some first-order stations (e.g. USW00094728, NYC Central Park) stopped
+# updating in Feb 2025, which silently dropped them from recent windows.
+_BASE_URL = "https://www.ncei.noaa.gov/pub/data/ghcn/daily"
 _STATIONS_URL = f"{_BASE_URL}/ghcnd-stations.txt"
-_STATION_CSV_URL = _BASE_URL + "/csv.gz/by_station/{station_id}.csv.gz"
-_YEAR_CSV_URL = _BASE_URL + "/csv.gz/by_year/{year}.csv.gz"
+_STATION_CSV_URL = _BASE_URL + "/by_station/{station_id}.csv.gz"
+_YEAR_CSV_URL = _BASE_URL + "/by_year/{year}.csv.gz"
 _CSV_COLUMNS = ["ID", "DATE", "ELEMENT", "VALUE", "M_FLAG", "Q_FLAG", "S_FLAG", "OBS_TIME"]
 _GHCN_MISSING_VALUE = -9999
+# PRCP measurement flags that mark a zero GHCN inferred rather than measured:
+# P = "missing presumed zero" (DSI 3200/3206), I = station reported no precipitation
+# data for the day. These are missing observations, so they are dropped (NaN).
+_PRESUMED_ZERO_MFLAGS = ["P", "I"]
 HTTP_TIMEOUT = 60
 DEFAULT_WORKERS = 8
 
@@ -142,6 +144,7 @@ def _station_frame(station_id: str, elements: dict, start_int: int, end_int: int
     raw = raw[(raw["DATE"] >= start_int) & (raw["DATE"] <= end_int)]
     raw = raw[raw["Q_FLAG"].isna()]
     raw = raw[raw["VALUE"] != _GHCN_MISSING_VALUE]
+    raw = raw[~((raw["ELEMENT"] == "PRCP") & raw["M_FLAG"].isin(_PRESUMED_ZERO_MFLAGS))]
     if raw.empty:
         return None
 
@@ -199,34 +202,43 @@ def _var_attrs(ds) -> dict:
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Print the newest observation date (YYYY-MM-DD) on stdout and exit. "
+        "Downloads the current year's GHCN-Daily by_year file (no -o). Takes no IDENT."
     ),
 )
-def fetch(start_time, end_time, bbox, workers, variable, **kwargs):
+def fetch(start_time, end_time, bbox, workers, variable, probe_latest, **kwargs):
     """Fetch NOAA GHCN-Daily station observations over HTTPS and write a point_obs weather-skills standard dataset Zarr."""
-    if kwargs.get("probe_latest") is not None:
-        from email.utils import parsedate_to_datetime
-
+    if probe_latest is not None:
+        if probe_latest:
+            raise UsageError(
+                f"--probe-latest takes no argument (got {probe_latest!r}); GHCN-Daily "
+                "is one product."
+            )
+        # The by_year file's Last-Modified is its upload date, days after the
+        # newest observation in it; report the newest DATE actually present.
         year = datetime.now(UTC).date().year
         for y in (year, year - 1):
-            resp = requests.head(
-                _YEAR_CSV_URL.format(year=y), timeout=HTTP_TIMEOUT, allow_redirects=True
-            )
-            if resp.status_code == 404:
+            try:
+                chunks = pd.read_csv(
+                    _YEAR_CSV_URL.format(year=y),
+                    compression="gzip",
+                    header=None,
+                    usecols=[1],
+                    chunksize=2_000_000,
+                )
+                latest = max(int(chunk[1].max()) for chunk in chunks)
+            except pd.errors.EmptyDataError:
                 continue
-            resp.raise_for_status()
-            last_modified = resp.headers.get("Last-Modified")
-            if not last_modified:
-                raise DataError(f"GHCN year file for {y} has no Last-Modified header")
-            print(parsedate_to_datetime(last_modified).date().isoformat())
+            except HTTPError as exc:
+                if exc.code == 404:
+                    continue
+                raise
+            print(datetime.strptime(str(latest), "%Y%m%d").date().isoformat())
             return
-        raise DataError("GHCN probe could not HEAD a by_year csv.gz")
+        raise DataError("GHCN probe found no by_year csv.gz for this year or last")
 
     start_iso = start_time.isoformat()
     end_iso = end_time.isoformat()
@@ -303,6 +315,10 @@ def fetch(start_time, end_time, bbox, workers, variable, **kwargs):
     df = df.set_index(["time", "station_id"])
 
     ds = xr.Dataset.from_dataframe(df)
+    # Days no selected station reported become NaN rows so the axis is a regular
+    # daily one (aggregate-temporal --window refuses gaps). It runs from
+    # --start-time to the last reported day only: nothing past the data is added.
+    ds = ds.reindex(time=pd.date_range(start_iso, ds["time"].values.max(), freq="D"))
     ds = ds.assign_coords(
         latitude=("station_id", meta.loc[ds["station_id"].values, "latitude"].values),
         longitude=("station_id", meta.loc[ds["station_id"].values, "longitude"].values),

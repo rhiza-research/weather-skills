@@ -2,20 +2,13 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "xarray",
-#   "zarr>=3",
-#   "cftime",
 #   "gcsfs",
-#   "numpy",
-#   "pint-xarray>=0.6",
 # ]
 # ///
 """Fetch a PBC AI Weather Quest precip forecast and write a weather-skills standard dataset."""
 
 from __future__ import annotations
 
-import json
-import os
 import re
 import sys
 from datetime import timedelta
@@ -28,13 +21,13 @@ from weather_skills_core.units import stamp_data_interval
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
 
-_BUCKET = "sheerwater-datalake"
+_BUCKET = "sheerwater-public-datalake"
 _PREFIX = "pbc-data"
 _DEFAULT_DATASET = "era5-p_pr_19"
 _COMPACT_DATE_RE = re.compile(r"^\d{8}$")
 _VAR_ALIASES = {"forecast": "pr", "precip": "pr", "tp": "pr", "probability": "pr"}
 
-# Canonical folder names under gs://sheerwater-datalake/pbc-data/.
+# Canonical folder names under gs://sheerwater-public-datalake/pbc-data/.
 # lead_start is AI-WQ day-1-is-init numbering: week 3 is days 19–25, week 4 is 26–32.
 # Store folders are named by that first valid day (init + lead_start - 1).
 _DATASETS: dict[str, dict] = {
@@ -50,40 +43,24 @@ _ALIASES = {
 _DATASET_CHOICES = [*_DATASETS, *_ALIASES]
 
 _AUTH_MSG = (
-    "cannot read gs://sheerwater-datalake/pbc-data (private GCS). Set "
-    "NEURAL_GCM_SERVICE_CREDENTIALS to the full service-account key JSON "
-    "(no file needed), GOOGLE_APPLICATION_CREDENTIALS to a service-account "
-    "JSON file path, or run `gcloud auth application-default login`."
+    "cannot read gs://sheerwater-public-datalake/pbc-data. It is a public "
+    "bucket (no credentials needed); this is likely a network issue or the "
+    "bucket/prefix no longer exists."
 )
 
 _FS = None
 
 
 def _gcs():
-    """Authenticated GCS filesystem: NEURAL_GCM_SERVICE_CREDENTIALS, then
-    GOOGLE_APPLICATION_CREDENTIALS / Application Default Credentials.
-    """
+    """Anonymous GCS filesystem: gs://sheerwater-public-datalake is public."""
     global _FS
     if _FS is None:
         import gcsfs
 
-        creds_json = os.environ.get("NEURAL_GCM_SERVICE_CREDENTIALS")
-        if creds_json:
-            try:
-                info = json.loads(creds_json)
-            except json.JSONDecodeError as exc:
-                raise DataError(
-                    f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc})."
-                ) from None
-            try:
-                _FS = gcsfs.GCSFileSystem(token=info)
-            except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
-                raise DataError(f"{_AUTH_MSG} ({exc})") from None
-        else:
-            try:
-                _FS = gcsfs.GCSFileSystem()
-            except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
-                raise DataError(f"{_AUTH_MSG} ({exc})") from None
+        try:
+            _FS = gcsfs.GCSFileSystem(token="anon")
+        except Exception as exc:  # noqa: BLE001 — surface access failures cleanly
+            raise DataError(f"{_AUTH_MSG} ({exc})") from None
     return _FS
 
 
@@ -152,23 +129,19 @@ def _folder_for_init(dataset: str, init) -> str:
 def _resolve_folder(date, dataset: str) -> tuple[str, object]:
     """Return ``(folder YYYYMMDD, init date)``.
 
-    ``--date`` is the forecast init (matching other fetchers). If that folder
-    is missing, the same string is tried as the store folder name (valid-week
-    start) so a date copied from ``gsutil ls`` still works.
+    ``--date`` is the forecast init (matching other fetchers). It is never
+    read as a folder name: folders are near-daily, so that would silently
+    return an older init than the one requested.
     """
     if date is not None:
-        as_init_folder = _folder_for_init(dataset, date)
-        if _store_exists(_store_key(dataset, as_init_folder)):
-            return as_init_folder, date
-        as_folder = _compact(date)
-        if _store_exists(_store_key(dataset, as_folder)):
-            return as_folder, _init_for_folder(dataset, as_folder)
+        folder = _folder_for_init(dataset, date)
+        if _store_exists(_store_key(dataset, folder)):
+            return folder, date
         raise DataError(
-            f"no {dataset!r} Zarr for --date {date.isoformat()} in "
-            f"gs://{_BUCKET}/{_PREFIX}/{dataset}/ (looked for folder "
-            f"{as_init_folder} as init+{_lead_offset(dataset)}d and {as_folder} "
-            "as a valid-week folder). Omit --date to take the latest available, "
-            "or pass --probe-latest."
+            f"no {dataset!r} Zarr for init --date {date.isoformat()} in "
+            f"gs://{_BUCKET}/{_PREFIX}/{dataset}/ (looked for folder {folder}; "
+            f"folders are named init+{_lead_offset(dataset)}d, the first valid "
+            "day). Pass --probe-latest for the latest init, or omit --date."
         )
 
     folders = _list_folder_dates(dataset)
@@ -211,7 +184,8 @@ def _as_forecast(ds, *, init, dataset: str):
             f"(have: {', '.join(sorted(ds.data_vars))})."
         )
 
-    lead = np.timedelta64(_lead_offset(dataset), "D")
+    # ns up front: core's write path recasts other resolutions and drops step attrs.
+    lead = np.timedelta64(_lead_offset(dataset), "D").astype("timedelta64[ns]")
     init_ns = np.datetime64(init.isoformat(), "ns")
     ds = ds.expand_dims(step=[lead])
     ds = ds.assign_coords(
@@ -226,7 +200,6 @@ def _as_forecast(ds, *, init, dataset: str):
     ds["pr"].attrs.update(
         units="1",
         long_name="precipitation quintile probability",
-        standard_name="probability",
     )
     if "quintile" in ds.coords:
         ds["quintile"].attrs.setdefault("long_name", "quintile upper bound")
@@ -263,7 +236,6 @@ def _as_forecast(ds, *, init, dataset: str):
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
@@ -272,18 +244,18 @@ def _as_forecast(ds, *, init, dataset: str):
         "(era5-p_pr_19, pr_26, …)."
     ),
 )
-def fetch(dataset, date, bbox, variable, output, **kwargs):
+def fetch(dataset, date, bbox, variable, probe_latest, **kwargs):
     """Fetch a PBC AI Weather Quest precip forecast and write a weather-skills standard dataset.
 
-    Opens a Zarr under ``gs://sheerwater-datalake/pbc-data/<dataset>/<YYYYMMDD>/``
+    Opens a Zarr under ``gs://sheerwater-public-datalake/pbc-data/<dataset>/<YYYYMMDD>/``
     with GCS Application Default Credentials. Optionally subsets by ``--bbox``
     and ``--variable``, maps quintile probabilities onto a classic forecast
     (scalar init ``time`` + ``step``), and returns a Dataset for the decorator
     to write.
     """
     dataset = _resolve_dataset(dataset)
-    if kwargs.get("probe_latest") is not None:
-        ident = kwargs["probe_latest"] or dataset
+    if probe_latest is not None:
+        ident = probe_latest or dataset
         dsid = _resolve_dataset(ident)
         _folder, init = _resolve_folder(None, dsid)
         print(init.isoformat())

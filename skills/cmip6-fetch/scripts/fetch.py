@@ -2,14 +2,8 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "xarray",
-#   "zarr",
 #   "gcsfs",
-#   "numpy",
 #   "pandas",
-#   "cftime",
-#   "cf_xarray",
-#   "pint-xarray>=0.6",
 # ]
 # ///
 """Fetch a CMIP6 climate-projection dataset from the public Pangeo Google Cloud catalog and write a weather-skills standard dataset Zarr."""
@@ -25,7 +19,6 @@ import xarray as xr
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs, udunits_error
 from weather_skills_core.standard_utils import (
-    apply_write_encoding,
     bbox_subset,
     ensure_normalized_longitude,
     verify_cf_decode,
@@ -68,13 +61,21 @@ def _resolve_zstore(model, experiment, variable, member, table, grid) -> tuple:
         if for_model.empty:
             hint = f"unknown --model {model!r}; sample models: {sorted(df.source_id.unique())[:10]}"
         else:
+            # Each list holds the other facets fixed, so the valid choice for
+            # the one that is wrong is always shown in full.
+            m = for_model
             hint = (
-                f"for model {model!r}: "
-                f"experiments={sorted(for_model.experiment_id.unique())[:12]}; "
-                f"variables(table {table})="
-                f"{sorted(for_model[for_model.table_id == table].variable_id.unique())[:15]}; "
-                f"members={sorted(for_model.member_id.unique())[:8]}"
+                f"for model {model!r}: experiments with {variable}/{table}="
+                f"{sorted(m[(m.variable_id == variable) & (m.table_id == table)].experiment_id.unique())}; "
+                f"variables in {experiment}/{table}="
+                f"{sorted(m[(m.experiment_id == experiment) & (m.table_id == table)].variable_id.unique())}; "
+                f"tables for {experiment}/{variable}="
+                f"{sorted(m[(m.experiment_id == experiment) & (m.variable_id == variable)].table_id.unique())}; "
+                f"members for {experiment}/{variable}/{table}="
+                f"{sorted(m[(m.experiment_id == experiment) & (m.variable_id == variable) & (m.table_id == table)].member_id.unique())}"
             )
+            if grid:
+                hint += f"; grids={sorted(df[mask].grid_label.unique())}"
         raise UsageError(
             f"no CMIP6 dataset matches model={model} experiment={experiment} "
             f"variable={variable} member={member} table={table}"
@@ -113,7 +114,6 @@ def _open_remote(state, model, experiment, variable, member, table, grid) -> dic
             ds = xr.open_zarr(mapper, consolidated=True, use_cftime=True)
 
         source_calendar = ds["time"].encoding.get("calendar")
-        source_time_units = ds["time"].encoding.get("units")
         if source_calendar is None:
             raise DataError(
                 "could not determine the source time calendar from the CMIP6 store; "
@@ -129,7 +129,6 @@ def _open_remote(state, model, experiment, variable, member, table, grid) -> dic
         state.update(
             ds=ds,
             source_calendar=source_calendar,
-            source_time_units=source_time_units,
         )
     return state
 
@@ -172,7 +171,6 @@ def _drop_bounds(ds):
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
@@ -181,9 +179,21 @@ def _drop_bounds(ds):
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(start_time, end_time, bbox, model, experiment, variable, member, table, grid, **kwargs):
+def fetch(
+    start_time,
+    end_time,
+    bbox,
+    model,
+    experiment,
+    variable,
+    member,
+    table,
+    grid,
+    probe_latest,
+    **kwargs,
+):
     """Fetch a CMIP6 climate-projection dataset from the public Pangeo Google Cloud catalog and write a weather-skills standard dataset Zarr."""
-    if kwargs.get("probe_latest") is not None:
+    if probe_latest is not None:
         print("none")
         return
 
@@ -199,6 +209,8 @@ def fetch(start_time, end_time, bbox, model, experiment, variable, member, table
         )
 
     source_globals = dict(ds.attrs)
+    # CMIP6's own cell edges, e.g. [Dec 1, Jan 1) for a mid-month Amon label.
+    native_bounds = ds.get(ds["time"].attrs.get("bounds", "time_bnds"))
     ds = ds[[variable]]
     ds = ds.rename({"lat": "latitude", "lon": "longitude"})
     ds = _drop_bounds(ds)
@@ -206,7 +218,27 @@ def fetch(start_time, end_time, bbox, model, experiment, variable, member, table
     if bbox:
         ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
 
-    ds = ds.sel(time=slice(start_iso, end_iso))
+    # Compare dates as YYYYMMDD integers: a string slice parses the bounds in
+    # the model calendar, so --end-time 2015-03-31 crashes on 360_day models
+    # (and 2016-02-29 on noleap ones).
+    start_key = start_time.year * 10000 + start_time.month * 100 + start_time.day
+    end_key = end_time.year * 10000 + end_time.month * 100 + end_time.day
+    if native_bounds is not None:
+        # Refuse a window the run does not fully cover (e.g. historical ends
+        # 2014-12-31) instead of silently returning the overlapping part.
+        first, last = native_bounds.values[0, 0], native_bounds.values[-1, 1]
+        first_key = first.year * 10000 + first.month * 100 + first.day
+        last_key = last.year * 10000 + last.month * 100 + last.day
+        if start_key < first_key or end_key >= last_key:
+            raise UsageError(
+                f"{model}/{experiment} covers {first.strftime('%Y-%m-%d')} up to (not "
+                f"including) {last.strftime('%Y-%m-%d')}; the window {start_iso}..{end_iso} "
+                "extends past it. Historical runs end 2014-12-31 and ssp* scenarios start "
+                "2015-01-01: fetch each experiment's part separately and join them with "
+                "the concat skill along time."
+            )
+    key = ds["time"].dt.year * 10000 + ds["time"].dt.month * 100 + ds["time"].dt.day
+    ds = ds.isel(time=((key >= start_key) & (key <= end_key)).values)
     if ds.sizes.get("time", 0) == 0:
         raise DataError(
             f"{model}/{experiment}/{variable} has no data in "
@@ -253,16 +285,16 @@ def fetch(start_time, end_time, bbox, model, experiment, variable, member, table
         )
 
     verify_cf_decode(ds)
-    fills = {v: ds[v].encoding.get("_FillValue") for v in ds.data_vars}
-    apply_write_encoding(
-        ds,
-        time_units=state["source_time_units"],
-        time_calendar=state["source_calendar"],
-        fills=fills,
-    )
     ds = to_standard_units(ds)
     ds = precip_amounts_to_rates(ds)
-    return stamp_data_interval(ds)
+    ds = stamp_data_interval(ds)
+    # Irregular axes (monthly tables) get CF bounds. Inferred ones treat each
+    # mid-month label as a cell end ([Nov 16, Dec 16] for December), which
+    # blends adjacent months when aggregated; use the source's edges instead.
+    name = ds["time"].attrs.get("bounds")
+    if name and native_bounds is not None:
+        ds[name] = (ds[name].dims, native_bounds.sel(time=ds["time"]).values)
+    return ds
 
 
 if __name__ == "__main__":

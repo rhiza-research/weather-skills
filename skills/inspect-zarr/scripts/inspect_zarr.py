@@ -2,8 +2,7 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime>=1.6",
-#   "numpy",
+#   "pandas",
 # ]
 # ///
 """Print dimensions, coordinates, and a bounded data-variable summary of a Zarr."""
@@ -21,6 +20,14 @@ _SKILL_VERSION = "0.0.2"
 # exceeds this many values, even when --max-values is 0 (which still dumps
 # every *coordinate* value).
 _DATA_SAMPLE_CAP = 256
+# Variable attrs worth showing: what the values are and how they were made.
+_KEY_ATTRS = (
+    "long_name",
+    "standard_name",
+    "cell_methods",
+    "aggregation_period",
+    "data_interval",
+)
 
 
 def _plain(da):
@@ -44,6 +51,16 @@ def _fmt(v):
     if isinstance(v, np.datetime64):
         s = str(np.datetime_as_string(v, timezone="naive"))
         return s.split("T", 1)[0] if "T00:00:00" in s else s
+    if isinstance(v, np.timedelta64):
+        # Lead times as "7 days" / "0 days 03:00:00", not raw nanoseconds.
+        import pandas as pd
+
+        td = pd.Timedelta(v)
+        if pd.isna(td):
+            return "NaT"
+        if td % pd.Timedelta(days=1) == pd.Timedelta(0):
+            return f"{td.days} day" if td.days == 1 else f"{td.days} days"
+        return str(td)
     v = v.item() if isinstance(v, np.generic) else v
     return v if type(v) in (int, float, str, bool) else str(v)
 
@@ -72,39 +89,44 @@ def _preview(vals, n):
     return [*vals[:h], "…", *vals[-t:]], True
 
 
-def _stats(arr):
-    flat = np.asarray(arr).reshape(-1)
-    n = int(flat.size)
-    out = {"n": n, "n_finite": None, "n_nan": None, "min": None, "max": None, "mean": None}
-    if n == 0 or flat.dtype.kind not in "biuf":
-        return out
-    if flat.dtype.kind == "f":
-        finite = np.isfinite(flat)
-        vals = flat[finite]
-        n_finite = int(vals.size)
-        n_nan = n - n_finite
-    else:
-        vals = flat
-        n_finite = n
-        n_nan = 0
-    out["n_finite"] = n_finite
-    out["n_nan"] = n_nan
-    if n_finite == 0:
-        return out
-    out["min"] = _jsonable(_fmt(vals.min()))
-    out["max"] = _jsonable(_fmt(vals.max()))
-    out["mean"] = _jsonable(float(vals.mean()))
-    return out
-
-
 def _data_var(name, da, max_values):
     arr = _numpy(da)
-    stats = _stats(arr)
     want = _DATA_SAMPLE_CAP if max_values == 0 else min(max_values, _DATA_SAMPLE_CAP)
-    flat = arr.reshape(-1)
-    raw = flat[: min(want, int(flat.size))]
-    sample = [_fmt(v) for v in raw]
-    truncated = int(flat.size) > len(raw)
+    n = int(arr.size)
+    kind = arr.dtype.kind
+    stats = {"n": n, "n_finite": None, "n_nan": None, "min": None, "max": None, "mean": None}
+    sample = []
+    if kind in "biufmM" and n:
+        # One pass over blocks along the first axis: no full-size copies of a
+        # large array, and the sample is the first *finite* values (a clipped
+        # grid's leading cells are often all NaN).
+        n_finite, total, lo, hi = 0, 0.0, None, None
+        blocks = arr.reshape(arr.shape[0], -1) if arr.ndim else arr.reshape(1, 1)
+        step = max(1, 10_000_000 // max(1, blocks.shape[1]))
+        for start in range(0, blocks.shape[0], step):
+            block = blocks[start : start + step].reshape(-1)
+            if kind == "f":
+                block = block[np.isfinite(block)]
+            elif kind in "mM":
+                block = block[~np.isnat(block)]
+            if not block.size:
+                continue
+            n_finite += int(block.size)
+            lo = block.min() if lo is None else min(lo, block.min())
+            hi = block.max() if hi is None else max(hi, block.max())
+            if kind not in "mM":
+                total += float(block.sum(dtype="float64"))
+            if len(sample) < want:
+                sample.extend(_fmt(v) for v in block[: want - len(sample)])
+        stats["n_finite"], stats["n_nan"] = n_finite, n - n_finite
+        if n_finite:
+            stats["min"], stats["max"] = _jsonable(_fmt(lo)), _jsonable(_fmt(hi))
+            if kind not in "mM":
+                stats["mean"] = _jsonable(total / n_finite)
+    else:
+        sample = [_fmt(v) for v in arr.reshape(-1)[:want]]
+    truncated = stats["n_finite"] is not None and stats["n_finite"] > len(sample)
+    truncated = truncated or (stats["n_finite"] is None and n > len(sample))
     if truncated:
         sample.append("…")
     return {
@@ -113,6 +135,7 @@ def _data_var(name, da, max_values):
         "shape": [int(s) for s in da.shape],
         "dtype": str(arr.dtype),
         "units": _units(da),
+        "attrs": {k: str(da.attrs[k]) for k in _KEY_ATTRS if da.attrs.get(k) is not None},
         **stats,
         "sample": [_jsonable(v) for v in sample],
         "sample_truncated": truncated,
@@ -133,7 +156,7 @@ def _data_var(name, da, max_values):
     help="Max values printed per coordinate and per data-variable sample (default 24). "
     "0 prints every coordinate value; data samples still cap at 256.",
 )
-def inspect_zarr(ds, format="human", max_values=24, **kwargs):
+def inspect_zarr(ds, format, max_values, **kwargs):
     """Print dimensions, coordinates, and a bounded data-variable summary of a Zarr."""
     if max_values < 0:
         raise UsageError(
@@ -178,13 +201,19 @@ def inspect_zarr(ds, format="human", max_values=24, **kwargs):
         units = f" [{v['units']}]" if v["units"] else ""
         shape = " × ".join(map(str, v["shape"])) or "scalar"
         print(f"  {v['name']} ({', '.join(v['dims'])}) {v['dtype']} {shape}{units}")
+        for key, val in v["attrs"].items():
+            print(f"    {key}: {val}")
         if v["n_finite"] is not None:
+            mean = f"  mean {_show(v['mean'])}" if v["mean"] is not None else ""
             print(
                 f"    finite {v['n_finite']}/{v['n']}  "
-                f"min {_show(v['min'])}  max {_show(v['max'])}  mean {_show(v['mean'])}"
+                f"min {_show(v['min'])}  max {_show(v['max'])}{mean}"
             )
-        shown = ", ".join(_show(x) for x in v["sample"])
-        extra = f"  ({len(v['sample']) - 1} of {v['n']} cells)" if v["sample_truncated"] else ""
+            of = f"{v['n_finite']} finite cells"
+        else:
+            of = f"{v['n']} cells"
+        shown = ", ".join(_show(x) for x in v["sample"]) or "(no finite values)"
+        extra = f"  ({len(v['sample']) - 1} of {of})" if v["sample_truncated"] else ""
         print(f"    sample: {shown}{extra}")
 
 

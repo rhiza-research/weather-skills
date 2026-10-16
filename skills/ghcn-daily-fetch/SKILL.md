@@ -2,7 +2,7 @@
 name: ghcn-daily-fetch
 description: Fetch NOAA GHCN-Daily global in-situ station observations (precipitation, max/min/avg temperature) for a date range and region, and write a point_obs weather-skills standard dataset Zarr. Use when a task needs credential-free worldwide daily station data, e.g. to compare against gridded satellite, reanalysis, or forecast data.
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads NOAA GHCN-Daily from the public S3 website endpoint (noaa-ghcn-pds.s3.amazonaws.com) over HTTPS; no credentials required.
+compatibility: Requires Python 3.12 and uv. Reads NOAA GHCN-Daily from NCEI's public HTTPS tree (www.ncei.noaa.gov/pub/data/ghcn/daily); no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.2"
@@ -17,7 +17,7 @@ metadata:
 # ghcn-daily-fetch
 
 Downloads NOAA Global Historical Climatology Network daily station observations
-from the public, credential-free GHCN-Daily S3 dataset. It reads the station
+from NCEI's public, credential-free GHCN-Daily HTTPS tree. It reads the station
 metadata file to find stations inside the requested bounding box, downloads each
 candidate station's per-station CSV concurrently, keeps only QC-passed rows for
 the requested elements and date range, scales them to canonical units, and writes
@@ -34,7 +34,7 @@ GHCN-Daily has ~130k stations and each is a separate whole-history download, so 
 - A task needs recent or historical daily station observations anywhere in the
   world, without credentials.
 - A downstream skill will compare stations against gridded precip/temperature
-  (via `plot --layer`) or aggregate them temporally.
+  or aggregate them temporally.
 
 For African stations with sub-daily sensor data, `tahmo-fetch` is an alternative
 (credentialed).
@@ -51,7 +51,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
   `YYYY-MM-DD`. Calendar windows: `resolve-time last-2w`. Latest published day: `--probe-latest`. A
   missing trailing tail near the present is treated as a normal partial window,
   not an error.
-- `--probe-latest` — print the latest available `YYYY-MM-DD` on stdout and exit. No `-o`.
+- `--probe-latest` — print the newest observation date in the current year's
+  GHCN-Daily `by_year` file on stdout and exit (takes no argument, no `-o`). It
+  streams that file (~100 MB late in the year), so it takes tens of seconds. Some
+  stations lag that date by days.
 - `--bbox` — spatial subset `N/W/S/E` decimal degrees, used to select stations
   from the GHCN station metadata. Bounds the work to the stations inside the box;
   omitting it (or giving an over-wide box) selects many stations, each a separate
@@ -77,8 +80,23 @@ Zarr with dims `(time, station_id)`, coords `latitude(station_id)`,
 `longitude(station_id)`, `name(station_id)`, and data variables among `precip`
 (mm day-1), `tmax`/`tmin`/`tavg` (`degree_Celsius`) — whichever were requested and present.
 GHCN-Daily values are stored in tenths (tenths of mm for PRCP, tenths of °C for
-temperature) and are scaled to these canonical units on the way out. Only rows
-whose quality flag is empty (passed all QC checks) are kept.
+temperature) and are scaled to these canonical units on the way out.
+
+What is kept and what becomes NaN:
+
+- Only rows whose quality flag is empty (passed all QC checks) are kept; any
+  non-blank `Q_FLAG` value is dropped.
+- PRCP zeros GHCN inferred rather than measured are dropped: measurement flag `P`
+  ("missing presumed zero") and `I` (station reported no precipitation data).
+  Trace precipitation (flag `T`, value 0) is kept as 0 mm.
+- Stations with no kept value in the window are omitted, not written as all-NaN
+  columns.
+- `time` is the GHCN `DATE`: the station's local observation day (the
+  observation hour varies by station, e.g. 07:00 local for many US co-op
+  stations), not a UTC day. The axis is daily from `--start-time` to the last day
+  any selected station reported; days nobody reported inside that span are NaN
+  rows. Days past the last report are not added, so a window running past the
+  data ends early (no padding).
 
 The store is fully **CF-1.13 timeSeries DSG** compliant — verified with
 `cf-xarray` before writing — plus the `weather_skills_history` provenance key:
@@ -96,13 +114,15 @@ The store is fully **CF-1.13 timeSeries DSG** compliant — verified with
   udunits `units` + `calendar` in the write encoding.
 - `weather_skills_source=ghcn-daily`.
 
-Missing station-time cells are NaN (with a matching `_FillValue` carried in the
-write encoding). Units are
+Missing station-time cells are NaN, never 0 (with a matching `_FillValue`
+carried in the write encoding). Units are
 validated against udunits before the write; if a variable's units string is not
 udunits-valid the run fails rather than emit a false CF claim.
 
 ### Memory and performance
 
+Each candidate station is one whole-history `by_station` CSV download (tens of
+KB to ~2 MB); the by_year files are not downloaded except by `--probe-latest`.
 Memory scales with the number of stations inside `--bbox` times the window length
 times the selected variables — station rows are small, and the working set is
 bounded by the bbox, not the global station list. Per-station CSVs are fetched
@@ -112,13 +132,7 @@ cost. On tight-memory hosts, narrow the `--bbox` or shorten the window.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: an append-only array of
-per-step entries `{skill, version, args, input}`. For this fetcher it is a
-length-1 array with `skill="ghcn-daily-fetch"` and `input=null`; downstream
-zarr-writing skills append their own entry. `args` records `bbox`, the sorted
-`variable` list, and `start`/`end` — `--workers` is excluded (a concurrency knob
-that does not change the data). `version` is this
-skill's version, also printed by `--help`. Inspect a written output's provenance
+The output carries a `weather_skills_history` provenance chain; inspect it
 with the `provenance` skill.
 
 ## Examples

@@ -454,3 +454,159 @@ def test_probe_latest_uses_catalog_init(capsys, fetch, mod):
         run_skill(fetch, "--probe-latest")
     assert capsys.readouterr().out.strip() == "2026-01-01"
 
+
+# --- ECDS path with a fake client and synthetic cfgrib datasets -------------
+
+_H = np.timedelta64(1, "h")
+
+
+def _fake_grib(path):
+    """Mimic cfgrib: daily means are labeled at their window end (endStep)."""
+    name = Path(path).name
+    cf = name.startswith("cf_")
+    if "_daily_" in name:
+        steps = np.arange(24, 24 * 4 + 1, 24) * _H  # 0_24 .. 72_96
+        var, vals, units = "2t", 280.0 + np.arange(4), "K"
+    elif "10lev" in name:
+        steps = np.arange(0, 24 * 4 + 1, 24) * _H
+        var, vals, units = "t", 250.0 + np.arange(5), "K"
+    else:
+        steps = np.arange(0, 24 * 4 + 1, 24) * _H
+        var, vals, units = "tp", np.array([0.0, 2.0, 5.0, 9.0, 14.0]), "kg m-2"
+    steps = steps.astype("timedelta64[ns]")
+    init = np.datetime64("2025-06-02", "ns")
+    dims = ["step", "latitude", "longitude"]
+    data = np.broadcast_to(vals[:, None, None], (len(steps), 2, 2)).copy()
+    coords = {
+        "time": init,
+        "step": steps,
+        "latitude": [1.0, 0.0],
+        "longitude": [34.0, 35.0],
+        "valid_time": ("step", init + steps),
+    }
+    if "10lev" in name:
+        data = data[:, None]
+        dims.insert(1, "isobaricInhPa")
+        coords["isobaricInhPa"] = [850.0]
+    if cf:
+        coords["number"] = 0
+    else:
+        data = np.stack([data, data])
+        dims.insert(0, "number")
+        coords["number"] = [1, 2]
+    return xr.Dataset({var: (dims, data, {"units": units})}, coords=coords)
+
+
+@pytest.fixture
+def fake_ecds(monkeypatch, mod):
+    import sys
+    import types
+
+    downloads = {"error": None}
+
+    class Remote:
+        results_ready = True
+
+        def download(self, path):
+            if downloads["error"] is not None:
+                raise downloads["error"]
+            Path(path).write_text("grib")
+
+    class Client:
+        def submit(self, name, request):
+            return Remote()
+
+    datastores = types.ModuleType("ecmwf.datastores")
+    datastores.Client = Client
+    processing = types.ModuleType("ecmwf.datastores.processing")
+    processing.ProcessingFailedError = type("ProcessingFailedError", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "ecmwf", types.ModuleType("ecmwf"))
+    monkeypatch.setitem(sys.modules, "ecmwf.datastores", datastores)
+    monkeypatch.setitem(sys.modules, "ecmwf.datastores.processing", processing)
+    monkeypatch.setenv("ECMWF_DATASTORES_KEY", "dummy")
+    monkeypatch.setattr(mod, "_open_grib", _fake_grib)
+    return downloads
+
+
+def _run_ecds(fetch, out, *variables, date_iso="2025-06-02"):
+    run_skill(fetch, "--date", date_iso, "--bbox", "1/34/0/35", "-v", *variables, "-o", str(out))
+    return xr.open_zarr(out, consolidated=True)
+
+
+def test_ecds_tp_and_daily_mean_share_step_labels(tmp_path, fetch, fake_ecds):
+    """Day-0 t2m mean and day-0 tp rate both sit at step 0 (not shifted a day)."""
+    ds = _run_ecds(fetch, tmp_path / "o.zarr", "tp", "t2m")
+    steps = np.asarray(ds["step"].values).astype("timedelta64[h]").astype(int)
+    assert steps.tolist() == [0, 24, 48, 72]
+    point = ds.isel(latitude=0, longitude=0).sel(number=0)
+    np.testing.assert_allclose(point["tp"].values, [2.0, 3.0, 4.0, 5.0])
+    np.testing.assert_allclose(point["t2m"].values, 280.0 + np.arange(4) - 273.15, rtol=1e-5)
+    assert ds.sizes["number"] == 3
+
+
+def test_ecds_daily_mean_alone_starts_at_step_zero(tmp_path, fetch, fake_ecds):
+    ds = _run_ecds(fetch, tmp_path / "o.zarr", "t2m")
+    steps = np.asarray(ds["step"].values).astype("timedelta64[h]").astype(int)
+    assert steps.tolist() == [0, 24, 48, 72]
+    assert ds["t2m"].attrs["data_interval"] == "1 day"
+
+
+def test_ecds_control_only_field_keeps_number_dim(tmp_path, fetch, fake_ecds):
+    ds = _run_ecds(fetch, tmp_path / "o.zarr", "t")
+    assert ds["t"].dims[0] == "number"
+    assert ds["number"].values.tolist() == [0]
+
+
+def test_ecds_control_only_field_with_ensemble_field_is_nan_for_members(tmp_path, fetch, fake_ecds):
+    ds = _run_ecds(fetch, tmp_path / "o.zarr", "tp", "t")
+    assert ds["t"].dims[0] == "number"
+    t = ds["t"].isel(latitude=0, longitude=0, step=0, vertical=0)
+    assert np.isfinite(t.sel(number=0).values)
+    assert np.isnan(t.sel(number=[1, 2]).values).all()
+
+
+def test_ecds_download_failure_is_clean_error(tmp_path, fetch, fake_ecds, capsys):
+    fake_ecds["error"] = ConnectionError("connection reset")
+    with pytest.raises(SystemExit) as exc:
+        _run_ecds(fetch, tmp_path / "o.zarr", "tp")
+    assert exc.value.code == 1
+    assert "ECDS download failed" in capsys.readouterr().err
+
+
+def test_ecds_refuses_tp_with_other_accumulated_fields(tmp_path, fetch, fake_ecds):
+    with pytest.raises(SystemExit) as exc:
+        _run_ecds(fetch, tmp_path / "o.zarr", "tp", "cp")
+    assert exc.value.code == 2
+
+
+def test_ecds_embargo_date_fails_before_needing_credentials(tmp_path, fetch, capsys):
+    """An init inside the 2-day embargo is refused without asking for the key."""
+    recent = date.today().isoformat()
+    env = {k: v for k, v in os.environ.items() if k != "ECMWF_DATASTORES_KEY"}
+    with patch.dict(os.environ, env, clear=True):
+        with pytest.raises(SystemExit) as exc:
+            run_skill(
+                fetch,
+                "--date",
+                recent,
+                "--bbox",
+                "1/34/0/35",
+                "-v",
+                "pv",
+                "-o",
+                str(tmp_path / "o.zarr"),
+            )
+    assert exc.value.code == 1
+    assert "embargo" in capsys.readouterr().err
+
+
+def test_catalog_open_failure_is_clean_error(tmp_path, mod, fetch, capsys):
+    import dynamical_catalog
+
+    with patch.object(dynamical_catalog, "list", side_effect=ConnectionError("offline")):
+        with pytest.raises(SystemExit) as exc:
+            run_skill(
+                fetch, "--date", "2026-01-01", "--bbox", "1/34/0/35", "-o", str(tmp_path / "o.zarr")
+            )
+    assert exc.value.code == 1
+    assert "dynamical.org catalog" in capsys.readouterr().err

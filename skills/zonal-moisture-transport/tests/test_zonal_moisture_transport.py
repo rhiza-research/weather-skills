@@ -148,3 +148,59 @@ def test_as_pa_hpa_and_already_pa(mod):
     assert mod._as_pa(hpa).values == pytest.approx([100000.0, 85000.0])
     pa = xr.DataArray([100000.0, 85000.0], dims="vertical", attrs={"units": "Pa"})
     assert mod._as_pa(pa).values == pytest.approx([100000.0, 85000.0])
+
+
+def test_dynamical_names_auto_detected(tmp_path, zmt):
+    """dynamical-fetch 46-day pressure_level writes specific_humidity / wind_u."""
+    src = write_zarr(
+        make_qu().rename({"q": "specific_humidity", "u": "wind_u"}), tmp_path / "in.zarr"
+    )
+    out = tmp_path / "out.zarr"
+
+    run_skill(zmt, "-i", str(src), "-o", str(out))
+
+    ds = xr.open_zarr(out, consolidated=True)
+    expected = abs(np.trapezoid(np.full(3, 0.1), x=np.array([1000.0, 850.0, 500.0]) * 100.0)) / G
+    assert ds["viwve"].values == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("levels", [(1000.0, 850.0, 500.0), (500.0, 850.0, 1000.0)])
+def test_westward_flux_is_negative(tmp_path, zmt, levels):
+    """u < 0 is westward transport: viwve < 0 for either level order (was abs())."""
+    src = write_zarr(make_qu(u_fill=-10.0, levels=levels), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(zmt, "-i", str(src), "-o", str(out))
+
+    # (1/g) ∫ from 500 to 1000 hPa of -0.1 dp = -0.1 * 50000 Pa / g
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds["viwve"].values == pytest.approx(-0.1 * 50000.0 / G)
+
+
+def test_humidity_in_g_per_kg_converted(tmp_path, zmt):
+    """q in g kg-1 must give the same IVT as q in kg kg-1, not 1000x."""
+    ds = make_qu(q_fill=10.0)
+    ds["q"].attrs["units"] = "g kg-1"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(zmt, "-i", str(src), "-o", str(out))
+
+    assert xr.open_zarr(out)["viwve"].values == pytest.approx(0.1 * 50000.0 / G)
+
+
+def test_missing_levels_warned_and_nan_not_zero(tmp_path, zmt, capsys):
+    """A level missing everywhere (46-day q above 200 hPa) is dropped and named on
+    stderr; a level missing in one column makes that column NaN, never 0."""
+    ds = make_qu(levels=(1000.0, 850.0, 500.0, 100.0))
+    ds["q"].loc[{"vertical": 100.0}] = np.nan
+    ds["q"].loc[{"vertical": 1000.0, "latitude": 1.0, "longitude": 10.0}] = np.nan
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(zmt, "-i", str(src), "-o", str(out))
+
+    assert "100.0" in capsys.readouterr().err
+    viwve = xr.open_zarr(out)["viwve"]
+    assert viwve.sel(latitude=1.0, longitude=10.0).isnull().all()
+    assert viwve.sel(latitude=2.0, longitude=11.0).values == pytest.approx(0.1 * 50000.0 / G)

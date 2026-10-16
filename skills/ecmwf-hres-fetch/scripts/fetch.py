@@ -2,19 +2,14 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime",
 #   # >=0.3.34 for the IFS Cycle 50r1 (2026-05-12) date-aware oper/scda
 #   # stream fix in Client.patch_stream — older pins misroute 06/18Z runs.
 #   "ecmwf-opendata==0.3.34",
-#   "xarray",
 #   "cfgrib",
 #   # eccodeslib carries the native libeccodes that cfgrib loads on macOS/Linux;
 #   # eccodes drops this as a transitive dep via PyPI metadata (ecmwf/eccodes-python#150),
 #   # so it is declared directly. Windows bundles the library in eccodes itself.
 #   "eccodeslib",
-#   "zarr",
-#   "numpy",
-#   "pint-xarray>=0.6",
 # ]
 # ///
 """Fetch a deterministic ECMWF HRES (IFS oper) forecast and write a weather-skills standard dataset Zarr."""
@@ -44,7 +39,23 @@ _SKILL_VERSION = "0.0.1"
 _FULL_RUN_STEPS = list(range(0, 144 + 1, 3)) + list(range(150, 360 + 1, 6))
 _SHORT_CUTOFF_STEPS = list(range(0, 144 + 1, 3))
 
-PRESSURE_LEVELS = ("1000", "925", "850", "700", "500", "400", "300", "250", "200", "150", "100", "50")
+# Every Open Data level from 1000 to 50 hPa. 10 hPa exists only since IFS
+# Cycle 50r1 (2026-05-12), so it is not requested: older inits would fail.
+PRESSURE_LEVELS = (
+    "1000",
+    "925",
+    "850",
+    "700",
+    "600",
+    "500",
+    "400",
+    "300",
+    "250",
+    "200",
+    "150",
+    "100",
+    "50",
+)
 
 # Keep dim-like coords; drop GRIB filter scalars that collide across parameters.
 _KEEP_COORDS = frozenset(
@@ -68,7 +79,6 @@ class _Var(NamedTuple):
     param: str  # ECMWF Open Data short param name
     level_type: str = "sfc"  # "sfc" | "pl"
     levels: tuple[str, ...] = ()
-    accumulated: bool = False  # cumulative since forecast start (step 0)
 
 
 # Most-used first, then the rest of the HRES ("oper") single-level and
@@ -76,21 +86,22 @@ class _Var(NamedTuple):
 # the cfgrib short names used by ecmwf-fetch (t2m, not 2t) where a field also
 # exists in that skill, so downstream code can treat them the same way.
 VARIABLES: dict[str, _Var] = {
-    "tp": _Var("tp", accumulated=True),
+    "tp": _Var("tp"),
     "t2m": _Var("2t"),
     "d2m": _Var("2d"),
     "msl": _Var("msl"),
     "u10": _Var("10u"),
     "v10": _Var("10v"),
-    "gust10": _Var("10fg", accumulated=True),
+    "gust10": _Var("10fg"),
     "sp": _Var("sp"),
     "tcwv": _Var("tcwv"),
-    "cape": _Var("cape"),
+    # Open Data publishes most-unstable CAPE only; there is no `cape` field.
+    "mucape": _Var("mucape"),
     "skt": _Var("skt"),
-    "ssrd": _Var("ssrd", accumulated=True),
-    "strd": _Var("strd", accumulated=True),
-    "str": _Var("str", accumulated=True),
-    "ttr": _Var("ttr", accumulated=True),
+    "ssrd": _Var("ssrd"),
+    "strd": _Var("strd"),
+    "str": _Var("str"),
+    "ttr": _Var("ttr"),
     "t": _Var("t", "pl", PRESSURE_LEVELS),
     "gh": _Var("gh", "pl", PRESSURE_LEVELS),
     "u": _Var("u", "pl", PRESSURE_LEVELS),
@@ -108,15 +119,10 @@ _GRIB_EXTRAS = {
     "10u": "u10",
     "10v": "v10",
     "10fg": "gust10",
-    "z": "gh",  # cfgrib sometimes decodes HRES gh as geopotential `z` (m2 s-2)
 }
 _GRIB_ALIASES = {name: name for name in VARIABLES} | _GRIB_EXTRAS
 
 _KELVIN_TEMPS = frozenset({"t2m", "d2m", "skt", "t"})
-
-# Accumulated (non-precip) fields left as raw cumulative-since-init amounts;
-# route them through the `deaccumulate` skill downstream if a rate is needed.
-_ACCUMULATED_NON_PRECIP = frozenset({"gust10", "ssrd", "strd", "str", "ttr"})
 
 
 def _canonical_name(token: str) -> str | None:
@@ -162,7 +168,9 @@ def _group_for_request(names: list[str]) -> list[tuple[tuple, list[str]]]:
     return list(groups.items())
 
 
-def _build_request(date_iso: str, run_hour: int, group_vars: list[str], level_type: str, levels: tuple[str, ...]) -> dict:
+def _build_request(
+    date_iso: str, run_hour: int, group_vars: list[str], level_type: str, levels: tuple[str, ...]
+) -> dict:
     req: dict = {
         "date": dt.date.fromisoformat(date_iso),
         "time": run_hour,
@@ -292,17 +300,16 @@ def _standardize(ds):
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest available init as YYYY-MM-DDTHH on stdout and exit. "
-        "Does not download fields."
+        "Print the latest init date (YYYY-MM-DD, usable as --date) on stdout and "
+        "exit; stderr names the latest run hour. Does not download fields."
     ),
 )
-def fetch(bbox, date, run, variable, **kwargs):
+def fetch(bbox, date, run, variable, probe_latest, **kwargs):
     """Fetch a deterministic ECMWF HRES (IFS oper) forecast and write a weather-skills standard dataset Zarr."""
-    if kwargs.get("probe_latest") is not None:
+    if probe_latest is not None:
         from ecmwf.opendata import Client
 
         client = Client(source="ecmwf")
@@ -310,11 +317,20 @@ def fetch(bbox, date, run, variable, **kwargs):
             latest = client.latest(stream="oper", type="fc", step=0, levtype="sfc", param="2t")
         except Exception as exc:  # noqa: BLE001
             raise DataError(f"could not determine the latest HRES init ({exc}).") from None
-        print(latest.strftime("%Y-%m-%dT%H"))
+        # stdout is a bare date so it passes straight to --date (whose 00 UTC run
+        # is published whenever any run that day is); stderr names the run hour.
+        print(
+            f"Latest run: {latest:%Y-%m-%d} {latest:%H} UTC "
+            f"(--date {latest:%Y-%m-%d} --run {latest.hour})",
+            file=sys.stderr,
+        )
+        print(latest.strftime("%Y-%m-%d"))
         return
 
     if bbox is None:
-        raise UsageError("--bbox is required (HRES is retrieved as global GRIB2 and subset locally).")
+        raise UsageError(
+            "--bbox is required (HRES is retrieved as global GRIB2 and subset locally)."
+        )
 
     date_iso = date.isoformat()
     names = _resolve_variables(variable)
@@ -329,7 +345,6 @@ def fetch(bbox, date, run, variable, **kwargs):
         file=sys.stderr,
     )
 
-    client = Client(source="ecmwf")
     with tempfile.TemporaryDirectory(prefix="ecmwf-hres-fetch-") as tmpdir:
         tmp = Path(tmpdir)
         parts = []
@@ -337,20 +352,32 @@ def fetch(bbox, date, run, variable, **kwargs):
             req = _build_request(date_iso, run, group_vars, level_type, levels)
             grib = tmp / f"hres_{i}.grib2"
             print(f"Retrieving {', '.join(group_vars)} ({level_type})...", file=sys.stderr)
-            try:
-                client.retrieve(request=req, target=str(grib))
-            except Exception as exc:  # noqa: BLE001
+            # data.ecmwf.int keeps only the last ~4 days of inits; the AWS
+            # mirror holds the archive (from 2023). Try ECMWF first (fastest
+            # for fresh runs), then AWS.
+            errors = []
+            for source in ("ecmwf", "aws"):
+                try:
+                    Client(source=source).retrieve(request=req, target=str(grib))
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{source}: {exc}")
+            else:
                 raise DataError(
                     f"ECMWF Open Data retrieval failed for init {date_iso} {run:02d}Z "
-                    f"({exc}); the init may not be published yet (recent inits lag ~6-9h) "
-                    "or this is a transport problem. Try an older --date or --run."
-                ) from None
+                    f"({'; '.join(errors)}). The init may not be published yet (recent "
+                    "inits lag ~6-9h; try --probe-latest) or this is a transport problem."
+                )
             ds = _promote_vertical(_open_grib(grib))
             parts.append(_rename_to_short(ds, group_vars))
 
         ds = parts[0] if len(parts) == 1 else xr.merge(parts, join="outer", compat="override")
         ds = ds[names]
         ds = bbox_subset(ds, list(bbox), lat_dim="latitude", lon_dim="longitude")
+        # Read one step at a time: cfgrib materializes the full global field for
+        # every step/level it is asked for before slicing to the bbox, so one
+        # whole-cube read of a pressure-level field needs several GB.
+        ds = xr.concat([ds.isel(step=[i]).load() for i in range(ds.sizes["step"])], dim="step")
         ds.attrs.update(Conventions="CF-1.13", weather_skills_source="ecmwf-hres")
         ds = _standardize(ds)
         ds = ds.load()

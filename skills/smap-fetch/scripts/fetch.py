@@ -4,16 +4,11 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 #   "earthaccess",
 #   "h5py",
-#   "xarray",
-#   "zarr",
-#   "numpy",
-#   "cf_xarray",
-#   "pint-xarray>=0.6",
-#   "cftime",
 # ]
 # ///
 """Fetch SMAP SPL3SMP_E soil moisture via Earthdata and write a weather-skills standard dataset Zarr."""
 
+import os
 import re
 import sys
 import tempfile
@@ -22,7 +17,7 @@ from datetime import UTC, date, datetime, timedelta
 import cf_xarray  # noqa: F401  (fail-fast probe)
 import cf_xarray.units  # noqa: F401  (fail-fast probe; configures pint CF registry)
 from weather_skills_core import DataError, SkillError, weather_skill
-from weather_skills_core.cf import stamp_cf_coords, udunits_error
+from weather_skills_core.cf import stamp_cf_coords
 from weather_skills_core.standard_utils import (
     apply_write_encoding,
     bbox_subset,
@@ -38,6 +33,7 @@ _SHORT_NAME = "SPL3SMP_E"
 _FILL = -9999.0
 _GRANULE_DATE_RE = re.compile(r"_(\d{8})_")
 _SM_STANDARD_NAME = "volume_fraction_of_condensed_water_in_soil"
+_SM_UNITS = "m3 m-3"
 
 _CF_CONVENTIONS = "CF-1.13"
 _CF_TITLE = "SMAP Enhanced L3 Radiometer Global Daily Soil Moisture"
@@ -91,12 +87,20 @@ def _reduce_geolocation(lat2d, lon2d, day_iso: str) -> tuple:
     return lat1d, lon1d
 
 
-def _slice_from_file(path: str, group: str, day_iso: str):
-    """Read one SPL3SMP_E granule into a (latitude, longitude) DataArray."""
+def _slice_from_file(path: str, group: str, day_iso: str, recommended_only: bool):
+    """Read one SPL3SMP_E granule into a (latitude, longitude) DataArray.
+
+    Fill, out-of-valid-range and (with ``recommended_only``) retrievals whose
+    ``retrieval_qual_flag`` bit 0 is set (not recommended) become NaN.
+    """
     import h5py
     import numpy as np
     import xarray as xr
+    from cf_xarray.units import units as ureg
 
+    # PM datasets carry a "_pm" suffix (soil_moisture_pm, latitude_pm, ...).
+    suffix = "_pm" if group == "PM" else ""
+    sm_name = f"soil_moisture{suffix}"
     try:
         with h5py.File(path, "r") as h:
             grp_name = f"Soil_Moisture_Retrieval_Data_{group}"
@@ -106,25 +110,28 @@ def _slice_from_file(path: str, group: str, day_iso: str):
                     f"(overpass {group}); available groups: {list(h.keys())}"
                 )
             grp = h[grp_name]
-            for dataset in ("soil_moisture", "latitude", "longitude"):
-                if dataset not in grp:
+            for base in ("soil_moisture", "latitude", "longitude", "retrieval_qual_flag"):
+                if f"{base}{suffix}" not in grp:
                     raise KeyError(
                         f"granule for {day_iso} group {grp_name!r} is missing the "
-                        f"{dataset!r} dataset (overpass {group}); "
+                        f"{base + suffix!r} dataset (overpass {group}); "
                         f"available datasets: {list(grp.keys())}"
                     )
-            raw_units = grp["soil_moisture"].attrs.get("units")
+            raw_units = grp[sm_name].attrs.get("units")
             if raw_units is None:
                 raise RuntimeError(
-                    f"granule for {day_iso} has no units attribute on soil_moisture; "
-                    "cannot pass source units through verbatim and will not fabricate one."
+                    f"granule for {day_iso} has no units attribute on {sm_name}; "
+                    "cannot confirm it is a volumetric ratio and will not fabricate one."
                 )
             if isinstance(raw_units, bytes):
                 raw_units = raw_units.decode("utf-8", "replace")
             source_units = str(raw_units).strip()
-            sm = grp["soil_moisture"][:].astype("float64")
-            lat2d = grp["latitude"][:].astype("float64")
-            lon2d = grp["longitude"][:].astype("float64")
+            valid_min = float(grp[sm_name].attrs.get("valid_min", 0.0))
+            valid_max = float(grp[sm_name].attrs.get("valid_max", 1.0))
+            sm = grp[sm_name][:].astype("float64")
+            qual = grp[f"retrieval_qual_flag{suffix}"][:]
+            lat2d = grp[f"latitude{suffix}"][:].astype("float64")
+            lon2d = grp[f"longitude{suffix}"][:].astype("float64")
     except KeyError as exc:
         raise RuntimeError(
             f"failed to read SMAP granule for {day_iso} at {path}: {exc.args[0]}"
@@ -134,7 +141,20 @@ def _slice_from_file(path: str, group: str, day_iso: str):
             f"failed to read SMAP granule HDF5 for {day_iso} at {path}: {exc}"
         ) from exc
 
-    sm = np.where(sm == _FILL, np.nan, sm)
+    try:
+        ratio = ureg.Quantity(1.0, source_units).to("dimensionless").magnitude
+    except Exception:
+        ratio = None
+    if ratio is None or not np.isclose(ratio, 1.0):
+        raise RuntimeError(
+            f"granule for {day_iso} has soil_moisture units {source_units!r}; expected a "
+            "dimensionless volumetric ratio (cm**3/cm**3), refusing to relabel it."
+        )
+
+    bad = (sm == _FILL) | (sm < valid_min) | (sm > valid_max)
+    if recommended_only:
+        bad |= (qual & 1) != 0
+    sm = np.where(bad, np.nan, sm)
     lat2d = np.where(lat2d == _FILL, np.nan, lat2d)
     lon2d = np.where(lon2d == _FILL, np.nan, lon2d)
     lat1d, lon1d = _reduce_geolocation(lat2d, lon2d, day_iso)
@@ -144,7 +164,6 @@ def _slice_from_file(path: str, group: str, day_iso: str):
         dims=("latitude", "longitude"),
         coords={"latitude": lat1d, "longitude": lon1d},
         name="soil_moisture",
-        attrs={"units": source_units},
     )
 
 
@@ -196,7 +215,6 @@ def _earthaccess_call(fn, *args, **kwargs):
 def _stamp_cf(ds) -> None:
     import xarray as xr
 
-    source_units = ds["soil_moisture"].attrs["units"]
     now_iso = datetime.now(UTC).isoformat(timespec="seconds")
     ds.attrs.clear()
     ds.attrs.update(
@@ -209,16 +227,10 @@ def _stamp_cf(ds) -> None:
     )
     stamp_cf_coords(ds)
 
-    units_exc = udunits_error(source_units, catch=(Exception,))
-    if units_exc is not None:
-        raise DataError(
-            f"soil_moisture units {source_units!r} are not udunits-valid "
-            f"({units_exc}); refusing to write a CF-noncompliant store."
-        ) from units_exc
     ds["soil_moisture"].attrs.update(
         standard_name=_SM_STANDARD_NAME,
-        units=source_units,
-        long_name=f"volumetric soil moisture ({source_units})",
+        units=_SM_UNITS,
+        long_name="volumetric soil moisture (cm3 cm-3)",
         grid_mapping=_GRID_MAPPING_NAME,
     )
     ds[_GRID_MAPPING_NAME] = xr.DataArray(0, attrs={})
@@ -246,10 +258,18 @@ def _stamp_cf(ds) -> None:
     ),
 )
 @weather_skill.argument(
+    "--quality",
+    choices=["recommended", "all"],
+    default="recommended",
+    help=(
+        "recommended (default) keeps only retrievals whose retrieval_qual_flag marks "
+        "them recommended quality; all also keeps not-recommended retrievals."
+    ),
+)
+@weather_skill.argument(
     "--probe-latest",
     nargs="?",
     const="",
-    default=None,
     metavar="IDENT",
     probe=True,
     help=(
@@ -258,13 +278,13 @@ def _stamp_cf(ds) -> None:
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(start_time, end_time, bbox, overpass, **kwargs):
+def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs):
     """Fetch SMAP SPL3SMP_E soil moisture via Earthdata and write a weather-skills standard dataset Zarr."""
     import earthaccess
     import numpy as np
     import xarray as xr
 
-    if kwargs.get("probe_latest") is not None:
+    if probe_latest is not None:
         end = datetime.now(UTC).date()
         start = end - timedelta(days=21)
         _login()
@@ -344,7 +364,7 @@ def fetch(start_time, end_time, bbox, overpass, **kwargs):
             if not files:
                 raise DataError(f"download returned no local file for the {day_iso} granule.")
             try:
-                da = _slice_from_file(files[0], overpass, day_iso)
+                da = _slice_from_file(files[0], overpass, day_iso, quality == "recommended")
                 if bbox is not None:
                     da = bbox_subset(
                         da.to_dataset(name="soil_moisture"),
@@ -354,11 +374,12 @@ def fetch(start_time, end_time, bbox, overpass, **kwargs):
                     )["soil_moisture"]
             except RuntimeError as exc:
                 raise DataError(str(exc)) from exc
-            ds_day = da.expand_dims(time=[np.datetime64(day_iso)]).to_dataset()
-            _stamp_cf(ds_day)
-            day_datasets.append(ds_day)
+            # Each global granule is ~690 MB; free the disk before the next day.
+            os.remove(files[0])
+            day_datasets.append(da.expand_dims(time=[np.datetime64(day_iso)]).to_dataset())
 
     ds = xr.concat(day_datasets, dim="time")
+    _stamp_cf(ds)
     ds = ensure_normalized_longitude(ds, lon_dim="longitude")
     ds.attrs["weather_skills_source"] = "smap"
     verify_cf_decode(ds)

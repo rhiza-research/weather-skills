@@ -21,10 +21,13 @@ metadata:
 
 Downloads NASA SMAP Enhanced L3 radiometer soil moisture (`SPL3SMP_E`, 9 km,
 daily) granules from NASA Earthdata via `earthaccess` and writes a gridded Zarr
-store. The product is HDF5 on the global EASE-Grid 2.0; its degenerate 2-D
-latitude/longitude reduce to 1-D coordinate vectors, so the output is a regular
-1-D lat/lon weather-skills standard dataset. Each requested day is one ~690 MB granule, so this
-skill is built for a bounded `--bbox` over a short window — pass `--bbox`.
+store. The product is HDF5 on the global EASE-Grid 2.0 (cylindrical
+equal-area): latitude is constant along rows and longitude along columns, so
+both reduce to exact 1-D coordinate vectors. Longitude is evenly spaced;
+latitude is not (rows are evenly spaced in projected metres, so the degree
+spacing varies — ~0.072° near the equator, wider toward the poles). Each
+requested day is one ~690 MB granule, so this skill is built for a bounded
+`--bbox` over a short window — pass `--bbox`.
 
 ## When to use
 
@@ -36,7 +39,7 @@ skill is built for a bounded `--bbox` over a short window — pass `--bbox`.
 ## Usage
 
 ```
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--bbox N/W/S/E] [--overpass AM|PM] -o <path.zarr>
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--bbox N/W/S/E] [--overpass AM|PM] [--quality recommended|all] -o <path.zarr>
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
@@ -57,7 +60,12 @@ like `imerg-fetch`.
   longitude bands (lon ≥ west or lon ≤ east). To fetch over a country, resolve
   its bbox with the `resolve-region` skill.
 - `--overpass` — which half-orbit group to read: `AM` (6am descending, default)
-  or `PM` (6pm ascending).
+  or `PM` (6pm ascending). One pass per run; AM and PM are never mixed or
+  averaged — fetch each separately if you need both.
+- `--quality` — `recommended` (default) keeps only retrievals whose
+  `retrieval_qual_flag` bit 0 is clear (recommended quality); `all` also keeps
+  not-recommended retrievals (e.g. dense vegetation), roughly doubling coverage
+  in some regions.
 - `--output`, `-o` — output Zarr path (overwritten if it exists).
 
 ### Output
@@ -79,16 +87,18 @@ format.
   (the file's `cm3/cm3` is a dimensionless volumetric ratio; `m3 m-3` is its
   udunits-valid, dimensionless CF form — equivalent to a bare `1` but more
   meaningful to downstream tools; the human form is kept in `long_name`). The
-  granule's own `soil_moisture` units attribute is read and confirmed to be the
-  expected dimensionless ratio before relabeling; an unexpected value fails the
+  granule's own `soil_moisture` units attribute is read and confirmed to be a
+  dimensionless ratio before relabeling; an unexpected value fails the
   run rather than silently mislabeling. Also carries `long_name`, an explicit NaN
-  `_FillValue`, and a `grid_mapping="latitude_longitude"` reference. The written
-  units are validated against udunits before write.
+  `_FillValue`, and a `grid_mapping="latitude_longitude"` reference.
+  NaN marks the `-9999` fill (ocean, no retrieval), values outside the file's
+  `valid_min`..`valid_max` (0.02–0.5), and, with `--quality recommended`,
+  not-recommended retrievals. Missing values are never filled.
 - A `latitude_longitude` `grid_mapping` variable carries the geographic CRS for
   the lat/lon presentation of the EASE-Grid 2.0 cells, on the WGS84 ellipsoid
   (EASE-Grid 2.0 is defined on WGS84). Latitude is the EASE-Grid 2.0 vector
-  (non-uniformly spaced, descending), preserved exactly; ocean and no-retrieval
-  cells are NaN.
+  (non-uniformly spaced, descending), preserved exactly. `--bbox` edges are
+  inclusive on cell centres.
 
 `cf-xarray` resolves the X/Y/T axes from these attrs, and the script runs that
 decode check on write — a stamping regression fails loudly rather than shipping
@@ -115,20 +125,16 @@ does not assert a false "not yet published" cause for a genuine interior gap.
 
 ### Provenance
 
-The output stamps a JSON-encoded `weather_skills_history` attr: an append-only array of
-per-step entries `{skill, version, args, input}`. For this fetcher it is a
-length-1 array with `skill="smap-fetch"` and `input=null`; downstream
-zarr-writing skills append their own entry. `args` records `bbox`, `overpass`,
-and `start`/`end`. `version` is this skill's version, also
-printed by `--help`. Inspect a written output's provenance with the `provenance`
-skill.
+The output carries a `weather_skills_history` provenance chain; inspect it
+with the `provenance` skill.
 
 ### Memory and performance
 
-Each requested day is one ~690 MB granule, so keep the window short and
-`--bbox` tight. Downloaded granules are staged to a temp directory, so disk,
-not RAM, bounds the window. Run the `clip-region` skill afterward for further
-trimming.
+Each requested day is one ~690 MB granule download, so keep the window short
+and `--bbox` tight. Days are processed one at a time: each granule is read,
+subset, then deleted before the next download, so disk holds one granule and
+peak RSS is ~450 MB regardless of window length (only the subset is kept).
+Run the `clip-region` skill afterward for further trimming.
 
 ## Examples
 

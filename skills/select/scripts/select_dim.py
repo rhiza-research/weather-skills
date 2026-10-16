@@ -2,8 +2,6 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime>=1.6",
-#   "numpy>=2.4",
 #   "pandas",
 # ]
 # ///
@@ -12,6 +10,13 @@
 import re
 
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.units import (
+    AGGREGATION_COVERAGE_COORD,
+    AGGREGATION_PERIOD_ATTR,
+    format_duration,
+    interval_days,
+    ureg,
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
@@ -26,11 +31,15 @@ _KEEP_SCALAR_COORDS = frozenset(
         "longitude",
         "lon",
         "country",
+        # The selected bin's coverage, so convert-to-totals can still refuse a
+        # partial interval after the time/step axis is gone.
+        AGGREGATION_COVERAGE_COORD,
     }
 )
 _INDEX_RE = re.compile(r"-?[0-9]+")
 _NUM_INT_RE = re.compile(r"-?[0-9]+")
 _NUM_FLOAT_RE = re.compile(r"-?([0-9]+\.[0-9]*|\.[0-9]+|[0-9]+)([eE][+-]?[0-9]+)?")
+_CFTIME_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2})(?::(\d{2})(?::(\d{2}))?)?)?")
 
 
 def _is_string_coord(dtype, coord_vals) -> bool:
@@ -52,9 +61,31 @@ def _parse_value(raw, coord_vals, dim):
         parts = re.split(r"[T ]", raw, maxsplit=1)
         if len(parts) == 2 and re.search(r"[+-]", parts[1]):
             raise UsageError(f"--value '{raw}' not a naive ISO datetime")
-        return np.datetime64(raw)
+        try:
+            return np.datetime64(raw)
+        except ValueError:
+            raise UsageError(
+                f"--value '{raw}' is not an ISO datetime (e.g. 2026-06-01, 2026-06-01T06:00)"
+            ) from None
     if np.issubdtype(dtype, np.timedelta64):
-        return pd.Timedelta(raw).to_timedelta64()
+        try:
+            return pd.Timedelta(raw).to_timedelta64()
+        except ValueError:
+            raise UsageError(f"--value '{raw}' is not a timedelta (e.g. 7D, 168h)") from None
+    first = coord_vals.flat[0] if coord_vals.size else None
+    if dtype.kind == "O" and hasattr(first, "calendar"):
+        # cftime labels (model calendars): build the date in the coord's own
+        # calendar, so 360_day dates like 2026-02-30 are selectable.
+        import cftime
+
+        match = _CFTIME_RE.fullmatch(raw)
+        if match is None:
+            raise UsageError(f"--value '{raw}' is not an ISO datetime (e.g. 2026-06-01)")
+        fields = [int(f) for f in match.groups() if f is not None]
+        try:
+            return cftime.datetime(*fields, calendar=first.calendar)
+        except ValueError as exc:
+            raise UsageError(f"--value '{raw}' is not a {first.calendar} date: {exc}") from None
     if np.issubdtype(dtype, np.number):
         if _NUM_INT_RE.fullmatch(raw):
             return int(raw)
@@ -80,6 +111,8 @@ def select(ds, dim, index, value, **kwargs):
 
     if (index is None) == (value is None):
         raise UsageError("exactly one of --index or --value is required")
+    if dim not in ds.dims:
+        raise UsageError(f"--dim '{dim}' is not a dimension; dims are {list(ds.dims)}")
     size = ds.sizes[dim]
     if index is not None:
         positions = []
@@ -88,18 +121,38 @@ def select(ds, dim, index, value, **kwargs):
             if not _INDEX_RE.fullmatch(raw):
                 raise UsageError(f"--index '{raw}' is not an integer")
             pos = int(raw)
+            if not -size <= pos < size:
+                raise UsageError(f"--index {raw} is out of range for '{dim}' (size {size})")
             canon = pos % size
             if canon in seen:
                 raise UsageError(f"--index {seen[canon]} and {raw} address the same element")
             seen[canon] = raw
             positions.append(pos)
     else:
+        if dim not in ds.coords:
+            raise UsageError(f"'{dim}' has no coordinate values; select it with --index")
         coord_vals = ds[dim].values
         positions, seen = [], {}
         for raw in value:
-            matched = np.nonzero(coord_vals == _parse_value(raw, coord_vals, dim))[0]
-            if matched.size != 1:
-                raise UsageError(f"--value '{raw}' matched {matched.size} entries on '{dim}'")
+            target = _parse_value(raw, coord_vals, dim)
+            if np.issubdtype(coord_vals.dtype, np.floating):
+                # Float labels built by arithmetic (0.30000000000000004) still match 0.3.
+                hits = np.isclose(coord_vals, target, rtol=1e-9, atol=1e-9)
+            else:
+                hits = coord_vals == target
+            matched = np.nonzero(hits)[0]
+            if matched.size == 0:
+                head = coord_vals[:5]
+                if np.issubdtype(head.dtype, np.datetime64):
+                    head = np.datetime_as_string(head, unit="auto")
+                sample = ", ".join(str(v) for v in head)
+                more = f", ... ({size} total)" if size > 5 else ""
+                raise UsageError(f"--value '{raw}' is not on '{dim}'; values are {sample}{more}")
+            if matched.size > 1:
+                raise UsageError(
+                    f"--value '{raw}' matches {matched.size} entries on '{dim}' "
+                    "(duplicate labels); select with --index"
+                )
             pos = int(matched[0])
             if pos in seen:
                 raise UsageError(f"--value '{seen[pos]}' and '{raw}' address the same element")
@@ -114,7 +167,18 @@ def select(ds, dim, index, value, **kwargs):
             for c in out.coords
             if out[c].ndim == 0 and c not in pre_scalar and c not in _KEEP_SCALAR_COORDS
         ]
-        return out.drop_vars(drop)
+        out = out.drop_vars(drop)
+        # A calendar aggregation_period ("1 month") is a different length per
+        # label. The label is dropped here, so stamp this bin's real length.
+        for name in out.data_vars:
+            period = out[name].attrs.get(AGGREGATION_PERIOD_ATTR)
+            calendar = isinstance(period, str) and re.search(r"month|year", period)
+            if calendar and ds[dim].dtype.kind in "MO":  # datetime64 or cftime labels
+                days = interval_days(ds[dim].isel({dim: [positions[0]]}), period)[0]
+                out[name].attrs[AGGREGATION_PERIOD_ATTR] = format_duration(
+                    ureg.Quantity(float(days), "day")
+                )
+        return out
     return ds.isel({dim: positions})
 
 

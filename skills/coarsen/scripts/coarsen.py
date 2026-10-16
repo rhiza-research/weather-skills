@@ -2,19 +2,17 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
-#   "cftime",
-#   "xarray",
 #   "xarray-regrid",
-#   "numpy",
 # ]
 # ///
-"""Coarsen/align onto a target grid (geometry only, linear)."""
+"""Coarsen/align onto a target grid (linear interpolation or conservative area mean)."""
 
 import math
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import detect_spatial_dims
 from weather_skills_core.standard_utils import ensure_normalized_longitude, grid_spacing
+from weather_skills_core.units import dequantify_dataset
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
@@ -45,7 +43,9 @@ def _clip_reference_axis(input_vals, ref_vals):
         spacing = float(np.median(np.abs(np.diff(np.sort(np.unique(ref))))))
     else:
         spacing = 0.0
-    pad = 0.5 * spacing
+    # Half a cell past each edge, plus slack for float32 coords (a reference
+    # point exactly half a cell out would otherwise fall just outside).
+    pad = 0.5 * spacing + 1e-4
     kept = ref[(ref >= vmin - pad) & (ref <= vmax + pad)]
     if kept.size == 0:
         raise UsageError(
@@ -68,7 +68,6 @@ def _clip_reference_axis(input_vals, ref_vals):
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument(
     "--reference-grid",
-    default=None,
     help=(
         "Zarr whose lat/lon become the target (exact coordinate values). "
         "Prefer this when matching another dataset for difference/verify."
@@ -77,17 +76,37 @@ def _clip_reference_axis(input_vals, ref_vals):
 @weather_skill.argument(
     "--target-resolution",
     type=float,
-    default=None,
     help="Target spacing in degrees (with --offset). Prefer --reference-grid to match a Zarr.",
 )
 @weather_skill.argument(
     "--offset",
     type=float,
-    default=None,
     help="Grid offset in degrees; points at offset + k*resolution (with --target-resolution).",
 )
-def coarsen(ds, variable, reference_grid, target_resolution, offset, **kwargs):
-    """Coarsen/align onto a target grid (geometry only, linear)."""
+@weather_skill.argument(
+    "--method",
+    default="linear",
+    choices=["linear", "conservative"],
+    help=(
+        "linear: interpolate at each target point (realigns, same-resolution shifts). "
+        "conservative: area-weighted mean of the source cells inside each target "
+        "cell — use it to coarsen fine obs (0.05°) onto a coarse forecast grid."
+    ),
+)
+@weather_skill.argument(
+    "--min-fraction",
+    type=float,
+    default=1.0,
+    help=(
+        "With --method conservative: least fraction of a target cell's area that "
+        "must have finite source data (default 1.0: any missing source cell makes "
+        "the target cell NaN). Lower it to average only the finite part."
+    ),
+)
+def coarsen(
+    ds, variable, reference_grid, target_resolution, offset, method, min_fraction, **kwargs
+):
+    """Coarsen/align onto a target grid (linear interpolation or conservative area mean)."""
     import numpy as np
     import xarray as xr
     import xarray_regrid  # noqa: F401
@@ -108,11 +127,19 @@ def coarsen(ds, variable, reference_grid, target_resolution, offset, **kwargs):
         )
     if target_resolution is not None and target_resolution <= 0:
         raise UsageError("--target-resolution must be > 0")
+    if not 0.0 < min_fraction <= 1.0:
+        raise UsageError("--min-fraction must be in (0, 1]")
+    if method != "conservative" and min_fraction != 1.0:
+        raise UsageError("--min-fraction applies only to --method conservative")
 
     lat_dim, lon_dim = detect_spatial_dims(ds)
     if variable:
         ds = ds[[variable]]
-    ds = ensure_normalized_longitude(ds, lon_dim)
+    # xarray-regrid can't interpolate pint quantities wrapping dask arrays, and
+    # fails on coords chunked unlike the data (aggregation_coverage on time);
+    # coords are small, so load them.
+    ds = dequantify_dataset(ensure_normalized_longitude(ds, lon_dim))
+    ds = ds.assign_coords({c: ds[c].compute() for c in ds.coords if ds[c].chunks})
     in_lat, in_lon = grid_spacing(ds[lat_dim].values), grid_spacing(ds[lon_dim].values)
 
     if has_ref:
@@ -150,7 +177,38 @@ def coarsen(ds, variable, reference_grid, target_resolution, offset, **kwargs):
             lon_dim: (lon_dim, new_lon, lon_attrs),
         }
     )
-    return ds.regrid.linear(target)
+    # Regrid only the variables on the grid; others (no lat/lon) pass through,
+    # since xarray-regrid's conservative method fails on them.
+    gridded = [v for v in ds.data_vars if {lat_dim, lon_dim} <= set(ds[v].dims)]
+    if not gridded:
+        raise UsageError("no data variable has both lat and lon dims; nothing to coarsen")
+    other = ds.drop_vars(gridded)
+    if method == "linear":
+        return ds[gridded].regrid.linear(target).assign(other.data_vars)
+
+    # Area-weighted (cos-lat) mean over each target cell. nan_threshold is the
+    # largest NaN area fraction kept, so 1 - min_fraction. Missing source
+    # cells are never filled; at the default they make the target cell NaN.
+    out = ds[gridded].regrid.conservative(
+        target, latitude_coord=lat_dim, nan_threshold=1.0 - min_fraction
+    )
+    # xarray-regrid also averages the covered part of a target cell that hangs
+    # past the input's edge (once over half is covered). Hold that uncovered
+    # area to --min-fraction too: per axis, the share of each target cell
+    # inside the input's cell edges.
+    inside = []
+    for dim, new in ((lat_dim, new_lat), (lon_dim, new_lon)):
+        src = np.sort(np.asarray(ds[dim].values, dtype=float))
+        new = np.asarray(new, dtype=float)
+        src_half = (src[1] - src[0]) / 2 if src.size > 1 else 0.0
+        new_half = grid_spacing(new) / 2 if new.size > 1 else src_half
+        lo = np.maximum(new - new_half, src[0] - src_half)
+        hi = np.minimum(new + new_half, src[-1] + src_half)
+        inside.append(np.clip(hi - lo, 0.0, None) / (2 * new_half))
+    covered = xr.DataArray(
+        np.outer(inside[0], inside[1]) >= min_fraction - 1e-3, dims=(lat_dim, lon_dim)
+    )
+    return out.assign({v: out[v].where(covered) for v in gridded}).assign(other.data_vars)
 
 
 if __name__ == "__main__":
