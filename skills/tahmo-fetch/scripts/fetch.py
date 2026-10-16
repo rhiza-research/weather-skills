@@ -48,6 +48,12 @@ DAILY_AGG = {
     "humidity": "mean",
     "pressure": "mean",
 }
+# TAHMO records every variable at a 5-minute interval, stamped at the interval
+# end. A daily value is kept only when all 288 stamps of that UTC day passed the
+# quality filter; any gap makes the day NaN. This applies to the means as well
+# as the precip sum: a gap removes part of the diurnal cycle (e.g. the warm
+# afternoon), so a partial-day mean is a biased estimate, not an observation.
+SAMPLES_PER_DAY = 288
 # (standard_name, units). Always CF/pint strings — TAHMO getVariables() uses
 # "-" for dimensionless (relative humidity) and that fails pint.quantify().
 CF_META = {
@@ -160,11 +166,19 @@ def _fetch_raw(api, station_id: str, start: str, end: str):
 
 
 def _station_frame(api, station_id: str, start: str, end: str):
-    """Return a daily-aggregated DataFrame for one station, or None."""
+    """Return a daily DataFrame for one station (NaN for incomplete days), or None.
+
+    Days are UTC calendar days ``start`` .. ``end`` inclusive. TAHMO stamps mark
+    the end of each 5-minute interval, so day D holds the stamps in
+    (D 00:00, D+1 00:00]: the 00:00 stamp closes the previous day.
+    """
     import pandas as pd
 
+    first = pd.Timestamp(start)
+    last = pd.Timestamp(end) + pd.Timedelta(days=1)
     try:
-        raw = _fetch_raw(api, station_id, start, end)
+        # The API end bound is inclusive, so this includes the 00:00 stamp closing ``end``.
+        raw = _fetch_raw(api, station_id, start, last.date().isoformat())
     except Exception as exc:  # noqa: BLE001
         print(f"{station_id}: DROPPED, fetch failed ({exc})", file=sys.stderr)
         return None
@@ -173,7 +187,7 @@ def _station_frame(api, station_id: str, start: str, end: str):
 
     raw["time"] = pd.to_datetime(raw["time"], format="mixed", utc=True).dt.tz_convert(None)
     keep_vars = set(VAR_MAP.keys())
-    raw = raw[raw["variable"].isin(keep_vars)]
+    raw = raw[raw["variable"].isin(keep_vars) & (raw["time"] > first) & (raw["time"] <= last)]
     if "quality" in raw.columns:
         raw = raw[raw["quality"] <= 2]
     if raw.empty:
@@ -187,15 +201,15 @@ def _station_frame(api, station_id: str, start: str, end: str):
     agg_spec = {c: DAILY_AGG[c] for c in wide.columns if c in DAILY_AGG}
     if not agg_spec:
         return None
-    resampler = wide.resample("D")
-    # A day with no records is missing, not 0 mm: plain ``sum`` turns an
-    # outage into a dry day. ``min_count=1`` keeps it NaN.
-    daily = pd.DataFrame(
-        {
-            c: resampler[c].sum(min_count=1) if how == "sum" else resampler[c].agg(how)
-            for c, how in agg_spec.items()
-        }
-    )
+    # Re-stamp each record at its interval start, so the 00:00 stamp falls in
+    # the day it closes, then bin by UTC calendar day.
+    wide.index = wide.index - pd.Timedelta(minutes=5)
+    days = wide[list(agg_spec)].resample("D")
+    daily = days.agg(agg_spec)
+    # Plain sum gives 0 mm for an empty day and an undercount for a partial
+    # one; a mean over a partial day is biased. Keep only complete days.
+    daily = daily.where(days.count() >= SAMPLES_PER_DAY)
+    daily = daily.reindex(pd.date_range(first, pd.Timestamp(end), freq="D", name="time"))
     daily["station_id"] = station_id
     return daily
 
@@ -305,12 +319,15 @@ def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_lat
         latest = None
         for _, row in selected.iterrows():
             daily = _station_frame(api, row["code"], start.isoformat(), end.isoformat())
-            if daily is None or daily.empty:
+            if daily is None:
                 continue
-            day = daily.index.max().date()
+            observed = daily.drop(columns="station_id").dropna(how="all")
+            if observed.empty:
+                continue
+            day = observed.index.max().date()
             latest = day if latest is None else max(latest, day)
         if latest is None:
-            raise DataError("TAHMO probe found no recent observations")
+            raise DataError("TAHMO probe found no recent complete days")
         print(latest.isoformat())
         return
 
@@ -351,7 +368,8 @@ def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_lat
             daily, meta_row = result
             frames.append(daily)
             meta_rows.append(meta_row)
-            print(f"{sid}: {len(daily)} daily rows", file=sys.stderr)
+            complete = int(daily.drop(columns="station_id").notna().any(axis=1).sum())
+            print(f"{sid}: {complete}/{len(daily)} days with a complete record", file=sys.stderr)
 
     if not frames:
         raise DataError("no data returned for any station.")

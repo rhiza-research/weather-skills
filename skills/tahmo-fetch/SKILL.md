@@ -27,13 +27,28 @@ TAHMO **deployment API** (`getStations()`): list them in a bounding box, pick
 ids, then fetch. For each `(time, variable)` it picks the best-quality sensor
 (lowest TAHMO quality flag, filtering to flags <= 2), resamples to daily (sum
 for `precip`, mean for `temperature`/`humidity`/`pressure`), and writes a
-point_obs Zarr store. A day with no records is NaN, not 0 mm.
+point_obs Zarr store.
 
-Stations often miss days. Never fill or extrapolate them (no interpolation,
-`fillna`, or scaling a partial week's mean to 7 days). For multi-day totals,
-use `aggregate-temporal` → `convert-to-totals`: stations with any missing day
-in the period come out NaN. Report how many stations were complete and how
-many were excluded.
+### Daily values: UTC days, complete records only
+
+- **Days are UTC calendar days.** TAHMO records every 5 minutes and stamps
+  each record at the **end** of its interval. Day D holds the 288 stamps from
+  D 00:05 to D+1 00:00 inclusive. The 00:00 stamp closes the previous day: a
+  `2026-01-02T00:00Z` record counts toward 2026-01-01. `--start-time` and
+  `--end-time` select these days, and the fetch asks TAHMO for the 00:00 stamp
+  that closes `--end-time`.
+- **A daily value needs a complete record.** A variable's daily value is NaN
+  unless all 288 five-minute records for that day passed the quality filter.
+  This covers the `precip` sum (a missing day is not 0 mm, and a partial day is
+  not scaled up) and the `temperature`/`humidity`/`pressure` means too. A gap
+  removes part of the diurnal cycle, so a partial-day mean is biased. One rule
+  for all variables keeps every value a full-day observation. Variables are
+  judged separately: a day can have `temperature` and NaN `precip`.
+- Never fill or extrapolate missing days (no interpolation, `fillna`, or
+  scaling a partial week to 7 days). For multi-day totals, use
+  `aggregate-temporal` → `convert-to-totals`: a station with any NaN day in the
+  period comes out NaN. Report how many stations were complete and how many
+  were excluded. stderr lists each station's count of complete days.
 
 Do not pass a country name. Resolve a place to `--bbox N/W/S/E` with
 `resolve-region`, list stations in that box, then fetch the ids you want — or
@@ -72,8 +87,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - `--bbox` — spatial subset `N/W/S/E` decimal degrees. With `--list-stations`,
   the region to search. With a fetch and no `--station`, every TA-prefixed
   station in the box. To cover a country, get its bbox from `resolve-region`.
-- `--start-time`, `--end-time` — inclusive date range. Each value is an absolute ISO date `YYYY-MM-DD`. Calendar windows: `resolve-time last-2w`. Latest published day: `--probe-latest`.
-- `--probe-latest` — print the latest available `YYYY-MM-DD` on stdout and exit. No `-o`. Optional `--station` / `--bbox` restrict which stations are probed; otherwise the first few TA stations in the deployment catalogue.
+- `--start-time`, `--end-time` — inclusive range of UTC days (see *Daily values* above). Each value is an absolute ISO date `YYYY-MM-DD`. Calendar windows: `resolve-time last-2w`. Latest published day: `--probe-latest`.
+- `--probe-latest` — print the latest UTC day with a complete record (`YYYY-MM-DD`) on stdout and exit. No `-o`. Optional `--station` / `--bbox` restrict which stations are probed; otherwise the first few TA stations in the deployment catalogue.
 - `--output`, `-o` — output Zarr path (overwritten if it exists).
 - `--workers` — max concurrent per-station fetch threads (default 8). Stations are fetched concurrently over a bounded thread pool; lower this if TAHMO returns 429/throttling errors. Does not affect the output.
 

@@ -301,18 +301,57 @@ def test_station_ids_take_precedence_over_bbox(tmp_path, mod, fetch):
     assert fetched == ["TA00002"]
 
 
-def test_station_day_without_records_is_nan_not_zero(mod):
-    """An outage day inside the range must stay NaN; summing it would invent 0 mm."""
-    raw = pd.DataFrame(
+def _five_minute_raw(variable, day, value, drop=0):
+    """Every 5-minute stamp closing UTC ``day`` (D 00:05 .. D+1 00:00), minus the last ``drop``."""
+    stamps = pd.date_range(f"{day} 00:05", periods=288, freq="5min")[: 288 - drop]
+    return pd.DataFrame(
         {
-            "time": ["2026-01-01T06:00:00Z", "2026-01-01T07:00:00Z", "2026-01-03T06:00:00Z"],
-            "variable": ["pr", "pr", "pr"],
-            "value": [1.0, 0.5, 2.0],
-            "quality": [1, 1, 1],
+            "time": stamps.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "variable": variable,
+            "value": value,
+            "quality": 1,
         }
     )
+
+
+def test_daily_values_need_a_complete_record(mod):
+    """Complete days aggregate; partial and empty days stay NaN, for sums and means alike."""
+    raw = pd.concat(
+        [
+            _five_minute_raw("pr", "2026-01-01", 0.1),
+            _five_minute_raw("te", "2026-01-01", 20.0),
+            _five_minute_raw("pr", "2026-01-02", 0.1, drop=1),  # one record short
+            _five_minute_raw("te", "2026-01-02", 21.0, drop=12),  # one hour short
+            # 2026-01-03: no records at all
+            _five_minute_raw("pr", "2026-01-04", 0.2),
+            _five_minute_raw("te", "2026-01-04", 22.0, drop=1),
+        ]
+    )
     with patch.object(mod, "_fetch_raw", return_value=raw):
-        daily = mod._station_frame(MagicMock(), "TA00001", "2026-01-01", "2026-01-03")
-    assert daily["precip"].iloc[0] == pytest.approx(1.5)
-    assert pd.isna(daily["precip"].iloc[1])
-    assert daily["precip"].iloc[2] == pytest.approx(2.0)
+        daily = mod._station_frame(MagicMock(), "TA00001", "2026-01-01", "2026-01-04")
+
+    assert list(daily.index) == list(pd.date_range("2026-01-01", "2026-01-04", freq="D"))
+    assert daily.loc["2026-01-01", "precip"] == pytest.approx(28.8)
+    assert daily.loc["2026-01-01", "temperature"] == pytest.approx(20.0)
+    assert pd.isna(daily.loc["2026-01-02", "precip"])
+    assert pd.isna(daily.loc["2026-01-02", "temperature"])
+    assert pd.isna(daily.loc["2026-01-03", "precip"])
+    assert pd.isna(daily.loc["2026-01-03", "temperature"])
+    assert daily.loc["2026-01-04", "precip"] == pytest.approx(57.6)
+    assert pd.isna(daily.loc["2026-01-04", "temperature"])
+
+
+def test_midnight_stamp_closes_previous_utc_day(mod):
+    """The 00:00 stamp ends the previous day; the window runs (start 00:00, end+1 00:00]."""
+    day = _five_minute_raw("pr", "2026-01-01", 0.0)
+    day.loc[day.index[-1], "value"] = 5.0  # 2026-01-02T00:00Z
+    before = pd.DataFrame(  # closes 2025-12-31, outside the window
+        {"time": ["2026-01-01T00:00:00Z"], "variable": "pr", "value": 9.0, "quality": 1}
+    )
+    raw = pd.concat([before, day])
+    with patch.object(mod, "_fetch_raw", return_value=raw) as fetch_raw:
+        daily = mod._station_frame(MagicMock(), "TA00001", "2026-01-01", "2026-01-01")
+
+    assert fetch_raw.call_args.args[2:] == ("2026-01-01", "2026-01-02")
+    assert list(daily.index) == [pd.Timestamp("2026-01-01")]
+    assert daily.loc["2026-01-01", "precip"] == pytest.approx(5.0)
