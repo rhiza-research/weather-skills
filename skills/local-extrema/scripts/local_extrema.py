@@ -4,7 +4,14 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Find the local highs or lows of a gridded field, writing a point_obs dataset."""
+"""Find the local highs or lows of a gridded field, writing a point_obs dataset.
+
+Per map (each combination of the non-spatial dims), a centre is a cell whose
+box-smoothed value is the extreme within --radius, with enough contrast in that
+window, and whose smoothing box lies wholly on the map and on data. Each centre
+becomes a point (station_id) holding the raw extreme under its smoothing box;
+points are NaN in maps where they are not a centre.
+"""
 
 import sys
 
@@ -25,7 +32,9 @@ MIN_CONTRAST = 0.05
 def _window(z, kx, ky, fn, fill, wrap=False):
     """``fn`` (np.maximum, np.minimum, np.add) over a (2ky+1) x (2kx+1) window at every cell.
 
-    ``wrap`` joins the last longitude to the first, for a grid that circles the globe.
+    Separable: reduce along longitude, then latitude. Cells off the map count as
+    ``fill``; ``wrap`` instead joins the last longitude to the first, for a grid
+    that circles the globe.
     """
     ny, nx = z.shape
     pad = np.pad(z, ((ky, ky), (0, 0)), constant_values=fill)
@@ -50,7 +59,11 @@ def _window(z, kx, ky, fn, fill, wrap=False):
 )
 @weather_skill.argument("--variable", "-v", help="Field to search (default: the only variable).")
 def local_extrema(ds, kind, radius, variable, **kwargs):
-    """Find the local highs or lows of a gridded field, writing a point_obs dataset."""
+    """Find the local highs or lows of a gridded field, writing a point_obs dataset.
+
+    Returns a CF ``timeSeries`` dataset: ``variable`` on ``(station_id, *other dims)``,
+    ids ``H1``/``L1``... strongest first, lat/lon coords at each point's first cell.
+    """
     if not np.isfinite(radius) or radius <= 0:
         raise UsageError("--radius must be a positive number of degrees")
     if variable is None:
@@ -63,6 +76,7 @@ def local_extrema(ds, kind, radius, variable, **kwargs):
     ds = dequantify_dataset(ensure_normalized_longitude(ds, lon_dim))
     da = ds[variable].sortby(lon_dim)
     lon = da[lon_dim].values.astype(float)
+    # Spacing between neighbouring longitudes, including last -> first across 360.
     gaps = np.diff(lon, append=lon[0] + 360)
     dlon = np.median(gaps)
     # A grid with no gap wider than a cell circles the globe, so windows wrap around it.
@@ -74,6 +88,7 @@ def local_extrema(ds, kind, radius, variable, **kwargs):
     da = da.transpose(*other, lat_dim, lon_dim)
     lat, lon = da[lat_dim].values.astype(float), da[lon_dim].values.astype(float)
     ny, nx = lat.size, lon.size
+    # Half-widths in cells: k* for the --radius search window, s* for smoothing.
     kx = max(1, round(radius / dlon))
     ky = max(1, round(radius / np.median(np.abs(np.diff(lat))))) if ny > 1 else 1
     # Smoothing over a quarter radius keeps single noisy cells and small bumps out.
@@ -90,18 +105,23 @@ def local_extrema(ds, kind, radius, variable, **kwargs):
         finite = np.isfinite(z)
         if not finite.any():
             continue
+        # Box mean over the cells that have data.
         total = _window(np.where(finite, z, 0.0), sx, sy, np.add, 0.0, wrap)
         count = _window(finite.astype(float), sx, sy, np.add, 0.0, wrap)
         smooth = np.where(finite, total / np.maximum(count, 1), -np.inf)
+        # Largest and smallest smoothed value within --radius of each cell.
         hi = _window(smooth, kx, ky, np.maximum, -np.inf, wrap)
         lo = _window(np.where(finite, smooth, np.inf), kx, ky, np.minimum, np.inf, wrap)
         span = smooth[finite].max() - smooth[finite].min()
         # The smoothing box must lie wholly on the map and on data: a field still
         # rising off the map edge, or toward masked land, has no centre there.
         full = count == (2 * sx + 1) * (2 * sy + 1)
+        # A centre is the window's maximum and the window is not flat.
         hit = full & (smooth == hi) & (hi - lo >= max(MIN_CONTRAST * span, np.finfo(float).tiny))
+        # The value reported: the raw extreme under the smoothing box.
         peak = _window(np.where(finite, z, -np.inf), sx, sy, np.maximum, -np.inf, wrap)
         iy, ix = np.nonzero(hit)
+        # Strongest first; drop a tie within --radius of a centre already kept.
         kept = []
         for i in np.argsort(-smooth[iy, ix], kind="stable"):
             y, x = int(iy[i]), int(ix[i])
@@ -124,7 +144,7 @@ def local_extrema(ds, kind, radius, variable, **kwargs):
                 cells.setdefault((y, x), p)
             found[(k, p)] = sign * peak[y, x]
 
-    # One point per anchor cell, strongest first.
+    # Dense (map, point) values, points ordered by their strongest value.
     values = np.full((len(maps), len(anchors)), np.nan)
     for (k, p), v in found.items():
         values[k, p] = v
