@@ -35,7 +35,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/difference.py -i A.zarr -i B.zarr -o OUT.zarr
 - A dim on only one side broadcasts: `(time, latitude, longitude)` minus `(latitude, longitude)` gives one anomaly per time. If A and B each have a dim the other lacks (`time` vs `dayofyear`, `step` vs `time`), it exits 2; put both on the same axis first.
 - A shared dim with no coordinate pairs by position; different sizes exit 2.
 - Incompatible units (`mm day-1` minus `mm`) exit 2, as do precip totals over different `aggregation_period`s (a 7-day minus a 30-day total).
-- No shared variable exits 2; rename one input's variable first.
+- No shared variable exits 2; rename one input's variable first with edit-coords `--rename`.
 
 ### Example
 ```bash

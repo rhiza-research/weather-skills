@@ -54,7 +54,7 @@ An unmirrored pair (e.g. `era5` `tmp2m`) exits 1 and lists the available pairs.
 - Feb 29 is used only in leap years. Every year in the window gets the same values for the same month and day.
 - For `ecmwf_ifs` and `gefs` at lead N, Jan 1 to Jan N are NaN; stderr lists every date with no value.
 - With `--window` > 1, `_std` is `sqrt(mean(std²) / window)`, which assumes independent days and so is a lower bound; stderr warns.
-- Observation fetchers name the variable `precip` or `sst`, not `precip_avg`; rename the mean before subtracting by name.
+- Observation fetchers name the variable `precip` or `sst`, not `precip_avg`; rename the mean first (edit-coords `--rename precip_avg=precip`) before subtracting by name.
 
 ### Example
 ```bash
