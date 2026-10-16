@@ -5,7 +5,7 @@
 #   "scipy",
 # ]
 # ///
-"""Sample a gridded dataset at point locations, writing a point_obs dataset."""
+"""Sample a gridded Zarr at point locations and write a station Zarr."""
 
 import csv
 import sys
@@ -79,7 +79,7 @@ def _load_points(points, point, points_csv):
 def point_value(
     ds, points, point, points_csv, method, neighborhood, variable, max_distance, **kwargs
 ):
-    """Sample a gridded dataset at point locations, writing a point_obs dataset."""
+    """Sample a gridded Zarr at point locations and write a station Zarr."""
     if sum(x is not None for x in (points, point, points_csv)) != 1:
         raise UsageError("pass exactly one of --points, --point, --points-csv")
     if neighborhood < 1 or neighborhood % 2 == 0:

@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Combine the variables of several Zarrs into one dataset on their shared coordinates."""
+"""Combine the variables of two or more Zarrs into one dataset on their shared coordinates."""
 
 import re
 import sys
@@ -25,7 +25,7 @@ _SKILL_VERSION = "0.0.1"
     help="Match values by calendar year: replace each input's time axis with a year axis first.",
 )
 def merge(ds, by_year, **kwargs):
-    """Combine the variables of several Zarrs into one dataset on their shared coordinates."""
+    """Combine the variables of two or more Zarrs into one dataset on their shared coordinates."""
     import pint
     import xarray as xr
 

@@ -5,7 +5,7 @@
 #   "pandas",
 # ]
 # ///
-"""Forecast vs observation verification: hits, bias, or MAE."""
+"""Score a forecast against observations cell by cell: event hits, bias, or mean absolute error."""
 
 import sys
 
@@ -46,7 +46,7 @@ _VAR = {"hits": "event_hit", "bias": "bias", "mae": "mae"}
     help="Event cutoff for --metric hits: a cell is an event when the variable is >= this.",
 )
 def verify(forecast, obs, variable, metric, threshold, **kwargs):
-    """Forecast vs observation verification: hits, bias, or MAE."""
+    """Score a forecast against observations cell by cell: event hits, bias, or mean absolute error."""
     fc_name = variable or auto_variable(forecast)
     obs_name = variable or auto_variable(obs)
     for name, ds, role in ((fc_name, forecast, "forecast"), (obs_name, obs, "obs")):

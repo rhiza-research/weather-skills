@@ -6,7 +6,7 @@
 #   "requests",
 # ]
 # ///
-"""Fetch NOAA GHCN-Daily station observations over HTTPS and write a point_obs weather-skills standard dataset Zarr."""
+"""Fetch NOAA GHCN-Daily station observations as a weather-skills station Zarr."""
 
 import io
 import sys
@@ -210,7 +210,7 @@ def _var_attrs(ds) -> dict:
     ),
 )
 def fetch(start_time, end_time, bbox, workers, variable, probe_latest, **kwargs):
-    """Fetch NOAA GHCN-Daily station observations over HTTPS and write a point_obs weather-skills standard dataset Zarr."""
+    """Fetch NOAA GHCN-Daily station observations as a weather-skills station Zarr."""
     if probe_latest is not None:
         if probe_latest:
             raise UsageError(

@@ -5,7 +5,7 @@
 #   "pillow",
 # ]
 # ///
-"""Inspect weather_skills_history on a Zarr or plot figure (stdout only; never writes)."""
+"""Print the processing history recorded on a Zarr or plot image as a lineage, JSON, or a script that regenerates it."""
 
 import html
 import json
@@ -418,7 +418,7 @@ def _render_script(data: dict) -> None:
     help="Validate weather_skills_history schema (exit 0/1/2).",
 )
 def provenance(input, format, check, **kwargs):
-    """Inspect weather_skills_history on a Zarr or plot figure (stdout only; never writes)."""
+    """Print the processing history recorded on a Zarr or plot image as a lineage, JSON, or a script that regenerates it."""
     if check:
         code, report = _run_check(Path(input))
         if code == 0:

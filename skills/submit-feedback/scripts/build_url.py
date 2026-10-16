@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Build a length-checked prefilled GitHub "new issue" URL for filing feedback."""
+"""Turn a title and body into a prefilled GitHub new-issue link for filing feedback."""
 
 import math
 import sys
@@ -55,18 +55,16 @@ def build_url(title: str, body: str, repo: str = DEFAULT_REPO) -> str:
     help=f"{OWNER} repository that owns the skill the report is about (default {DEFAULT_REPO}).",
 )
 def submit_feedback(title, body, body_file, repo, **kwargs):
-    """Build a length-checked prefilled GitHub "new issue" URL for filing feedback.
-
-    Stateless formatter and validator. The caller authors the title and body; this
-    script URL-encodes them into a
-    https://github.com/<repo>/issues/new?title=...&body=... link for an allow-listed
-    target repository and checks the assembled URL against the clean length ceiling GitHub
-    accepts. Within budget it prints the URL to stdout; over budget it reports the
-    overage on stderr so the caller can trim and retry. It never creates an issue,
-    holds a credential, or makes a network request -- the user files the issue by
-    clicking the link and pressing Submit on github.com, which posts under their own
-    GitHub account.
-    """
+    """Turn a title and body into a prefilled GitHub new-issue link for filing feedback."""
+    # Stateless formatter and validator. The caller authors the title and body; this
+    # script URL-encodes them into a
+    # https://github.com/<repo>/issues/new?title=...&body=... link for an allow-listed
+    # target repository and checks the assembled URL against the clean length ceiling GitHub
+    # accepts. Within budget it prints the URL to stdout; over budget it reports the
+    # overage on stderr so the caller can trim and retry. It never creates an issue,
+    # holds a credential, or makes a network request -- the user files the issue by
+    # clicking the link and pressing Submit on github.com, which posts under their own
+    # GitHub account.
     if not title.strip():
         raise UsageError("--title must not be empty.")
 

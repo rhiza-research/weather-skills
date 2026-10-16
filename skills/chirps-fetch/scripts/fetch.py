@@ -5,7 +5,7 @@
 #   "dynamical-catalog==1.0.1",
 # ]
 # ///
-"""Fetch CHIRPS precipitation from the dynamical.org catalog (final, prelim fallback) and write a weather-skills standard dataset Zarr."""
+"""Fetch CHIRPS daily rainfall observations from the dynamical.org catalog as a weather-skills Zarr."""
 
 import os
 import sys
@@ -121,7 +121,7 @@ def _latest_day(dataset_id: str) -> date | None:
     ),
 )
 def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
-    """Fetch CHIRPS precipitation from the dynamical.org catalog (final, prelim fallback) and write a weather-skills standard dataset Zarr."""
+    """Fetch CHIRPS daily rainfall observations from the dynamical.org catalog as a weather-skills Zarr."""
     if probe_latest is not None:
         if probe_latest:
             raise UsageError(

@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Standardized anomaly: (ds[var] - clim[var_avg]) / clim[var_std]."""
+"""Compute a standardized anomaly, (field − mean) / std, from a Zarr and its climatology."""
 
 import pint
 import pint_xarray
@@ -24,7 +24,7 @@ _SKILL_VERSION = "0.0.1"
 @weather_skill.argument("--climatology", type=Dataset("any"), required=True)
 @weather_skill.argument("--variable", "-v", action="append", required=True)
 def standardize_anomaly(ds, climatology, variable, **kwargs):
-    """Standardized anomaly: (ds[var] - clim[var_avg]) / clim[var_std] per --variable."""
+    """Compute a standardized anomaly, (field − mean) / std, from a Zarr and its climatology."""
     import xarray as xr
 
     # Put both sides' spatial dims on one name (core rounds their values on open).

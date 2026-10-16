@@ -5,7 +5,7 @@
 #   "netCDF4",
 # ]
 # ///
-"""Fetch NOAA OISST v2.1 daily sea-surface temperature from NOAA PSL OPeNDAP and write a weather-skills standard dataset Zarr."""
+"""Fetch NOAA OISST v2.1 daily sea-surface temperature as a weather-skills Zarr."""
 
 import sys
 import time
@@ -238,7 +238,7 @@ def _probe_year(year: int):
     ),
 )
 def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
-    """Fetch NOAA OISST v2.1 daily sea-surface temperature from NOAA PSL OPeNDAP and write a weather-skills standard dataset Zarr."""
+    """Fetch NOAA OISST v2.1 daily sea-surface temperature as a weather-skills Zarr."""
     today = datetime.now(UTC).date()
     if probe_latest is not None:
         if probe_latest:

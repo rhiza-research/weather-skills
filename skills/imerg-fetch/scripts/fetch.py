@@ -8,7 +8,7 @@
 #   "dask",
 # ]
 # ///
-"""Fetch IMERG live precipitation and write a weather-skills standard dataset Zarr."""
+"""Fetch NASA IMERG daily precipitation from GES DISC (Earthdata login) as a weather-skills Zarr."""
 
 import re
 import sys
@@ -71,7 +71,7 @@ def _login() -> None:
     ),
 )
 def fetch(start_time, end_time, version, probe_latest, **kwargs):
-    """Fetch IMERG live precipitation and write a weather-skills standard dataset Zarr."""
+    """Fetch NASA IMERG daily precipitation from GES DISC (Earthdata login) as a weather-skills Zarr."""
     if probe_latest is not None:
         import earthaccess
 

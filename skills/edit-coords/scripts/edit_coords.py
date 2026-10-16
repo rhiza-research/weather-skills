@@ -5,7 +5,7 @@
 #   "cftime>=1.6",
 # ]
 # ///
-"""Rename variables, coordinates, or dims, and swap a dim onto another coordinate."""
+"""Rename variables, coordinates, or dimensions in a Zarr, or re-index a dimension by another coordinate."""
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import DIMS, has_dim
@@ -38,7 +38,7 @@ def _pair(text):
     help="Rename a data variable, coordinate, or dim (repeatable).",
 )
 def edit_coords(ds, swap_dims, rename, **kwargs):
-    """Rename variables, coordinates, or dims, and swap a dim onto another coordinate."""
+    """Rename variables, coordinates, or dimensions in a Zarr, or re-index a dimension by another coordinate."""
     swaps = dict(map(_pair, swap_dims))
     renames = dict(map(_pair, rename))
     if not swaps and not renames:

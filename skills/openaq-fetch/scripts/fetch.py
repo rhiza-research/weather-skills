@@ -6,10 +6,8 @@
 #   "requests",
 # ]
 # ///
-"""Fetch OpenAQ v3 air-quality station observations and write a point_obs weather-skills standard dataset Zarr.
-
-Uses the OpenAQ v3 REST API. API key: OPENAQ_API_KEY.
-"""
+"""Fetch OpenAQ air-quality station observations as a weather-skills station Zarr."""
+# Uses the OpenAQ v3 REST API. API key: OPENAQ_API_KEY.
 
 import math
 import sys
@@ -308,7 +306,7 @@ def _var_attrs(ds, units_by_param: dict, min_coverage: float) -> dict:
     ),
 )
 def fetch(start_time, end_time, bbox, workers, variable, min_coverage, probe_latest, **kwargs):
-    """Fetch OpenAQ v3 air-quality station observations and write a point_obs weather-skills standard dataset Zarr."""
+    """Fetch OpenAQ air-quality station observations as a weather-skills station Zarr."""
     if probe_latest is not None:
         (key,) = require_env(
             "OPENAQ_API_KEY",

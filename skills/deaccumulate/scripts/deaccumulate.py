@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Per-step diff of cumulative-since-init vars (clipped ≥0). Precip → rates."""
+"""Convert a forecast variable stored as a running total since init into per-step values."""
 
 import sys
 
@@ -23,7 +23,7 @@ _SKILL_VERSION = "0.0.2"
 @weather_skill.argument("-i", "--input", type=Dataset("forecast"), required=True)
 @weather_skill.argument("--variable", "-v")
 def deaccumulate(ds, variable, **kwargs):
-    """Per-step diff along forecast step. Precip amounts become mm day-1 rates."""
+    """Convert a forecast variable stored as a running total since init into per-step values."""
     if variable is None:
         if len(ds.data_vars) != 1:
             raise UsageError(

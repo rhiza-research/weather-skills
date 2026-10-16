@@ -5,7 +5,7 @@
 #   "pandas",
 # ]
 # ///
-"""Convert precipitation rates to period totals using stamped aggregation_period."""
+"""Convert precipitation rates in a time-aggregated Zarr into period totals in mm."""
 
 import re
 import sys
@@ -79,7 +79,7 @@ def _sum_cell_methods_dim(da, dim: str | None) -> str:
 )
 @weather_skill.argument("--time-dim")
 def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
-    """Multiply precip rates by stamped aggregation_period → amounts. Terminal before plot."""
+    """Convert precipitation rates in a time-aggregated Zarr into period totals in mm."""
     dim = _resolve_dim(ds, time_dim)
     kinds = {
         name: classify_variable(

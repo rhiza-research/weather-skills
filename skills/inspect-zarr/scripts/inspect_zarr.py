@@ -5,7 +5,7 @@
 #   "pandas",
 # ]
 # ///
-"""Print dimensions, coordinates, and a bounded data-variable summary of a Zarr."""
+"""Print a short summary of a Zarr: dimensions, coordinates, and each variable's units and value range."""
 
 import json
 import math
@@ -157,7 +157,7 @@ def _data_var(name, da, max_values):
     "0 prints every coordinate value; data samples still cap at 256.",
 )
 def inspect_zarr(ds, format, max_values, **kwargs):
-    """Print dimensions, coordinates, and a bounded data-variable summary of a Zarr."""
+    """Print a short summary of a Zarr: dimensions, coordinates, and each variable's units and value range."""
     if max_values < 0:
         raise UsageError(
             "--max-values must be >= 0 (0 prints every coordinate value; data samples stay capped)."

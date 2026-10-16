@@ -8,7 +8,7 @@
 #   "rioxarray",
 # ]
 # ///
-"""Fetch a Kenya forecasts archive grid and write a weather-skills standard dataset."""
+"""Fetch a forecast grid from the public Kenya forecasts archive as a weather-skills Zarr."""
 
 import json
 import re
@@ -345,14 +345,12 @@ def _shift_step_origin_to_zero(ds):
     ),
 )
 def fetch(dataset, date, bbox, variable, probe_latest, **kwargs):
-    """Fetch a Kenya forecasts archive grid and write a weather-skills standard dataset.
-
-    Opens a store under ``gs://kenya-forecasting-data/<date>/data/`` over HTTPS
-    (credential-free): native S2S Zarr grids, the CHIRPS-resolution weekly
-    downscaled precip NetCDF, or the daily downscaled GeoTIFF. Optionally
-    subsets by ``--bbox`` and ``--variable``, normalizes units/CF attrs, and
-    returns a Dataset for the decorator to write.
-    """
+    """Fetch a forecast grid from the public Kenya forecasts archive as a weather-skills Zarr."""
+    # Opens a store under ``gs://kenya-forecasting-data/<date>/data/`` over HTTPS
+    # (credential-free): native S2S Zarr grids, the CHIRPS-resolution weekly
+    # downscaled precip NetCDF, or the daily downscaled GeoTIFF. Optionally
+    # subsets by ``--bbox`` and ``--variable``, normalizes units/CF attrs, and
+    # returns a Dataset for the decorator to write.
     if probe_latest is not None:
         dsid = probe_latest or dataset
         if dsid not in _DATASETS:

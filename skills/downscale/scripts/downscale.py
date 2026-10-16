@@ -5,7 +5,7 @@
 #   "xarray-regrid",
 # ]
 # ///
-"""Downscale onto a finer grid (linear or empirical q-q)."""
+"""Put a gridded Zarr onto a finer or equally spaced lat/lon grid, optionally with quantile mapping."""
 
 import math
 import sys
@@ -92,7 +92,7 @@ def downscale(
     qq_model,
     **kwargs,
 ):
-    """Downscale onto a finer grid (linear or empirical q-q)."""
+    """Put a gridded Zarr onto a finer or equally spaced lat/lon grid, optionally with quantile mapping."""
     import numpy as np
     import xarray as xr
     import xarray_regrid  # noqa: F401

@@ -5,7 +5,7 @@
 #   "pandas",
 # ]
 # ///
-"""Temporal aggregation: calendar resample, rolling window, or step buckets (rates)."""
+"""Roll up a Zarr along its time or forecast-step axis into fixed or rolling windows (mean, min, or max)."""
 
 import datetime as _dt
 import sys
@@ -581,7 +581,7 @@ def aggregate(
     start_time,
     **kwargs,
 ):
-    """Temporal aggregation of rates: calendar resample, rolling, or step buckets."""
+    """Roll up a Zarr along its time or forecast-step axis into fixed or rolling windows (mean, min, or max)."""
     import cf_xarray  # noqa: F401
 
     if (period is None) == (window is None):

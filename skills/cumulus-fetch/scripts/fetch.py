@@ -5,7 +5,7 @@
 #   "adlfs",
 # ]
 # ///
-"""Fetch a Cumulus AI operational ensemble forecast and write a weather-skills standard dataset."""
+"""Fetch the Cumulus AI ensemble precipitation forecast for one init date as a weather-skills Zarr."""
 
 from __future__ import annotations
 
@@ -164,13 +164,11 @@ def _to_standard(ds):
     ),
 )
 def fetch(dataset, date, bbox, variable, probe_latest, workers, **kwargs):
-    """Fetch a Cumulus AI operational ensemble forecast and write a weather-skills standard dataset.
-
-    Opens the init's Zarr store
-    ``az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr/<variable>/YYYY-MM-DD-HH.zarr``
-    with the SAS in ``AZURE_STORAGE_SAS_TOKEN``, optionally subsets by
-    ``--bbox``, and returns a Dataset for the decorator to write.
-    """
+    """Fetch the Cumulus AI ensemble precipitation forecast for one init date as a weather-skills Zarr."""
+    # Opens the init's Zarr store
+    # ``az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr/<variable>/YYYY-MM-DD-HH.zarr``
+    # with the SAS in ``AZURE_STORAGE_SAS_TOKEN``, optionally subsets by
+    # ``--bbox``, and returns a Dataset for the decorator to write.
     import numpy as np
 
     probe = probe_latest

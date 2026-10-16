@@ -5,7 +5,7 @@
 #   "shapely>=2.1",
 # ]
 # ///
-"""Resolve a country, named region, custom box, admin unit, or Nominatim landmark to a bbox and optional polygon."""
+"""Turn a country, region, or place name into a lat/lon bounding box and optional boundary GeoJSON."""
 
 import json
 import sys
@@ -73,7 +73,7 @@ _AREA_TYPES = frozenset(
     ),
 )
 def resolve_region(code, geojson, pad, **kwargs):
-    """Resolve a country, named region, custom box, admin unit, or Nominatim landmark to a bbox and optional polygon."""
+    """Turn a country, region, or place name into a lat/lon bounding box and optional boundary GeoJSON."""
     text = code.strip()
     if not text:
         raise UsageError(

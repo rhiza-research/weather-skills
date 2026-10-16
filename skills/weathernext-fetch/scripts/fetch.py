@@ -5,7 +5,7 @@
 #   "gcsfs",
 # ]
 # ///
-"""Fetch a Google WeatherNext 2 ensemble forecast and write a weather-skills standard dataset."""
+"""Fetch a Google WeatherNext 2 ensemble forecast for one init date as a weather-skills Zarr."""
 
 from __future__ import annotations
 
@@ -306,14 +306,12 @@ def _select_variables(ds, variable):
     help="Print the latest available YYYY-MM-DD on stdout and exit. Does not download fields.",
 )
 def fetch(date, bbox, variable, member, cycle, probe_latest, **kwargs):
-    """Fetch a Google WeatherNext 2 ensemble forecast and write a weather-skills standard dataset.
-
-    Opens a consolidated Zarr under
-    ``gs://weathernext/weathernext_2_0_0/zarr/2025_to_present/<init>/predictions.zarr``
-    with Google Cloud Application Default Credentials, maps dims onto the
-    standard ensemble-forecast cube, optionally subsets by ``--bbox`` /
-    ``--variable``, and returns a Dataset for the decorator to write.
-    """
+    """Fetch a Google WeatherNext 2 ensemble forecast for one init date as a weather-skills Zarr."""
+    # Opens a consolidated Zarr under
+    # ``gs://weathernext/weathernext_2_0_0/zarr/2025_to_present/<init>/predictions.zarr``
+    # with Google Cloud Application Default Credentials, maps dims onto the
+    # standard ensemble-forecast cube, optionally subsets by ``--bbox`` /
+    # ``--variable``, and returns a Dataset for the decorator to write.
     if probe_latest is not None:
         stamps = _list_init_stamps()
         if cycle:

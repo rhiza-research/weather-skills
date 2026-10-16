@@ -5,7 +5,7 @@
 #   "gcsfs",
 # ]
 # ///
-"""Fetch a PBC AI Weather Quest precip forecast and write a weather-skills standard dataset."""
+"""Fetch a PBC AI Weather Quest precipitation forecast as a weather-skills Zarr."""
 
 from __future__ import annotations
 
@@ -245,14 +245,12 @@ def _as_forecast(ds, *, init, dataset: str):
     ),
 )
 def fetch(dataset, date, bbox, variable, probe_latest, **kwargs):
-    """Fetch a PBC AI Weather Quest precip forecast and write a weather-skills standard dataset.
-
-    Opens a Zarr under ``gs://sheerwater-public-datalake/pbc-data/<dataset>/<YYYYMMDD>/``
-    with GCS Application Default Credentials. Optionally subsets by ``--bbox``
-    and ``--variable``, maps quintile probabilities onto a classic forecast
-    (scalar init ``time`` + ``step``), and returns a Dataset for the decorator
-    to write.
-    """
+    """Fetch a PBC AI Weather Quest precipitation forecast as a weather-skills Zarr."""
+    # Opens a Zarr under ``gs://sheerwater-public-datalake/pbc-data/<dataset>/<YYYYMMDD>/``
+    # with GCS Application Default Credentials. Optionally subsets by ``--bbox``
+    # and ``--variable``, maps quintile probabilities onto a classic forecast
+    # (scalar init ``time`` + ``step``), and returns a Dataset for the decorator
+    # to write.
     dataset = _resolve_dataset(dataset)
     if probe_latest is not None:
         ident = probe_latest or dataset

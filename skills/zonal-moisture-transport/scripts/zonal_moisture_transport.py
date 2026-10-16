@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Eastward moisture flux (q·u), optionally column-integrated to IVT_x."""
+"""Compute eastward moisture flux (q·u) and, by default, its column integral (IVT)."""
 
 from __future__ import annotations
 
@@ -161,7 +161,7 @@ def zonal_moisture_transport(
     output_name,
     **kwargs,
 ):
-    """Eastward moisture flux (q·u), optionally column-integrated to IVT_x."""
+    """Compute eastward moisture flux (q·u) and, by default, its column integral (IVT)."""
     datasets = []
     for item in _as_datasets(ds):
         item = ensure_normalized_longitude(item)

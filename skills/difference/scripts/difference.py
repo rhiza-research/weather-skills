@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Subtract A − B (xarray-aligned)."""
+"""Subtract one Zarr from another (A − B), cell by cell."""
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_utils import ensure_normalized_longitude
@@ -23,7 +23,7 @@ _WIDEN = {1: "int16", 2: "int32", 4: "int64"}
 @weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=True)
 @weather_skill.argument("--variable", "-v", action="append")
 def difference(ds, variable, **kwargs):
-    """Subtract A − B (xarray-aligned)."""
+    """Subtract one Zarr from another (A − B), cell by cell."""
     if len(ds) != 2:
         raise UsageError(f"expected exactly two --input paths, got {len(ds)}")
     ds_a, ds_b = ds
