@@ -9,9 +9,9 @@
 > use in any automated workflow you rely on, and do not assume outputs are
 > scientifically validated. Expect breakage.
 
-Small tools an AI agent can run to fetch weather data, transform it, and make
-plots. Each skill is a command-line script. They share one Zarr file format so
-outputs of one skill can feed into the next — see
+Small tools an AI agent can run to fetch weather data and transform it. Each
+skill is a command-line script. They share one Zarr file format so outputs of
+one skill can feed into the next — see
 [`STANDARD_DATASET.md`](https://github.com/rhiza-research/weather-skills-core/blob/main/docs/weather-skill-authoring/references/STANDARD_DATASET.md).
 
 Built as [Agent Skills](https://agentskills.io) by Rhiza Research.
@@ -32,7 +32,7 @@ credentialed or source-specific fetcher only when it does not.
 | `imerg-fetch` | Earthdata **daily** IMERG Late/Final fallback (`GPM_3IMERGDL` / `GPM_3IMERGDF`) → Zarr. Default IMERG is `dynamical-fetch`, not this skill. |
 | `clim-fetch` | Climatology (mean + std) for a `--dataset` (`imerg_final`, `era5`, `chirps`, `ecmwf_ifs`, `oisst`, …) via Sheerwater's public GCS mirror, at a selected `--prediction-timedelta` lead and `--window` (days; correctly rolled up, centered, with circular padding if not pre-mirrored), expanded to a `--start-time`/`--end-time` window → Zarr. OISST SST is `--dataset oisst --variable sst`. |
 | `tahmo-fetch` | TAHMO station observations (daily-aggregated) → Zarr |
-| `kenya-forecast-fetch` | Kenya forecasts archive grids (`gs://kenya-forecasting-data/<date>/data/`) — native S2S Zarr or CHIRPS-resolution weekly / daily downscaled precip → standard dataset (compose with `plot` for figures) |
+| `kenya-forecast-fetch` | Kenya forecasts archive grids (`gs://kenya-forecasting-data/<date>/data/`) — native S2S Zarr or CHIRPS-resolution weekly / daily downscaled precip → standard dataset |
 | `cumulus-fetch` | Cumulus AI operational ensemble precip (`gs://sheerwater-datalake/cumulus-data/v0.0.1-op/pf/…`) — 1° global, 29 members, 46 daily leads → Zarr. Requires GCS credentials. |
 | `neuralgcm-fetch` | NeuralGCM S2S ensemble from `gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/<init>/` (IMERG precip `tp`, ERA5 surface `t2m`/`d2m`) — 48 members, 6-hour leads to 60 days, ~2.8° → Zarr. Requires GCS credentials. |
 | `weathernext-fetch` | Google WeatherNext 2 ensemble from `gs://weathernext/weathernext_2_0_0/zarr/2025_to_present/<init>/` (realtime archive only) — 64 members, 6-hour leads to 15 days, 0.25° global, 13 pressure levels → Zarr. Pass `-v` and `--member` (full cube ~1 TB). Requires GCS credentials. |
@@ -60,27 +60,8 @@ credentialed or source-specific fetcher only when it does not.
 | `difference` | Subtract one dataset from another (A − B) with inner-join alignment and broadcasting — anomalies vs a baseline, scenario-minus-historical change maps |
 | `standardize-anomaly` | Standardized anomaly aka z-score: `(field − clim_avg) / clim_std` against a climatology (e.g. `clim-fetch`) — dimensionless output, errors on units mismatch. For a plain physical-unit anomaly, use `difference` instead. |
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
-| `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). Plot the output with `plot`. |
+| `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). |
 | `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
-
-### Figure skills
-
-`plot`, `plot-verify`, and `plot-mediogram` live in their
-own repo, [`weather-skills-plotting`](https://github.com/rhiza-research/weather-skills-plotting).
-Name the input files on the command line (`-i`, `--layer KIND:PATH`) and put
-every drawing choice — variable, kind, title, colormap, map window, mask — in
-the `--spec` JSON; there are no per-knob flags such as `--title`. To change a
-figure, rerun with `--dump-spec -`, edit the JSON, and pass it back as
-`--spec`. Each run writes a PNG and prints a `plot hash` plus `data: not null`
-or `data: NULL` (`NULL` means inspect-zarr the input). See
-[weather-skills-plotting's docs/plotting.md](https://github.com/rhiza-research/weather-skills-plotting/blob/main/docs/plotting.md)
-for the spec reference.
-
-| Skill | Use when |
-|---|---|
-| [`plot`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot/SKILL.md) | Maps (one or several side by side, each on its own grid), overlays on the same axes (`--layer`), several series on one time axis (ensemble spaghetti, percentile bands), xy scatter, wind rose |
-| [`plot-verify`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-verify/SKILL.md) | Lead-week obs / forecast / metric maps |
-| [`plot-mediogram`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-mediogram/SKILL.md) | Ensemble vs m-climate at one lat/lon |
 
 ### Agent capabilities
 Capabilities the agent uses alongside pipelines; none of them produces a
@@ -90,7 +71,7 @@ dataset output.
 |---|---|
 | `resolve-time` | Resolve relative calendar dates to absolute `--start-time`/`--end-time` or `--date`. |
 | `inspect-zarr` | Print dims, coordinate values, and a bounded data-variable summary of a Zarr (stdout; no write). Data arrays can be huge — this skill never dumps them in full. |
-| `provenance` | Inspect `weather_skills_history` on a Zarr or plot PNG (DAG lineage, JSON, or a commit-pinned reproduction script). |
+| `provenance` | Inspect `weather_skills_history` on a Zarr or a PNG (DAG lineage, JSON, or a commit-pinned reproduction script). |
 | `submit-feedback` | Build a length-checked prefilled GitHub new-issue URL the user clicks to file feedback under their own account. Holds no token, makes no network call, creates no issue itself. |
 
 ## Install
@@ -203,8 +184,8 @@ See `npx skillkit install --help` for more flags.
 
 ## Composition pattern
 
-Middle-pipeline skills are designed to chain. Example — daily forecast plus
-satellite validation for one country, using the `forecasting-skills` CLI from
+Middle-pipeline skills are designed to chain. Example — a weekly forecast and
+the matching observations for one country, using the `forecasting-skills` CLI from
 the Install section above:
 
 ```bash
@@ -220,11 +201,8 @@ forecasting-skills aggregate-temporal \
     --input /tmp/ecmwf.zarr --period weekly --output /tmp/ecmwf_weekly.zarr
 forecasting-skills convert-to-totals \
     --input /tmp/ecmwf_weekly.zarr --output /tmp/ecmwf_weekly_totals.zarr
-forecasting-skills plot \
-    -i /tmp/ecmwf_weekly_totals.zarr --output /tmp/ecmwf_weekly.png \
-    --spec '{"inputs":[{"variable":"precipitation_surface"}],"title":"ECMWF weekly precip"}'
 
-# CHIRPS observations for the same weeks, then the two side by side
+# CHIRPS observations for the same weeks
 forecasting-skills chirps-fetch \
     --start-time 2026-09-14 --end-time 2026-09-20 --bbox 5.5/33.9/-4.7/41.9 \
     --output /tmp/chirps.zarr

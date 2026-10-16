@@ -66,4 +66,4 @@ Writes 101-member weekly precip rates at ~0.05° over Kenya for the 2026-10-12 i
 
 **Choosing a product for probabilities.** Daily-window events (dry spells, `>50 mm in one day`) need daily members: use `precip`. The daily downscale is a mean, so it gives yes/no maps only. Weekly-total events and spread (share of members under 10 mm in week 2, member std) can use `precip_downscaled` at ~0.05°. Keep `number` until the final reduction.
 
-The archive is browsable at https://kenya-forecasts.sheerwater.rhizaresearch.org/files/. Full pipelines that rebuild the KMSA weekly figures: [references/EXAMPLES.md](references/EXAMPLES.md).
+The archive is browsable at https://kenya-forecasts.sheerwater.rhizaresearch.org/files/. Full pipelines from each product to weekly totals: [references/EXAMPLES.md](references/EXAMPLES.md).

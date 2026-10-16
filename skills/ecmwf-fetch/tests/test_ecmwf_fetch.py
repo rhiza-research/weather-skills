@@ -557,6 +557,14 @@ def test_ecds_control_only_field_keeps_number_dim(tmp_path, fetch, fake_ecds):
     assert ds["number"].values.tolist() == [0]
 
 
+def test_ecds_control_only_field_with_ensemble_field_is_nan_for_members(tmp_path, fetch, fake_ecds):
+    ds = _run_ecds(fetch, tmp_path / "o.zarr", "tp", "t")
+    assert ds["t"].dims[0] == "number"
+    t = ds["t"].isel(latitude=0, longitude=0, step=0, vertical=0)
+    assert np.isfinite(t.sel(number=0).values)
+    assert np.isnan(t.sel(number=[1, 2]).values).all()
+
+
 def test_ecds_download_failure_is_clean_error(tmp_path, fetch, fake_ecds, capsys):
     fake_ecds["error"] = ConnectionError("connection reset")
     with pytest.raises(SystemExit) as exc:

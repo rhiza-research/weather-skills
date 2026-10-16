@@ -119,7 +119,6 @@ _GRIB_EXTRAS = {
     "10u": "u10",
     "10v": "v10",
     "10fg": "gust10",
-    "z": "gh",  # cfgrib sometimes decodes HRES gh as geopotential `z` (m2 s-2)
 }
 _GRIB_ALIASES = {name: name for name in VARIABLES} | _GRIB_EXTRAS
 
