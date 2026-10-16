@@ -1,6 +1,6 @@
 ---
 name: tahmo-fetch
-description: Fetch TAHMO station observations for specific station IDs (or all TA stations in a bbox) and write a point_obs weather-skills standard dataset Zarr. Every call, including --list-stations and --probe-latest, needs TAHMO_API_USERNAME and TAHMO_API_PASSWORD in the environment. Use --list-stations --bbox N/W/S/E first to see deployment stations in a region, then --station TA00025 (repeatable) to fetch chosen ids. Use when a task needs in-situ African station rainfall/temperature/humidity/pressure, e.g. to compare against gridded satellite or forecast data.
+description: "Fetch daily TAHMO weather-station observations (rainfall, temperature, humidity, pressure) from the Trans-African Hydro-Meteorological Observatory network, for chosen station ids or every station in a lat/lon box, as a weather-skills station Zarr. Can also list the stations in a box. Needs TAHMO credentials. Use when a task needs in-situ station data in Africa, for example to compare against gridded satellite or forecast data."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Installs the TAHMO Python SDK directly from GitHub (git+https://github.com/rhiza-research/tahmo-api) via uv script metadata. Requires TAHMO_API_USERNAME and TAHMO_API_PASSWORD in the environment.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -22,86 +22,42 @@ metadata:
 
 # tahmo-fetch
 
-Downloads TAHMO station observations via the TAHMO SDK. Stations come from the
-TAHMO **deployment API** (`getStations()`): list them in a bounding box, pick
-ids, then fetch. For each `(time, variable)` it picks the best-quality sensor
-(lowest TAHMO quality flag, filtering to flags <= 2), resamples to daily (sum
-for `precip`, mean for `temperature`/`humidity`/`pressure`), and writes a
-point_obs Zarr store. A day with no records is NaN, not 0 mm.
-
-Stations often miss days. Never fill or extrapolate them (no interpolation,
-`fillna`, or scaling a partial week's mean to 7 days). For multi-day totals,
-use `aggregate-temporal` → `convert-to-totals`: stations with any missing day
-in the period come out NaN. Report how many stations were complete and how
-many were excluded.
-
-Do not pass a country name. Resolve a place to `--bbox N/W/S/E` with
-`resolve-region`, list stations in that box, then fetch the ids you want — or
-fetch every TA station in the box.
-
-## Credentials
-
-Every call — fetch, `--list-stations`, and `--probe-latest` — needs
-`TAHMO_API_USERNAME` and `TAHMO_API_PASSWORD` in the environment. Without
-them the skill exits non-zero before contacting TAHMO.
-
-## When to use
-
-- A task needs recent daily in-situ observations for specific TAHMO stations
-  (or every TA station in a region).
-- A downstream skill will compare stations against gridded precip (via
-  `plot --layer`) or aggregate them temporally.
+Lists TAHMO stations in a box, or fetches their quality-controlled records and writes daily values as one station Zarr.
 
 ## Usage
 
-```
+```bash
+# List stations in a box (TSV on stdout, no -o)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --list-stations --bbox N/W/S/E
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --station TA00025 [--station TA00026 ...] --start-time YYYY-MM-DD --end-time YYYY-MM-DD -o <path.zarr>
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox N/W/S/E --start-time YYYY-MM-DD --end-time YYYY-MM-DD -o <path.zarr>
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
+# Fetch chosen stations, or every TA station in a box
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py (--station ID [--station ID ...] | --bbox N/W/S/E) --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--workers N] -o OUT.zarr
+# Print the latest day with data, and exit
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--station ID | --bbox N/W/S/E]
 ```
 
 ### Arguments
-- `--list-stations` — (needs credentials) query the TAHMO deployment API and print TA stations in
-  `--bbox` as TSV on stdout (`station_id`, `name`, `latitude`, `longitude`,
-  `country` as ISO 3166-1 alpha-2). No `-o`. Use this so the agent can choose
-  which stations to fetch. An empty box prints the header and `0 stations`.
-- `--station` — TAHMO station id to fetch (repeatable), e.g. `TA00025`. When
-  any `--station` is given, those ids are fetched and `--bbox` is not used for
-  selection.
-- `--bbox` — spatial subset `N/W/S/E` decimal degrees. With `--list-stations`,
-  the region to search. With a fetch and no `--station`, every TA-prefixed
-  station in the box. To cover a country, get its bbox from `resolve-region`.
-- `--start-time`, `--end-time` — inclusive date range. Each value is an absolute ISO date `YYYY-MM-DD`. Calendar windows: `resolve-time last-2w`. Latest published day: `--probe-latest`.
-- `--probe-latest` — print the latest available `YYYY-MM-DD` on stdout and exit. No `-o`. Optional `--station` / `--bbox` restrict which stations are probed; otherwise the first few TA stations in the deployment catalogue.
-- `--output`, `-o` — output Zarr path (overwritten if it exists).
-- `--workers` — max concurrent per-station fetch threads (default 8). Stations are fetched concurrently over a bounded thread pool; lower this if TAHMO returns 429/throttling errors. Does not affect the output.
+- `--list-stations` — print the TA stations in `--bbox` as TSV (`station_id`, `name`, `latitude`, `longitude`, `country` as ISO 3166-1 alpha-2) and exit. Requires `--bbox`.
+- `--station` — station id such as `TA00025`; repeat for several. When given, `--bbox` is not used to select stations. An unknown id exits 2.
+- `--bbox` — `N/W/S/E` decimal degrees. Without `--station`, selects every station whose id starts with `TA` inside the box. W > E crosses the antimeridian.
+- `--start-time`, `--end-time` — inclusive date range, `YYYY-MM-DD`.
+- `--workers` — concurrent station downloads. Default: 8. Lower it if TAHMO throttles.
+- `--probe-latest` — print the latest day with data in the last 14 days for the `--station` / `--bbox` stations (default: the first three TA stations) and exit. Any value passed is ignored.
+- `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
+- Dims `(time, station_id)` with coords `latitude`, `longitude`, `name`, `country` on `station_id`. `featureType="timeSeries"`, stamped `data_interval = "1 day"`.
+- `precip` (`mm day-1`, daily sum), `temperature` (`degree_Celsius`), `humidity` (fraction, units `1`), `pressure` (`kPa`), each a daily mean except precip — whichever the stations report.
+- Days are UTC days. Only records with TAHMO quality flag <= 2 are used; where several sensors report the same variable at the same time, the best-flagged one is kept.
+- A day with no records is NaN, never 0 mm. Days with no data at any station are absent from `time`. Stations with no data are left out.
 
-Zarr with dims `(time, station_id)`, coords `latitude(station_id)`,
-`longitude(station_id)`, `country(station_id)` (ISO 3166-1 alpha-2),
-`name(station_id)`, and data variables `precip` (mm day-1), `temperature`
-(`degree_Celsius`), `humidity` (dimensionless fraction `1`, not percent),
-`pressure` (kPa) — whichever variables the stations report.
-Stamped with `weather_skills_source=tahmo` and `featureType=timeSeries`.
+### Notes
+- Set `TAHMO_API_USERNAME` and `TAHMO_API_PASSWORD` in the environment for every call, including `--list-stations` and `--probe-latest`; without them it exits 2.
+- Stations often miss days. Never fill or extrapolate them. For multi-day totals, a station missing any day of the period must come out NaN; report how many stations were complete.
+- A station whose fetch fails is dropped with a stderr line. No data for any station exits 1.
 
-### Provenance
-
-The output carries a `weather_skills_history` provenance chain; inspect it
-with the `provenance` skill.
-
-## Examples
-
+### Example
 ```bash
-# 1. List stations around Nairobi so you can pick ids
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --list-stations --bbox 1.5/36.5/-1.5/37.5
-
-# 2. Fetch the stations you chose
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --station TA00025 --station TA00026 \
-    --start-time 2026-01-01 --end-time 2026-02-15 -o /tmp/tahmo.zarr
-
-# Every TA station in a country bbox (dummy; use resolve-region for a real one)
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox 5/34/-5/42 \
-    --start-time 2026-01-01 --end-time 2026-02-15 -o /tmp/tahmo_kenya.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --list-stations --bbox 5.5/33.5/-5/42.5
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --station TA00025 --station TA00026 --start-time 2026-09-01 --end-time 2026-09-30 -o tahmo_kenya.zarr
 ```
+Lists Kenya's TAHMO stations, then writes daily September 2026 values for two of them.
