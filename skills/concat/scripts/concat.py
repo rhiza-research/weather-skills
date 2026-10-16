@@ -95,12 +95,13 @@ def concat(ds, dim, coords, **kwargs):
             "put them on one calendar first with convert-calendar"
         )
 
-    # select keeps the picked label as a scalar coord (time, step). One that
-    # only some inputs carry would be stamped from the first input alone.
-    scalar = [{c for c in item.coords if item[c].ndim == 0} for item in dss]
-    partial = set.union(*scalar) - set.intersection(*scalar)
-    if partial:
-        dss = [item.drop_vars(partial & set(item.coords)) for item in dss]
+    # Single-value labels, such as the time or step that select keeps.
+    # If only some inputs have one (say valid_time), xr.concat would copy the
+    # first input's value onto every input: a wrong date. Drop those labels.
+    single_labels = [{c for c in item.coords if item[c].ndim == 0} for item in dss]
+    on_every_input = set.intersection(*single_labels)
+    on_some_inputs = set.union(*single_labels) - on_every_input
+    dss = [item.drop_vars(on_some_inputs & set(item.coords)) for item in dss]
 
     if not all(has_dim):
         if coords:
@@ -113,9 +114,9 @@ def concat(ds, dim, coords, **kwargs):
 
     # join="exact": every other coordinate must match. The outer join pads a
     # mismatch with NaN instead, which looks like missing data.
+    # coords="different": a single-value label that differs between inputs
+    # (ECMWF step 7 days, GEFS step 14 days) becomes a label along dim.
     try:
-        # A scalar coord that differs across inputs (each select's step)
-        # becomes a coord along dim.
         out = xr.concat(dss, dim=dim, join="exact", coords="different")
     except pint.DimensionalityError as exc:
         raise UsageError(f"inputs carry incompatible units: {exc}") from None
