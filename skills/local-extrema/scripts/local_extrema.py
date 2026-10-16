@@ -30,11 +30,19 @@ MIN_CONTRAST = 0.05
 
 
 def _window(z, kx, ky, fn, fill, wrap=False):
-    """``fn`` (np.maximum, np.minimum, np.add) over a (2ky+1) x (2kx+1) window at every cell.
+    """Reduce ``z`` over a (2ky+1) x (2kx+1) window centred on every cell.
 
-    Separable: reduce along longitude, then latitude. Cells off the map count as
-    ``fill``; ``wrap`` instead joins the last longitude to the first, for a grid
-    that circles the globe.
+    Separable: reduce along longitude, then latitude.
+
+    Args:
+        z: 2-D (lat, lon) array.
+        kx, ky: window half-widths in cells along lon and lat.
+        fn: ufunc applied pairwise: np.maximum, np.minimum, or np.add (box sum).
+        fill: value for cells off the map (e.g. -inf for a max, 0 for a sum).
+        wrap: join the last longitude to the first, for a grid that circles the globe.
+
+    Returns:
+        Array shaped like ``z``.
     """
     ny, nx = z.shape
     pad = np.pad(z, ((ky, ky), (0, 0)), constant_values=fill)
