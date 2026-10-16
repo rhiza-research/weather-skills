@@ -141,8 +141,8 @@ def test_script_pins_commit_and_reproduces_join(tmp_path, provenance, capsys):
     run_skill(provenance, "-i", str(out), "--format", "script")
 
     captured = capsys.readouterr().out
-    assert "uvx --from git+https://github.com/example/weather-skills@aaaaaaaaaaaa" in captured
-    assert "uvx --from git+https://github.com/example/weather-skills@deadbeefcafebabe" in captured
+    assert "$(_checkout https://github.com/example/weather-skills aaaaaaaaaaaa)" in captured
+    assert "$(_checkout https://github.com/example/weather-skills deadbeefcafebabe)" in captured
     assert "chirps-fetch" in captured
     assert "dynamical-fetch" in captured
     assert "concat" in captured
@@ -194,13 +194,17 @@ def _script(provenance, path, capsys):
     return capsys.readouterr().out
 
 
-def test_script_unpinned_step_runs_from_dev(tmp_path, provenance, capsys):
-    # The default branch names its CLI `weather-skills`; `forecasting-skills` is on dev.
+def test_script_unpinned_step_runs_from_main(tmp_path, provenance, capsys):
+    # Every step runs its script from a checkout, whatever the repo's CLI is called.
     out = _stamp_history(tmp_path / "f.zarr", [_fetch("chirps-fetch")])
 
     captured = _script(provenance, out, capsys)
 
-    assert "git+https://github.com/rhiza-research/weather-skills@dev forecasting-skills" in captured
+    repo = "https://github.com/rhiza-research/weather-skills"
+    assert (
+        f'uv run --script "$(_checkout {repo} main)"/skills/chirps-fetch/scripts/*.py' in captured
+    )
+    assert "uvx" not in captured
 
 
 def test_script_runs_other_repo_skill_from_checkout(tmp_path, provenance, capsys):
@@ -222,7 +226,6 @@ def test_script_runs_other_repo_skill_from_checkout(tmp_path, provenance, capsys
 
     assert "_checkout() {" in captured
     assert f'uv run --script "$(_checkout {repo} bbbb)"/skills/make-map/scripts/*.py' in captured
-    assert f"{repo}@bbbb forecasting-skills" not in captured
 
 
 def test_script_emits_structured_args(tmp_path, provenance, capsys):
@@ -245,7 +248,7 @@ def test_script_verify_join_uses_forecast_and_obs(tmp_path, provenance, capsys):
 
     captured = _script(provenance, out, capsys)
 
-    assert "verify --forecast a.zarr --obs b.zarr --output v.zarr" in captured
+    assert "verify/scripts/*.py --forecast a.zarr --obs b.zarr --output v.zarr" in captured
 
 
 def test_script_reproduces_join_before_later_step(tmp_path, clip_region, provenance, capsys):
@@ -271,10 +274,19 @@ def test_script_reproduces_join_before_later_step(tmp_path, clip_region, provena
 
     captured = _script(provenance, final, capsys)
 
-    assert "clip-region --bbox -1/10/-3/13 --input '<UPSTREAM>' --output a.zarr" in captured
-    assert "clip-region --bbox -1/10/-3/13 --input '<UPSTREAM>' --output b.zarr" in captured
-    assert "difference --input a.zarr --input b.zarr --output step1.zarr" in captured
-    assert "clip-region --bbox -1/10/-2/12 --input step1.zarr --output final.zarr" in captured
+    assert (
+        "clip-region/scripts/*.py --bbox -1/10/-3/13 --input '<UPSTREAM>' --output a.zarr"
+        in captured
+    )
+    assert (
+        "clip-region/scripts/*.py --bbox -1/10/-3/13 --input '<UPSTREAM>' --output b.zarr"
+        in captured
+    )
+    assert "difference/scripts/*.py --input a.zarr --input b.zarr --output step1.zarr" in captured
+    assert (
+        "clip-region/scripts/*.py --bbox -1/10/-2/12 --input step1.zarr --output final.zarr"
+        in captured
+    )
 
 
 def test_malformed_entries_do_not_traceback(tmp_path, provenance, capsys):
@@ -290,7 +302,7 @@ def test_malformed_entries_do_not_traceback(tmp_path, provenance, capsys):
 
     assert "args: (malformed: not an object)" in human
     assert "input: [?, ?]" in human
-    assert "concat --input step1.zarr --input '?'" in captured
+    assert "concat/scripts/*.py --input step1.zarr --input '?'" in captured
 
 
 def test_reads_html_and_jpeg_figures(tmp_path, provenance, capsys):
@@ -313,3 +325,54 @@ def test_reads_html_and_jpeg_figures(tmp_path, provenance, capsys):
         assert "bbox='1/2/3/4'" in captured
         assert "workers" not in captured
         assert "valid weather_skills_history" in capsys.readouterr().out
+
+
+def test_script_uses_recorded_flags_and_input_args(tmp_path, provenance, capsys):
+    # A figure from `-i /x/a.zarr=A -i /x/b.zarr=B -i /x/a.zarr=C`: dest `inputs`,
+    # option `--input`; the reproduced paths keep their `=NAME`.
+    parents = [
+        {"basename": n, "hash": "h", "history": [_fetch("chirps-fetch")]}
+        for n in ("a.zarr", "b.zarr")
+    ]
+    step = {
+        "skill": "draw",
+        "version": "0.0.2",
+        "args": {"inputs": ["/x/a.zarr=A", "/x/b.zarr=B", "/x/a.zarr=C"], "title": "t"},
+        "flags": {"inputs": "--input"},
+        "input_args": [
+            {"dest": "inputs", "item": 0, "path": "/x/a.zarr", "input": 0},
+            {"dest": "inputs", "item": 1, "path": "/x/b.zarr", "input": 1},
+            {"dest": "inputs", "item": 2, "path": "/x/a.zarr", "input": 0},
+        ],
+        "input": parents,
+    }
+    out = _stamp_history(tmp_path / "fig.zarr", [step])
+
+    captured = _script(provenance, out, capsys)
+
+    assert (
+        "draw/scripts/*.py --input a.zarr=A --input b.zarr=B --input a.zarr=C --title t "
+        "--output fig.zarr"
+    ) in captured
+    assert "--inputs" not in captured
+
+
+def test_script_input_args_scalar_and_dataset_dest(tmp_path, provenance, capsys):
+    # A single-value holder keeps its `KIND:` prefix; a Dataset dest (path not
+    # kept in args) gets its recorded flag.
+    step = {
+        "skill": "draw",
+        "version": "0.0.2",
+        "args": {"layer": "heatmap:rel/in.zarr=L"},
+        "flags": {"base": "-b"},
+        "input_args": [
+            {"dest": "base", "item": None, "path": "rel/in.zarr", "input": 0},
+            {"dest": "layer", "item": None, "path": "rel/in.zarr", "input": 0},
+        ],
+        "input": {"basename": "in.zarr", "hash": "h"},
+    }
+    out = _stamp_history(tmp_path / "fig.zarr", [_fetch("chirps-fetch"), step])
+
+    captured = _script(provenance, out, capsys)
+
+    assert "--layer heatmap:step1.zarr=L -b step1.zarr --output fig.zarr" in captured

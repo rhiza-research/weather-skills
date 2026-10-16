@@ -23,10 +23,8 @@ from weather_skills_core.provenance import (
 )
 
 DEFAULT_REPO = "https://github.com/rhiza-research/weather-skills"
-DEFAULT_CLI = "forecasting-skills"
-# Ref a step runs from when it recorded no commit: the CLI above lives on dev
-# (the default branch names its CLI differently).
-DEFAULT_REF = "dev"
+# Ref a step runs from when it recorded no commit.
+DEFAULT_REF = "main"
 # Joins whose inputs are not a repeated --input, in the order the decorator
 # records them (declaration order).
 JOIN_FLAGS = {
@@ -221,22 +219,48 @@ def _render_human(data: dict) -> None:
         _print_chain(chain, indent)
 
 
-def _command(step: dict, inputs: list, output: str) -> str:
+def _command(step: dict, in_paths: list, output: str, input_flags=None) -> str:
+    """One step's command line, with ``in_paths`` (one per recorded input) as its inputs.
+
+    ``input_flags`` names each input's flag for a history that records no
+    ``input_args``; else a known join's flags, else ``--input``.
+    """
     skill = step.get("skill", "?")
-    args = step.get("args") if isinstance(step.get("args"), dict) else {}
+    args = dict(step.get("args")) if isinstance(step.get("args"), dict) else {}
+    flags = step.get("flags") if isinstance(step.get("flags"), dict) else {}
+    input_args = step.get("input_args")
     repo = step.get("repo") if isinstance(step.get("repo"), str) and step["repo"] else DEFAULT_REPO
     commit = step.get("commit")
     ref = commit if isinstance(commit, str) and commit else DEFAULT_REF
-    # weather-skills (or a fork) has the CLI. Another repo may name its CLI
-    # differently or have none: run the skill's one script from a checkout, as
-    # skills-runner does.
-    if repo.rsplit("/", 1)[-1] == DEFAULT_REPO.rsplit("/", 1)[-1]:
-        parts = ["uvx", "--from", f"git+{repo}@{ref}", DEFAULT_CLI, skill]
+    # Run the skill's one script from a checkout at that ref, as skills-runner
+    # does: works for any repo and whatever the CLI was called at that commit.
+    checkout = f'"$(_checkout {shlex.quote(repo)} {shlex.quote(ref)})"'
+    parts = ["uv", "run", "--script", f"{checkout}/skills/{skill}/scripts/*.py"]
+
+    inputs = []
+    if isinstance(input_args, list) and in_paths:
+        # The step recorded where each input went: swap the reproduced path
+        # into that arg, keeping its decoration (`=NAME`, `KIND:`).
+        for use in input_args:
+            dest, item, old = use.get("dest"), use.get("item"), use.get("path")
+            new = in_paths[use["input"]]
+            if dest not in args:
+                # A Dataset arg: its path is not kept in args.
+                inputs.append((flags.get(dest, "--" + dest.replace("_", "-")), new))
+            elif item is None:
+                args[dest] = str(args[dest]).replace(old, new, 1)
+            else:
+                values = list(args[dest])
+                values[item] = str(values[item]).replace(old, new, 1)
+                args[dest] = values
     else:
-        checkout = f'"$(_checkout {shlex.quote(repo)} {shlex.quote(ref)})"'
-        parts = ["uv", "run", "--script", f"{checkout}/skills/{skill}/scripts/*.py"]
+        # Older histories: inputs go on --input, or a known join's flags.
+        join_flags = input_flags or JOIN_FLAGS.get(skill, [])
+        for j, path in enumerate(in_paths):
+            inputs.append((join_flags[j] if j < len(join_flags) else "--input", path))
+
     for dest, value in sorted(args.items()):
-        flag = "--" + dest.replace("_", "-")
+        flag = flags.get(dest, "--" + dest.replace("_", "-"))
         if value is None or value is False:
             continue
         if value is True:
@@ -279,48 +303,43 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
         skill = step.get("skill", "?")
         step_input = step.get("input")
         output = final_output if i == n else f"{prefix}{i}.zarr"
-        flags = JOIN_FLAGS.get(skill, [])
-        branches = _parent_histories(step)
 
-        if len(branches) >= 2:
-            branch_outputs = []
-            for idx, (basename, history) in enumerate(branches):
+        # One path per recorded input, in the order of the step's `input`.
+        if len(_parent_histories(step)) >= 2:
+            in_paths = []
+            for idx, item in enumerate(step_input):
                 label = chr(ord("a") + idx) if idx < 26 else str(idx)
                 branch_out = f"{prefix}{label}.zarr" if prefix != "step" else f"{label}.zarr"
+                history = item.get("history") if isinstance(item, dict) else None
                 lines.append(f"# --- input branch {label} ---")
-                if history:
+                if isinstance(history, list) and history:
                     lines += _emit_graph(history, f"{prefix}{label}_", branch_out)
                 else:
+                    basename = item.get("basename", "?") if isinstance(item, dict) else "?"
                     lines.append(
                         f"# branch {label} records no steps; "
                         f"supply {basename} as {branch_out} yourself."
                     )
-                branch_outputs.append(branch_out)
+                in_paths.append(branch_out)
                 lines.append("")
             lines.append(f"# --- combine the input branches ({skill}) ---")
-            inputs = [
-                (flags[j] if j < len(flags) else "--input", out)
-                for j, out in enumerate(branch_outputs)
-            ]
         elif isinstance(step_input, list):
-            inputs = []
+            in_paths = []
             for j, item in enumerate(step_input):
-                flag = flags[j] if j < len(flags) else "--input"
                 if j == 0 and prev is not None:
-                    inputs.append((flag, prev))
+                    in_paths.append(prev)
                 else:
-                    name = item.get("basename", "?") if isinstance(item, dict) else "?"
-                    inputs.append((flag, name))
+                    in_paths.append(item.get("basename", "?") if isinstance(item, dict) else "?")
         elif step_input is None:
-            inputs = []
+            in_paths = []
         elif prev is not None:
-            inputs = [("--input", prev)]
+            in_paths = [prev]
         else:
             lines.append(f"# step {i} ({skill})'s input is an artifact outside this chain;")
             lines.append("# reproduce it separately and replace <UPSTREAM> below.")
-            inputs = [("--input", "<UPSTREAM>")]
+            in_paths = ["<UPSTREAM>"]
 
-        lines.append(_command(step, inputs, output))
+        lines.append(_command(step, in_paths, output))
         prev = output
     return lines
 
@@ -387,11 +406,12 @@ def _render_script(data: dict) -> None:
             if set(labels) <= {"forecast", "mclimate"}:
                 order = {"forecast": 0, "mclimate": 1}
                 ordered = sorted(branch_outputs, key=lambda x: order.get(x[0], 99))
-                ins = [("--" + lab, out) for lab, out in ordered]
+                input_flags = ["--" + lab for lab, _ in ordered]
             else:
                 ordered = sorted(branch_outputs, key=lambda x: x[0])
-                ins = [("--input", out) for _, out in ordered]
-            lines.append(_command(terminal, ins, name))
+                input_flags = ["--input"] * len(ordered)
+            in_paths = [out for _, out in ordered]
+            lines.append(_command(terminal, in_paths, name, input_flags))
     print("\n".join(_with_checkout_helper(lines)))
 
 
