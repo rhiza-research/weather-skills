@@ -40,7 +40,7 @@ with an error instead of writing an empty store.
 
 Not for: resampling or rolling up the time axis into fixed windows (daily,
 weekly, monthly) — that is `aggregate-temporal`. Not for comparing or plotting
-two datasets — that is `plot` or `plot-timeseries`. This skill changes only the calendar of
+two datasets. This skill changes only the calendar of
 the time axis; it does not resample, reduce, or render.
 
 ## Usage

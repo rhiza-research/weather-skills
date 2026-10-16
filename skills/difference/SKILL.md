@@ -29,9 +29,8 @@ join on shared dims, broadcasting over dims present on only one side — so a
 - Any cell-by-cell difference of two datasets on a shared grid (forecast
   minus observations, model A minus model B). If the lat/lon coordinates
   differ, `coarsen` or `downscale` first so the inner join hits the same
-  points. That alignment is for this subtraction. To draw them, pass two
-  heatmap traces to `plot`: each panel keeps its own lat/lon. `--layer`
-  stacks both on one map.
+  points. That alignment is for this subtraction; drawing the two
+  side by side does not need it.
 
 ## Usage
 

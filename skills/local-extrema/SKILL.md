@@ -1,6 +1,6 @@
 ---
 name: local-extrema
-description: Find the local highs or lows of a gridded weather-skills standard dataset Zarr — pressure centres in MSLP or geopotential, rainfall or temperature maxima, SST warm and cold spots — and write their locations and central values as a point_obs (station_id) dataset. One --kind (high or low) per run; --radius sets the minimum distance between centres. Non-spatial dims (time, step, number) are kept, one map at a time. Use for H / L labels on a weather map (draw the output as a text scatter layer with plot), or to list or compare centres (ids are not tracks).
+description: Find the local highs or lows of a gridded weather-skills standard dataset Zarr — pressure centres in MSLP or geopotential, rainfall or temperature maxima, SST warm and cold spots — and write their locations and central values as a point_obs (station_id) dataset. One --kind (high or low) per run; --radius sets the minimum distance between centres. Non-spatial dims (time, step, number) are kept, one map at a time. Use for H / L labels on a weather map (draw the output as a text layer over the field), or to list or compare centres (ids are not tracks).
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py *)
@@ -60,8 +60,7 @@ remove. Treat centres over high terrain with care.
   centre one grid cell from a point found in an earlier map reuses that
   point (its `latitude` / `longitude` stay at the first cell), so a system
   that jitters by a cell keeps its id; one that moves further is a new
-  point. A `plot` text trace
-  (`mode: "text"`) skips the NaN points.
+  point. Drop the NaN points before labelling a map.
 - The variable keeps its name, units, and attrs, plus `extremum_kind` and
   `extremum_radius_deg`.
 - Coords `latitude` / `longitude` (the point's first cell), and any non-spatial
@@ -81,5 +80,4 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i /tmp/imerg_week.zarr -o /
 ```
 
 To label a map, draw the output as a text scatter layer whose `texttemplate`
-prints the letter and `%{customdata}` (the central value). The `plot` skill's
-help has the full MSLP recipe.
+prints the letter and `%{customdata}` (the central value).

@@ -166,13 +166,12 @@ uv run skills/select/scripts/select_dim.py -i /tmp/weathernext_z.zarr \
 ```
 
 ```bash
-# Weekly precip totals then plot (single member, for a fast preview)
+# Weekly precip totals (single member, for a fast preview)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox 5/34/-5/42 \
     -v tp --member 0 -o /tmp/weathernext_m0.zarr
 uv run skills/aggregate-temporal/scripts/aggregate.py \
     -i /tmp/weathernext_m0.zarr -o /tmp/weathernext_weekly.zarr --period weekly
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/weathernext_weekly.zarr -o /tmp/weathernext_weekly_mm.zarr
-uv run skills/plot/scripts/plot.py -i /tmp/weathernext_weekly_mm.zarr \
     -o /tmp/weathernext_weekly.png --spec '{"inputs":[{"variable":"tp"}]}'
 ```

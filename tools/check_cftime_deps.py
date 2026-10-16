@@ -15,7 +15,7 @@ xarray import alias (`import xarray as xr` -> `xr.open_zarr(...)`) or as a bare
 name imported from xarray (`from xarray import open_dataset` -> `open_dataset(...)`).
 
 Usage:
-    uv run tools/check_cftime_deps.py skills/plot/scripts/plot.py
+    uv run tools/check_cftime_deps.py skills/coarsen/scripts/coarsen.py
     uv run tools/check_cftime_deps.py skills              # recurses on dir
 """
 

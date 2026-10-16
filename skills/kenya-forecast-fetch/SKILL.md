@@ -1,6 +1,6 @@
 ---
 name: kenya-forecast-fetch
-description: Fetch a forecast grid from the public Kenya forecasts archive (gs://kenya-forecasting-data/<date>/data/). Native ECMWF S2S is the low-resolution Zarr (`--dataset precip`, ~1.5°); the CHIRPS-resolution weekly downscale is `--dataset precip_downscaled` (~0.05°, data_weekly_Kenya_downscaled.nc, 101 ensemble members on `number` for inits from 2026-09-07); the daily downscale is `--dataset precip_downscaled_daily` (~0.05°, daily_downscaled_kenya.tif, ensemble mean). Also GEFS, medium-range precip, temps, and winds. Use for clipping, aggregation, comparison, or plotting via plot / plot-timeseries / plot-mediogram.
+description: Fetch a forecast grid from the public Kenya forecasts archive (gs://kenya-forecasting-data/<date>/data/). Native ECMWF S2S is the low-resolution Zarr (`--dataset precip`, ~1.5°); the CHIRPS-resolution weekly downscale is `--dataset precip_downscaled` (~0.05°, data_weekly_Kenya_downscaled.nc, 101 ensemble members on `number` for inits from 2026-09-07); the daily downscale is `--dataset precip_downscaled_daily` (~0.05°, daily_downscaled_kenya.tif, ensemble mean). Also GEFS, medium-range precip, temps, and winds. Use for clipping, aggregation, comparison, or plotting.
 license: MIT
 compatibility: Requires Python 3.12 and uv. Opens public consolidated Zarr (native S2S / GEFS / medium-range), the weekly downscaled NetCDF, or the daily downscaled GeoTIFF over HTTPS from Google Cloud Storage bucket kenya-forecasting-data; no credentials required. Older init folders may only have GRIB/NetCDF under data/ and no Zarr.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -37,10 +37,9 @@ YYYY-MM-DD/data/gefs/gefs_kenya.zarr/
 By default the skill takes the **most recent** init date that has the requested
 `--dataset`. Pass `--date` to pin an init.
 
-This skill does **not** plot. For flexible figures, chain to `plot`,
-`plot-timeseries`, `plot-mediogram`, `summarize-dim`, `clip-region`, etc.
-Recreate KMSA / Sheerwater product figures from the data this way rather
-than downloading the archive's pre-rendered PNGs.
+This skill does **not** plot. Chain to `summarize-dim`, `clip-region`,
+`aggregate-temporal`, etc., and draw KMSA / Sheerwater product figures from
+the data rather than downloading the archive's pre-rendered PNGs.
 
 ## When to use
 
@@ -152,12 +151,12 @@ full 101-member weekly file and ~0.25 GB with a small `--bbox`.
 - `--variable`, `-v` — restrict to named data variables (repeatable).
 - `--output`, `-o` — output Zarr path.
 
-### Example: recreate the KMSA weekly precip product figure
+### Example: the data behind the KMSA weekly precip product figure
 
 The archive grid is daily S2S `tp` (fetch writes per-step rates). The product
 figure (`weekly_precip.png` in the archive) is six weekly totals on the
-Kenya product extent `7/32/-6/43`, drawn with plot's default precip palette.
-Replicate it with weekly aggregation + totals, then plot (omit `theme.colormap` so the default precip palette applies):
+Kenya product extent `7/32/-6/43`. Build the same weekly totals with weekly
+aggregation + totals; a map of them over that extent matches the product:
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset precip \
@@ -169,12 +168,11 @@ uv run skills/aggregate-temporal/scripts/aggregate.py \
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/kenya_weekly.zarr -o /tmp/kenya_weekly_mm.zarr
 
-uv run skills/plot/scripts/plot.py -i /tmp/kenya_weekly_mm.zarr -o /tmp/kenya_weekly.png \
     --spec '{"inputs":[{"variable":"tp"}],"geo":{"bbox":[7,32,-6,43]}}'
 ```
 
 High-resolution weekly downscale (already weekly; fetch stamps
-`aggregation_period`. Convert to mm then plot — no `aggregate-temporal` /
+`aggregation_period`. Convert to mm — no `aggregate-temporal` /
 `downscale`):
 
 ```bash
@@ -184,7 +182,6 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset precip_downscaled \
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/kenya_tp_ds.zarr -o /tmp/kenya_tp_ds_mm.zarr
 
-uv run skills/plot/scripts/plot.py -i /tmp/kenya_tp_ds_mm.zarr -o /tmp/kenya_weekly_downscaled.png \
     --spec '{"inputs":[{"variable":"tp"}]}'
 ```
 
@@ -203,7 +200,6 @@ uv run skills/aggregate-temporal/scripts/aggregate.py \
 uv run skills/convert-to-totals/scripts/convert_to_totals.py \
     -i /tmp/kenya_tp_ds_daily_weekly.zarr -o /tmp/kenya_tp_ds_daily_weekly_mm.zarr
 
-uv run skills/plot/scripts/plot.py -i /tmp/kenya_tp_ds_daily_weekly_mm.zarr \
     -o /tmp/kenya_daily_downscaled.png \
     --spec '{"inputs":[{"variable":"tp"}]}'
 ```
