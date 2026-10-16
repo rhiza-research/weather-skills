@@ -6,7 +6,7 @@
 #   "jaxa-earth",
 # ]
 # ///
-"""Fetch GSMaP hourly precipitation directly from JAXA (credential-free) and write a weather-skills standard dataset Zarr."""
+"""Fetch JAXA GSMaP hourly precipitation as a weather-skills Zarr."""
 
 import sys
 
@@ -95,7 +95,7 @@ def _to_dataarray(raster, hours):
     ),
 )
 def fetch(start_time, end_time, bbox, **kwargs):
-    """Fetch GSMaP hourly precipitation directly from JAXA (no credentials required)."""
+    """Fetch JAXA GSMaP hourly precipitation as a weather-skills Zarr."""
     import pandas as pd
     import xarray as xr
 

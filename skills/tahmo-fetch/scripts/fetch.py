@@ -9,16 +9,14 @@
 # [tool.uv.sources]
 # tahmo = { git = "https://github.com/rhiza-research/tahmo-api", rev = "8ed3adc22b5b7c53d08753e45676e9d4a0a52ab8" }
 # ///
-"""Fetch TAHMO station observations and write a point_obs weather-skills standard dataset Zarr.
-
-Uses the TAHMO Python SDK. Credentials: TAHMO_API_USERNAME and TAHMO_API_PASSWORD.
-
-List stations in a region from the deployment API (no ``-o``)::
-
-    tahmo-fetch --list-stations --bbox N/W/S/E
-
-Then fetch chosen station IDs (and/or every TA station in a bbox).
-"""
+"""Fetch daily TAHMO weather-station observations as a weather-skills station Zarr."""
+# Uses the TAHMO Python SDK. Credentials: TAHMO_API_USERNAME and TAHMO_API_PASSWORD.
+#
+# List stations in a region from the deployment API (no ``-o``)::
+#
+#     tahmo-fetch --list-stations --bbox N/W/S/E
+#
+# Then fetch chosen station IDs (and/or every TA station in a bbox).
 
 import csv
 import sys
@@ -278,7 +276,7 @@ def _ensure_setup(state):
     ),
 )
 def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_latest, **kwargs):
-    """Fetch TAHMO station observations and write a point_obs weather-skills standard dataset Zarr."""
+    """Fetch daily TAHMO weather-station observations as a weather-skills station Zarr."""
     import pandas as pd
     import xarray as xr
 

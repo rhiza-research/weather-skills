@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Realize forecast step as wall-clock time (time = init + step)."""
+"""Relabel a single-init forecast by valid date: its step axis becomes a time axis of init + step."""
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 
@@ -20,7 +20,7 @@ _SKILL_VERSION = "0.0.2"
     "-i", "--input", type=Dataset("init_time, prediction_timedelta"), required=True
 )
 def step_to_time(ds, **kwargs):
-    """Realize forecast step as wall-clock time (time = init + step)."""
+    """Relabel a single-init forecast by valid date: its step axis becomes a time axis of init + step."""
     import cftime
     import numpy as np
 

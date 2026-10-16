@@ -5,7 +5,7 @@
 #   "shapely",
 # ]
 # ///
-"""Subset by bbox, named region, or GeoJSON polygon."""
+"""Clip a gridded or station Zarr to a lat/lon box, a named region, or a GeoJSON polygon."""
 
 from shapely.geometry import shape
 from weather_skills_core import Dataset, UsageError, weather_skill
@@ -39,7 +39,7 @@ _SKILL_VERSION = "0.0.2"
     help="With --geojson or --region: NaN outside instead of dropping cells/stations.",
 )
 def clip_region(ds, bbox, region, geojson, keep_outside, **kwargs):
-    """Subset by bbox, named region, or GeoJSON polygon."""
+    """Clip a gridded or station Zarr to a lat/lon box, a named region, or a GeoJSON polygon."""
     if keep_outside and geojson is None and region is None:
         raise UsageError("--keep-outside requires --geojson or --region")
     n_set = sum(value is not None for value in (bbox, geojson, region))

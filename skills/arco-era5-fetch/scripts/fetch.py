@@ -5,7 +5,7 @@
 #   "gcsfs",
 # ]
 # ///
-"""Fetch ARCO-ERA5 reanalysis from the public Google Cloud Zarr and write a weather-skills standard dataset Zarr."""
+"""Fetch ERA5 reanalysis from Google's public ARCO-ERA5 store as a weather-skills Zarr."""
 
 import sys
 from datetime import UTC, datetime
@@ -148,7 +148,7 @@ def _stamp_coord_attrs(ds) -> None:
     ),
 )
 def fetch(start_time, end_time, bbox, variable, probe_latest, **kwargs):
-    """Fetch ARCO-ERA5 reanalysis from the public Google Cloud Zarr and write a weather-skills standard dataset Zarr."""
+    """Fetch ERA5 reanalysis from Google's public ARCO-ERA5 store as a weather-skills Zarr."""
     if probe_latest is not None:
         import numpy as np
 

@@ -5,7 +5,7 @@
 #   "cftime>=1.6",
 # ]
 # ///
-"""Drop named data variables or non-index coordinates."""
+"""Remove named data variables or non-index coordinates from a Zarr."""
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 
@@ -23,7 +23,7 @@ _SKILL_VERSION = "0.0.1"
     help="Data variable or non-index coordinate to drop (repeatable).",
 )
 def drop(ds, name, **kwargs):
-    """Drop named data variables or non-index coordinates."""
+    """Remove named data variables or non-index coordinates from a Zarr."""
     names = list(dict.fromkeys(name))
     missing = [n for n in names if n not in ds.variables]
     if missing:

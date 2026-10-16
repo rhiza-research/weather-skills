@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Summarize named dims with a statistic."""
+"""Collapse named dimensions of a Zarr with a statistic such as mean or max."""
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import detect_spatial_dims
@@ -37,7 +37,7 @@ _SKILL_VERSION = "0.0.2"
     help="cos(lat) weights for --method mean over latitude.",
 )
 def summarize_dim(ds, variable, dim, method, lat_weighted, **kwargs):
-    """Summarize named dims with a statistic."""
+    """Collapse named dimensions of a Zarr with a statistic such as mean or max."""
     dims = list(dict.fromkeys(dim))
     for d in dims:
         if d not in ds.dims:

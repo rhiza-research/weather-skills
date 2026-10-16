@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Convert data variable(s) to --to-units, or --to-standard (temp °C, precip mm)."""
+"""Convert data variables in a Zarr to target units or to the standard units."""
 
 import sys
 
@@ -52,7 +52,7 @@ _PRECIP_STANDARD_NAME_BY_DIMS = {
     help="CF standard_name override (only with --to-units).",
 )
 def unit_convert(ds, variable, to_units, to_standard, standard_name, **kwargs):
-    """Convert data variable(s). Omitting --variable converts all (--to-units) or recognized (--to-standard)."""
+    """Convert data variables in a Zarr to target units or to the standard units."""
     if to_standard and to_units:
         raise UsageError("pass only one of --to-units or --to-standard")
     if not to_standard and not to_units:

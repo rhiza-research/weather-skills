@@ -8,14 +8,12 @@
 #   "pandas",
 # ]
 # ///
-"""Fetch a cached climatology from Sheerwater's public GCS mirror.
-
-Source dims: ``init_time``, ``prediction_timedelta``, ``lat``, ``lon`` — 1904
-init dates (a leap year, so day-of-year always covers 1..366). Pipeline:
-select one ``--prediction-timedelta`` lead (``time = init_time + lead``),
-optionally roll up to a coarser ``--window`` (days), then expand onto every
-day in ``--start-time``/``--end-time``, repeating rows across years as needed.
-"""
+"""Fetch a precomputed daily climatology (mean and standard deviation) laid onto a date range as a weather-skills Zarr."""
+# Source dims: ``init_time``, ``prediction_timedelta``, ``lat``, ``lon`` — 1904
+# init dates (a leap year, so day-of-year always covers 1..366). Pipeline:
+# select one ``--prediction-timedelta`` lead (``time = init_time + lead``),
+# optionally roll up to a coarser ``--window`` (days), then expand onto every
+# day in ``--start-time``/``--end-time``, repeating rows across years as needed.
 
 from __future__ import annotations
 
@@ -272,7 +270,7 @@ def _expand_climatology(clim: xr.Dataset, start, end) -> xr.Dataset:
 def fetch(
     dataset, start_time, end_time, variable, prediction_timedelta, window, align, bbox, **kwargs
 ):
-    """Fetch a cached daily climatology and expand it to the requested date range."""
+    """Fetch a precomputed daily climatology (mean and standard deviation) laid onto a date range as a weather-skills Zarr."""
     if window < 1:
         raise UsageError(f"--window must be >= 1; got {window}")
     print(

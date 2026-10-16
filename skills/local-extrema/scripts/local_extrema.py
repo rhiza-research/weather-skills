@@ -4,14 +4,12 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Find the local highs or lows of a gridded field, writing a point_obs dataset.
-
-Per map (each combination of the non-spatial dims), a centre is a cell whose
-box-smoothed value is the extreme within --radius, with enough contrast in that
-window, and whose smoothing box lies wholly on the map and on data. Each centre
-becomes a point (station_id) holding the raw extreme under its smoothing box;
-points are NaN in maps where they are not a centre.
-"""
+"""Find the local highs or lows of a gridded field and write them as station-style points."""
+# Per map (each combination of the non-spatial dims), a centre is a cell whose
+# box-smoothed value is the extreme within --radius, with enough contrast in that
+# window, and whose smoothing box lies wholly on the map and on data. Each centre
+# becomes a point (station_id) holding the raw extreme under its smoothing box;
+# points are NaN in maps where they are not a centre.
 
 import sys
 
@@ -67,11 +65,9 @@ def _window(z, kx, ky, fn, fill, wrap=False):
 )
 @weather_skill.argument("--variable", "-v", help="Field to search (default: the only variable).")
 def local_extrema(ds, kind, radius, variable, **kwargs):
-    """Find the local highs or lows of a gridded field, writing a point_obs dataset.
-
-    Returns a CF ``timeSeries`` dataset: ``variable`` on ``(station_id, *other dims)``,
-    ids ``H1``/``L1``... strongest first, lat/lon coords at each point's first cell.
-    """
+    """Find the local highs or lows of a gridded field and write them as station-style points."""
+    # Returns a CF ``timeSeries`` dataset: ``variable`` on ``(station_id, *other dims)``,
+    # ids ``H1``/``L1``... strongest first, lat/lon coords at each point's first cell.
     if not np.isfinite(radius) or radius <= 0:
         raise UsageError("--radius must be a positive number of degrees")
     if variable is None:

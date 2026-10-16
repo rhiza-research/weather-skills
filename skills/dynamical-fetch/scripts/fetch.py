@@ -5,7 +5,7 @@
 #   "dynamical-catalog==1.0.1",
 # ]
 # ///
-"""Fetch a dynamical.org open-catalog dataset and write a weather-skills standard dataset Zarr."""
+"""Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
 
 import re
 import sys
@@ -265,7 +265,7 @@ def _open_dataset(state, dataset) -> dict:
     ),
 )
 def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, **kwargs):
-    """Fetch a dynamical.org open-catalog dataset and write a weather-skills standard dataset Zarr."""
+    """Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
     if probe_latest is not None:
         import numpy as np
 

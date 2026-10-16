@@ -6,7 +6,7 @@
 #   "h5py",
 # ]
 # ///
-"""Fetch SMAP SPL3SMP_E soil moisture via Earthdata and write a weather-skills standard dataset Zarr."""
+"""Fetch NASA SMAP daily 9 km soil moisture via Earthdata as a weather-skills Zarr."""
 
 import os
 import re
@@ -279,7 +279,7 @@ def _stamp_cf(ds) -> None:
     ),
 )
 def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs):
-    """Fetch SMAP SPL3SMP_E soil moisture via Earthdata and write a weather-skills standard dataset Zarr."""
+    """Fetch NASA SMAP daily 9 km soil moisture via Earthdata as a weather-skills Zarr."""
     import earthaccess
     import numpy as np
     import xarray as xr

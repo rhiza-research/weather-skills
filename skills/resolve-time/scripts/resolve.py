@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Resolve a relative date query to absolute --start-time/--end-time or --date."""
+"""Turn a relative date such as last-2w into absolute YYYY-MM-DD dates."""
 
 import calendar
 import json
@@ -144,7 +144,7 @@ def _parse(query: str, as_of: date) -> tuple[date, date, str]:
     help="stdout format: CLI flags (default), START/END, or JSON",
 )
 def resolve_time(query, as_of, emit, **kwargs):
-    """Resolve a relative date query to absolute --start-time/--end-time or --date."""
+    """Turn a relative date such as last-2w into absolute YYYY-MM-DD dates."""
     if query is None:
         raise UsageError(f"pass a query token. {_QUERY_HELP}")
     if as_of is not None and as_of.strip().lower() == "none":

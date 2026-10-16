@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Concatenate Zarr stores along a named dim."""
+"""Join two or more Zarrs into one along a named dimension."""
 
 import numpy as np
 from weather_skills_core import Dataset, UsageError, weather_skill
@@ -38,7 +38,7 @@ def _coerce(values):
 @weather_skill.argument("--dim", required=True)
 @weather_skill.argument("--coords", help="Comma-separated coord values for the new dim")
 def concat(ds, dim, coords, **kwargs):
-    """Concatenate Zarr stores along a named dim."""
+    """Join two or more Zarrs into one along a named dimension."""
     import pint
     import xarray as xr
 

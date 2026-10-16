@@ -5,7 +5,7 @@
 #   "pandas",
 # ]
 # ///
-"""Select along one dim by --index or --value."""
+"""Pick entries along one dimension of a Zarr by position or by coordinate value."""
 
 import re
 
@@ -108,7 +108,7 @@ def _parse_value(raw, coord_vals, dim):
 @weather_skill.argument("--index", action="append", help="Integer position (repeatable).")
 @weather_skill.argument("--value", action="append", help="Coord value (repeatable).")
 def select(ds, dim, index, value, **kwargs):
-    """Select along one dim by --index or --value."""
+    """Pick entries along one dimension of a Zarr by position or by coordinate value."""
     # action="append" so a second --dim is refused instead of silently replacing the first.
     if len(dim) > 1:
         raise UsageError(f"--dim may be given once; got {dim}. Select one dim per run")

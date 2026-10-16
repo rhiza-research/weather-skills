@@ -6,7 +6,7 @@
 #   "pandas",
 # ]
 # ///
-"""Fetch a CMIP6 climate-projection dataset from the public Pangeo Google Cloud catalog and write a weather-skills standard dataset Zarr."""
+"""Fetch one CMIP6 climate-model run from the public Pangeo catalog as a weather-skills Zarr."""
 
 import sys
 from datetime import UTC, datetime
@@ -192,7 +192,7 @@ def fetch(
     probe_latest,
     **kwargs,
 ):
-    """Fetch a CMIP6 climate-projection dataset from the public Pangeo Google Cloud catalog and write a weather-skills standard dataset Zarr."""
+    """Fetch one CMIP6 climate-model run from the public Pangeo catalog as a weather-skills Zarr."""
     if probe_latest is not None:
         print("none")
         return

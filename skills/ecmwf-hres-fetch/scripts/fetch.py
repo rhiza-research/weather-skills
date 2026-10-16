@@ -12,7 +12,7 @@
 #   "eccodeslib",
 # ]
 # ///
-"""Fetch a deterministic ECMWF HRES (IFS oper) forecast and write a weather-skills standard dataset Zarr."""
+"""Fetch a deterministic ECMWF HRES forecast from ECMWF Open Data as a weather-skills Zarr."""
 
 from __future__ import annotations
 
@@ -308,7 +308,7 @@ def _standardize(ds):
     ),
 )
 def fetch(bbox, date, run, variable, probe_latest, **kwargs):
-    """Fetch a deterministic ECMWF HRES (IFS oper) forecast and write a weather-skills standard dataset Zarr."""
+    """Fetch a deterministic ECMWF HRES forecast from ECMWF Open Data as a weather-skills Zarr."""
     if probe_latest is not None:
         from ecmwf.opendata import Client
 

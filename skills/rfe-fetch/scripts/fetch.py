@@ -5,7 +5,7 @@
 #   "rasterio",
 # ]
 # ///
-"""Fetch NOAA CPC African Rainfall Estimate (RFE2) daily precipitation and write a weather-skills standard dataset Zarr."""
+"""Fetch NOAA CPC RFE2 daily rainfall over Africa as a weather-skills Zarr."""
 
 import io
 import re
@@ -79,7 +79,7 @@ def _latest_day() -> date:
     help="Print the latest published YYYY-MM-DD on stdout and exit.",
 )
 def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
-    """Fetch NOAA CPC RFE2 daily rainfall over Africa (no credentials required)."""
+    """Fetch NOAA CPC RFE2 daily rainfall over Africa as a weather-skills Zarr."""
     if probe_latest:
         print(_latest_day().isoformat())
         return

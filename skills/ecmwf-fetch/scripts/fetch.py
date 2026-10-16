@@ -12,7 +12,7 @@
 #   "eccodeslib",
 # ]
 # ///
-"""Fetch ECMWF S2S ensemble fields (cf + pf) and write a weather-skills standard dataset Zarr."""
+"""Fetch an ECMWF S2S (46-day) ensemble forecast for one init date as a weather-skills Zarr."""
 
 from __future__ import annotations
 
@@ -738,7 +738,7 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
     ),
 )
 def fetch(bbox, date, variable, probe_latest, **kwargs):
-    """Fetch ECMWF S2S ensemble fields (cf + pf) and write a weather-skills standard dataset Zarr."""
+    """Fetch an ECMWF S2S (46-day) ensemble forecast for one init date as a weather-skills Zarr."""
     if probe_latest is not None:
         found = _catalog_latest_init()
         if found is not None:

@@ -5,7 +5,7 @@
 #   "pandas",
 # ]
 # ///
-"""Convert time axis to a target CF calendar."""
+"""Convert a Zarr's time axis to another CF calendar."""
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import detect_time_dim
@@ -41,7 +41,7 @@ _SKILL_VERSION = "0.0.2"
 )
 @weather_skill.argument("--time-dim")
 def convert_calendar(ds, calendar, align_on, time_dim, **kwargs):
-    """Convert time axis to a target CF calendar."""
+    """Convert a Zarr's time axis to another CF calendar."""
     import sys
 
     import numpy as np

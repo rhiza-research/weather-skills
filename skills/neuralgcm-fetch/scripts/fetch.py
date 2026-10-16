@@ -5,7 +5,7 @@
 #   "gcsfs",
 # ]
 # ///
-"""Fetch a NeuralGCM S2S ensemble forecast and write a weather-skills standard dataset."""
+"""Fetch a NeuralGCM subseasonal ensemble forecast for one init date as a weather-skills Zarr."""
 
 from __future__ import annotations
 
@@ -319,14 +319,12 @@ def _select_variables(ds, variable):
     ),
 )
 def fetch(dataset, date, bbox, variable, cycle, probe_latest, **kwargs):
-    """Fetch a NeuralGCM S2S ensemble forecast and write a weather-skills standard dataset.
-
-    Opens a consolidated Zarr under
-    ``gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/<init>/<dataset>/``
-    with the credentials described in SKILL.md, maps dims onto the
-    standard forecast cube, optionally subsets by ``--bbox`` / ``--variable``,
-    and returns a Dataset for the decorator to write.
-    """
+    """Fetch a NeuralGCM subseasonal ensemble forecast for one init date as a weather-skills Zarr."""
+    # Opens a consolidated Zarr under
+    # ``gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/<init>/<dataset>/``
+    # with the credentials described in SKILL.md, maps dims onto the
+    # standard forecast cube, optionally subsets by ``--bbox`` / ``--variable``,
+    # and returns a Dataset for the decorator to write.
     dsid = _canonical_dataset(probe_latest or dataset)
     if probe_latest is not None:
         stamps = _list_init_stamps()

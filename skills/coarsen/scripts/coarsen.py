@@ -5,7 +5,7 @@
 #   "xarray-regrid",
 # ]
 # ///
-"""Coarsen/align onto a target grid (linear interpolation or conservative area mean)."""
+"""Put a gridded Zarr onto a coarser or equally spaced lat/lon grid."""
 
 import math
 
@@ -106,7 +106,7 @@ def _clip_reference_axis(input_vals, ref_vals):
 def coarsen(
     ds, variable, reference_grid, target_resolution, offset, method, min_fraction, **kwargs
 ):
-    """Coarsen/align onto a target grid (linear interpolation or conservative area mean)."""
+    """Put a gridded Zarr onto a coarser or equally spaced lat/lon grid."""
     import numpy as np
     import xarray as xr
     import xarray_regrid  # noqa: F401

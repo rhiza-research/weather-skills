@@ -4,7 +4,7 @@
 #   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
 # ]
 # ///
-"""Apply a boolean indicator (or ensemble probability) to a daily standard dataset."""
+"""Apply a yes/no weather rule to each day or week of a Zarr, optionally reduced to an onset date or a probability."""
 
 import json
 import re
@@ -492,7 +492,7 @@ def _step_days(ds, dim: str) -> int:
     help="Ensemble fraction True (mean over number). No-op if there is no number dim.",
 )
 def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **kwargs):
-    """Apply a boolean indicator (or ensemble probability) to a daily standard dataset."""
+    """Apply a yes/no weather rule to each day or week of a Zarr, optionally reduced to an onset date or a probability."""
     spec = parse_rule(rule)
     dim = _axis(ds, time_dim)
     step_days = _step_days(ds, dim)
