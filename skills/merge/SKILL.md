@@ -30,6 +30,7 @@ One dataset holding every input's variables. Along each shared dim it keeps only
 ### Notes
 - Variable names must differ across inputs; rename one first with the rename skill.
 - Grids must line up to be matched cell by cell; regrid one onto the other with coarsen `--reference-grid` first.
+- To merge a forecast with observations, turn the forecast's steps into times with step-to-time first.
 
 ### Example
 ```bash
