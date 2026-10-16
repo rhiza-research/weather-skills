@@ -1,6 +1,6 @@
 ---
 name: provenance
-description: Inspect the weather_skills_history provenance chain stamped on a weather-skills artifact (a standard dataset Zarr or a plot PNG, JPEG, or HTML figure) and render it as a human-readable lineage, the raw JSON chain, or a runnable reproduction script. Use when you need to answer "how did this file come to exist, and how do I regenerate it?" — especially for a PNG, whose chain lives in binary tEXt chunks an editor can't open.
+description: "Read the processing history (weather_skills_history) recorded on a weather-skills Zarr or plot image (PNG, JPEG, HTML) and print it as a readable lineage, raw JSON, or a bash script that regenerates the file. Can also validate that history against its schema. Use to answer how a file was made and how to reproduce it."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Inspects a zarr directory or a .png/.jpg/.html figure; reads no credentials and writes nothing.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py *)
@@ -11,163 +11,36 @@ metadata:
 
 # provenance
 
-Read-only inspector for the `weather_skills_history` provenance DAG that every
-zarr-writing skill stamps on its output (and that plot-writers embed in PNG
-`tEXt` chunks, JPEG EXIF, or an HTML `<meta>` tag). It does not produce an artifact — every view prints to
-stdout, and the user redirects when they want a file.
-
-## When to use
-
-- You have a zarr or PNG and want to know which skills produced it, in what
-  order, with what arguments.
-- You need to regenerate an artifact and want a starting-point reproduction
-  script rather than reconstructing the pipeline by hand.
-- The chain is unreadable directly: a zarr keeps it in store attrs, and a PNG
-  keeps it in binary `tEXt` chunks.
-- You need lineage, not a visual check — plot skills print `plot hash` and
-  `data: not null` / `NULL`; look at the PNG as well.
-
-Read-only: it takes no `--output` and prints the result to stdout; it never
-writes a file or modifies its input.
+Prints the chain of skill runs that produced a Zarr or figure; it reads only and writes nothing.
 
 ## Usage
 
-```
-uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py --input <artifact> [--format human|json|script] [--check]
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py -i ARTIFACT [--format human|json|script] [--check]
 ```
 
 ### Arguments
-- `--input`, `-i` — the artifact to inspect: a weather-skills standard dataset Zarr (a
-  directory) or a figure ending `.png`, `.jpg`/`.jpeg`, or `.html`/`.htm`. Required.
-- `--format` — output view, one of `human` (default), `json`, or `script`.
-- `--check` — validate the `weather_skills_history` schema instead of rendering it.
-  Takes precedence over `--format`.
+- `--input`, `-i` — a Zarr directory, or a `.png`, `.jpg`/`.jpeg`, or `.html`/`.htm` figure. Required.
+- `--format` — `human` (readable lineage), `json` (raw history), or `script` (bash reproduction). Default: `human`.
+- `--check` — validate the history's schema instead of printing it; overrides `--format`.
 
-A path that is neither a zarr directory nor one of those figures, or a missing
-path, is an error: a message goes to stderr and the skill exits 2. An
-artifact with no `weather_skills_history` reports `no provenance recorded` and
-exits 0.
+### Output
+Everything goes to stdout; redirect to keep a file.
+- `human`: steps oldest first, each with skill, version, commit (when recorded, plus `dirty` if the working tree had changes), input file name, and the args that were set. Steps that combine several inputs (`concat`, `difference`, `verify`, …) list each input's own history under a label `a`, `b`, …. A Zarr's `weather_skills_source` attr prints first.
+- `json`: the history array; a PNG with several labelled history keys prints a `{label: history}` object.
+- `script`: a bash script, run from an empty directory, that reruns each step at its recorded commit and writes intermediates as `stepN.zarr` (one file per input branch as `a.zarr`, `b.zarr`, …) and the final step under the artifact's own name.
+- `--check`: `valid …` and exit 0; no history exits 1; invalid history lists each violation with its location and exits 2.
 
-In the render formats (`human`/`json`/`script`), an artifact whose
-`weather_skills_history` is present but not a JSON array is treated as no history: the
-skill prints a one-line malformed-history warning to stderr, reports
-`no provenance recorded`, and exits 0.
+### Notes
+- An artifact with no history, or one whose history is not a JSON array, prints `no provenance recorded on …` and exits 0 (the latter with a warning on stderr). A missing path or unsupported file type exits 2.
+- Review a `script` before running it. Path arguments (`--geojson`, spec files) keep the path as first typed, `--no-<flag>` options are dropped, and a step whose input came from outside the history reads `<UPSTREAM>`, which you replace. Fetch steps read credentials from the environment; none are written into the script.
 
-## Formats
-
-### `human`
-
-Prints the lineage oldest-first. Each step shows its skill, version, git
-commit (when recorded), input basename, and the args that were set (`None`
-args — flags not passed — are left out). Malformed entries print a note
-instead of failing. A single-input path is a
-flat list. Any multi-input join (`concat`, `difference`, `plot-mediogram`, …)
-lists each parent subgraph under its own label (`a`, `b`, …), including
-nested joins. For a two-input PNG that still stores separate tEXt keys
-(`plot-mediogram`), each input branch is printed under its
-own label. If the zarr carries a `weather_skills_source` attr it is printed
-first.
-
-### `json`
-
-Emits the raw chain(s) to stdout as JSON. A single-branch artifact emits the
-chain array; a multi-branch PNG emits a `{label: chain}` object so each
-branch stays identified.
-
-### `script`
-
-Emits a runnable bash reproduction that regenerates the artifact, run from
-an empty directory. Each step is pinned to its recorded commit:
-
-- A `weather-skills` step (or one from a fork) is
-  `uvx --from git+<repo>@<commit> forecasting-skills <skill> …`. A step with
-  no recorded commit runs from the `dev` branch of the default repo, which
-  may have moved since.
-- A step from any other repo (which may have no CLI) clones
-  that repo once per commit into `./_checkouts` and runs the skill's single
-  script with `uv run --script`.
-
-- A single-input path reproduces linearly: each step's output threads into
-  the next step's `--input`; fetch steps take no `--input`; intermediates
-  write to `stepN.zarr` and the final step writes the artifact's own name.
-- Any multi-input join (`concat`, `difference`, …) reproduces each parent
-  subgraph to a distinctly-named file (`a.zarr`, `b.zarr`, …), then runs the
-  join with every branch as an `--input`, in recorded order. `verify` gets
-  `--forecast`/`--obs`, `standardize-anomaly` `--input`/`--climatology`, and
-  `point-value` `--input`/`--points`. A join may sit anywhere on the path
-  (a join whose output feeds further steps); nested joins recurse.
-- An older two-input PNG that stores separate tEXt keys reproduces each
-  labeled branch, then emits one final plot command.
-- A branch whose head is not a fetcher still emits the `<UPSTREAM>` caveat
-  so you can supply that input yourself. A step recorded with `dirty: true`
-  gets a warning comment: the commit may not match what executed.
-
-## `--check` (schema validation)
-
-`--check` validates the `weather_skills_history` on an artifact against the array
-contract in `STANDARD_DATASET.md` and reports every violation it finds. It validates
-**schema shape**, not skill-name membership: a `skill` value may be any
-non-empty string, because external tools that emit `weather_skills_history` have their
-own skill names.
-
-For a zarr it reads the single `weather_skills_history` attribute; for a PNG it reads
-the `weather_skills_history` key and every `weather_skills_history_<label>` tEXt key, validating
-each; for a JPEG the EXIF UserComment; for HTML the `<meta>` tag. Each value must be a JSON array, and each entry an object with:
-
-- `skill` — a non-empty string.
-- `version` — a string.
-- `args` — an object.
-- `input` — `null`, a `{basename, hash}` object, or an array of
-  `{basename, hash}` objects (each of which may also carry a nested `history`
-  DAG, which is validated recursively, so every join's parent subgraphs are
-  checked too).
-- `commit` — optional non-empty string (git SHA of the skill that ran).
-- `repo` — optional non-empty string (clone URL of that skill checkout).
-- `dirty` — optional boolean (working tree had tracked changes).
-
-Unknown or extra keys are noted but do not fail validation. Every violation is
-reported with its location (which key, which entry index, which rule).
-
-Exit codes:
-
-- `0` — valid `weather_skills_history` is present.
-- `1` — no `weather_skills_history` is present on the artifact.
-- `2` — `weather_skills_history` is present but invalid; the violations are listed.
-
+### Example
 ```bash
-# Validate that a freshly produced artifact conforms to the schema.
-uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py -i /tmp/forecast.zarr --check
+uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py -i chirps_kenya.zarr --format script > repro.sh
 ```
+Writes a bash script that reruns the fetch and clip steps that made `chirps_kenya.zarr`.
 
-## Reproduction-script caveats
+## Details
 
-- **Argument translation.** Stored `args` are argparse dest names
-  (underscored, e.g. `time_dim`); the script translates them back to CLI
-  flags (`--time-dim`). Booleans become a bare flag when true and are
-  omitted when false; list values become one repeated flag per element
-  (a list of lists — `-v tp t2m` — becomes one flag with several values);
-  object values (a JSON spec) are passed as JSON; `None` values are
-  omitted.
-- **What the record cannot say.** The history keeps argparse dests, not the
-  command line, so some steps need hand-editing: a `--no-<flag>`
-  (`BooleanOptionalAction`) is recorded as `False` and dropped; path-valued
-  args (`--geojson`, `--reference-grid`, a spec file) keep the path as
-  typed, relative to the original directory; the same file passed twice
-  (`-i x -i x`) is recorded once; and a skill whose inputs use flags other
-  than `--input` (and is not one of the joins above) gets repeated `--input`.
-- **Fetch-step credentials.** Fetch steps read credentials from the
-  environment at run time. The emitted script calls the fetcher but embeds
-  no secret value.
-
-## Example
-
-```bash
-# Human-readable lineage of a clipped forecast zarr.
-uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py -i /tmp/ecmwf_kenya.zarr
-
-# Raw chain as JSON.
-uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py -i /tmp/forecast.png --format json
-
-# Reproduction script, saved by the user via redirect.
-uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py -i /tmp/forecast.png --format script > repro.sh
-```
+Where the history is stored, the schema `--check` enforces, and how the reproduction script maps recorded args back to flags: [references/REFERENCE.md](references/REFERENCE.md).
