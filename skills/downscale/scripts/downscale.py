@@ -187,7 +187,14 @@ def downscale(
         if factor is not None:
             if factor < 1:
                 raise UsageError("--factor must be >= 1")
-            lat_sp, lon_sp = in_lat / factor, in_lon / factor
+            # Split each input cell into `factor` steps between the input's own
+            # points, so every factor-th output point is an input point and
+            # --factor 1 keeps the grid. Stepping by a measured spacing instead
+            # drifts on float32 grids such as CHIRPS.
+            new_lat, new_lon = (
+                np.linspace(c[0], c[-1], (c.size - 1) * factor + 1)
+                for c in (ds[lat_dim].values.astype(float), ds[lon_dim].values.astype(float))
+            )
         else:
             too_coarse = (
                 in_lat < target_resolution
@@ -198,14 +205,8 @@ def downscale(
             )
             if target_resolution <= 0 or too_coarse:
                 raise UsageError("--target-resolution must be finer-or-equal to input")
-            lat_sp = lon_sp = target_resolution
-        if factor == 1:
-            # Identity: keep the input coords exactly. Rebuilding them as
-            # vmin + spacing * k drifts on float32 grids such as CHIRPS.
-            new_lat, new_lon = ds[lat_dim].values, ds[lon_dim].values
-        else:
-            new_lat = _target_coord(ds[lat_dim].values, lat_sp)
-            new_lon = _target_coord(ds[lon_dim].values, lon_sp)
+            new_lat = _target_coord(ds[lat_dim].values, target_resolution)
+            new_lon = _target_coord(ds[lon_dim].values, target_resolution)
 
     target = xr.Dataset(
         coords={
