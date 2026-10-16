@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/rhiza-research/weather-skills-core@dev",
+#   "weather-skills-core>=0.1.1",
 # ]
 # ///
 """Relabel a single-init forecast by valid date: its step axis becomes a time axis of init + step."""

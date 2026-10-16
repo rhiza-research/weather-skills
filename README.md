@@ -12,7 +12,7 @@
 Small tools an AI agent can run to fetch weather data and transform it. Each
 skill is a command-line script. They share one Zarr file format so outputs of
 one skill can feed into the next — see
-[`STANDARD_DATASET.md`](https://github.com/rhiza-research/weather-skills-core/blob/main/docs/weather-skill-authoring/references/STANDARD_DATASET.md).
+[`STANDARD_DATASET.md`](https://github.com/weather-skills/weather-skills-core/blob/main/docs/weather-skill-authoring/references/STANDARD_DATASET.md).
 
 Built as [Agent Skills](https://agentskills.io) by Rhiza Research.
 
@@ -223,7 +223,7 @@ Skills share a simple Zarr contract: fixed dimension names (`latitude`,
 `longitude`, `time`, `step`, `number`, `station_id`, …) and short types (`spatial`, `observations`, `forecast`,
 `vertical_forecast`, `point_obs`, …).
 See
-[`STANDARD_DATASET.md`](https://github.com/rhiza-research/weather-skills-core/blob/main/docs/weather-skill-authoring/references/STANDARD_DATASET.md).
+[`STANDARD_DATASET.md`](https://github.com/weather-skills/weather-skills-core/blob/main/docs/weather-skill-authoring/references/STANDARD_DATASET.md).
 Fetchers write that shape; other skills only depend on dims, coords, data
 variables, and `weather_skills_*` attrs — not on per-variable encoding.
 
@@ -233,7 +233,7 @@ Each skill declares its CLI through the `@weather_skill` decorator from
 `weather_skills_core`, so common parameters (`--input` / `-o`, `--bbox`,
 `--start-time` / `--end-time`, etc.) mean the same thing wherever they appear.
 See
-[`CONVENTIONS.md`](https://github.com/rhiza-research/weather-skills-core/blob/main/docs/weather-skill-authoring/references/CONVENTIONS.md)
+[`CONVENTIONS.md`](https://github.com/weather-skills/weather-skills-core/blob/main/docs/weather-skill-authoring/references/CONVENTIONS.md)
 for the full mapping of concept → canonical flag.
 
 ## Credentials
