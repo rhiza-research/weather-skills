@@ -39,7 +39,7 @@ def merge(ds, by_year, **kwargs):
             if name in owner:
                 raise UsageError(
                     f"variable {name!r} is in input {owner[name] + 1} and input {i + 1}; "
-                    "give one a new name with the rename skill first"
+                    "give one a new name first with edit-coords --rename OLD=NEW"
                 )
             owner[name] = i
 

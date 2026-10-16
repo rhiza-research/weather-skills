@@ -28,7 +28,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/merge.py -i A.zarr -i B.zarr [-i C.zarr ...] 
 One dataset holding every input's variables. Along each shared dim it keeps only the values all inputs have (time steps, years, grid cells); stderr says when values were dropped. With `--by-year`, `time` becomes an integer `year` dim.
 
 ### Notes
-- Variable names must differ across inputs; rename one first with the rename skill.
+- Variable names must differ across inputs; rename one first with edit-coords `--rename OLD=NEW`.
 - Grids must line up to be matched cell by cell; regrid one onto the other with coarsen `--reference-grid` first.
 - To merge a forecast with observations, turn the forecast's steps into times with step-to-time first.
 

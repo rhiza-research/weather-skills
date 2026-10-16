@@ -81,7 +81,7 @@ def test_errors(tmp_path, merge, capsys):
         (["-i", str(fc), "-i", str(rain)], "step-to-time"),
         (["-i", str(fc), "-i", str(fc2)], "different values of 'time'"),
         (["-i", str(rain), "-i", str(offset)], "coarsen --reference-grid"),
-        (["-i", str(rain), "-i", str(rain)], "rename skill"),
+        (["-i", str(rain), "-i", str(rain)], "edit-coords --rename"),
         (["-i", str(rain), "-i", str(later)], "share no 'time' values"),
         (["-i", str(daily), "-i", str(later), "--by-year"], "several values in year 2020"),
     ]
