@@ -90,8 +90,7 @@ def merge(ds, by_year, **kwargs):
         if any(c.attrs.get("bounds") == name for item in dss for c in item.coords.values()):
             raise UsageError(
                 f"inputs have different {name!r} (e.g. an instant field labelled [prev, step] "
-                "and an averaged one labelled [step, next)); they describe different intervals. "
-                f"If that is intended, remove {name!r} from one input with drop --name {name}"
+                "and an averaged one labelled [step, next)); they describe different intervals"
             ) from None
         raise UsageError(
             f"inputs have different values of {name!r} (e.g. two forecast init dates, or one "
