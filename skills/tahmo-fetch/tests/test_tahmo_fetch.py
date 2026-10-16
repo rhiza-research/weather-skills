@@ -316,3 +316,31 @@ def test_station_day_without_records_is_nan_not_zero(mod):
     assert daily["precip"].iloc[0] == pytest.approx(1.5)
     assert pd.isna(daily["precip"].iloc[1])
     assert daily["precip"].iloc[2] == pytest.approx(2.0)
+
+
+def test_fetch_reports_complete_stations(tmp_path, mod, fetch, capsys):
+    """Two of three requested days reported: the station is not complete."""
+    daily = pd.DataFrame(
+        {"precip": [1.5, 2.0], "station_id": "TA00001"},
+        index=pd.to_datetime(["2026-01-01", "2026-01-02"]),
+    )
+    daily.index.name = "time"
+    var_meta = {"pr": {"units": "mm", "description": "Precipitation"}}
+    api = MagicMock()
+    with (
+        patch.dict(os.environ, {"TAHMO_API_USERNAME": "user", "TAHMO_API_PASSWORD": "pass"}),
+        patch.object(mod, "_ensure_setup", side_effect=_fake_setup(api, _stations(), var_meta)),
+        patch.object(mod, "_station_frame", return_value=daily),
+    ):
+        run_skill(
+            fetch,
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-03",
+            "--station",
+            "TA00001",
+            "-o",
+            str(tmp_path / "out.zarr"),
+        )
+    assert "precip: 0 of 1 stations complete (all 3 days" in capsys.readouterr().err

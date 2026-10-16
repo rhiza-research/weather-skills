@@ -401,6 +401,16 @@ def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_lat
         Conventions="CF-1.13",
         weather_skills_source="tahmo",
     )
+    # A station is complete when it reported every requested day; multi-day
+    # totals are only meaningful for those (missing days are never filled).
+    n_days = (end_time - start_time).days + 1
+    for name in sorted(ds.data_vars):
+        complete = int((ds[name].notnull().sum("time") == n_days).sum())
+        print(
+            f"{name}: {complete} of {ds.sizes['station_id']} stations complete "
+            f"(all {n_days} days {start} → {end})",
+            file=sys.stderr,
+        )
     return stamp_data_interval(ds, period="1 day")
 
 

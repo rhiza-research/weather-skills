@@ -89,3 +89,26 @@ def test_errors(tmp_path, merge, capsys):
         with pytest.raises(SystemExit):
             run_skill(merge, *argv, "-o", str(tmp_path / "x.zarr"))
         assert match in capsys.readouterr().err
+
+
+def test_instant_field_bounds_do_not_reach_averaged_field(tmp_path, merge, capsys):
+    """MSLP (instant) labels its steps [prev, step]; precip (avg) keeps [step, next]."""
+    hour = np.timedelta64(1, "h")
+    steps = np.arange(3) * hour
+
+    def _with_bounds(name, lo, step_type):
+        ds = make_forecast(n_step=3, name=name).assign_coords(step=steps)
+        ds = ds.assign_coords(step_bounds=(("step", "nv"), np.stack([lo, lo + hour], axis=1)))
+        ds["step"].attrs["bounds"] = "step_bounds"
+        ds[name].attrs["step_type"] = step_type
+        return ds
+
+    tp = write_zarr(_with_bounds("precip", steps, "avg"), tmp_path / "tp.zarr")
+    msl = write_zarr(_with_bounds("msl", steps - hour, "instant"), tmp_path / "msl.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(merge, "-i", str(msl), "-i", str(tp), "-o", str(out))
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert set(ds.data_vars) == {"precip", "msl"}
+    assert (ds["step_bounds"].values[:, 0] == ds["step"].values).all()
+    assert "instant field" in capsys.readouterr().err

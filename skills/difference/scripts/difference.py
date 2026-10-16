@@ -38,7 +38,8 @@ def difference(ds, variable, **kwargs):
     if not vars_:
         raise UsageError(
             f"inputs share no data variable (A: {list(ds_a.data_vars)}, "
-            f"B: {list(ds_b.data_vars)}); rename one first"
+            f"B: {list(ds_b.data_vars)}); rename one to match first with edit-coords "
+            "--rename OLD=NEW (e.g. precipitation_surface=precip)"
         )
     for v in vars_:
         if v not in shared:

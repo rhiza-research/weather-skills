@@ -22,7 +22,7 @@ Fetches one dataset from the [dynamical.org catalog](https://dynamical.org/catal
 
 ```bash
 # Forecast: one 00 UTC init
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --date YYYY-MM-DD [--bbox N/W/S/E] -v VAR [-v VAR ...] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --date YYYY-MM-DD [--bbox N/W/S/E] [--max-lead 240h] -v VAR [-v VAR ...] -o OUT.zarr
 # Analysis: inclusive date range
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--bbox N/W/S/E] -v VAR -o OUT.zarr
 # Latest init or analysis day (no download)
@@ -36,10 +36,11 @@ HRRR ids are rejected (projected grid).
 ### Arguments
 - `--dataset` — catalog id from the lists above.
 - `--date` — forecast init date; selects the 00 UTC init.
+- `--max-lead` — forecasts only: keep leads up to this one (`240h`, `10D`); only those leads are downloaded. Default: every lead (GFS has 209).
 - `--start-time`, `--end-time` — analysis range; `--end-time` includes the whole end day (half-hourly IMERG for one day is 48 steps).
 - `--bbox` — `N/W/S/E`, longitudes −180..180; W > E crosses the antimeridian. Omit for the full grid.
 - `--variable`, `-v` — catalog variable name; repeat for several. Aliases: `precip`/`tp`/`pr` → `precipitation_surface`; `sst` → `sea_surface_temperature`; `t2m` → `temperature_2m` (or 46-day `average_temperature_2m`); `msl` → `pressure_reduced_to_mean_sea_level`; `sp` → `pressure_surface`; `u10`/`v10`/`u100`/`v100` → `wind_u_10m`/`wind_v_10m`/`wind_u_100m`/`wind_v_100m`; `t`/`gh`/`u`/`v`/`w`/`q` → every pressure level of that field. An unknown name exits and lists `Available:`. Omitting `-v` fetches every field.
-- `--probe-latest [ID]` — print the latest init or analysis date and exit. A fresh forecast init may still be publishing; a sub-daily analysis's latest day is partial (stderr says so).
+- `--probe-latest [ID]` — print the latest init or analysis date and exit. stderr notes a forecast init whose last lead is not published yet; a sub-daily analysis's latest day is partial (stderr says so).
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output

@@ -31,6 +31,7 @@ One dataset holding every input's variables. Along each shared dim it keeps only
 - Variable names must differ across inputs; rename one first with edit-coords `--rename OLD=NEW`.
 - Grids must line up to be matched cell by cell; regrid one onto the other with coarsen `--reference-grid` first.
 - To merge a forecast with observations, turn the forecast's steps into times with step-to-time first.
+- An input whose variables are all instant (`step_type: instant`, or `cell_methods` with `point`, e.g. MSLP) has its time/step bounds dropped, so an averaged field's bounds (precip) are the ones kept.
 
 ### Example
 ```bash

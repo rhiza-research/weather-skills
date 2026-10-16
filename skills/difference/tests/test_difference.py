@@ -147,3 +147,12 @@ def test_difference_relabels_long_name(tmp_path, difference):
     b.attrs["climatology_dataset"] = "oisst"  # B is a climatology
     r = _run(tmp_path / "clim", difference, a, b)
     assert r["sst"].attrs["long_name"] == "Sea Surface Temperature anomaly"
+
+
+def test_difference_no_shared_variable_names_the_rename(tmp_path, difference, capsys):
+    a = _field("precip", 3.0, "mm day-1")
+    b = _field("precipitation_surface", 1.0, "mm day-1")
+    with pytest.raises(SystemExit) as exc:
+        _run(tmp_path, difference, a, b)
+    assert exc.value.code == 2
+    assert "edit-coords --rename OLD=NEW" in capsys.readouterr().err

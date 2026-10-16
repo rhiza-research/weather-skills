@@ -560,3 +560,22 @@ def test_resolve_surface_pressure_and_wind_aliases(mod):
         "wind_v_10m",
     ]
     assert mod._resolve_variables(["u"], names, "ifs") == ["wind_u_850hpa"]
+
+
+def test_max_lead_keeps_leads_up_to_limit(tmp_path, mod, fetch):
+    ds = _end_labelled_forecast_ds()
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "temperature_2m", "--max-lead", "6h")
+    hours = (written["step"].values / np.timedelta64(1, "h")).tolist()
+    assert hours == [0, 3, 6]
+
+
+@pytest.mark.parametrize("publishing", [False, True])
+def test_probe_latest_warns_only_when_last_lead_missing(mod, fetch, capsys, publishing):
+    ds = _end_labelled_forecast_ds()
+    if publishing:
+        ds["precipitation_surface"].values[:, -1] = np.nan
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "forecast"}):
+        run_skill(fetch, "--dataset", "t", "--probe-latest")
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "2026-01-01"
+    assert ("still publishing" in captured.err) == publishing

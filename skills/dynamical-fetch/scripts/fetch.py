@@ -271,7 +271,14 @@ def _open_dataset(state, dataset) -> dict:
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, **kwargs):
+@weather_skill.argument(
+    "--max-lead",
+    help=(
+        "Forecasts only: keep leads up to this one (pandas timedelta: 240h, 10D). "
+        "Only those leads are downloaded. Default: every lead."
+    ),
+)
+def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max_lead, **kwargs):
     """Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
     if probe_latest is not None:
         import numpy as np
@@ -283,11 +290,16 @@ def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, **k
         is_fc = state["shape"] in ("ensemble", "forecast")
         latest = np.max(state["ds"]["init_time" if is_fc else "time"].values)
         if is_fc:
-            print(
-                f"Note: the {np_to_date(latest).isoformat()} init may still be publishing; "
-                "its long leads can be all-NaN for a few hours.",
-                file=sys.stderr,
-            )
+            # Read one value: the last lead of the newest init at one grid
+            # point. NaN there means the long leads are still publishing.
+            var = state["ds"][next(iter(state["ds"].data_vars))].sel(init_time=latest)
+            point = var.isel({d: -1 if d == "lead_time" else 0 for d in var.dims})
+            if np.isnan(float(point.values)):
+                print(
+                    f"Note: the {np_to_date(latest).isoformat()} init is still publishing; "
+                    "its long leads are all-NaN for now.",
+                    file=sys.stderr,
+                )
         elif latest != latest.astype("datetime64[D]"):
             print(
                 f"Note: latest timestamp is {str(latest)[:16]}; that day is partial.",
@@ -314,6 +326,8 @@ def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, **k
             )
         date_iso = date.isoformat()
     else:
+        if max_lead is not None:
+            raise UsageError(f"{dataset} is an analysis dataset; --max-lead is for forecasts.")
         if start_time is None or end_time is None:
             raise UsageError(
                 f"{dataset} is an analysis dataset; --start-time and --end-time are required."
@@ -338,6 +352,18 @@ def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, **k
                 f"{np_to_date(inits.min()).isoformat()}..{np_to_date(inits.max()).isoformat()}."
             )
 
+        if max_lead is not None:
+            import pandas as pd
+
+            try:
+                limit = pd.Timedelta(max_lead).to_timedelta64()
+            except ValueError:
+                raise UsageError(
+                    f"--max-lead {max_lead!r} is not a timedelta (240h, 10D)"
+                ) from None
+            if limit <= np.timedelta64(0):
+                raise UsageError("--max-lead must be positive")
+            ds = ds.sel(lead_time=slice(None, limit))
         if init_target not in inits:
             raise _no_init()
         try:

@@ -62,6 +62,25 @@ def merge(ds, by_year, **kwargs):
             item["year"].attrs = {"long_name": "calendar year"}
             dss[i] = item
 
+    # An instant field (MSLP, step_type "instant") has no averaging interval,
+    # so its time/step bounds would clash with, or be stamped onto, an averaged
+    # field's (precip). Drop them and keep the averaged field's own.
+    for i, item in enumerate(dss):
+        instant = all(
+            item[v].attrs.get("step_type") == "instant"
+            or "point" in str(item[v].attrs.get("cell_methods", ""))
+            for v in item.data_vars
+        )
+        bounds = [item[c].attrs.get("bounds") for c in item.coords]
+        bounds = [b for b in bounds if b in item.variables]
+        if instant and bounds and len(item.data_vars):
+            item = item.drop_vars(bounds)
+            for c in item.coords:
+                if item[c].attrs.get("bounds") in bounds:
+                    item[c].attrs = {k: v for k, v in item[c].attrs.items() if k != "bounds"}
+            dss[i] = item
+            print(f"merge: dropped {bounds} from input {i + 1} (instant field)", file=sys.stderr)
+
     for i, item in enumerate(dss):
         for dim, index in item.indexes.items():
             if index.has_duplicates:

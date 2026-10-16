@@ -52,7 +52,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--station ID | --bbo
 
 ### Notes
 - Set `TAHMO_API_USERNAME` and `TAHMO_API_PASSWORD` in the environment for every call, including `--list-stations` and `--probe-latest`; without them it exits 2.
-- Stations often miss days. Never fill or extrapolate them. For multi-day totals, a station missing any day of the period must come out NaN; report how many stations were complete.
+- Stations often miss days. Never fill or extrapolate them. For multi-day totals, a station missing any day of the period must come out NaN; report how many stations were complete. stderr prints that count per variable (`precip: 144 of 153 stations complete`).
 - A station whose fetch fails is dropped with a stderr line. No data for any station exits 1.
 
 ### Example
