@@ -1,6 +1,6 @@
 ---
 name: dynamical-fetch
-description: "Prefer this over credentialed fetchers when the dynamical.org catalog has the dataset. Default IMERG (`nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`); do not start with imerg-fetch. CHIRPS: `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`; prefer chirps-fetch for the merge as `precip`. ECMWF 46-day S2S/ER: `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`; do not start with ecmwf-fetch. Fetch a catalog dataset (GFS, GEFS, IFS-ENS, AIFS, ICON-EU, MRMS, analyses, IMERG, CHIRPS) to a weather-skills Zarr. IMERG/CHIRPS precip is `precipitation_surface`; `-v precip` / `-v tp` map to it. SST is `sea_surface_temperature` (`-v sst`). `*_Nhpa` stacks onto `vertical`; 46-day pressure fields (`-v q`, `-v u`, `-v t`) are in `group=pressure_level`. Precip is a rate (do not deaccumulate), forecast `step` = interval start (empty lead 0 dropped). `--end-time` covers the whole day, also for IMERG."
+description: "Fetch a dynamical.org catalog dataset (GFS, GEFS, ECMWF IFS-ENS 15- and 46-day, AIFS, ICON-EU, MRMS, IMERG, CHIRPS) for a forecast init date or an analysis date range into a weather-skills Zarr. Credential-free. The default fetcher whenever the catalog has the product, including IMERG (`nasa-imerg-analysis-late`) and ECMWF S2S/ER (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`); use imerg-fetch or ecmwf-fetch only for what the catalog lacks. For CHIRPS final+preliminary merged as `precip`, use chirps-fetch. Precip is written as a rate (`mm day-1`): do not deaccumulate."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -16,222 +16,59 @@ metadata:
 
 # dynamical-fetch
 
-Opens a dataset from the [dynamical.org](https://dynamical.org/catalog/) open
-catalog with `dynamical-catalog`, subsets it by bounding box, time, and
-variables, maps its dimensions onto the weather-skills standard dataset, and writes a
-consolidated Zarr store. One skill covers the whole catalog — the dataset is
-selected with `--dataset` and validated at runtime against
-`dynamical_catalog.list()`.
-
-## When to use
-
-Prefer this fetcher whenever the [dynamical.org catalog](https://dynamical.org/catalog/)
-has the dataset — GFS, GEFS, ECMWF IFS-ENS (15-day and 46-day), AIFS, ICON-EU,
-MRMS, their analyses, IMERG early/late, and CHIRPS final/preliminary. It is
-credential-free and has no API queue.
-
-**IMERG:** this is the default source (`--dataset nasa-imerg-analysis-late`
-or `nasa-imerg-analysis-early`, `-v precipitation_surface`). Do not start
-with `imerg-fetch`. That skill is the Earthdata daily Late/Final fallback
-only (GES DISC granules, no bbox, credentials).
-
-**CHIRPS:** `--dataset ucsb-chc-chirps-analysis-final` (or
-`ucsb-chc-chirps-analysis-preliminary`), `-v precipitation_surface`. Prefer
-`chirps-fetch` when you want final-with-prelim-fallback written as `precip`.
-
-- A task needs a forecast ensemble, deterministic forecast, or gridded analysis
-  from that catalog.
-- A downstream skill will clip, aggregate, compare, or plot the result as a
-  weather-skills standard dataset Zarr. Fetch writes known precip as a **rate**
-  (`mm day-1`) and known air temperature as `degree_Celsius`. Next steps are
-  `aggregate-temporal` and (for `mm` totals) `convert-to-totals`. Do **not**
-  run `deaccumulate` — fetchers already write rates.
-
-This is the default for ECMWF **S2S / ER**
-(`--dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`). `-v tp` maps
-to `precipitation_surface`. Use `ecmwf-fetch` only when the catalog cannot
-serve the request (pre-2026 inits, ocean, 6-hour max/min, accumulated
-fluxes, `pv`). Use source-specific fetchers (TAHMO,
-OISST, ARCO-ERA5, CMIP6, …) when the catalog does not carry that product. For
-IMERG, use `imerg-fetch` only when you need GES DISC **daily** Late or Final,
-not as the first choice. For CHIRPS, `chirps-fetch` is the default (final +
-prelim merge as `precip`); this skill fetches one catalog product.
+Fetches one dataset from the [dynamical.org catalog](https://dynamical.org/catalog/), subset by bbox, time, and variables, as a weather-skills standard dataset Zarr.
 
 ## Usage
 
-```
-# Forecast datasets — a single init date:
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset <id> --date <date> [--bbox N/W/S/E] [-v VAR ...] -o <path.zarr>
-
-# Analysis datasets — an inclusive date range (whole end day, also for sub-daily data):
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset <id> --start-time <date> --end-time <date> [--bbox N/W/S/E] [-v VAR ...] -o <path.zarr>
-
-# Latest available day (no download):
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest <id>
+```bash
+# Forecast: one 00 UTC init
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --date YYYY-MM-DD [--bbox N/W/S/E] -v VAR [-v VAR ...] -o OUT.zarr
+# Analysis: inclusive date range
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--bbox N/W/S/E] -v VAR -o OUT.zarr
+# Latest init or analysis day (no download)
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest ID
 ```
 
-### Supported datasets
-
-The dataset shape determines which time flags apply and the output dims.
-
-| Dataset id | Shape | Coverage | Output dims |
-|---|---|---|---|
-| `noaa-gefs-forecast-35-day` | ensemble forecast (31) | global | `(step, number, latitude, longitude)` |
-| `ecmwf-ifs-ens-forecast-15-day-0-25-degree` | ensemble forecast (51) | global | `(step, number, latitude, longitude)` |
-| `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` | ensemble forecast (101) | global 1.5° daily | `(step, number, latitude, longitude)` |
-| `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | ensemble forecast (101) | global 1.5° 6-hourly | `(step, number, latitude, longitude)` |
-| `ecmwf-aifs-ens-forecast` | ensemble forecast (51) | global | `(step, number, latitude, longitude)` |
-| `noaa-gfs-forecast` | deterministic forecast | global | `(step, latitude, longitude)` |
-| `ecmwf-aifs-single-forecast` | deterministic forecast | global | `(step, latitude, longitude)` |
-| `dwd-icon-eu-forecast-5-day` | deterministic forecast | Europe | `(step, latitude, longitude)` |
-| `noaa-gfs-analysis` | analysis | global | `(time, latitude, longitude)` |
-| `noaa-gefs-analysis` | analysis | global | `(time, latitude, longitude)` |
-| `noaa-mrms-conus-analysis-hourly` | analysis | CONUS | `(time, latitude, longitude)` |
-| `nasa-imerg-analysis-early` | analysis | global | `(time, latitude, longitude)` |
-| `nasa-imerg-analysis-late` | analysis | global | `(time, latitude, longitude)` |
-| `ucsb-chc-chirps-analysis-final` | analysis | global land 60°S–60°N | `(time, latitude, longitude)` |
-| `ucsb-chc-chirps-analysis-preliminary` | analysis | global land 60°S–60°N | `(time, latitude, longitude)` |
-
-Pressure-level catalog fields add a `vertical` dim (hPa). Medium-range
-IFS/AIFS publish selected `*_Nhpa` fields at the store root (925/850/500
-hPa). The 46-day S2S/ER product stores the full 10-level stack in
-`group=pressure_level`; this skill opens that group when `-v t` / `-v gh`
-(or another pressure token) is not on the root. GFS and ICON-EU publish
-none.
-
-See <https://dynamical.org/catalog/> for each dataset's variables, resolution,
-and update cadence. `--variable`/`-v` is the catalog name for that `--dataset`
-(or `-v t` / `-v gh` for all native pressure levels). An unknown name exits
-non-zero and prints `Available:`.
-
-### Variable names
-
-Do **not** reuse names from other fetchers. ARCO-ERA5 and ECMWF S2S use
-`total_precipitation` / `2m_temperature` / `tp`; dynamical.org does not.
-
-| Want | Typical dynamical `-v` | Also accepted |
-|---|---|---|
-| Precipitation | `precipitation_surface` | `precip`, `precipitation`, `tp`, `total_precipitation` |
-| Sea-surface temperature | `sea_surface_temperature` | `sst` |
-| 2 m temperature | `temperature_2m` (GFS, GEFS, IFS 15-day) or `average_temperature_2m` (46-day) | `t2m` → `temperature_2m`, else the 46-day daily mean |
-| Pressure-level temperature | `temperature_850hpa` or `-v t` | prefix `temperature` |
-| Geopotential height | `geopotential_height_500hpa` or `-v gh` | prefix `geopotential_height` |
-
-IMERG Late/Early and CHIRPS final/preliminary publish `precipitation_surface`
-(IMERG also has a quality-index companion). `-v precip` / `-v precipitation`
-resolve to that field; they do not pull `precipitation_quality_index_surface`.
-Those surface names are the ones on GEFS, GFS, and
-`ecmwf-ifs-ens-forecast-15-day-0-25-degree`. SST is
-`sea_surface_temperature`, on the 46-day product only; `-v sst` maps to it. Catalog
-fields ending in `_Nhpa` are stacked onto a `vertical` coordinate (hPa) and
-renamed to the prefix (`temperature_850hpa` + `temperature_925hpa` →
-`temperature`). Height-above-ground fields (`temperature_2m`, `wind_u_80m`)
-stay separate. If you are unsure, pass `-v` once with a guess and read the
-`Available:` list — do not omit `-v` (that pulls every field).
-
-The two HRRR datasets (`noaa-hrrr-forecast-48-hour`, `noaa-hrrr-analysis`) are
-**not supported**: they are on a projected Lambert Conformal Conic grid (1-D
-`y`/`x` in meters with 2-D `latitude(y,x)`/`longitude(y,x)`), which the 1-D
-lat/lon standard dataset does not model. Selecting one exits non-zero. Converting a
-projected grid to a regular lat/lon grid is a reprojection — a grid transform
-out of scope for this fetcher.
+**Forecast ids** (use `--date`): `noaa-gefs-forecast-35-day` (31 members), `ecmwf-ifs-ens-forecast-15-day-0-25-degree` (51), `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` (101), `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` (101), `ecmwf-aifs-ens-forecast` (51), `noaa-gfs-forecast`, `ecmwf-aifs-single-forecast`, `dwd-icon-eu-forecast-5-day` (Europe).
+**Analysis ids** (use `--start-time`/`--end-time`): `noaa-gfs-analysis`, `noaa-gefs-analysis`, `noaa-mrms-conus-analysis-hourly` (CONUS), `nasa-imerg-analysis-early`, `nasa-imerg-analysis-late`, `ucsb-chc-chirps-analysis-final`, `ucsb-chc-chirps-analysis-preliminary` (land, 60°S–60°N).
+HRRR ids are rejected (projected grid).
 
 ### Arguments
-
-- `--dataset` — catalog dataset id from the table above (validated against
-  `dynamical_catalog.list()`; an unknown id prints the available list and exits).
-- `--probe-latest [dataset-id]` — print the latest init or analysis time (`YYYY-MM-DD`) on stdout and exit. No `-o`. Pass the catalog id here or as `--dataset`. On a forecast, the latest init may still be publishing (long leads empty for a few hours; stderr says so) — use the previous day's init when you need every lead. On a sub-daily analysis (IMERG, MRMS) the latest day is usually partial; stderr prints the last timestamp. For a complete window, end on the day before.
-- `--date` — forecast init date (**forecast datasets only**). Absolute ISO date `YYYY-MM-DD`. Selects the **00 UTC** initialization. Latest listed init: `--probe-latest <id>`. A fresh init still filling its long leads (GEFS 35-day often stops at 384 h for hours): fetch drops the empty tail leads and prints `WARNING: ... no data after catalog lead N h` — never padded. An init with no data at all exits 1.
-- `--start-time`, `--end-time` — inclusive date range (**analysis datasets only**). Absolute ISO dates `YYYY-MM-DD`. `--end-time` covers the **whole** end day: on half-hourly IMERG, `--start-time 2026-09-20 --end-time 2026-09-20` gives the 48 steps 00:00–23:30, same day range as `chirps-fetch`. Calendar windows: `resolve-time last-2w --as-of <probe-latest>`. Latest published time: `--probe-latest <this-id>`. A window running past the latest (or before the first) published time writes only what exists and prints `WARNING: ... covers only <first>..<last>` (never padded); a window with no data exits 1.
-- `--bbox` — spatial subset `N/W/S/E` decimal degrees. The slice follows each
-  axis's own order, so any region works regardless of how a dataset stores
-  latitude. W/E are −180..180; an antimeridian box is W > E (`10/170/-10/-170`);
-  0..360 values (`10/350/-5/370`) select nothing. Omit to fetch the dataset's full native grid. Named places: compose
-  with the `resolve-region` skill.
-- `--variable`, `-v` — restrict to one data variable; repeat once per variable
-  (`-v temperature_2m -v precipitation_surface`). Prefer catalog-exact names.
-  For precip, `precip` / `precipitation` / `tp` / `total_precipitation` map to
-  `precipitation_surface` when that field is in the dataset (IMERG, GEFS, IFS).
-  For SST, prefer the catalog name `sea_surface_temperature`; `-v sst` is
-  accepted as an alias.
-  `-v t` / `-v gh` (and the prefixes `temperature` / `geopotential_height`)
-  select every `*_Nhpa` field of that prefix. Omit to fetch all variables
-  (usually too much).
-- `--output`, `-o` — output Zarr path (overwritten if it exists).
+- `--dataset` — catalog id from the lists above.
+- `--date` — forecast init date; selects the 00 UTC init.
+- `--start-time`, `--end-time` — analysis range; `--end-time` includes the whole end day (half-hourly IMERG for one day is 48 steps).
+- `--bbox` — `N/W/S/E`, longitudes −180..180; W > E crosses the antimeridian. Omit for the full grid.
+- `--variable`, `-v` — catalog variable name; repeat for several. Aliases: `precip`/`tp`/`pr` → `precipitation_surface`; `sst` → `sea_surface_temperature`; `t2m` → `temperature_2m` (or 46-day `average_temperature_2m`); `t`/`gh`/`u`/`v`/`w`/`q` → every pressure level of that field. An unknown name exits and lists `Available:`. Omitting `-v` fetches every field.
+- `--probe-latest [ID]` — print the latest init or analysis date and exit. A fresh forecast init may still be publishing; a sub-daily analysis's latest day is partial (stderr says so).
+- `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
+- Forecasts: `(step, [number,] latitude, longitude)` with scalar `time` = init. Analyses: `(time, latitude, longitude)`. Pressure fields add `vertical` (hPa).
+- Precip in `mm day-1`, air temperature in `degree_Celsius`, other units as published. Longitude is `[-180, 180)`.
+- Requested windows or leads past what is published are written as available, with a `WARNING` on stderr; nothing is padded. No data at all exits 1.
 
-A consolidated weather-skills standard dataset Zarr. Forecast datasets carry a scalar `time`
-coord (the init date), `step` (forecast lead time, `timedelta64`), and — for
-ensembles — `number` (member 0 is the control). Analysis datasets carry a
-`time` dimension. Pressure-level fields add `vertical` (hPa). Longitude is
-normalized to `[-180, 180)` even when `--bbox` is omitted.
+### Example
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree \
+  --date 2026-10-12 --bbox 5.5/33.5/-5/42.5 -v precip -o ecmwf_s2s_kenya.zarr
+```
+Writes 101-member daily precip rates for 46 days over Kenya.
 
-**Forecast `step` is the interval start.** The catalog labels averaged
-fields (precip, 46-day daily means such as `average_temperature_2m`) at the
-**end** of their interval ("average over the previous 24 hours"), so their
-lead 0 is all-NaN. When every selected field is NaN at lead 0, this skill
-drops that lead and relabels each remaining step to the previous step's
-value, so `step = 0` is the first interval (the init day for 46-day daily
-precip; the first 3 h for GEFS). Where leads change spacing (GEFS and IFS
-ENS go from 3- to 6-hourly), fetch also writes `step_bounds` = `[step, next
-lead)`, which `step-to-time` carries over as `time_bounds`. This matches
-`ecmwf-fetch`, `step-to-time`, and `aggregate-temporal` weekly bins (week 1 = `[0d, 7d)`). Fetching an
-instant field (GEFS `temperature_2m`, winds, pressure levels) alongside keeps
-lead 0 and the catalog labels; fetch averaged and instant fields separately
-when you need interval-start steps. Known precip is converted to `mm day-1` and known air
-temperature to `degree_Celsius`; other variables keep source units. Skip
-`deaccumulate` — precip is already a rate. Stamped with `weather_skills_source=dynamical:<id>`.
+## Details
 
-### Provenance
+**Forecast `step` is the interval start.** The catalog labels averaged fields (precip, 46-day daily means) at the end of their interval. When every selected field is NaN at lead 0, fetch drops that lead and shifts each step back one, so `step = 0` is the first interval and weekly bins line up with `aggregate-temporal`. Where lead spacing changes (3- to 6-hourly), fetch writes `step_bounds`. Instant fields (winds, pressure levels, GEFS `temperature_2m`) keep the catalog labels, so fetch averaged and instant fields separately when you need interval-start steps.
 
-The output carries a `weather_skills_history` provenance chain; inspect it
-with the `provenance` skill.
+**Pressure levels.** Medium-range IFS/AIFS publish selected `*_Nhpa` fields (925/850/500 hPa); the 46-day product has a 10-level stack in `group=pressure_level`, opened automatically. GFS and ICON-EU publish none. `-v precip` does not pull IMERG's `precipitation_quality_index_surface`; ask for it by name.
 
-## Examples
+More examples:
 
 ```bash
-# GEFS 35-day ensemble over a country (dummy bbox; use resolve-region for a real one)
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset noaa-gefs-forecast-35-day --date 2026-06-01 \
-  --bbox 5/34/-5/42 -v precipitation_surface -o /tmp/gefs.zarr
-
-# ECMWF IFS ensemble — precip is precipitation_surface, not total_precipitation
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-15-day-0-25-degree --date 2026-06-01 \
-  --bbox 5/34/-5/42 -v precipitation_surface -o /tmp/ifs_ens.zarr
-
-# IFS pressure-level temperature (850 + 925 hPa, stacked on `vertical`)
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-15-day-0-25-degree --date 2026-06-01 \
-  --bbox 5/34/-5/42 -v t -o /tmp/ifs_t.zarr
-
-# ECMWF 46-day S2S/ER (default; ecmwf-fetch is ECDS fallback only)
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree --date 2026-02-15 \
-  --bbox 5/34/-5/42 -v precipitation_surface -o /tmp/ifs_er.zarr
-
-# GFS deterministic forecast for a specific init date, full global grid
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset noaa-gfs-forecast --date 2026-06-01 -o /tmp/gfs.zarr
-
-# GFS analysis over a date range
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset noaa-gfs-analysis --start-time 2026-05-10 --end-time 2026-05-30 \
-  --bbox 5/34/-5/42 -o /tmp/gfs_analysis.zarr
-
-# IMERG Late (default IMERG source; do not start with imerg-fetch)
+# IMERG Late, 30 days
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset nasa-imerg-analysis-late \
-  --start-time 2026-07-21 --end-time 2026-08-19 --bbox 5/34/-5/42 \
-  -v precipitation_surface -o /tmp/imerg.zarr
-
-# IMERG with its quality-index companion (precipitation_quality_index_surface,
-# dimensionless -- higher is better; -v precip alone does not pull it in, ask
-# by exact name). One whole day: 48 half-hourly steps, 00:00-23:30.
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset nasa-imerg-analysis-late \
-  --start-time 2026-09-20 --end-time 2026-09-20 --bbox 5/34/-5/42 \
-  -v precipitation_surface -v precipitation_quality_index_surface \
-  -o /tmp/imerg_with_quality.zarr
-
-# CHIRPS final only (prefer chirps-fetch for final+prelim merge as precip)
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ucsb-chc-chirps-analysis-final \
-  --start-time 2026-01-01 --end-time 2026-02-15 --bbox 5/34/-5/42 \
-  -v precipitation_surface -o /tmp/chirps_final.zarr
+  --start-time 2026-09-14 --end-time 2026-10-13 --bbox 5.5/33.5/-5/42.5 -v precip -o imerg_kenya.zarr
+# IFS-ENS 850/925 hPa temperature, stacked on vertical
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-15-day-0-25-degree \
+  --date 2026-10-12 --bbox 5.5/33.5/-5/42.5 -v t -o ifs_t_kenya.zarr
 ```
 
-See [references/REFERENCE.md](${CLAUDE_SKILL_DIR}/references/REFERENCE.md) for the full per-dataset
-dimension list and the dynamical → standard dataset coordinate mapping.
+Per-dataset native dims and the coordinate mapping: [references/REFERENCE.md](references/REFERENCE.md).
