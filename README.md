@@ -64,7 +64,7 @@ credentialed or source-specific fetcher only when it does not.
 
 ### Figure skills
 
-`plot`, `plot-timeseries`, `plot-verify`, and `plot-mediogram` live in their
+`plot`, `plot-verify`, and `plot-mediogram` live in their
 own repo, [`weather-skills-plotting`](https://github.com/rhiza-research/weather-skills-plotting).
 Name the input files on the command line (`-i`, `--layer KIND:PATH`) and put
 every drawing choice — variable, kind, title, colormap, map window, mask — in
@@ -77,8 +77,7 @@ for the spec reference.
 
 | Skill | Use when |
 |---|---|
-| [`plot`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot/SKILL.md) | Maps (one or several side by side, each on its own grid), overlays on the same axes (`--layer`), xy scatter, wind rose |
-| [`plot-timeseries`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-timeseries/SKILL.md) | Several series on one time axis; ensemble spaghetti and percentile bands |
+| [`plot`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot/SKILL.md) | Maps (one or several side by side, each on its own grid), overlays on the same axes (`--layer`), several series on one time axis (ensemble spaghetti, percentile bands), xy scatter, wind rose |
 | [`plot-verify`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-verify/SKILL.md) | Lead-week obs / forecast / metric maps |
 | [`plot-mediogram`](https://github.com/rhiza-research/weather-skills-plotting/blob/main/skills/plot-mediogram/SKILL.md) | Ensemble vs m-climate at one lat/lon |
 
