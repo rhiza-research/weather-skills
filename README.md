@@ -35,7 +35,7 @@ credentialed or source-specific fetcher only when it does not.
 | `cumulus-fetch` | Cumulus AI operational ensemble precip (Aurora S2S run) from private Azure Blob — 30 members, 46 daily leads, 0.25° or 1° global (`--dataset precip`, `precip_1deg`, `precip_era5`) → Zarr. Requires `AZURE_STORAGE_SAS_TOKEN`. |
 | `neuralgcm-fetch` | NeuralGCM S2S ensemble from the Tomorrow Now 2026 realtime archive (IMERG precip `tp`, ERA5 surface `t2m`/`d2m`) — up to 50 members, 6-hour leads to 60 days, ~2.8° → Zarr. Requires GCS credentials. |
 | `weathernext-fetch` | Google WeatherNext 2 ensemble from the realtime archive (2025 on) — 64 members, 6-hour leads to 15 days, 0.25° global, 13 pressure levels → Zarr. Pass `-v` and `--member` (full cube ~1 TB). Requires GCS credentials. |
-| `pbc-fetch` | PBC / StillLearning AI Weather Quest precip **quintile probabilities** from the public Sheerwater datalake (`era5-p_pr_19` week 3, `era5-p_pr_26` week 4), 1.5° global → Zarr. No credentials. |
+| `pbc-fetch` | PBC / StillLearning AI Weather Quest precip **quintile probabilities** from the private Sheerwater datalake (`era5-p_pr_19` week 3, `era5-p_pr_26` week 4), 1.5° global → Zarr. Requires Google Cloud service-account credentials. |
 | `ecmwf-hres-fetch` | Deterministic ECMWF HRES forecast from the free ECMWF Open Data feed — 0.25°, out to 15 days, surface and pressure-level fields → Zarr. No credentials; needs the eccodes system library. |
 | `arco-era5-fetch` | ERA5 hourly reanalysis from Google's public ARCO-ERA5 Zarr → Zarr. No credentials. |
 | `cmip6-fetch` | One CMIP6 model run (historical 1850–2014 or `ssp*` to 2100) from the public Pangeo CMIP6 catalog on Google Cloud → Zarr. No credentials. |
