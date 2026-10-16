@@ -175,8 +175,8 @@ skill writes `precip_avg` / `precip_std`, so the pair shares no variable.
 Rename the climatology mean first, then difference:
 
 ```bash
-uv run skills/rename/scripts/rename.py -i clim.zarr -o clim_precip.zarr \
-    --variable precip_avg --to-name precip
+uv run skills/edit-coords/scripts/edit_coords.py -i clim.zarr -o clim_precip.zarr \
+    --rename precip_avg=precip
 uv run skills/difference/scripts/difference.py -i obs.zarr -i clim_precip.zarr \
     -v precip -o anom.zarr
 ```

@@ -51,7 +51,7 @@ Points set to NaN are listed on stderr.
 - Dims `(station_id, ...)` (or the `--points` Zarr's point dim). All
   non-spatial input dims are kept.
 - Variables keep names, units, and attrs, so `difference -i sampled.zarr -i
-  stations.zarr` works once names match (`rename` / `unit-convert` if not).
+  stations.zarr` works once names match (`edit-coords` / `unit-convert` if not).
 - Coords: requested `latitude` / `longitude` (the CF latitude/longitude),
   plus `grid_latitude` / `grid_longitude`: the center of the sampled cell,
   in plain `degrees` so CF lat/lon detection does not mistake them for the
