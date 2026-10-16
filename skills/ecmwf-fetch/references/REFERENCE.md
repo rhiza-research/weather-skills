@@ -1,20 +1,15 @@
 # ecmwf-fetch reference
 
-Prefer `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`
-for ECMWF S2S / ER. This skill is the ECDS fallback for unmapped fields and
-pre-2026 inits. Prefer `dynamical-fetch` (`ecmwf-ifs-ens-forecast-15-day-0-25-degree`
-or `ecmwf-aifs-ens-forecast`) for medium-range ECMWF.
-
 ## dynamical.org catalog (default)
 
-Dataset id: `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` (staging until
-promoted; a 6-hourly companion exists as
-`ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree`). 101 members, 1.5°,
+Dataset id: `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` (read from the
+production catalog, or the staging catalog when production does not list it). 101 members, 1.5°,
 daily 00 UTC inits from 2026-01-01, 47 daily leads (0–1104 h). Surface
 fields at the store root; pressure fields in `group="pressure_level"`.
 Catalog precip is already a rate (`kg m-2 s-1`). 24-hour surface
 statistics are all-NaN at lead 0; this skill drops that lead and shifts
-remaining steps so `step=0` is the first 24 h.
+remaining steps so `step=0` is the first 24 h. Pressure fields carry all
+101 members on 10 levels (1000–10 hPa); `q` is NaN above 200 hPa.
 
 The catalog stores SST as `sea_surface_temperature` (not `sst`). This skill
 accepts `-v sst` / `wtmp` and writes the S2S short name `sst`.
@@ -44,8 +39,6 @@ different statistic), accumulated fluxes (`sshf`, `slhf`, `ssr`, `ssrd`,
 `str`, `strd`, `ttr`), static fields (`lsm`, `orog`, `slt`), `pv`, and
 ocean parameters. Mixed catalog + unmapped fields in one call also use
 ECDS. Pre-2026 inits use ECDS.
-
-## ECDS request (fallback)
 
 ## ECDS request
 

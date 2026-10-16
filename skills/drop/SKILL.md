@@ -1,6 +1,6 @@
 ---
 name: drop
-description: Drop named data variables or non-index coordinates from a weather-skills standard dataset Zarr (repeatable --name). Use to strip leftovers that block concat or difference — e.g. valid_time, surface, heightAboveGround, spatial_ref — or to keep only the variables a later step needs. Refuses dimension index coordinates (use select or summarize-dim) and dropping every data variable.
+description: "Remove named data variables or non-index coordinates from a weather-skills Zarr. Use to strip leftovers that stop two datasets from lining up, or to keep only the variables a later step needs."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/drop.py *)
@@ -11,56 +11,29 @@ metadata:
 
 # drop
 
-Removal primitive. Drops the named data variables and non-index coordinates
-(`ds.drop_vars`) and writes a new standard dataset. Everything else passes
-through unchanged.
-
-## When to use
-
-- `concat` or `difference` fails or misaligns because one input carries extra
-  scalar or auxiliary coordinates (`valid_time`, `surface`, `spatial_ref`, ...).
-  Run `inspect-zarr` to see them, then list each one with `--name`.
-- A dataset has variables a later step does not need.
-
-To remove a dimension, collapse it with `select` (pick one entry) or reduce
-over it with `summarize-dim`. To rename instead of drop, use `edit-coords`.
+Removes the named data variables and coordinates and writes the rest unchanged.
 
 ## Usage
 
-```
-uv run ${CLAUDE_SKILL_DIR}/scripts/drop.py --input <in.zarr> --output <out.zarr> \
-    --name NAME [--name NAME ...]
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/drop.py -i IN.zarr -o OUT.zarr --name NAME [--name NAME ...]
 ```
 
 ### Arguments
-- `--input`, `-i` — input Zarr containing a weather-skills standard dataset.
+- `--input`, `-i` — input Zarr.
+- `--name` — a data variable, or a coordinate that does not index a dimension; repeat for several. Required.
 - `--output`, `-o` — output Zarr.
-- `--name` — repeatable, required. A data variable or a coordinate that is not
-  a dimension's index.
 
 ### Output
-
 The input without the named variables; attributes pass through unchanged.
-A coordinate's CF `bounds` variable is not dropped with it — list it with
-`--name` too.
 
-The skill exits with code 2 and a clear message when: a name does not exist
-(the message lists the data variables and coordinates); a name is a
-dimension's index coordinate; or the drop would leave no data variables.
+### Notes
+- A coordinate's CF `bounds` variable is not dropped with it; list it with `--name` too.
+- To remove a dimension, pick one entry with select or reduce over it with summarize-dim.
+- Exits 2 when a name does not exist (the message lists what does), names a dimension's index, or would leave no data variables.
 
-### Provenance
-
-The output stamps a JSON-encoded `weather_skills_history` attr: an append-only
-array of per-step entries `{skill, version, args, input}`. This skill reads the
-upstream input's `weather_skills_history` and appends its own entry; `args`
-records `name` as the list given.
-
-## Example
-
-An IFS fetch carries scalar `valid_time` and `surface` coordinates that the
-IMERG store lacks. Drop them, then concatenate:
-
+### Example
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/drop.py -i /tmp/ifs.zarr -o /tmp/ifs_clean.zarr \
-    --name valid_time --name surface
+uv run ${CLAUDE_SKILL_DIR}/scripts/drop.py -i ifs.zarr -o ifs_clean.zarr --name valid_time --name surface
 ```
+Writes the IFS fetch without its scalar `valid_time` and `surface` coordinates, so it lines up with an IMERG dataset that lacks them.

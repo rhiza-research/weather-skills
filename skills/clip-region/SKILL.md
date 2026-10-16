@@ -1,6 +1,6 @@
 ---
 name: clip-region
-description: "Spatially subset a weather-skills standard dataset Zarr to a lat/lon bbox, named country (--region), or GeoJSON polygon. Use when you need to restrict any dataset (forecast, satellite, reanalysis, stations) before downstream aggregation or plotting. --region / --geojson keep every grid cell that overlaps the polygon, including cells that straddle the country boundary."
+description: "Clip a gridded or station Zarr to a lat/lon box, a named region (country, province or county, multi-country region), or a GeoJSON polygon. Use to restrict any dataset to an area of interest."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py *)
@@ -11,65 +11,37 @@ metadata:
 
 # clip-region
 
-Source-agnostic spatial subset of a gridded or station (point_obs) Zarr. Pass
-exactly one of `--bbox`, `--region`, or `--geojson`.
+Keeps the part of a gridded or station dataset inside a box or polygon.
 
 ## Usage
 
-```
-uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py -i <in.zarr> -o <out.zarr> --bbox N/W/S/E
-uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py -i <in.zarr> -o <out.zarr> --region Kenya
-uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py -i <in.zarr> -o <out.zarr> --geojson boundary.geojson [--keep-outside]
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py -i IN.zarr -o OUT.zarr (--bbox N/W/S/E | --region NAME | --geojson FILE) [--keep-outside]
 ```
 
 ### Arguments
-- `--input`, `-i` — input Zarr (gridded or point_obs).
+- `--input`, `-i` — input Zarr, gridded or point_obs.
 - `--output`, `-o` — output Zarr.
-- `--bbox` — `N/W/S/E` decimal degrees. Keeps grid cells whose **centre** is
-  inside the box. West > east crosses the antimeridian.
-- `--region` — an offline region name: ISO3 (`KEN`), country name, Natural
-  Earth region (`East Africa`), custom box (`Indian Ocean`), or sub-national
-  `country-admin1` (`Kenya-Turkana`). No Nominatim fallback: for a town,
-  landmark, or basin, get a polygon from `resolve-region` (or another region
-  skill) and pass it as `--geojson`.
-- `--geojson` — path to a GeoJSON Feature, FeatureCollection (features are
-  unioned), or bare geometry.
-- `--keep-outside` — with `--region` / `--geojson`: keep the full grid or
-  station list and set values outside the polygon to NaN.
+- `--bbox` — `N/W/S/E` decimal degrees. Keeps cells whose centre is inside. West > east crosses the antimeridian.
+- `--region` — ISO3 (`KEN`), country name, Natural Earth region (`East Africa`), custom box (`Indian Ocean`), or `country-admin1` (`Kenya-Turkana`). Offline lookup only.
+- `--geojson` — GeoJSON Feature, FeatureCollection (unioned), or bare geometry.
+- `--keep-outside` — with `--region` / `--geojson`: keep the full grid or station list and set values outside the polygon to NaN.
 
-### What `--region` / `--geojson` keep
-
-- **Grids:** every cell whose footprint overlaps the polygon by a positive
-  area, including cells that straddle the border (an edge or corner touch
-  doesn't count). Overlapping cells keep their full value; nothing is
-  area-weighted. Rows and columns are trimmed to the polygon's extent; inside
-  that extent, cells outside the polygon are NaN.
-- **Stations:** stations whose point lies inside the polygon.
-- Only variables on the grid (or station axis) are masked; time bounds and
-  other variables pass through unchanged. Masked integer variables become
-  float (NaN needs a float).
-- Country and sub-national outlines come from geoBoundaries and line up
-  with each other. Multi-country regions (`East Africa`) use coarse 1:110m
-  outlines, as does a country when geoBoundaries can't be reached (stderr
-  warns); pass a detailed `--geojson` when those edge cells matter.
-
-### Longitude convention
-
-A grid stored in `[0, 360]` is wrapped to `[-180, 180)` before clipping, so
-bboxes and polygons in negative longitude work. The output keeps the wrapped
-longitudes.
+Pass exactly one of `--bbox`, `--region`, `--geojson`.
 
 ### Output
+The input subset in space. With `--region` / `--geojson`:
+- Grids keep every cell that overlaps the polygon by positive area, at full value (no area weighting), trimmed to the polygon's extent; other cells in that extent are NaN.
+- Stations keep those whose point lies inside the polygon.
 
-A spatial subset of the input with a `weather_skills_history` provenance
-chain (see the `provenance` skill). An empty selection exits 1 with an error.
+### Notes
+- Grids stored in `[0, 360]` longitude are wrapped to `[-180, 180)`; the output keeps the wrapped longitudes.
+- Masked integer variables become float. Variables off the grid or station axis pass through unchanged.
+- An empty selection exits 1.
+- Multi-country regions use coarse 1:110m outlines. Pass a detailed `--geojson` when edge cells matter.
 
-## Example
-
+### Example
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py -i /tmp/ecmwf.zarr -o /tmp/ecmwf_kenya.zarr --region Kenya
-
-# Station point_obs: keeps stations inside the box
-uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py -i /tmp/tahmo.zarr -o /tmp/tahmo_mombasa.zarr \
-    --bbox -3.92/39.57/-4.16/39.76
+uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py -i chirps_eastafrica.zarr -o chirps_kenya.zarr --region Kenya
 ```
+Writes CHIRPS cells that touch Kenya; cells outside the border but inside its extent are NaN.

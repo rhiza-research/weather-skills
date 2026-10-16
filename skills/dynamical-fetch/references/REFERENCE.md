@@ -1,15 +1,5 @@
 # dynamical-fetch reference
 
-Default forecast/analysis fetcher when the catalog has the product, including
-ECMWF S2S / ER (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`). Use
-`ecmwf-fetch` only when the catalog cannot serve the request (pre-2026,
-ocean, unmapped fields).
-Default IMERG source:
-`nasa-imerg-analysis-late` / `nasa-imerg-analysis-early` — do not start
-with `imerg-fetch`. CHIRPS daily analyses:
-`ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`.
-Prefer `chirps-fetch` for the final+prelim merge written as `precip`.
-
 ## Library
 
 Datasets are opened with [`dynamical-catalog`](https://github.com/dynamical-org/dynamical-catalog):

@@ -1,6 +1,6 @@
 ---
 name: point-value
-description: Sample any gridded weather-skills standard dataset Zarr (IMERG, CHIRPS, ERA5, SMAP, ECMWF/GEFS forecasts) at point locations and write a point_obs (station_id) dataset. Points come from a station Zarr (TAHMO, GHCN-Daily, OpenAQ), repeatable --point LAT,LON[,ID], or a CSV. Use before grid-vs-station comparison — after it, difference and verify (bias, MAE, hits per station) work against the station data directly. Methods nearest (default, containing cell), bilinear, or cell-mean (N x N neighborhood). Non-spatial dims (time, step, number, vertical) are kept.
+description: "Sample a gridded weather-skills Zarr (satellite, reanalysis, or forecast) at point locations and write a station Zarr with the same layout as station observations. Points come from a station Zarr, lat/lon pairs on the command line, or a CSV. Use to put a grid and station data on the same points before comparing them."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/point_value.py *)
@@ -11,66 +11,41 @@ metadata:
 
 # point-value
 
-Samples a grid at point locations and writes a CF-1.13 `timeSeries` point_obs
-dataset, the same shape the station fetchers write. Run it before comparing a
-grid with stations: `verify` on a raw grid + station pair broadcasts every
-station against every cell.
+Reads grid values at given points, by nearest cell, bilinear interpolation, or a neighbourhood mean, keeping every non-spatial dim.
 
 ## Usage
 
-```
-uv run ${CLAUDE_SKILL_DIR}/scripts/point_value.py -i <grid.zarr> -o <points.zarr> \
-    (--points <stations.zarr> | --point LAT,LON[,ID] ... | --points-csv <file.csv>) \
-    [--method nearest|bilinear|cell-mean] [--neighborhood N] \
-    [--variable VAR ...] [--max-distance DEG]
-```
-
-- `--input`, `-i` — gridded Zarr (lat/lon dims).
-- Exactly one points source:
-  - `--points` — a point_obs Zarr. Its point dim, lat/lon, and other 1-D
-    coords (`name`, `country`, ...) are copied; its data variables are ignored.
-  - `--point LAT,LON[,ID]` — repeatable; ids default to `P0`, `P1`, ....
-    Negative latitudes work as is: `--point -1.29,36.82,nairobi`.
-  - `--points-csv` — columns `id,lat,lon[,name]`.
-- `--method` — `nearest` (default): the cell containing the point.
-  `bilinear`: linear interpolation at the point (NaN if a surrounding cell is
-  NaN or the point is beyond the outer cell centers). `cell-mean`:
-  NaN-skipping mean of the `N x N` cells around the containing cell (cells
-  past the grid edge are left out, not repeated); appends `area: mean` to
-  `cell_methods`.
-- `--neighborhood` — odd `N` for `cell-mean` (default 3).
-- `--variable`, `-v` — repeatable; default all variables.
-- `--max-distance` — degrees. Without it, points off the grid are NaN. With
-  it, each point uses the nearest cell with any finite value within that
-  distance (e.g. a coastal station by a masked cell); farther points are NaN.
-
-Points set to NaN are listed on stderr.
-
-## Output
-
-- Dims `(station_id, ...)` (or the `--points` Zarr's point dim). All
-  non-spatial input dims are kept.
-- Variables keep names, units, and attrs, so `difference -i sampled.zarr -i
-  stations.zarr` works once names match (`edit-coords` / `unit-convert` if not).
-- Coords: requested `latitude` / `longitude` (the CF latitude/longitude),
-  plus `grid_latitude` / `grid_longitude`: the center of the sampled cell,
-  in plain `degrees` so CF lat/lon detection does not mistake them for the
-  station position. NaN for points set to NaN.
-- Provenance: standard `weather_skills_history`. With `--points`, both Zarrs
-  are hashed as inputs.
-
-## Examples
-
 ```bash
-# IMERG daily at TAHMO stations
-uv run ${CLAUDE_SKILL_DIR}/scripts/point_value.py -i /tmp/imerg_daily.zarr \
-    -o /tmp/imerg_at_tahmo.zarr --points /tmp/tahmo.zarr
-
-# ECMWF ensemble at two sites (members and steps kept)
-uv run ${CLAUDE_SKILL_DIR}/scripts/point_value.py -i /tmp/s2s.zarr -o /tmp/s2s_sites.zarr \
-    --point -1.29,36.82,nairobi --point -4.04,39.67,mombasa
-
-# 5x5 neighborhood mean at farms, snapping to data within 0.2°
-uv run ${CLAUDE_SKILL_DIR}/scripts/point_value.py -i /tmp/smap.zarr -o /tmp/smap_farms.zarr \
-    --points-csv farms.csv --method cell-mean --neighborhood 5 --max-distance 0.2
+uv run ${CLAUDE_SKILL_DIR}/scripts/point_value.py -i GRID.zarr -o POINTS.zarr \
+  (--points STATIONS.zarr | --point LAT,LON[,ID] ... | --points-csv FILE.csv) \
+  [--method nearest|bilinear|cell-mean] [--neighborhood N] [-v VAR ...] [--max-distance DEG]
 ```
+
+### Arguments
+- `--input`, `-i` — gridded Zarr with lat/lon dims.
+- `--output`, `-o` — output Zarr.
+- `--points` — station Zarr. Its station dim, `latitude`/`longitude`, and other per-station coords (`name`, `country`, ...) are copied; its data variables are ignored.
+- `--point` — `LAT,LON[,ID]`; repeat for several. Ids default to `P0`, `P1`, .... Example: `--point -1.29,36.82,nairobi`.
+- `--points-csv` — CSV with columns `lat`, `lon`, and optional `id` and `name`.
+- `--method` — `nearest`: the cell containing the point. `bilinear`: linear interpolation at the point; NaN if a surrounding cell is NaN or the point lies past the outer cell centres. `cell-mean`: NaN-skipping mean of the `N x N` cells centred on the containing cell, leaving out cells past the grid edge. Default: `nearest`.
+- `--neighborhood` — odd window width `N` for `cell-mean`. Default: 3.
+- `--variable`, `-v` — variable to sample; repeat for several. Default: all.
+- `--max-distance` — degrees. Each point uses the nearest cell that has any finite value within this distance (for example a coastal station beside a masked sea cell); farther points are NaN. Without it, points more than half a cell from any cell centre are NaN.
+
+Pass exactly one of `--points`, `--point`, `--points-csv`. Point ids must be unique.
+
+### Output
+- Dims `(station_id, ...)`, or the `--points` Zarr's station dim; all non-spatial input dims (`time`, `step`, `number`, `vertical`) are kept. `featureType="timeSeries"`, CF-1.13.
+- Variables keep their names, units, and attrs. `cell-mean` appends `area: mean (NxN grid-cell neighborhood)` to `cell_methods`.
+- Coords: the requested `latitude`/`longitude`, plus `grid_latitude`/`grid_longitude`, the centre of the cell used (units `degrees`, NaN for NaN points).
+- Points set to NaN are listed on stderr (first 10).
+
+### Notes
+- Longitudes of grid and points are both wrapped to `[-180, 180)` before matching.
+- With `--method bilinear`, `--max-distance` only decides which points are kept; the value is still interpolated at the point itself.
+
+### Example
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/point_value.py -i chirps_kenya.zarr -o chirps_at_tahmo.zarr --points tahmo_kenya.zarr
+```
+Writes the CHIRPS value of the cell containing each TAHMO station, for every day in the grid.
