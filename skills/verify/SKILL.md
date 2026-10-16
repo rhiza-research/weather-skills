@@ -1,6 +1,6 @@
 ---
 name: verify
-description: "Forecast vs observation verification on a shared grid or shared stations — hits (event classification), bias (forecast − obs), or MAE (|forecast − obs|). Cell-by-cell only: put fine obs on the coarse forecast grid first with coarsen --reference-grid <forecast.zarr> --method conservative (area mean; linear would point-sample), and align time with step-to-time / aggregate-temporal. For stations, run point-value on the grid first; then verify pairs station by station. The output Zarr is the metric field to plot with plot-verify. Do not coarsen inputs just to draw them; plot with two heatmap traces keeps each dataset on its own grid."
+description: "Score a forecast against observations on a shared grid or shared stations, cell by cell: event hits at a threshold, bias (forecast − obs), or mean absolute error. Writes the metric field as a Zarr and prints a regional score. Use for forecast skill maps and event verification."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py *)
@@ -11,121 +11,39 @@ metadata:
 
 # verify
 
-Cell-by-cell forecast verification against observations. Choose a metric
-with `--metric`:
-
-| `--metric` | Output variable | Meaning |
-| --- | --- | --- |
-| `hits` (default) | `event_hit` | Event classification at `--threshold` |
-| `bias` | `bias` | `forecast − observation` per cell |
-| `mae` | `mae` | `\|forecast − observation\|` per cell |
-
-### Hits (`--metric hits`)
-
-An **event** is `--variable` ≥ `--threshold` (default `1`, in the forecast's units):
-
-| Value | Meaning |
-| --- | --- |
-| `1` (`hit`) | forecast and truth both ≥ threshold |
-| `-1` (`disagree`) | one is ≥ threshold and the other is not |
-| `0` (`below`) | both below the threshold |
-
-### Alignment, ensembles, NaNs (all metrics)
-
-- Inputs are inner-joined (overlapping coordinates only); no overlap on a dim
-  is an error. A scalar `time` (after `select`) is checked the same way, so
-  two single-time inputs must carry the same date.
-- A forecast with a `step` dim is refused unless `--obs` has `step` too — run
-  `step-to-time` first.
-- Ensemble `number` is averaged before scoring: every metric scores the
-  ensemble mean, not per member. A NaN member leaves that cell NaN.
-- NaNs in either input stay NaN and are left out of the printed score (a NaN
-  cell is neither an event nor a miss).
-
-### Units
-
-`--obs` is converted to the forecast's units before any comparison (K
-observations against a °C forecast, `mm hr-1` against `mm day-1`), so
-`--threshold` is always in the forecast's units. Incompatible units — a
-weekly total in `mm` against a rate in `mm day-1` — exit non-zero; put both on
-one basis with `aggregate-temporal` / `convert-to-totals` first. `bias` and
-`mae` carry the forecast's units (a temperature error is `delta_degC`).
-Units on only one input exit non-zero; neither having units is allowed.
-
-Plot hits with `plot` (discrete red / gray / green map). For a lead-week
-grid of obs, forecast, and verification maps, use `plot-verify`.
-
-## When to use
-
-- Binary event verification (`--metric hits`) — rain ≥ 1 mm, temperature ≥
-  35 °C, …
-- Continuous error maps (`--metric bias` or `--metric mae`) for forecast
-  skill assessment on a shared grid.
-
-**Match obs to the forecast, not the reverse.** Coarsen `--obs` onto the
-forecast's lat/lon spacing and offset before this skill, with
-`coarsen --reference-grid <forecast.zarr> --method conservative` when the
-obs are much finer (CHIRPS 0.05° vs a 1.5° forecast): that averages every
-obs cell inside the forecast cell, while the default linear method samples
-the few cells next to its centre. Do not `downscale` the forecast onto the
-obs grid. That shared grid is for the subtraction
-here, not for drawing the two fields: `plot` with two heatmap traces
-keeps each on its own grid. Run `step-to-time` on a classic forecast first. For a precip
-threshold in `mm`, run `aggregate-temporal` then `convert-to-totals` first.
+Compares a forecast with observations cell by cell (or station by station) and writes one metric field.
 
 ## Usage
 
-```
-uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py \
-    --forecast <forecast.zarr> --obs <truth.zarr> \
-    [--metric hits|bias|mae] [--variable NAME] [--threshold 1] \
-    -o <verify.zarr>
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr [--metric hits|bias|mae] [-v NAME] [--threshold 1] -o OUT.zarr
 ```
 
 ### Arguments
-
-- `--forecast` — forecast Zarr (required).
-- `--obs` — truth / observation Zarr (required). Must already be on the
-  forecast's spatial resolution.
-- `--metric` — `hits`, `bias`, or `mae` (default `hits`).
-- `--variable`, `-v` — data variable in both inputs. Default: each input's
-  first usable variable (names may differ).
-- `--threshold` — event cutoff for `--metric hits` only (default `1`).
+- `--forecast` — forecast Zarr.
+- `--obs` — observation Zarr on the forecast's grid spacing (or the same stations).
+- `--metric` — `hits` (event classification), `bias` (forecast − obs), or `mae` (|forecast − obs|). Default: `hits`.
+- `--variable`, `-v` — variable name in both inputs. Default: each input's first usable variable (names may differ).
+- `--threshold` — event cutoff for `hits`, in the forecast's units: an event is value ≥ threshold. Default: `1`. Ignored (with a stderr note) for other metrics.
 - `--output`, `-o` — output Zarr.
 
-### Station data
-
-To verify a grid against stations, sample the grid at the stations with
-`point-value --points <stations.zarr>` first, then pass the sampled Zarr and
-the station Zarr as `--forecast` / `--obs` (same variable name and units;
-`rename` / `unit-convert` if not). Pairs inner-join on `station_id` and
-`time`, so only days both report are scored. The printed score is the plain
-mean over every station and time with both values (there is no latitude
-grid to weight). Do not pass a raw grid with a station Zarr: the two have no
-shared lat/lon labels.
-
 ### Output
+- One variable: `event_hit`, `bias`, or `mae`, float32. `event_hit` is `1` hit (both ≥ threshold), `-1` disagree (only one is), `0` both below, with CF `flag_values` / `flag_meanings`.
+- `bias` and `mae` are in the forecast's units (a temperature error is `delta_degC`).
+- NaN in either input stays NaN and is left out of the score.
+- Stdout prints the score: hit rate = hits / observed events, or a cos-latitude-weighted mean of bias / MAE (a plain mean on stations). Also stamped as `verify_score_summary`.
 
-One verification data variable (`event_hit`, `bias`, or `mae`). Hits output
-carries CF `flag_values` `-1, 0, 1` and `flag_meanings`
-`disagree below hit`. Bias and MAE keep the input `units`. A regional score
-is printed to stdout (hit rate = hits / obs events for hits; cos-lat weighted mean for bias/mae
-on a grid, plain mean on stations).
+### Notes
+- Grid spacing must match: a different lat or lon spacing exits 2. Put the obs on the forecast grid (for fine obs, an area mean such as `coarsen --reference-grid FC.zarr --method conservative`), not the forecast on the obs grid.
+- Inputs keep only shared labels (inner join); no overlap on a dim exits 2 and prints both ranges. Single-time inputs must carry the same date.
+- A forecast `step` dim exits 2 unless the obs have `step`: convert leads to valid times first.
+- Ensemble `number` is averaged first, so every metric scores the ensemble mean; a NaN member makes that cell NaN.
+- Obs are converted to the forecast's units. Incompatible units (an `mm` total against an `mm day-1` rate), or units on only one input, exit 2. For a precip threshold in mm, give both inputs as period totals.
+- Stations: sample the grid at the station points first, then pass the sample and the station Zarr. Pairs join on `station_id` and `time`.
 
-If the inputs share no labels on some dim, the error names that dim and
-both ranges (e.g. weekly obs labelled one day off the forecast weeks).
-
-## Examples
-
+### Example
 ```bash
-# Event hits Zarr for re-plotting
-uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py \
-    --forecast /tmp/s2s_weekly.zarr --obs /tmp/chirps_weekly.zarr \
-    --metric hits --variable precip --threshold 1 -o /tmp/hits.zarr
-# then draw /tmp/hits.zarr with the plot skill (or plot-verify for a lead-week grid)
-
-# Bias error field
-uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py \
-    --forecast /tmp/s2s_weekly.zarr --obs /tmp/chirps_weekly.zarr \
-    --metric bias --variable precip -o /tmp/bias.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast s2s_kenya_week2_mm.zarr \
+  --obs chirps_kenya_week2_mm_on_s2s.zarr --metric hits -v precip --threshold 10 -o hits_week2.zarr
 ```
+Writes week-2 hit / disagree / below cells for ≥ 10 mm weekly rain over Kenya and prints the hit rate.

@@ -1,6 +1,6 @@
 ---
 name: kenya-forecast-fetch
-description: Fetch a forecast grid from the public Kenya forecasts archive (gs://kenya-forecasting-data/<date>/data/). Native ECMWF S2S is the low-resolution Zarr (`--dataset precip`, ~1.5°); the CHIRPS-resolution weekly downscale is `--dataset precip_downscaled` (~0.05°, data_weekly_Kenya_downscaled.nc, 101 ensemble members on `number` for inits from 2026-09-07); the daily downscale is `--dataset precip_downscaled_daily` (~0.05°, daily_downscaled_kenya.tif, ensemble mean). Also GEFS, medium-range precip, temps, and winds. Use for clipping, aggregation, comparison, or plotting via plot / plot-timeseries / plot-mediogram.
+description: "Fetch a published forecast grid from the public KMSA / Rhiza Kenya forecasts archive (gs://kenya-forecasting-data) for one init date, as a weather-skills Zarr. Products: native ECMWF S2S precip (~1.5°, 101 members), its ~0.05° CHIRPS-resolution weekly downscale (101 members) and daily downscale (ensemble mean), S2S temperatures, humidity and winds, medium-range precip, and GEFS. No credentials needed."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Opens public consolidated Zarr (native S2S / GEFS / medium-range), the weekly downscaled NetCDF, or the daily downscaled GeoTIFF over HTTPS from Google Cloud Storage bucket kenya-forecasting-data; no credentials required. Older init folders may only have GRIB/NetCDF under data/ and no Zarr.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -17,193 +17,53 @@ metadata:
 
 # kenya-forecast-fetch
 
-Opens a store under the KMSA / Rhiza Kenya forecasts archive
-`data/` folder, subsets it, maps it onto the weather-skills standard dataset,
-and writes a local Zarr. The archive is browsable at
-https://kenya-forecasts.sheerwater.rhizaresearch.org/files/; this skill reads
-the same objects from `gs://kenya-forecasting-data` over HTTPS.
-
-Layout:
-
-```
-YYYY-MM-DD/data/ECMWF_s2s_precip_YYYY-MM-DD.zarr/     # native S2S ~1.5°
-YYYY-MM-DD/data/data_weekly_Kenya_downscaled.nc       # CHIRPS-resolution weekly ~0.05°, 33–42E 5S–6N, 101 members
-YYYY-MM-DD/data/daily_downscaled_kenya.tif            # same 0.05° lattice, wider 27–43E 7.5S–7.5N, daily, ensemble mean
-YYYY-MM-DD/data/medium_range_precip.zarr/
-YYYY-MM-DD/data/gefs/gefs_kenya.zarr/
-…
-```
-
-By default the skill takes the **most recent** init date that has the requested
-`--dataset`. Pass `--date` to pin an init.
-
-This skill does **not** plot. For flexible figures, chain to `plot`,
-`plot-timeseries`, `plot-mediogram`, `summarize-dim`, `clip-region`, etc.
-Recreate KMSA / Sheerwater product figures from the data this way rather
-than downloading the archive's pre-rendered PNGs.
-
-## When to use
-
-- Need Kenya-region ensemble / medium-range grids already published in the
-  pilot archive (no ECDS queue).
-- Native S2S precip (`--dataset precip`) vs the statistically downscaled
-  weekly precip (`--dataset precip_downscaled`) or the daily disaggregation
-  of that downscale (`--dataset precip_downscaled_daily`) for the same init.
-- Ensemble spread or member-based probabilities from the KMSA forecast —
-  see [Ensemble members](#ensemble-members) for which products carry
-  `number`.
-
-## Ensemble members
-
-| `--dataset` | Members | Cadence | Grid |
-|---|---|---|---|
-| `precip` | 101 (`number` 0–100) | daily | ~1.5° |
-| `precip_downscaled` | 101 (`number` 0–100); none before 2026-09-07 | weekly | ~0.05° |
-| `precip_downscaled_daily` | none — ensemble mean | daily | ~0.05° |
-
-The weekly downscale is **not** a single forecast: every member is
-downscaled, so you can take weekly probabilities at ~0.05°. Inits before
-2026-09-07 hold one field with no `number`. The daily GeoTIFF is always the
-ensemble mean. Its `GRIB_totalNumber = 101` attribute is
-inherited metadata, not a member axis.
-
-Pick the product by the event's time window:
-
-- **Daily-window events** (dry spells such as `<9 mm in 10 days` or
-  `7+ consecutive days <1 mm`, or `>50 mm in one day`) need daily
-  members. Use `--dataset precip` with `indicator --probability`. The
-  daily downscale is a mean, so it gives only yes/no maps, never
-  probabilities. `indicator` refuses the weekly downscale because it is
-  not daily.
-- **Weekly-total events and spread** (for example, the share of members
-  with a week-2 total under 10 mm, the member std, or a percentile band)
-  can use `--dataset precip_downscaled` at ~0.05°. Run
-  `convert-to-totals`, then reduce over `number`.
-
-Keep `number` until the final reduction. Averaging the members first
-turns a probability into a yes/no field.
-
-Prefer `dynamical-fetch` when you need a live global GEFS / IFS / GFS / S2S
-fetch (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` for ER). Use this
-skill for Kenya-region grids already published in the pilot archive (no
-catalog or ECDS queue). Use `ecmwf-fetch` only when the catalog cannot serve
-the request, or when an init date's `data/` folder only has legacy
-GRIB/NetCDF (no `.zarr` / downscaled weekly or daily file).
+Opens one product from an init folder `gs://kenya-forecasting-data/YYYY-MM-DD/data/`, subsets it, and writes a weather-skills standard dataset Zarr.
 
 ## Usage
 
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--dataset ID] [--date YYYY-MM-DD] [--bbox N/W/S/E] [-v VAR ...] -o OUT.zarr
+# Latest init that has the product (no download)
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [ID]
 ```
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset <id> \
-    [--date YYYY-MM-DD] [--bbox N/W/S/E] [-v VAR ...] -o <path.zarr>
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [dataset-id]
-```
 
-### Datasets
-
-| `--dataset` | Store under `<date>/data/` | Typical vars |
-|---|---|---|
-| `precip` (default) | `ECMWF_s2s_precip_<date>.zarr` | `tp` — native S2S, ~1.5°, daily ensemble |
-| `precip_downscaled` | `data_weekly_Kenya_downscaled.nc` | `tp` — CHIRPS-resolution weekly, ~0.05°, 101 members (`number` 0–100) |
-| `precip_downscaled_daily` | `daily_downscaled_kenya.tif` | `tp` — same ~0.05° lattice on a wider box, daily leads, ensemble mean, no `number` |
-| `daily_vars` | `ECMWF_s2s_daily_vars_<date>.zarr` | `t2m`, `d2m`, `cape`, `tcw` (daily means) |
-| `Tminmax` | `ECMWF_s2s_Tminmax_<date>.zarr` | `mn2t6`, `mx2t6` |
-| `10wind` | `ECMWF_s2s_10wind_<date>.zarr` | `u10`, `v10` |
-| `500wind` | `ECMWF_s2s_500wind_<date>.zarr` | `w` (and related) |
-| `700wind` | `ECMWF_s2s_700wind_<date>.zarr` | `u`, `v` |
-| `medium_range_precip` | `medium_range_precip.zarr` | `tp` |
-| `gefs` | `gefs/gefs_kenya.zarr` | `tp` |
-
-Output dims follow the classic forecast shape: scalar `time` (init) + `step`
-(+ `number` for ensembles) + `latitude`/`longitude`. Fetch writes precipitation
-as a per-step **rate** (`mm day-1`) and known air temperature as
-`degree_Celsius`. Interval fields (`precip`, `precip_downscaled`,
-`precip_downscaled_daily`, `gefs`, `daily_vars`, `medium_range_precip`) are
-**left-labeled**: `step = 0` is the first native period (`[init, init+1d)`
-for daily precip; `[init, init+7d)` for weekly downscaled / medium-range).
-Instantaneous winds keep archive `step` (lead 0 = 00Z analysis). Tminmax keeps
-archive `step` too: 6-hour min / max ending at each step, sampled every 12 h
-from step 6 h. `tcw` (total column water, `kg m-2`) is not precipitation: it
-keeps its values and every step, and is never converted to a rate or total.
-Daily products (`precip`, `gefs`, `daily_vars`, `precip_downscaled_daily`):
-`aggregate-temporal --period weekly` then `convert-to-totals`.
-Already-weekly products (`precip_downscaled`, `medium_range_precip`) stamp
-`aggregation_period` on fetch — run `convert-to-totals` directly; do **not**
-`aggregate-temporal` (that would re-bin adjacent weeks). Do not run
-`deaccumulate` after this skill. The downscaled files are already on a
-~0.05° grid — do not run `downscale` to refine them. To compare against live
-CHIRPS, the cell centers may not match (half-cell lon offset is common);
-realign with `coarsen --reference-grid` or `downscale --reference-grid`.
-
-Lead counts vary by init: recent weekly files have 4 weeks (the daily GeoTIFF
-28 days); older ones had 6 weeks (42 days). The NetCDF / GeoTIFF products are
-downloaded whole before `--bbox` subsets them. Peak RSS is ~0.7 GB for the
-full 101-member weekly file and ~0.25 GB with a small `--bbox`.
+**Dataset ids** (variables; members on `number`):
+- `precip` — native S2S `tp`, daily, ~1.5°, 101 members.
+- `precip_downscaled` — `tp`, weekly, ~0.05° over 33–42°E 5°S–6°N, 101 members (inits from 2026-09-07; earlier inits have one field).
+- `precip_downscaled_daily` — `tp`, daily, ~0.05° over 27–43°E 7.5°S–7.5°N, ensemble mean only.
+- `daily_vars` — `t2m`, `d2m`, `cape`, `tcw` daily means. `Tminmax` — `mn2t6`, `mx2t6`.
+- `10wind` — `u10`, `v10`. `500wind` — `w`. `700wind` — `u`, `v`.
+- `medium_range_precip` — `tp`, weekly. `gefs` — `tp`, daily.
 
 ### Arguments
+- `--dataset` — id from the list. Default: `precip`.
+- `--date` — init date. Default: the latest init folder that has the product.
+- `--bbox` — `N/W/S/E`; keeps cell centres inside the box. Omit for the full grid.
+- `--variable`, `-v` — keep only these data variables; repeatable. An unknown name exits and lists `Available:`.
+- `--probe-latest [ID]` — print the latest init date for `ID` (default: `--dataset`) and exit.
+- `--output`, `-o` — output Zarr.
 
-- `--dataset` — product id from the table (default `precip`, the native
-  low-resolution S2S precip). High-resolution weekly downscale:
-  `precip_downscaled`. High-resolution daily downscale (GeoTIFF):
-  `precip_downscaled_daily`.
-- `--date` — optional init date `YYYY-MM-DD`. Default: latest folder with that
-  Zarr. Calendar day: `resolve-time latest`. Latest published init: `--probe-latest`.
-- `--probe-latest [dataset-id]` — print the latest init `YYYY-MM-DD` on stdout and exit. No `-o`.
-- `--bbox` — optional spatial subset `N/W/S/E` (keeps cell centres inside the box).
-- `--variable`, `-v` — restrict to named data variables (repeatable).
-- `--output`, `-o` — output Zarr path.
+### Output
+- Dims `(step, [number,] latitude, longitude)` with scalar `time` = init. Longitude is `[-180, 180)`.
+- Precip is a rate in `mm day-1`; air temperature in `degree_Celsius`; `tcw` (total column water) stays `kg m-2`.
+- Precip, `gefs`, `daily_vars` and `medium_range_precip` steps are interval starts: `step = 0` is `[init, init + 1 period)`. Winds and `Tminmax` keep the archive steps (`Tminmax`: 6-hour min/max ending at each step, every 12 h from 6 h).
+- `precip_downscaled` and `medium_range_precip` carry `aggregation_period` (one week), so they are ready for period totals without weekly aggregation.
 
-### Example: recreate the KMSA weekly precip product figure
+### Notes
+- Lead counts vary by init: recent weekly files have 4 weeks (the daily GeoTIFF 28 days), older ones 6 weeks.
+- The downscaled NetCDF and GeoTIFF are downloaded whole before `--bbox` applies (~0.7 GB peak memory for the full 101-member weekly file).
+- Downscaled cell centres can sit half a cell off CHIRPS; align grids before a cell-by-cell comparison.
+- A `--date` folder without the product exits 1.
 
-The archive grid is daily S2S `tp` (fetch writes per-step rates). The product
-figure (`weekly_precip.png` in the archive) is six weekly totals on the
-Kenya product extent `7/32/-6/43`, drawn with plot's default precip palette.
-Replicate it with weekly aggregation + totals, then plot (omit `theme.colormap` so the default precip palette applies):
-
+### Example
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset precip \
-    --date 2026-08-18 -v tp -o /tmp/kenya_tp.zarr
-
-uv run skills/aggregate-temporal/scripts/aggregate.py \
-    -i /tmp/kenya_tp.zarr -o /tmp/kenya_weekly.zarr --period weekly
-
-uv run skills/convert-to-totals/scripts/convert_to_totals.py \
-    -i /tmp/kenya_weekly.zarr -o /tmp/kenya_weekly_mm.zarr
-
-uv run skills/plot/scripts/plot.py -i /tmp/kenya_weekly_mm.zarr -o /tmp/kenya_weekly.png \
-    --spec '{"inputs":[{"variable":"tp"}],"geo":{"bbox":[7,32,-6,43]}}'
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset precip_downscaled --date 2026-10-12 \
+  --bbox 5.5/33.5/-5/42.5 -o kenya_tp_downscaled.zarr
 ```
+Writes 101-member weekly precip rates at ~0.05° over Kenya for the 2026-10-12 init.
 
-High-resolution weekly downscale (already weekly; fetch stamps
-`aggregation_period`. Convert to mm then plot — no `aggregate-temporal` /
-`downscale`):
+## Details
 
-```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset precip_downscaled \
-    --date 2026-08-30 -o /tmp/kenya_tp_ds.zarr
+**Choosing a product for probabilities.** Daily-window events (dry spells, `>50 mm in one day`) need daily members: use `precip`. The daily downscale is a mean, so it gives yes/no maps only. Weekly-total events and spread (share of members under 10 mm in week 2, member std) can use `precip_downscaled` at ~0.05°. Keep `number` until the final reduction.
 
-uv run skills/convert-to-totals/scripts/convert_to_totals.py \
-    -i /tmp/kenya_tp_ds.zarr -o /tmp/kenya_tp_ds_mm.zarr
-
-uv run skills/plot/scripts/plot.py -i /tmp/kenya_tp_ds_mm.zarr -o /tmp/kenya_weekly_downscaled.png \
-    --spec '{"inputs":[{"variable":"tp"}]}'
-```
-
-High-resolution daily downscale (ensemble-mean GeoTIFF; fetch writes per-step
-rates, left-labeled at `step = 0`. Aggregate then convert for weekly totals —
-no `downscale`):
-
-```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset precip_downscaled_daily \
-    --date 2026-09-16 -o /tmp/kenya_tp_ds_daily.zarr
-
-uv run skills/aggregate-temporal/scripts/aggregate.py \
-    -i /tmp/kenya_tp_ds_daily.zarr -o /tmp/kenya_tp_ds_daily_weekly.zarr \
-    --period weekly
-
-uv run skills/convert-to-totals/scripts/convert_to_totals.py \
-    -i /tmp/kenya_tp_ds_daily_weekly.zarr -o /tmp/kenya_tp_ds_daily_weekly_mm.zarr
-
-uv run skills/plot/scripts/plot.py -i /tmp/kenya_tp_ds_daily_weekly_mm.zarr \
-    -o /tmp/kenya_daily_downscaled.png \
-    --spec '{"inputs":[{"variable":"tp"}]}'
-```
+The archive is browsable at https://kenya-forecasts.sheerwater.rhizaresearch.org/files/. Full pipelines that rebuild the KMSA weekly figures: [references/EXAMPLES.md](references/EXAMPLES.md).
