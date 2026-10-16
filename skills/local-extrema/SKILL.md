@@ -22,7 +22,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/local_extrema.py -i GRID.zarr -o CENTRES.zarr
 ### Arguments
 - `--input`, `-i` — gridded Zarr (lat/lon dims).
 - `--kind` — `high` (local maxima) or `low` (local minima). Run twice for both.
-- `--radius` — degrees; at most one centre of this kind within this distance. Raise it for fewer, larger systems. Default: 10.
+- `--radius` — degrees; at most one centre of this kind within this distance. Raise it for fewer, larger systems. Default: 10. For MSLP H / L labels, about 7 gives the denser set of centres a Tropical Tidbits chart marks; 15 or more misses most of them.
 - `--variable`, `-v` — the field to search; required when the input has more than one variable.
 - `--output`, `-o` — output Zarr.
 
