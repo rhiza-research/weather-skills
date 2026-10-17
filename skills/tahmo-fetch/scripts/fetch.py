@@ -45,6 +45,15 @@ DAILY_AGG = {
     "temperature": "mean",
     "humidity": "mean",
     "pressure": "mean",
+    "tmax": "max",
+    "tmin": "min",
+}
+# Daily extremes taken from the 5-minute temperature records, under the same
+# complete-day rule as the other variables.
+DERIVED = {"tmax": "temperature", "tmin": "temperature"}
+EXTREMES = {
+    "tmax": ("time: maximum", "daily maximum air temperature"),
+    "tmin": ("time: minimum", "daily minimum air temperature"),
 }
 # TAHMO records every variable at a 5-minute interval, stamped at the interval
 # end. A daily value is kept only when all 288 stamps of that UTC day passed the
@@ -59,6 +68,8 @@ CF_META = {
     "temperature": ("air_temperature", "degree_Celsius"),
     "humidity": ("relative_humidity", "1"),
     "pressure": ("air_pressure", "kPa"),
+    "tmax": ("air_temperature", "degree_Celsius"),
+    "tmin": ("air_temperature", "degree_Celsius"),
 }
 # TAHMO API leftovers if CF_META has no override.
 _TAHMO_UNITS = {
@@ -195,6 +206,9 @@ def _station_frame(api, station_id: str, start: str, end: str):
     raw = raw.drop_duplicates(["time", "variable"], keep="first")
     wide = raw.pivot(index="time", columns="variable", values="value")
     wide = wide.rename(columns=VAR_MAP)
+    for name, source in DERIVED.items():
+        if source in wide.columns:
+            wide[name] = wide[source]
 
     agg_spec = {c: DAILY_AGG[c] for c in wide.columns if c in DAILY_AGG}
     if not agg_spec:
@@ -413,6 +427,8 @@ def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_lat
         description = api_meta.get("description")
         if description:
             attrs["long_name"] = description
+        if canonical in EXTREMES:
+            attrs["cell_methods"], attrs["long_name"] = EXTREMES[canonical]
         ds[canonical].attrs.update(attrs)
     ds.attrs.update(
         featureType="timeSeries",

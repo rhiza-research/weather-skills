@@ -383,3 +383,74 @@ def test_fetch_reports_complete_stations(tmp_path, mod, fetch, capsys):
             str(tmp_path / "out.zarr"),
         )
     assert "precip: 0 of 1 stations complete (all 3 days" in capsys.readouterr().err
+
+
+def _temperature_day(day, drop=0):
+    """A complete 5-minute temperature day peaking at 30 °C, with a 10 °C low on the closing 00:00 stamp."""
+    raw = _five_minute_raw("te", day, 20.0, drop=drop)
+    raw.loc[raw.index[150], "value"] = 30.0
+    raw.loc[raw.index[-1], "value"] = 10.0  # D+1 00:00 closes day D
+    return raw
+
+
+def test_tmax_tmin_only_from_complete_days(mod):
+    """tmax/tmin are the 5-minute extremes on complete days and NaN on partial or empty ones."""
+    raw = pd.concat(
+        [
+            _temperature_day("2026-01-01"),
+            _temperature_day("2026-01-02", drop=1),  # loses the 10 °C closing stamp
+            # 2026-01-03: no records at all
+        ]
+    )
+    with patch.object(mod, "_fetch_raw", return_value=raw):
+        daily = mod._station_frame(MagicMock(), "TA00001", "2026-01-01", "2026-01-03")
+
+    assert daily.loc["2026-01-01", "tmax"] == pytest.approx(30.0)
+    assert daily.loc["2026-01-01", "tmin"] == pytest.approx(10.0)
+    for day in ["2026-01-02", "2026-01-03"]:
+        assert pd.isna(daily.loc[day, "tmax"])
+        assert pd.isna(daily.loc[day, "tmin"])
+        assert pd.isna(daily.loc[day, "temperature"])
+
+
+def test_fetch_writes_tmax_tmin_and_counts_complete_stations(tmp_path, mod, fetch, capsys):
+    """tmax/tmin carry CF metadata; a station with one partial day is not complete."""
+    full = pd.concat([_temperature_day("2026-01-01"), _temperature_day("2026-01-02")])
+    gappy = pd.concat([_temperature_day("2026-01-01"), _temperature_day("2026-01-02", drop=3)])
+    var_meta = {"te": {"units": "degrees Celsius", "description": "Surface air temperature"}}
+    api = MagicMock()
+    out = tmp_path / "out.zarr"
+    with (
+        patch.dict(os.environ, {"TAHMO_API_USERNAME": "user", "TAHMO_API_PASSWORD": "pass"}),
+        patch.object(mod, "_ensure_setup", side_effect=_fake_setup(api, _stations(), var_meta)),
+        patch.object(
+            mod, "_fetch_raw", side_effect=lambda api, sid, *_: full if sid == "TA00001" else gappy
+        ),
+    ):
+        run_skill(
+            fetch,
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "--station",
+            "TA00001",
+            "--station",
+            "TA00002",
+            "-o",
+            str(out),
+        )
+
+    err = capsys.readouterr().err
+    assert "tmax: 1 of 2 stations complete (all 2 days" in err
+    assert "tmin: 1 of 2 stations complete (all 2 days" in err
+    ds = xr.open_zarr(out, consolidated=True)
+    for name, method in [("tmax", "time: maximum"), ("tmin", "time: minimum")]:
+        assert ds[name].attrs["units"] == "degree_Celsius"
+        assert ds[name].attrs["standard_name"] == "air_temperature"
+        assert ds[name].attrs["cell_methods"] == method
+        assert ds[name].attrs["data_interval"] == "1 day"
+    assert ds["tmax"].sel(station_id="TA00001").values.tolist() == [30.0, 30.0]
+    assert ds["tmin"].sel(station_id="TA00002", time="2026-01-01").item() == 10.0
+    assert ds["tmin"].sel(station_id="TA00002", time="2026-01-02").isnull().item()
+    quantify_dataset(ds)
