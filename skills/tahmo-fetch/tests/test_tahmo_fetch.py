@@ -227,7 +227,7 @@ def test_fetch_by_bbox_skips_stations_outside(tmp_path, mod, fetch):
     out = tmp_path / "out.zarr"
     fetched = []
 
-    def fake_frame(_api, station_id, _start, _end):
+    def fake_frame(_api, station_id, _start, _end, _hour):
         fetched.append(station_id)
         daily = pd.DataFrame(
             {"precip": [1.0], "station_id": station_id},
@@ -266,7 +266,7 @@ def test_station_ids_take_precedence_over_bbox(tmp_path, mod, fetch):
     out = tmp_path / "out.zarr"
     fetched = []
 
-    def fake_frame(_api, station_id, _start, _end):
+    def fake_frame(_api, station_id, _start, _end, _hour):
         fetched.append(station_id)
         daily = pd.DataFrame(
             {"precip": [1.0], "station_id": station_id},
@@ -454,3 +454,48 @@ def test_fetch_writes_tmax_tmin_and_counts_complete_stations(tmp_path, mod, fetc
     assert ds["tmin"].sel(station_id="TA00002", time="2026-01-01").item() == 10.0
     assert ds["tmin"].sel(station_id="TA00002", time="2026-01-02").isnull().item()
     quantify_dataset(ds)
+
+
+def test_day_start_hour_shifts_the_daily_window(mod):
+    """With day_start_hour=6, 06 UTC 2 Oct to 06 UTC 3 Oct is 2 Oct's value."""
+    stamps = pd.date_range("2026-10-02 06:05", periods=288, freq="5min")
+    day = pd.DataFrame(
+        {
+            "time": stamps.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "variable": "pr",
+            "value": 0.1,
+            "quality": 1,
+        }
+    )
+    before = pd.DataFrame(  # 06:00 2 Oct closes 1 Oct, outside the window
+        {"time": ["2026-10-02T06:00:00Z"], "variable": "pr", "value": 9.0, "quality": 1}
+    )
+    raw = pd.concat([before, day])
+    with patch.object(mod, "_fetch_raw", return_value=raw) as fetch_raw:
+        daily = mod._station_frame(MagicMock(), "TA00001", "2026-10-02", "2026-10-02", 6)
+        utc_daily = mod._station_frame(MagicMock(), "TA00001", "2026-10-02", "2026-10-02")
+
+    # The API end date is inclusive at 00:00, so 06:00 on 3 Oct needs 4 Oct.
+    assert fetch_raw.call_args_list[0].args[2:] == ("2026-10-02", "2026-10-04")
+    assert list(daily.index) == [pd.Timestamp("2026-10-02")]
+    assert daily.loc["2026-10-02", "precip"] == pytest.approx(28.8)
+    # The same records split across two UTC days, so no UTC day is complete.
+    assert pd.isna(utc_daily.loc["2026-10-02", "precip"])
+
+
+def test_day_start_hour_out_of_range_exits_2(tmp_path, fetch):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch,
+            "--start-time",
+            "2026-10-02",
+            "--end-time",
+            "2026-10-02",
+            "--station",
+            "TA00001",
+            "--day-start-hour",
+            "24",
+            "-o",
+            str(tmp_path / "out.zarr"),
+        )
+    assert exc.value.code == 2

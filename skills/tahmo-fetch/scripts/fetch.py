@@ -174,20 +174,22 @@ def _fetch_raw(api, station_id: str, start: str, end: str):
         )
 
 
-def _station_frame(api, station_id: str, start: str, end: str):
+def _station_frame(api, station_id: str, start: str, end: str, day_start_hour: int = 0):
     """Return a daily DataFrame for one station (NaN for incomplete days), or None.
 
-    Days are UTC calendar days ``start`` .. ``end`` inclusive. TAHMO stamps mark
-    the end of each 5-minute interval, so day D holds the stamps in
-    (D 00:00, D+1 00:00]: the 00:00 stamp closes the previous day.
+    Days ``start`` .. ``end`` inclusive, each starting at ``day_start_hour`` UTC.
+    TAHMO stamps mark the end of each 5-minute interval, so day D holds the
+    stamps in (D HH:00, D+1 HH:00]: the HH:00 stamp closes the previous day.
     """
     import pandas as pd
 
-    first = pd.Timestamp(start)
-    last = pd.Timestamp(end) + pd.Timedelta(days=1)
+    offset = pd.Timedelta(hours=day_start_hour)
+    first = pd.Timestamp(start) + offset
+    last = pd.Timestamp(end) + pd.Timedelta(days=1) + offset
     try:
-        # The API end bound is inclusive, so this includes the 00:00 stamp closing ``end``.
-        raw = _fetch_raw(api, station_id, start, last.date().isoformat())
+        # The API end bound is an inclusive date (00:00), so round up to the
+        # date that includes the HH:00 stamp closing ``end``.
+        raw = _fetch_raw(api, station_id, start, last.ceil("D").date().isoformat())
     except Exception as exc:  # noqa: BLE001
         print(f"{station_id}: DROPPED, fetch failed ({exc})", file=sys.stderr)
         return None
@@ -213,15 +215,16 @@ def _station_frame(api, station_id: str, start: str, end: str):
     agg_spec = {c: DAILY_AGG[c] for c in wide.columns if c in DAILY_AGG}
     if not agg_spec:
         return None
-    # Re-stamp each record at its interval start, so the 00:00 stamp falls in
-    # the day it closes, then bin by UTC calendar day.
-    wide.index = wide.index - pd.Timedelta(minutes=5)
+    # Re-stamp each record at its interval start, so the HH:00 stamp falls in
+    # the day it closes, and shift by the day-start hour so each day bins as
+    # one calendar day labelled by the date it starts on.
+    wide.index = wide.index - pd.Timedelta(minutes=5) - offset
     days = wide[list(agg_spec)].resample("D")
     daily = days.agg(agg_spec)
     # Plain sum gives 0 mm for an empty day and an undercount for a partial
     # one; a mean over a partial day is biased. Keep only complete days.
     daily = daily.where(days.count() >= SAMPLES_PER_DAY)
-    daily = daily.reindex(pd.date_range(first, pd.Timestamp(end), freq="D", name="time"))
+    daily = daily.reindex(pd.date_range(start, end, freq="D", name="time"))
     daily["station_id"] = station_id
     return daily
 
@@ -282,6 +285,15 @@ def _ensure_setup(state):
     ),
 )
 @weather_skill.argument(
+    "--day-start-hour",
+    type=int,
+    default=0,
+    help=(
+        "UTC hour each daily value starts at (0-23, default 0). Day D covers "
+        "D HH:00 to D+1 HH:00 UTC and is labelled D; e.g. 6 for KMSA's 06 UTC rainfall day."
+    ),
+)
+@weather_skill.argument(
     "--list-stations",
     action="store_true",
     default=False,
@@ -303,10 +315,23 @@ def _ensure_setup(state):
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_latest, **kwargs):
+def fetch(
+    start_time,
+    end_time,
+    workers,
+    bbox,
+    station,
+    day_start_hour,
+    list_stations,
+    probe_latest,
+    **kwargs,
+):
     """Fetch daily TAHMO weather-station observations as a weather-skills station Zarr."""
     import pandas as pd
     import xarray as xr
+
+    if not 0 <= day_start_hour <= 23:
+        raise UsageError(f"--day-start-hour must be 0-23, got {day_start_hour}.")
 
     if list_stations and bbox is None:
         raise UsageError("--list-stations requires --bbox N/W/S/E.")
@@ -330,7 +355,9 @@ def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_lat
             selected = _ta_stations(stations).head(3)
         latest = None
         for _, row in selected.iterrows():
-            daily = _station_frame(api, row["code"], start.isoformat(), end.isoformat())
+            daily = _station_frame(
+                api, row["code"], start.isoformat(), end.isoformat(), day_start_hour
+            )
             if daily is None:
                 continue
             observed = daily.drop(columns="station_id").dropna(how="all")
@@ -347,13 +374,14 @@ def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_lat
     start = start_time.isoformat()
     end = end_time.isoformat()
     print(
-        f"Fetching {len(selected)} TAHMO station(s) {start} → {end}",
+        f"Fetching {len(selected)} TAHMO station(s) {start} → {end}, "
+        f"days starting {day_start_hour:02d}:00 UTC",
         file=sys.stderr,
     )
 
     def _fetch_one(row):
         sid = row["code"]
-        daily = _station_frame(api, sid, start, end)
+        daily = _station_frame(api, sid, start, end, day_start_hour)
         if daily is None:
             return None
         return daily, {
@@ -400,7 +428,11 @@ def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_lat
     )
     ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north", axis="Y")
     ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east", axis="X")
-    ds["time"].attrs.update(standard_name="time", axis="T")
+    ds["time"].attrs.update(
+        standard_name="time",
+        axis="T",
+        comment=f"day D covers D {day_start_hour:02d}:00 to D+1 {day_start_hour:02d}:00 UTC",
+    )
     ds["station_id"].attrs.update(cf_role="timeseries_id", long_name="TAHMO station identifier")
     ds["country"].attrs.update(long_name="ISO 3166-1 alpha-2 country code")
     ds["name"].attrs.update(long_name="station name")
