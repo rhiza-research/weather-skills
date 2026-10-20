@@ -146,6 +146,12 @@ def _resolve_variables(requested, data_vars, dataset: str):
     return resolved
 
 
+def _written_name(catalog_name: str) -> str:
+    """Output name of a catalog field: `*_Nhpa` fields are stacked to their prefix."""
+    match = _HPA_RE.match(catalog_name)
+    return match.group(1) if match else catalog_name
+
+
 def _stack_pressure_levels(ds):
     """Combine `*_Nhpa` variables into one field with a `vertical` (hPa) dim."""
     import xarray as xr
@@ -389,7 +395,13 @@ def fetch(
         start_iso = start_time.isoformat()
         end_iso = end_time.isoformat()
 
+    requested_as: dict[str, list[str]] = {}
     if variable:
+        for token in variable:
+            for name in _resolve_variables([token], ds.data_vars, dataset):
+                tokens = requested_as.setdefault(_written_name(name), [])
+                if token != _written_name(name) and token not in tokens:
+                    tokens.append(token)
         ds = ds[_resolve_variables(variable, ds.data_vars, dataset)]
 
     if is_forecast:
@@ -559,6 +571,11 @@ def fetch(
             continue
     # Period totals (WeatherNext 2 6 h precip in mm) become mm day-1 rates.
     out = precip_amounts_to_rates(out, deaccumulate=False)
+    order = [n for n in requested_as if n in out.data_vars]
+    for name in order + [n for n in out.data_vars if n not in order]:
+        aliases = requested_as.get(name)
+        suffix = f" (requested as {', '.join(f'-v {a}' for a in aliases)})" if aliases else ""
+        print(f"variable: {name}{suffix}")
     return stamp_data_interval(out)
 
 
