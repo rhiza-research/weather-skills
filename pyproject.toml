@@ -42,7 +42,7 @@ dev = [
 skills-runner = { git = "https://github.com/tescalada/skills-runner" }
 
 [tool.pytest.ini_options]
-testpaths = ["skills"]
+testpaths = ["skills", "tests"]
 python_files = ["test_*.py"]
 pythonpath = ["tests"]
 filterwarnings = [
