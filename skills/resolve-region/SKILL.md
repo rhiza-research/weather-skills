@@ -23,7 +23,6 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py QUERY [--geojson PATH] [--pad DEG]
 - `code` (positional `QUERY`) — one of, tried in this order:
   - Country: uppercase ISO 3166-1 alpha-3 (`KEN`, `COD`) or country name (`Kenya`).
   - Multi-country region, by Natural Earth continent / UN subregion / World Bank label: `East Africa`, `Western Africa`, `Sub-Saharan Africa`.
-  - Custom box: `Indian Ocean` (also `Indian Ocean basin`, `IOB`) = `30.0/20.0/-40.0/120.0`.
   - Sub-national key: names lowercased, spaces to `_`, accents stripped, levels joined by `-`. State/province/Kenyan county is `country-admin1` (`kenya-nairobi`, `KEN-nairobi`, `USA-california`); district/sub-county is `country-admin1-admin2` or `country-admin2` (`kenya-nairobi-westlands`, `kenya-westlands`).
   - Anything else is a landmark, looked up once on OpenStreetMap's Nominatim geocoder: `Lake Victoria, Kenya`, `Mount Kenya`.
 - `--geojson` — also write the outline to this path as a one-feature GeoJSON FeatureCollection. Default: not written.
@@ -31,7 +30,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py QUERY [--geojson PATH] [--pad DEG]
 
 ### Output
 - stdout: one line `N/W/S/E` in decimal degrees, ready for any `--bbox` flag. West > east means the box crosses the 180° meridian (e.g. Russia, Fiji).
-- `--geojson`: feature properties `iso3`, `name`, `region_name`, `level` (`country`, `region`, `custom`, `admin_1`, `admin_2`, `nominatim`), `country`; countries add `boundary_source`; regions, custom boxes and landmarks add `bbox` (`[N, W, S, E]`).
+- `--geojson`: feature properties `iso3`, `name`, `region_name`, `level` (`country`, `region`, `admin_1`, `admin_2`, `nominatim`), `country`; countries add `boundary_source`; regions and landmarks add `bbox` (`[N, W, S, E]`).
 - stderr names what matched: `nominatim: <display name>` for landmarks, a padding note for points, a warning when a country falls back to the coarse outline.
 
 ### Notes

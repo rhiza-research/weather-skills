@@ -201,18 +201,6 @@ def test_east_africa_is_eastern_africa(capsys, resolve_region, monkeypatch):
     assert w < 30 < e
 
 
-def test_indian_ocean_prints_basin_bbox(capsys, resolve_region, monkeypatch):
-    def _fail_nominatim(query):
-        raise AssertionError(f"Nominatim should not run for Indian Ocean; got {query!r}")
-
-    monkeypatch.setattr("weather_skills_core.region._load_nominatim", _fail_nominatim)
-
-    run_skill(resolve_region, "Indian Ocean")
-    assert capsys.readouterr().out.strip() == "30.0/20.0/-40.0/120.0"
-    run_skill(resolve_region, "Indian Ocean basin")
-    assert capsys.readouterr().out.strip() == "30.0/20.0/-40.0/120.0"
-
-
 def test_landmark_geojson_write(tmp_path, resolve_mod, monkeypatch):
     from weather_skills_core.region import _nominatim_collection
 

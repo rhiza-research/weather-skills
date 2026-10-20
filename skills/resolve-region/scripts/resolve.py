@@ -54,7 +54,6 @@ _AREA_TYPES = frozenset(
     "code",
     help=(
         "ISO3 country code (uppercase, e.g. KEN), named region (East Africa), "
-        "custom box (Indian Ocean basin), "
         "sub-national region (kenya-nairobi), or leftover place name "
         "(Mount Kenya, Kenya)"
     ),
@@ -78,7 +77,6 @@ def resolve_region(code, geojson, pad, **kwargs):
     if not text:
         raise UsageError(
             "pass an ISO3 code (e.g. KEN), a named region (e.g. East Africa), "
-            "a custom box (e.g. 'Indian Ocean'), "
             "a sub-national region (e.g. kenya-nairobi), "
             "or a landmark (e.g. 'Nairobi, Kenya')."
         )

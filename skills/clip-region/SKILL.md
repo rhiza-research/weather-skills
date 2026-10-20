@@ -23,7 +23,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py -i IN.zarr -o OUT.zarr (--bbox N/W/S/
 - `--input`, `-i` — input Zarr, gridded or point_obs.
 - `--output`, `-o` — output Zarr.
 - `--bbox` — `N/W/S/E` decimal degrees. Keeps cells whose centre is inside. West > east crosses the antimeridian.
-- `--region` — ISO3 (`KEN`), country name, Natural Earth region (`East Africa`), custom box (`Indian Ocean`), or `country-admin1` (`Kenya-Turkana`). Offline lookup only.
+- `--region` — ISO3 (`KEN`), country name, Natural Earth region (`East Africa`), or `country-admin1` (`Kenya-Turkana`). Offline lookup only.
 - `--geojson` — GeoJSON Feature, FeatureCollection (unioned), or bare geometry.
 - `--keep-outside` — with `--region` / `--geojson`: keep the full grid or station list and set values outside the polygon to NaN.
 
