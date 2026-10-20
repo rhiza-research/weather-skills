@@ -527,3 +527,46 @@ def test_within_one_true_day_decides_an_incomplete_lookahead(tmp_path, indicator
     )  # fmt: skip
     # Spell mask is 1,1,1,0,0,nan,nan: day 0/1 see a spell; day 2 needs days 5-7.
     np.testing.assert_array_equal(_cell(out).values, [0, 0] + [np.nan] * 5)
+
+
+def _first_in(tmp_path, indicator_fn, values, window, *extra):
+    ds = _daily(len(values)).copy(deep=True)
+    ds["precip"].values[:, 0, 0] = values
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        indicator_fn, "-i", str(src), "-o", str(out),
+        "--rule", "precip sum 1d >= 10", "--first-in", window, *extra,
+    )  # fmt: skip
+    return out
+
+
+def test_first_in_blanks_dates_after_the_event(tmp_path, indicator_fn):
+    """1 while the first event is inside the window, NaN once it already happened."""
+    rain = [0, 0, 0, 0, 0, 20, 0, 0, 0, 20, 0, 0]
+    out = _first_in(tmp_path, indicator_fn, rain, "3d")
+    expect = [0, 0, 0, 1, 1, 1] + [np.nan] * 6
+    np.testing.assert_array_equal(_cell(out).values, expect)
+    attrs = _cell(out).attrs
+    assert attrs["aggregation_period"] == "3 day"
+    assert attrs["units"] == "1"
+
+
+def test_first_in_gap_and_tail_are_unknown(tmp_path, indicator_fn):
+    """A gap before the event hides the first date; with no event, the tail is undecided."""
+    gap = [0, 0, np.nan, 0, 0, 20, 0, 0]
+    np.testing.assert_array_equal(
+        _cell(_first_in(tmp_path, indicator_fn, gap, "2d")).values, [0] + [np.nan] * 7
+    )
+    dry = [0, 0, 0, 0, 0]
+    out = _first_in(tmp_path / "dry", indicator_fn, dry, "1w")
+    np.testing.assert_array_equal(_cell(out).values, [np.nan] * 5)
+    out = _first_in(tmp_path / "dry2", indicator_fn, dry, "2d")
+    np.testing.assert_array_equal(_cell(out).values, [0, 0, 0, 0, np.nan])
+
+
+@pytest.mark.parametrize("extra", [["--cumulative"], ["--probability"], ["--detect", "any"]])
+def test_first_in_rejects_other_reductions(tmp_path, indicator_fn, extra):
+    with pytest.raises(SystemExit) as exc:
+        _first_in(tmp_path, indicator_fn, [0, 20, 0], "2d", *extra)
+    assert exc.value.code == 2
