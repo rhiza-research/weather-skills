@@ -96,7 +96,9 @@ def _open_gefs(variable: str) -> xr.Dataset:
     except Exception as exc:  # noqa: BLE001
         raise DataError(f"{_AUTH_MSG} Opening gs://{path} failed: {exc}") from None
     # init_time is float days since 1960-01-01; decode by hand (no CF decode on v3 here).
-    inits = pd.Timestamp("1960-01-01") + pd.to_timedelta(ds["init_time"].values.astype("float64"), "D")
+    inits = pd.Timestamp("1960-01-01") + pd.to_timedelta(
+        ds["init_time"].values.astype("float64"), "D"
+    )
     return ds.assign_coords(init_time=inits.values.astype("datetime64[ns]"))
 
 
@@ -124,7 +126,9 @@ def _ecmwf_cube(ds, variables, start, end, issue_year, bbox):
 
     inits = ds["time"].values  # (forecast_time, hindcast_year)
     in_year = (issued.year == issue_year)[:, None]
-    in_window = (inits >= np.datetime64(start)) & (inits < np.datetime64(end) + np.timedelta64(1, "D"))
+    in_window = (inits >= np.datetime64(start)) & (
+        inits < np.datetime64(end) + np.timedelta64(1, "D")
+    )
     fi, hi = np.nonzero(in_year & in_window)
     if fi.size == 0:
         raise DataError(
@@ -162,14 +166,16 @@ def _gefs_cube(variables, start, end):
         )
         if not keep.any():
             first, last = pd.DatetimeIndex(ds["init_time"].values[[0, -1]]).strftime("%Y-%m-%d")
-            raise DataError(f"no GEFS hindcast init between {start} and {end} (store runs {first} to {last}).")
+            raise DataError(
+                f"no GEFS hindcast init between {start} and {end} (store runs {first} to {last})."
+            )
         ds = ds[[v]].isel(init_time=np.nonzero(keep)[0])
         ds[v].attrs["units"] = _GEFS_VARIABLES[v][1]
         parts.append(ds)
     # The precip and tmp2m stores skip different weeks; keep every init and leave
     # a variable NaN where its store has no run. Never filled: say which.
     cube = xr.merge(parts, join="outer")
-    for part, v in zip(parts, variables):
+    for part, v in zip(parts, variables, strict=True):
         missing = np.setdiff1d(cube["init_time"].values, part["init_time"].values)
         if missing.size:
             print(
@@ -178,7 +184,13 @@ def _gefs_cube(variables, start, end):
                 file=sys.stderr,
             )
     cube = cube.rename(
-        {"init_time": "time", "member": "number", "prediction_timedelta": "step", "lat": "latitude", "lon": "longitude"}
+        {
+            "init_time": "time",
+            "member": "number",
+            "prediction_timedelta": "step",
+            "lat": "latitude",
+            "lon": "longitude",
+        }
     )
     steps = pd.to_timedelta(cube["step"].values, "D").values.astype("timedelta64[ns]")
     return cube.assign_coords(number=cube["number"].values.astype("int64"), step=steps)
@@ -212,7 +224,9 @@ def _gefs_cube(variables, start, end):
     probe=True,
     help="Print the latest hindcast init date (YYYY-MM-DD) for ecmwf (default) or gefs and exit.",
 )
-def fetch(dataset, start_time, end_time, variable, bbox, issue_year, members, probe_latest, **kwargs):
+def fetch(
+    dataset, start_time, end_time, variable, bbox, issue_year, members, probe_latest, **kwargs
+):
     """Fetch ECMWF or GEFS subseasonal hindcasts (reforecasts) for a range of init dates as a weather-skills Zarr."""
     if probe_latest is not None:
         if probe_latest == "gefs":
@@ -230,14 +244,20 @@ def fetch(dataset, start_time, end_time, variable, bbox, issue_year, members, pr
     variables = variable or ["precip"]
     unknown = [v for v in variables if v not in table]
     if unknown:
-        raise UsageError(f"{dataset} has no variable {', '.join(unknown)}; choose from {', '.join(table)}.")
+        raise UsageError(
+            f"{dataset} has no variable {', '.join(unknown)}; choose from {', '.join(table)}."
+        )
 
     if dataset == "ecmwf":
-        cube, issue_year = _ecmwf_cube(_open_ecmwf(members), variables, start_time, end_time, issue_year, bbox)
+        cube, issue_year = _ecmwf_cube(
+            _open_ecmwf(members), variables, start_time, end_time, issue_year, bbox
+        )
         source = "weatherbench2:ifs-ext-reforecast" + ("" if members else "-ens-mean")
     else:
         if issue_year is not None or members:
-            raise UsageError("--issue-year and --members apply to --dataset ecmwf only; gefs always has all 11 members.")
+            raise UsageError(
+                "--issue-year and --members apply to --dataset ecmwf only; gefs always has all 11 members."
+            )
         cube = _gefs_cube(variables, start_time, end_time)
         cube = bbox_subset(cube, bbox) if bbox is not None else ensure_normalized_longitude(cube)
         source = "sheerwater:gefs_chc_raw"
@@ -276,7 +296,9 @@ def fetch(dataset, start_time, end_time, variable, bbox, issue_year, members, pr
     if dataset == "ecmwf":
         cube.attrs["hindcast_issue_year"] = issue_year
     cube["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
-    cube["step"].attrs.update(standard_name="forecast_period", long_name="time since forecast_reference_time")
+    cube["step"].attrs.update(
+        standard_name="forecast_period", long_name="time since forecast_reference_time"
+    )
     stamp_cf_attrs(cube)
     return stamp_data_interval(cube, period="1 day")
 

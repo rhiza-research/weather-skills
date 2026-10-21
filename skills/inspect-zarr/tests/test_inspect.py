@@ -124,7 +124,10 @@ def test_small_sample_keeps_nan_in_place_along_coord(tmp_path, inspect_zarr, cap
     out = json.loads(capsys.readouterr().out)
     labels = next(c for c in out["coords"] if c["name"] == "admin_1")["values"]
     sample = out["data_vars"][0]["sample"]
-    assert [c for c, v in zip(labels, sample) if v is None] == ["kenya-kirinyaga", "kenya-lamu"]
+    assert [c for c, v in zip(labels, sample, strict=False) if v is None] == [
+        "kenya-kirinyaga",
+        "kenya-lamu",
+    ]
 
     run_skill(inspect_zarr, "-i", str(src), "--max-values", "0")
 

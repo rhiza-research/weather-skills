@@ -9,6 +9,13 @@ from conftest import load_skill, make_gridded, make_point_obs, run_skill, write_
 from weather_skills_core import region as region_mod
 from weather_skills_core.provenance import load_history
 
+# label-group pins weather-skills-core dev (region.LEVELS); with the PyPI core in the test
+# environment the skill cannot import, so its tests skip rather than error.
+if not hasattr(region_mod, "LEVELS"):
+    pytest.skip(
+        "label-group needs weather-skills-core dev (region.LEVELS)", allow_module_level=True
+    )
+
 
 @pytest.fixture(scope="module")
 def label_group():
