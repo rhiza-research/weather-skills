@@ -15,6 +15,8 @@ Total time:
 
 ## What you need
 - **A Mac or Linux machine** with `git` and `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`). `uv` installs Python itself.
+- **Google Chrome** (or another Chromium browser, such as Brave or Edge): the maps are drawn to PNG through it. Without one, `run_demo.sh` stops at "maps + report".
+- **For step 7 only:** Claude with the Artifact tool (the Claude desktop app's Code tab, or claude.ai/code).
 - **About 3.5 GB of free disk:** 2.2 GB of data, 0.9 GB of Python packages and 0.4 GB of working files.
 - **The demo service-account key:** a JSON file shared by Rhiza Research, which can read `gs://sheerwater-datalake/gates-demo/`. Never print it or commit it.
 
@@ -72,7 +74,7 @@ Run step 5 below and check that the report and maps appear.
 
 ### 5. Run the blend (about 2½ min)
 ```bash
-bash $HERE/run_demo.sh 2>&1 | tee $OUT/run_demo.log
+mkdir -p $OUT && bash $HERE/run_demo.sh 2>&1 | tee $OUT/run_demo.log
 ```
 It prints each stage and its time (kept in `$OUT/run_demo.log` for the dashboard in step 7):
 1. **Observed onsets:** finds when the rains really started in every season since 1981 (`indicator --rule icpac-onset`).
