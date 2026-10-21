@@ -1,0 +1,3 @@
+.ruff_cache/
+# Copies of skill scripts uploaded with the Coiled job; copy them from skills/ before running it.
+scripts/gefs_job/skills/
