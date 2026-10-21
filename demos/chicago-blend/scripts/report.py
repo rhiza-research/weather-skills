@@ -93,15 +93,15 @@ started = xr.open_zarr(run / "started.zarr")["indicator"].sel(time=pd.Timestamp(
 skill_md, outlook_md = [], []
 for region, mask in REGIONS.items():
     rows, events, samples = skill_section(mask)
+    # GEFS sets join the table as more models: 7 days only, scored on the seasons GEFS shares with ECMWF.
+    grows, gevents, gsamples = skill_section(mask, gdf, GEFS_SETS, [7])
+    rows += [[r[0], r[1], "–"] for r in grows if r[0] != "ECMWF"]
     cells = "" if mask is None else f" ({int(mask.sum())} cells)"
     skill_md.append(f"""**{region}**{cells}: {samples[0]:,} samples, {events[0]} / {events[1]} onsets within 7 / 14 days.
 
 {table(["Predictors"] + WEEKS, rows)}
-""")
-    grows, gevents, gsamples = skill_section(mask, gdf, GEFS_SETS, [7])
-    skill_md.append(f"""*With GEFS*, within 7 days only, {len(gyears)} seasons ({", ".join(map(str, gyears))}): {gsamples[0]:,} samples, {gevents[0]} onsets.
 
-{table(["Predictors", WEEKS[0]], grows)}
+GEFS rows: within 7 days only, on the {len(gyears)} seasons GEFS shares with ECMWF ({", ".join(map(str, gyears))}; {gsamples[0]:,} samples, {gevents[0]} onsets).
 """)
     here = started if mask is None else started.where(mask.reindex_like(started, method="nearest", tolerance=0.01).fillna(False), False)
     outlook_md.append(f"""**{region}**: rains already started (CHIRPS) in {int(here.sum())} cells.

@@ -102,7 +102,7 @@ Report back in this order:
    | Cumulus | +0.31 / +0.27 | +0.29 / +0.35 |
    | ECMWF + Cumulus | **+0.33 / +0.29** | **+0.31 / +0.37** |
 
-2. **Which models matter?** Read the weights table. In the ECMWF + Cumulus blend, Cumulus carries most of the weight (5.8 vs 1.7 for 7 days). The AI model adds the most skill. The *With GEFS* tables (7 days only, 5 seasons the GEFS reforecast shares with ECMWF) show GEFS adding to ECMWF: ECMWF + GEFS +0.09 against climatology over all cells, +0.14 in Kenya, against −0.02 and +0.00 for ECMWF alone. In Uganda neither beats climatology on those seasons.
+2. **Which models matter?** Read the weights table. In the ECMWF + Cumulus blend, Cumulus carries most of the weight (5.8 vs 1.7 for 7 days). The AI model adds the most skill. GEFS is in the same skill tables as the other models, with a 7-day score only (it runs 35 days), from the 5 seasons its reforecast shares with ECMWF: GEFS +0.12 and ECMWF + GEFS +0.14 in Kenya; in Uganda neither beats climatology on those seasons.
 3. **What does it say for this season?** Read the 2026 outlook tables and the country maps. Each number is the chance the rains have started by that date. Where CHIRPS already shows the onset, it's 1. On the 15 October init:
    - **Uganda:** the rains have already started in 9 of its 17 cells, mostly the north and west. Around Lake Victoria the blend gives high chances by 21 October. Area mean: about **76%** by 21 October and **80%** by 28 October.
    - **Kenya:** no onset yet. About **8%** by 21 October and **19%** by 28 October, close to an average year. The highest chances are near Lake Victoria and in the east and north-east.

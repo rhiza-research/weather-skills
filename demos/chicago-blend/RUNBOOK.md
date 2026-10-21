@@ -148,7 +148,7 @@ The report has the skill table, weights and 2026 outlook for all cells, Kenya an
 | Cumulus | +0.22 / +0.20 | +0.31 / +0.27 | +0.29 / +0.35 |
 | ECMWF + Cumulus | **+0.24 / +0.23** | **+0.33 / +0.29** | **+0.31 / +0.37** |
 
-**With GEFS**, within 7 days only, the 5 seasons the GEFS reforecast shares with ECMWF (2004, 2005, 2010, 2011, 2016):
+**GEFS**, within 7 days only (the report and dashboard list these rows in the same tables as the other models), on the 5 seasons the GEFS reforecast shares with ECMWF (2004, 2005, 2010, 2011, 2016):
 
 | Predictors | All cells (329 onsets) | Kenya (80) | Uganda (69) |
 |---|---|---|---|

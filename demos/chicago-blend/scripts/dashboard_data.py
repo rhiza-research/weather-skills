@@ -4,7 +4,7 @@ Usage: python dashboard_data.py OUT_DIR [RUN_LOG]
 
 OUT_DIR holds report.md and the map_*.png that report.py and run_demo.sh wrote. RUN_LOG, optional,
 is run_demo.sh's printed output (stage times). Writes OUT_DIR/dashboard/:
-- skill.json, skill_gefs.json, samples.json, weights.json, outlook.json, started.json, run.json, stages.json: the
+- skill.json, samples.json, weights.json, outlook.json, started.json, run.json, stages.json: the
   datasets, one JSON array of rows each, to upload as files;
 - datasets.json: each dataset's title, description and file name, for its datasets/<id> document;
 - file_index.html.json and file_map_<name>.js.json: the page (dashboard.html, next to this script)
@@ -42,16 +42,8 @@ skill, samples = [], []
 for region, para, rows in blocks(section("How well")):
     n, e7, e14 = re.search(r"([\d,]+) samples, (\d+) / (\d+) onsets", para).groups()
     samples.append({"region": region, "samples": int(n.replace(",", "")), "onsets_7d": int(e7), "onsets_14d": int(e14)})
-    skill += [{"region": region, "predictors": r[0], "bss_7d": float(r[1]), "bss_14d": float(r[2])} for r in rows]
-
-# The *With GEFS* table under each region: 7 days only, over the seasons GEFS shares with ECMWF.
-skill_gefs = []
-how = section("How well")
-for m in re.finditer(r"\*With GEFS\*, within 7 days only, (\d+) seasons \(([^)]*)\): ([\d,]+) samples, (\d+) onsets\.\n\n((?:\|[^\n]*\n?)+)", how):
-    region = re.findall(r"\*\*([^*]+)\*\*", how[:m.start()])[-1]
-    rows = [[c.strip() for c in line.strip("|").split("|")] for line in m.group(5).strip().splitlines()][2:]
-    skill_gefs += [{"region": region, "predictors": r[0], "bss_7d": float(r[1]), "seasons": m.group(2),
-                    "samples": int(m.group(3).replace(",", "")), "onsets_7d": int(m.group(4))} for r in rows]
+    num = lambda v: None if v == "–" else float(v)  # noqa: E731  ("–": GEFS has no 14-day window)
+    skill += [{"region": region, "predictors": r[0], "bss_7d": num(r[1]), "bss_14d": num(r[2])} for r in rows]
 
 weights = []
 for line in section("Blend weights").splitlines():
@@ -82,8 +74,6 @@ DATASETS = {
     "run": ("Forecast date and windows", "The live init and the last day of each window.", run),
     "skill": ("Cross-validated blend skill", "Brier skill score against climatology, leave-one-season-out, "
               "by region and predictor set, within 7 and 14 days.", skill),
-    "skill_gefs": ("Blend skill with GEFS", "Brier skill score against climatology, leave-one-season-out, "
-                   "within 7 days, over the seasons the GEFS reforecast shares with ECMWF.", skill_gefs),
     "samples": ("Cross-validation sample counts", "Samples (init x cell) and observed onsets within "
                 "7 / 14 days scored per region.", samples),
     "weights": ("Fitted blend weights", "Logistic-regression intercept and coefficients (log-odds per unit "

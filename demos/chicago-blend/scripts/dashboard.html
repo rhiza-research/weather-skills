@@ -112,20 +112,11 @@
 
   <section class="rb-section" id="skill">
     <h2>Does the blend work?</h2>
-    <p class="rb-muted">Brier skill score against climatology in leave-one-season-out cross-validation over the six seasons ECMWF and Cumulus share (2016–2021). Above 0 beats climatology; 0.30 means 30% better.</p>
+    <p class="rb-muted">Brier skill score against climatology in leave-one-season-out cross-validation over the six seasons ECMWF and Cumulus share (2016–2021). Above 0 beats climatology; 0.30 means 30% better. GEFS runs 35 days, so it has the 7-day bar only, scored on the five seasons its reforecast shares with ECMWF (2004, 2005, 2010, 2011, 2016).</p>
     <div class="rb-legend" id="skill-legend" data-source="skill"></div>
     <div class="rb-grid">
       <article class="rb-card"><div class="rb-card-head"><h3>Kenya</h3><span class="rb-muted" id="samples-kenya"></span></div><div class="rb-chart" id="skill-kenya" data-source="skill"></div></article>
       <article class="rb-card"><div class="rb-card-head"><h3>Uganda</h3><span class="rb-muted" id="samples-uganda"></span></div><div class="rb-chart" id="skill-uganda" data-source="skill"></div></article>
-      <article class="rb-card" id="card-gefs">
-        <div class="rb-card-head"><h3>With GEFS, within 7 days</h3><span class="rb-muted">GEFS runs 35 days, so it answers the 7-day question only. Seasons its reforecast shares with ECMWF: <span id="gefs-seasons" data-source="skill_gefs" data-field="seasons" data-row="0">—</span>.</span></div>
-        <div class="rb-tablewrap">
-          <table id="gefs-table" data-source="skill_gefs" data-row-key="region,predictors">
-            <thead><tr><th data-field="region">Region</th><th data-field="predictors">Predictors</th><th data-field="bss_7d" class="num">Skill within 7 days</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </article>
     </div>
   </section>
 
@@ -214,7 +205,7 @@
   const signed = d3.format('+.2f');
   const dur = (s) => (s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`);
   const BLEND = 'ECMWF + Cumulus blend';
-  const PREDICTORS = ['ECMWF', 'Cumulus', 'ECMWF + Cumulus'];
+  const PREDICTORS = ['ECMWF', 'Cumulus', 'ECMWF + Cumulus', 'GEFS', 'ECMWF + GEFS'];
 
   const fmtMark = (el, v) => {
     const f = el.dataset.field;
@@ -307,10 +298,11 @@
         const row = rows.find((r) => catOf(r) === c);
         if (!row) return;
         const v = value(row, s);
+        if (!Number.isFinite(v)) return;  // no value (GEFS has no 14-day window)
         const y = y0 + si * (barH + gapIn);
         g.append('rect').attr('x', x(Math.min(0, v))).attr('y', y).attr('height', barH)
           .attr('width', Math.max(1, Math.abs(x(v) - x(0)))).attr('rx', 4).attr('fill', colors[si])
-          .on('mousemove', (ev) => t.show(ev, c, series.map((s2, k) => [colors[k], s2.label, fmt(value(row, s2))])))
+          .on('mousemove', (ev) => t.show(ev, c, series.map((s2, k) => [colors[k], s2.label, Number.isFinite(value(row, s2)) ? fmt(value(row, s2)) : '—'])))
           .on('mouseleave', () => t.hide());
         g.append('text').attr('x', x(Math.max(0, v)) + 4).attr('y', y + barH / 2).attr('dy', '0.35em')
           .attr('fill', 'var(--color-fg-muted)').style('font-size', 'var(--cds-font-size-caption)')
@@ -358,11 +350,13 @@
       if (skill.status !== 'ok') { box.querySelector('svg')?.remove(); continue; }
       box.querySelector('div[style]')?.remove();
       const rows = skill.data.filter((d) => d.region === reg);
-      const hi = d3.max(skill.data.filter((d) => d.region !== 'All cells'), (d) => Math.max(d.bss_7d, d.bss_14d));
+      const vals = skill.data.filter((d) => d.region !== 'All cells').flatMap((d) => [d.bss_7d, d.bss_14d]).filter((v) => v != null);
+      const hi = d3.max(vals), lo = Math.min(0, d3.min(vals));
       hbars(box, rows, {
         cats: PREDICTORS, catOf: (r) => r.predictors,
         series: [{key: 'bss_7d', label: 'Within 7 days'}, {key: 'bss_14d', label: 'Within 14 days'}],
-        value: (r, s) => Number(r[s.key]), fmt: signed, domain: [0, Math.ceil(hi * 10) / 10], colors: sCols,
+        value: (r, s) => (r[s.key] == null ? NaN : Number(r[s.key])), fmt: signed,
+        domain: [Math.floor(lo * 10) / 10, Math.ceil(hi * 10) / 10], colors: sCols,
       });
     }
 
@@ -401,15 +395,6 @@
       const pctOr = (v) => (v == null ? '—' : pct(v));  // GEFS has no 14-day forecast
       fillTable(otab, ol.data, (r) => [[r.region], [r.forecast], [pctOr(r.p_7d), true], [pctOr(r.p_14d), true]]);
     } else otab.querySelector('tbody').innerHTML = '';
-
-    // GEFS skill
-    const sg = dash.data('skill_gefs');
-    const gtab = document.getElementById('gefs-table');
-    const gseasons = document.getElementById('gefs-seasons');
-    if (sg.status === 'ok') {
-      fillTable(gtab, sg.data, (r) => [[r.region], [r.predictors], [signed(Number(r.bss_7d)), true]]);
-      gseasons.textContent = sg.data[0] ? sg.data[0].seasons : '—';
-    } else { gtab.querySelector('tbody').innerHTML = ''; gseasons.textContent = '—'; }
 
     // Stages
     const st = dash.data('stages');
