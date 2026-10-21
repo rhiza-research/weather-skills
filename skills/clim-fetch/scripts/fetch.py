@@ -86,21 +86,31 @@ def _open_zarr_or_none(key: str) -> xr.Dataset | None:
         return None
 
 
-def _open_remote(dataset: str, variable: str, window: int) -> tuple[xr.Dataset, bool]:
+def _open_remote(
+    dataset: str, variable: str, window: int, approximate_spread: str = "none"
+) -> tuple[xr.Dataset, bool]:
     """Open the climatology; return (dataset, is_pre_aggregated).
 
-    Tries the exact --window cache; falls back to the daily (1d) cache —
-    which the caller must then roll up itself.
+    A daily store does not contain the covariance needed for a window spread.
+    Refuse an absent window cache unless the caller explicitly requests a bound.
     """
     if window > 1:
         pre_aggregated = _open_zarr_or_none(_object_key(dataset, variable, window))
         if pre_aggregated is not None:
             return pre_aggregated, True
+        if approximate_spread != "upper-bound":
+            raise DataError(
+                f"no exact {window}d climatology could be opened for "
+                f"--dataset {dataset} --variable {variable}. Daily means and standard "
+                "deviations do not determine day-to-day covariance or the window spread. "
+                "Use period-level history (aggregate each base year, then take the std "
+                "across years), --window 1, or explicitly opt in with "
+                "--approximate-spread upper-bound."
+            )
         print(
             f"clim-fetch: no pre-aggregated {window}d cache for "
-            f"{dataset!r}/{variable!r}; aggregating manually — resulting "
-            "standard deviations are approximate, not exact (assumes "
-            "independent days, ignoring day-to-day covariance)",
+            f"{dataset!r}/{variable!r}; emitting mean(daily std), the perfect-correlation "
+            "UPPER bound on window spread, marked approximate in the output",
             file=sys.stderr,
         )
     key = _object_key(dataset, variable, 1)
@@ -170,8 +180,11 @@ def _pad_circular(clim: xr.Dataset, window: int) -> xr.Dataset:
 def _roll_climatology(
     clim: xr.Dataset, mean_name: str, std_name: str, window: int, align: str
 ) -> xr.Dataset:
-    """Roll a daily climatology up to a coarser --window, correctly handling different
-    aggregation approach for mean and std.
+    """Roll daily means and emit the perfect-correlation upper bound on spread.
+
+    The standard deviation of a mean is at most the mean of daily standard
+    deviations (Minkowski inequality); daily moments do not determine its value.
+    An invalid or missing daily std must not produce a numeric window bound.
     """
     padded = _pad_circular(clim, window)
     original_times = clim["time"].values
@@ -179,11 +192,14 @@ def _roll_climatology(
     rolled_mean = roll_and_agg(padded[[mean_name]], window, "time", "mean", align=align)
     rolled_mean = rolled_mean.sel(time=original_times)
 
-    squared = (padded[std_name] ** 2).to_dataset(name=std_name)
-    squared_mean = roll_and_agg(squared, window, "time", "mean", align=align)
-    squared_mean = squared_mean.sel(time=original_times)
-    std_out = np.sqrt(squared_mean[std_name] / window)
-    std_out.attrs = dict(clim[std_name].attrs)  # sqrt(mean(x^2))/sqrt(N) keeps x's units
+    valid = np.isfinite(padded[std_name]) & (padded[std_name] >= 0)
+    daily_std = padded[std_name].where(valid).to_dataset(name=std_name)
+    std_out = roll_and_agg(daily_std, window, "time", "mean", align=align)[std_name]
+    valid_fraction = roll_and_agg(
+        valid.astype(float).to_dataset(name="valid"), window, "time", "mean", align=align
+    )["valid"]
+    std_out = std_out.where(valid_fraction == 1).sel(time=original_times)
+    std_out.attrs = dict(clim[std_name].attrs)
 
     out = rolled_mean
     out[std_name] = std_out
@@ -252,8 +268,8 @@ def _expand_climatology(clim: xr.Dataset, start, end) -> xr.Dataset:
     default=_DEFAULT_WINDOW_DAYS,
     help=(
         f"Climatology window in days (default: {_DEFAULT_WINDOW_DAYS}, i.e. "
-        "daily). Tries a pre-aggregated cache first; falls back to rolling up "
-        "the daily climatology locally (see --align) if that isn't mirrored."
+        "daily). Requires a pre-aggregated cache above 1, unless "
+        "--approximate-spread upper-bound explicitly permits a daily roll-up."
     ),
 )
 @weather_skill.argument(
@@ -266,9 +282,24 @@ def _expand_climatology(clim: xr.Dataset, start, end) -> xr.Dataset:
         "Ignored on --window 1 or a pre-aggregated cache hit."
     ),
 )
+@weather_skill.argument(
+    "--approximate-spread",
+    choices=["none", "upper-bound"],
+    default="none",
+    help="Without a window cache: refuse (none), or emit mean(daily std), marked approximate.",
+)
 @weather_skill.argument("--bbox")
 def fetch(
-    dataset, start_time, end_time, variable, prediction_timedelta, window, align, bbox, **kwargs
+    dataset,
+    start_time,
+    end_time,
+    variable,
+    prediction_timedelta,
+    window,
+    align,
+    bbox,
+    approximate_spread="none",
+    **kwargs,
 ):
     """Fetch a precomputed daily climatology (mean and standard deviation) laid onto a date range as a weather-skills Zarr."""
     if window < 1:
@@ -278,7 +309,7 @@ def fetch(
         f"prediction_timedelta={prediction_timedelta}d window={window}d align={align!r}",
         file=sys.stderr,
     )
-    clim, is_pre_aggregated = _open_remote(dataset, variable, window)
+    clim, is_pre_aggregated = _open_remote(dataset, variable, window, approximate_spread)
     clim = _select_lead(clim, prediction_timedelta)
 
     semantic_name = clim.attrs.get("variable", variable)
@@ -310,7 +341,8 @@ def fetch(
     if bbox is not None:
         clim = bbox_subset(clim, bbox)
 
-    if window > 1 and not is_pre_aggregated:
+    rolled_up = window > 1 and not is_pre_aggregated
+    if rolled_up:
         clim = _roll_climatology(clim, mean_name, std_name, window, align)
 
     expanded = _expand_climatology(clim, start_time, end_time).load()
@@ -338,6 +370,27 @@ def fetch(
     )
     for name in (mean_name, std_name):
         expanded[name].attrs[AGGREGATION_PERIOD_ATTR] = f"{window} day"
+    spread_method = (
+        "upper_bound_perfect_correlation"
+        if rolled_up
+        else "source_pre_aggregated_window"
+        if is_pre_aggregated
+        else "source_daily"
+    )
+    expanded[std_name].attrs.update(
+        spread_method=spread_method,
+        spread_is_approximate=rolled_up,
+        spread_window_days=window,
+        spread_estimator=(
+            "mean(daily std): perfect-correlation upper bound, not an exact window std"
+            if rolled_up
+            else "source climatology std, as published"
+        ),
+    )
+    expanded.attrs.update(
+        climatology_spread_method=spread_method,
+        climatology_spread_is_approximate=rolled_up,
+    )
     stamp_cf_attrs(expanded)
     return stamp_data_interval(expanded, period="1 day")
 

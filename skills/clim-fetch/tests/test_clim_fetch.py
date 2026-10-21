@@ -119,3 +119,109 @@ def test_lead_with_no_source_value_past_dec31_warns_and_stays_nan(tmp_path, mod,
     err = capsys.readouterr().err
     assert "7 of 11 dates have no climatology value" in err
     assert "2026-01-01" in err and "2026-01-07" in err and "2026-01-08" not in err
+
+
+def _spread_source(std=1.0):
+    import numpy as np
+    import pandas as pd
+    import xarray as xr
+
+    dims = ("init_time", "prediction_timedelta", "lat", "lon")
+    return xr.Dataset(
+        {
+            "avg": (dims, np.full((366, 1, 1, 1), 4.0)),
+            "std": (dims, np.full((366, 1, 1, 1), std)),
+        },
+        coords={
+            "init_time": pd.date_range("1904-01-01", periods=366),
+            "prediction_timedelta": np.array([0], dtype="timedelta64[ns]"),
+            "lat": [0.0],
+            "lon": [36.0],
+        },
+        attrs={"variable": "precip", "units": "mm / day"},
+    )
+
+
+def _fetch_spread(mod, path, source, window, *extra, exact=False):
+    def _open(key):
+        return source if key.endswith("_1d.zarr") or exact else None
+
+    with patch.object(mod, "_open_zarr_or_none", side_effect=_open):
+        run_skill(
+            mod.fetch,
+            "--dataset",
+            "chirps",
+            "--start-time",
+            "2026-06-01",
+            "--end-time",
+            "2026-06-03",
+            "--window",
+            str(window),
+            "-o",
+            str(path),
+            *extra,
+        )
+
+
+def test_missing_window_spread_refused_by_default(tmp_path, mod, capsys):
+    out = tmp_path / "out.zarr"
+    with pytest.raises(SystemExit) as exc:
+        _fetch_spread(mod, out, _spread_source(), 7)
+    assert exc.value.code != 0
+    assert not out.exists()
+    err = capsys.readouterr().err
+    assert "covariance" in err
+    assert "--approximate-spread upper-bound" in err
+
+
+@pytest.mark.parametrize("align", ["left", "right", "center"])
+def test_correlated_years_use_explicit_upper_bound(tmp_path, mod, align):
+    import numpy as np
+    import xarray as xr
+
+    # Each year's seven days move together: true window std equals daily std.
+    years = np.repeat(np.array([[3.0], [5.0]]), 7, axis=1)
+    true_std = years.mean(axis=1).std()
+    out = tmp_path / "out.zarr"
+    _fetch_spread(
+        mod,
+        out,
+        _spread_source(years[:, 0].std()),
+        7,
+        "--approximate-spread",
+        "upper-bound",
+        "--align",
+        align,
+    )
+    result = xr.open_zarr(out, consolidated=True)
+    np.testing.assert_allclose(result["precip_std"].values, true_std)
+    np.testing.assert_allclose(result["precip_avg"].values, years.mean())
+    assert result["precip_std"].attrs["spread_is_approximate"] is True
+    assert result["precip_std"].attrs["spread_method"] == "upper_bound_perfect_correlation"
+    assert result.attrs["climatology_spread_is_approximate"] is True
+
+
+@pytest.mark.parametrize("window", [1, 7])
+def test_exact_cache_spread_is_preserved(tmp_path, mod, window):
+    import numpy as np
+    import xarray as xr
+
+    out = tmp_path / "out.zarr"
+    _fetch_spread(mod, out, _spread_source(0.75), window, exact=True)
+    result = xr.open_zarr(out, consolidated=True)
+    np.testing.assert_allclose(result["precip_std"].values, 0.75)
+    assert result["precip_std"].attrs["spread_is_approximate"] is False
+
+
+@pytest.mark.parametrize("std", [0.0, -1.0, float("nan")])
+def test_upper_bound_preserves_zero_and_masks_invalid_spread(tmp_path, mod, std):
+    import numpy as np
+    import xarray as xr
+
+    out = tmp_path / "out.zarr"
+    _fetch_spread(mod, out, _spread_source(std), 7, "--approximate-spread", "upper-bound")
+    got = xr.open_zarr(out, consolidated=True)["precip_std"].values
+    if std == 0:
+        assert (got == 0).all()
+    else:
+        assert np.isnan(got).all()

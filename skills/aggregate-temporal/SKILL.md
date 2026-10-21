@@ -41,7 +41,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window 
 - Coordinate `aggregation_coverage` (0–1) on the axis: the share of expected input samples with data. Incomplete windows are kept and listed on stderr.
 
 ### Notes
-- A cell missing samples that other cells have is NaN for that window; values are never averaged over a partial record.
+- A cell missing samples that other cells have is NaN for that window, even when every cell misses a different sample and no cell is complete. A sample missing everywhere lowers `aggregation_coverage` instead; it does not blank cells that have every available sample.
 - Input that is already aggregated must divide evenly into the period (weekly → `14 day`, not `monthly`), else exit 2. A period shorter than the input's samples (`6 hour` on daily data, or shorter than the widest `step_bounds` cell) also exits 2. Input already at the period is only stamped, not changed.
 - Concatenated segments with gaps (e.g. one week per year) straddle windows; aggregate each segment before concatenating.
 - `--window` is refused on axes with missing rows or CF `{dim}_bounds`; use `--period`.

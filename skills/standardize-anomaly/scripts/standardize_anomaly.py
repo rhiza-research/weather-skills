@@ -10,7 +10,7 @@ import pint
 import pint_xarray
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import ALIASES, detect_spatial_dims
-from weather_skills_core.units import ureg
+from weather_skills_core.units import AGGREGATION_PERIOD_ATTR, ureg
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
@@ -59,6 +59,7 @@ def standardize_anomaly(ds, climatology, variable, **kwargs):
     for v in vars_:
         avg_name, std_name = f"{v}_avg", f"{v}_std"
         field, avg, std = ds[v], climatology[avg_name], climatology[std_name]
+        period = field.attrs.get(AGGREGATION_PERIOD_ATTR)
         units = [da.pint.units for da in (field, avg, std)]
         if all(u is not None for u in units):
             try:
@@ -109,6 +110,8 @@ def standardize_anomaly(ds, climatology, variable, **kwargs):
                 "the input to it (sub-daily input: aggregate-temporal to daily first)"
             )
         anomaly.attrs = {"units": "1", "long_name": f"{v} standardized anomaly"}
+        if period is not None:
+            anomaly.attrs[AGGREGATION_PERIOD_ATTR] = period
         out[f"{v}_anomaly"] = anomaly
 
     return xr.Dataset(out)

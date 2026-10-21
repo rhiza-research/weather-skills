@@ -543,6 +543,57 @@ def test_partial_grid_cell_is_nan(tmp_path, aggregate):
     assert int(np.isnan(weekly).sum()) == 2
 
 
+@pytest.mark.parametrize("extra", [[], ["--end-time", "2026-10-05"]])
+@pytest.mark.parametrize("method", ["mean", "min", "max"])
+def test_every_station_partial_is_nan_without_complete_station(tmp_path, aggregate, extra, method):
+    ds = make_point_obs(n_time=7, n_points=2, fill=5.0, start="2026-09-28")
+    ds["precip"].values[0, 1] = np.nan
+    ds["precip"].values[1, 4] = np.nan
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        aggregate,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--period",
+        "weekly",
+        "--method",
+        method,
+        *extra,
+    )
+    weekly = xr.open_zarr(out, consolidated=True)
+    assert np.isnan(weekly["precip"].values).all()
+
+
+def test_day_missing_everywhere_keeps_available_rate_and_reduces_coverage(tmp_path, aggregate):
+    ds = make_point_obs(n_time=7, n_points=2, fill=5.0, start="2026-09-28")
+    ds["precip"].values[:, 3] = np.nan
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--period", "weekly")
+    weekly = xr.open_zarr(out, consolidated=True)
+    assert weekly["precip"].values.reshape(-1) == pytest.approx([5.0, 5.0])
+    assert float(weekly["aggregation_coverage"].values[0]) == pytest.approx(6 / 7)
+
+
+def test_every_station_partial_with_duration_weights_is_nan(tmp_path, aggregate):
+    ds = make_point_obs(n_time=7, n_points=2, fill=5.0, start="2026-09-28")
+    ds["precip"].values[0, 1] = np.nan
+    ds["precip"].values[1, 4] = np.nan
+    starts = ds["time"].values
+    ds["time_bounds"] = (
+        ("time", "nv"),
+        np.stack([starts, starts + np.timedelta64(1, "D")], axis=1),
+    )
+    ds["time"].attrs["bounds"] = "time_bounds"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--period", "weekly")
+    assert np.isnan(xr.open_zarr(out, consolidated=True)["precip"].values).all()
+
+
 def _daily_with_gap(stamp_interval):
     """Two weeks of daily 1 mm/day with no row at all for 2026-01-05."""
     days = np.array([d for d in range(14) if d != 4])

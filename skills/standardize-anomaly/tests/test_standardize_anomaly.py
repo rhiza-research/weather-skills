@@ -155,3 +155,22 @@ def test_nan_propagates(tmp_path, standardize_anomaly):
     out = _run(tmp_path, standardize_anomaly, field, _ds(_CLIM), "precip")
     values = xr.open_zarr(out, consolidated=True)["precip_anomaly"].values.ravel()
     assert np.isnan(values[0]) and values[1] == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize("period", ["7 day", "1 month", None])
+def test_input_period_preserved_without_inventing_one(tmp_path, standardize_anomaly, period):
+    field = _ds({"precip": (6.0, "mm day-1")})
+    if period is not None:
+        field["precip"].attrs["aggregation_period"] = period
+    clim = _ds(_CLIM)
+    # Monthly inputs can legitimately pair with a 31-day climatology window.
+    for name in clim.data_vars:
+        clim[name].attrs["aggregation_period"] = "31 day"
+    result = xr.open_zarr(
+        _run(tmp_path, standardize_anomaly, field, clim, "precip"), consolidated=True
+    )["precip_anomaly"]
+    assert result.values == pytest.approx(2.0)
+    if period is None:
+        assert "aggregation_period" not in result.attrs
+    else:
+        assert result.attrs["aggregation_period"] == period

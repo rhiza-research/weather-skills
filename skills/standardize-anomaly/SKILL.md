@@ -26,7 +26,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/standardize_anomaly.py -i IN.zarr --climatolo
 - `--output`, `-o` — output Zarr.
 
 ### Output
-- One `NAME_anomaly` per variable, `units: "1"`, `long_name: "NAME standardized anomaly"`. The field's other attrs are not copied.
+- One `NAME_anomaly` per variable, `units: "1"`, `long_name: "NAME standardized anomaly"`, plus the input field's `aggregation_period` when present. An anomaly of a weekly mean remains weekly; an unstamped input gets no invented period. The field's other attrs are not copied.
 - Spatial dims are named `latitude` / `longitude` whatever the inputs called them.
 - Cells where `NAME_std` is 0 are NaN (no spread, so no z-score). NaN in any of the three gives NaN; nothing is filled.
 
