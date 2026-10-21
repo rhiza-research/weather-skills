@@ -4,7 +4,7 @@ Usage: python members_live.py ARCHIVE WORK INIT [MODEL ...]      e.g. ... 2026-1
 
 For each model and window W = 7, 14 days: indicator --rule icpac-onset --first-in Wd --season-start
 09-15 --probability --time-dim step on ARCHIVE/live/MODEL/MODEL_INIT.zarr, read at lead 0 (the share
-of members whose first onset since 15 Sep falls within W days of the init), put on WORK/grid.zarr (clip-region for ECMWF's 1.5 deg grid, coarsen for Cumulus's 1 deg).
+of members whose first onset since 15 Sep falls within W days of the init), put on WORK/grid.zarr (clip-region for ECMWF's and GEFS's 1.5 deg grids, coarsen for Cumulus's 1 deg).
 Writes WORK/live/MODEL_wk.zarr: probability(step=0, window=7/14, latitude, longitude).
 """
 
@@ -45,7 +45,10 @@ for model in MODELS:
     wk.to_dataset(name="probability").to_zarr(fine, mode="w")
     out = WORK / "live" / f"{model}_wk.zarr"
     shutil.rmtree(out, ignore_errors=True)
-    if model == "ecmwf":
+    if model == "gefs":
+        wk = wk.where(wk["window"] == 7)  # 35-day GEFS decides the 7-day window only (members_predictors.py)
+        wk.to_dataset(name="probability").to_zarr(fine, mode="w")
+    if model in ("ecmwf", "gefs"):  # already on the 1.5 deg cells
         run("clip-region", "clip", "-i", fine, "--bbox", BOX, "-o", out)
     else:
         run("coarsen", "coarsen", "-i", fine, "--reference-grid", WORK / "grid.zarr", "--method", "conservative", "-o", out)

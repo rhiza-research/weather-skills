@@ -17,7 +17,7 @@ Total time:
 - **A Mac or Linux machine** with `git` and `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`). `uv` installs Python itself.
 - **Google Chrome** (or another Chromium browser, such as Brave or Edge): the maps are drawn to PNG through it. Without one, `run_demo.sh` stops at "maps + report".
 - **For step 7 only:** Claude with the Artifact tool (the Claude desktop app's Code tab, or claude.ai/code).
-- **About 3.5 GB of free disk:** 2.2 GB of data, 0.9 GB of Python packages and 0.4 GB of working files.
+- **About 3.7 GB of free disk:** 2.4 GB of data, 0.9 GB of Python packages and 0.4 GB of working files.
 - **The demo service-account key:** a JSON file shared by Rhiza Research, which can read `gs://sheerwater-datalake/gates-demo/`. Never print it or commit it.
 
 ## Before the meeting
@@ -49,11 +49,12 @@ export INIT=2026-10-15
 py() { uv run --project "$SKILLS/.." python -I "$@"; }    # Python with every skill's dependencies
 ```
 
-### 3. Download the inputs (2.1 GB, about 40 s on a fast connection)
+### 3. Download the inputs (2.3 GB, about 45 s on a fast connection)
 ```bash
 B=gs://sheerwater-datalake/gates-demo/archive
-for f in chirps_daily_1p5.zarr ecmwf_reforecast.zarr cumulus_hindcast.zarr live/chirps_2026.zarr \
-         live/ecmwf/ecmwf_$INIT.zarr live/cumulus/cumulus_$INIT.zarr; do
+for f in chirps_daily_1p5.zarr ecmwf_reforecast.zarr cumulus_hindcast.zarr gefs_reforecast.zarr \
+         live/chirps_2026.zarr live/ecmwf/ecmwf_$INIT.zarr live/cumulus/cumulus_$INIT.zarr \
+         live/gefs/gefs_$INIT.zarr; do
   mkdir -p "$(dirname "$ARCHIVE/$f")"
   py $HERE/download_pack.py $B/$f $ARCHIVE/$f
 done
@@ -62,8 +63,9 @@ What it downloads:
 - CHIRPS satellite rainfall since 1981 on the 1.5° cells;
 - the ECMWF reforecast: 10 members, 20 past years;
 - the Cumulus AI hindcast: 30 members, 2016–2024;
+- the US GEFS reforecast: 11 members, 1999–2019;
 - this season's CHIRPS up to mid-October, to see where the rains have already started;
-- the two live forecasts for `$INIT`.
+- the three live forecasts (ECMWF, Cumulus, GEFS) for `$INIT`.
 
 Anything already downloaded is skipped.
 
@@ -78,7 +80,7 @@ mkdir -p $OUT && bash $HERE/run_demo.sh 2>&1 | tee $OUT/run_demo.log
 ```
 It prints each stage and its time (kept in `$OUT/run_demo.log` for the dashboard in step 7):
 1. **Observed onsets:** finds when the rains really started in every season since 1981 (`indicator --rule icpac-onset`).
-2. **Member predictors:** for each past and live forecast, the share of ensemble members that start the rains within 7 and within 14 days (`indicator --probability`).
+2. **Member predictors:** for each past and live forecast (ECMWF, Cumulus, GEFS), the share of ensemble members that start the rains within 7 and within 14 days (`indicator --probability`). GEFS runs only 35 days, so it gives the 7-day share only.
 3. **Cross-validation:** hides one season at a time, fits the blend on the rest (`mme-fit`), predicts the hidden season (`mme-blend`) and scores it.
 4. **Fit + blend 2026:** fits on all seasons, blends the `$INIT` forecasts, and sets places where CHIRPS already shows the onset to 1.
 5. **Maps + report.**
@@ -100,7 +102,7 @@ Report back in this order:
    | Cumulus | +0.31 / +0.27 | +0.29 / +0.35 |
    | ECMWF + Cumulus | **+0.33 / +0.29** | **+0.31 / +0.37** |
 
-2. **Which models matter?** Read the weights table. In the ECMWF + Cumulus blend, Cumulus carries most of the weight (5.8 vs 1.7 for 7 days). The AI model adds the most skill.
+2. **Which models matter?** Read the weights table. In the ECMWF + Cumulus blend, Cumulus carries most of the weight (5.8 vs 1.7 for 7 days). The AI model adds the most skill. The *With GEFS* tables (7 days only, 5 seasons the GEFS reforecast shares with ECMWF) show GEFS adding to ECMWF: ECMWF + GEFS +0.09 against climatology over all cells, +0.14 in Kenya, against −0.02 and +0.00 for ECMWF alone. In Uganda neither beats climatology on those seasons.
 3. **What does it say for this season?** Read the 2026 outlook tables and the country maps. Each number is the chance the rains have started by that date. Where CHIRPS already shows the onset, it's 1. On the 15 October init:
    - **Uganda:** the rains have already started in 9 of its 17 cells, mostly the north and west. Around Lake Victoria the blend gives high chances by 21 October. Area mean: about **76%** by 21 October and **80%** by 28 October.
    - **Kenya:** no onset yet. About **8%** by 21 October and **19%** by 28 October, close to an average year. The highest chances are near Lake Victoria and in the east and north-east.

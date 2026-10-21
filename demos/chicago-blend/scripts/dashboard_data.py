@@ -28,7 +28,7 @@ dash.mkdir(exist_ok=True)
 report = (out / "report.md").read_text()
 sections = {s.split("\n", 1)[0]: s for s in re.split(r"\n## ", report)}
 section = lambda start: next(s for title, s in sections.items() if title.startswith(start))  # noqa: E731
-pct = lambda s: float(s.rstrip("%")) / 100  # noqa: E731
+pct = lambda s: None if s == "–" else float(s.rstrip("%")) / 100  # noqa: E731  ("–": no forecast)
 
 
 def blocks(text):
@@ -48,9 +48,9 @@ weights = []
 for line in section("Blend weights").splitlines():
     c = [x.strip() for x in line.strip("|").split("|")]
     if len(c) == 4 and c[1].endswith(" days"):
-        coef = {k: float(v) for k, v in re.findall(r"(ECMWF|Cumulus) ([-\d.]+)", c[3])}
+        coef = {k: float(v) for k, v in re.findall(r"(ECMWF|Cumulus|GEFS) ([-\d.]+)", c[3])}
         weights.append({"blend": c[0], "window_days": int(c[1].split()[0]), "intercept": float(c[2]),
-                        "w_ecmwf": coef.get("ECMWF"), "w_cumulus": coef.get("Cumulus")})
+                        "w_ecmwf": coef.get("ECMWF"), "w_cumulus": coef.get("Cumulus"), "w_gefs": coef.get("GEFS")})
 
 outlook, started = [], []
 cells = {region: int(n) for region, n in re.findall(r"\*\*(\w+)\*\* \((\d+) cells\)", section("How well"))}

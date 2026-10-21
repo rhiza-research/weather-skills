@@ -31,24 +31,24 @@ export OUT=/path/to/results                           # report.md and the maps
 export INIT=2026-10-15                                # the live init to blend
 bash $HERE/run_demo.sh
 ```
-The run only needs these parts of the archive (2.1 GB):
+The run only needs these parts of the archive (2.3 GB):
 - `chirps_daily_1p5.zarr`;
 - `ecmwf_reforecast.zarr`;
 - `cumulus_hindcast.zarr`;
+- `gefs_reforecast.zarr` (and `gefs_operational.zarr` once it exists: it adds 2020 – 2021);
 - `live/chirps_2026.zarr`;
-- `live/ecmwf/ecmwf_$INIT.zarr`;
-- `live/cumulus/cumulus_$INIT.zarr`.
+- `live/ecmwf/ecmwf_$INIT.zarr`, `live/cumulus/cumulus_$INIT.zarr`, `live/gefs/gefs_$INIT.zarr`.
 
 Timings on 21 Oct 2026 (Apple silicon, local disk):
 
 | Stage | Script(s) | Time |
 |---|---|---|
-| Observed onsets | `members_events.py` | 22 s |
-| Member predictors, hindcast and live | `members_predictors.py ... 2022 cumulus`, `members_live.py` | 91 s |
-| Cross-validation | `clim.py`, `cv.py ... cumulus-no-gefs` | 16 s |
-| Final fits, 2026 blends, already-started cells | `fit_blend.py ... ecmwf cumulus ecmwf+cumulus`, `started.py` | 3 s |
-| Maps and report | `clip-region`, `plot` (five maps), `report.py` | 26 s |
-| **Total** | | **158 s** |
+| Observed onsets | `members_events.py` | 21 s |
+| Member predictors, hindcast and live | `members_predictors.py ... 2022 cumulus gefs`, `members_live.py ... ecmwf cumulus gefs` | 75 s |
+| Cross-validation | `clim.py`, `cv.py ... cumulus-no-gefs`, `cv.py ... gefs` | 25 s |
+| Final fits, 2026 blends, already-started cells | `fit_blend.py ... ecmwf cumulus ecmwf+cumulus gefs ecmwf+gefs`, `started.py` | 4 s |
+| Maps and report | `clip-region`, `plot` (five maps), `report.py` | 27 s |
+| **Total** | | **152 s** |
 
 The member predictors run `indicator` once per window, so they take about twice as long as with one window.
 
@@ -76,7 +76,7 @@ gcloud storage rsync -r gs://sheerwater-datalake/gates-demo/archive $ARCHIVE
 | `live/grid_1p5.zarr` | The 1.5° target grid. | |
 | `live/chirps_2026.zarr` | CHIRPS final and preliminary, 15 Sep – 15 Oct 2026, on the 1.5° cells (`chirps-fetch`, then `coarsen --reference-grid live/grid_1p5.zarr --method conservative`). Refresh it before a later init. | 0.1 MB |
 
-GEFS isn't in the current analysis yet. Its reforecast ends in 2019, so it overlaps Cumulus for only 4 seasons until the operational 2020 – 2025 store is finished.
+GEFS enters the analysis for the 7-day window only (35-day forecasts), scored separately from Cumulus because the seasons they share with ECMWF barely overlap (2016 only, until `gefs_operational.zarr` adds 2020 – 2021).
 
 How the archive was built (scripts in `scripts/`; rerun only to rebuild it):
 - ECMWF reforecast and real-time: `cloud_members.py`, run on a Coiled VM next to the source.
@@ -98,12 +98,13 @@ py $HERE/members_events.py $ARCHIVE $RUN
 
 ### 2. Member predictors
 ```bash
-py $HERE/members_predictors.py $ARCHIVE $RUN 2022 cumulus
-py $HERE/members_live.py $ARCHIVE $RUN $INIT ecmwf cumulus
+py $HERE/members_predictors.py $ARCHIVE $RUN 2022 cumulus gefs
+py $HERE/members_live.py $ARCHIVE $RUN $INIT ecmwf cumulus gefs
 ```
 - **ECMWF:** the 2022 model cycle's Thursday issuances (hindcast years 2002 – 2021), reshaped from WeatherBench2's issuance × hindcast-year layout to one init axis (own code, since no skill reads that layout). Then `clip-region` and `indicator`. This gives `ecmwf_hind.zarr`, 360 inits, with dims `(time, step=0, window=7/14, latitude, longitude)`.
 - **Cumulus:** for each ECMWF init, the latest Cumulus init on or before it, at most 1 day earlier. It is read at lead day lag, so the windows start on the same valid date, then put on the 1.5° cells with `coarsen --method conservative`. This gives `cumulus_hind.zarr`, 108 inits (2016 – 2021).
-- **Live:** the same for `$INIT`, giving `live/ecmwf_wk.zarr` and `live/cumulus_wk.zarr`.
+- **GEFS:** paired the same way (lag 0 – 1 day). The reforecast runs on Wednesdays, so it lines up with the ECMWF hindcast dates (which keep the 2022 calendar dates in every year) in only 5 seasons: 2004, 2005, 2010, 2011, 2016. It is reshaped from its IRIDL layout (own code), run through `indicator`, and coarsened from 1° to the 1.5° cells. `gefs_operational.zarr` (daily inits, already at 1.5°), when present, adds every 2020 – 2021 init at lag 0 with `select` and `clip-region`. GEFS runs 35 days, which decides onset only within 7 days, so its 14-day share is set to NaN. This gives `gefs_hind.zarr`.
+- **Live:** the same for `$INIT`, giving `live/ecmwf_wk.zarr`, `live/cumulus_wk.zarr` and `live/gefs_wk.zarr`.
 
 Cumulus's 1° grid doesn't fully cover the southern row and the eastern column of 1.5° cells, so those are NaN for Cumulus (about 16% of cells).
 
@@ -111,22 +112,25 @@ Cumulus's 1° grid doesn't fully cover the southern row and the eastern column o
 ```bash
 EC_INIT=$INIT py $HERE/clim.py $RUN
 py $HERE/cv.py $RUN cumulus-no-gefs > $RUN/cv.txt
+py $HERE/cv.py $RUN gefs > $RUN/cv_gefs.txt
 ```
 - **`clim.py`** writes, for the same inits and windows, the chance of the event from that day of the season:
   - `clim_hind.zarr`: every 1981 – 2025 season except the init's own;
   - `clim_2026_analog.zarr`: the 2026 El Niño analog years 1982 1994 1997 2006 2015 2019 2023;
   - `clim_2026_all.zarr`: all years.
 - **`cv.py`:** for each of the 6 seasons ECMWF and Cumulus share (2016 – 2021), it fits on the other 5 with `mme-fit`, blends the held-out season with `mme-blend`, and scores it. The sets are `ecmwf`, `cumulus`, `ecmwf+cumulus` and `clim`. Every set is scored on the same cell-weeks: those where the observation and every input are present. Rows go to `cv_predictions_cumulus-no-gefs.csv`, with each sample's cell.
+- **`cv.py ... gefs`:** the same over the seasons ECMWF and GEFS share, for `ecmwf`, `gefs`, `ecmwf+gefs` and `clim`, 7 days only (`cv_predictions_gefs.csv`).
 
 Other modes: `cv.py $RUN no-gefs` scores ECMWF alone and ECMWF + climatology over all 20 ECMWF seasons. The modes `cumulus` and the default include GEFS.
 
 ### 4. Final fits, 2026 blends and already-started cells
 ```bash
-py $HERE/fit_blend.py $RUN ecmwf cumulus ecmwf+cumulus
-py $HERE/started.py $ARCHIVE $RUN $INIT p2026_ecmwf p2026_cumulus p2026_ecmwf+cumulus clim_2026_analog clim_2026_all
+py $HERE/fit_blend.py $RUN ecmwf cumulus ecmwf+cumulus gefs ecmwf+gefs
+py $HERE/started.py $ARCHIVE $RUN $INIT p2026_ecmwf p2026_cumulus p2026_ecmwf+cumulus p2026_gefs p2026_ecmwf+gefs \
+  clim_2026_analog clim_2026_all
 ```
 - `fit_blend.py` fits on all seasons (`--fit-along window`) and blends the live forecasts, writing `w_<set>.zarr` and `p2026_<set>.zarr`.
-- `started.py` runs `indicator --rule icpac-onset --cumulative` on `live/chirps_2026.zarr` and clips it to the box (`started.zarr`). It sets each named 2026 file to 1 where the onset is confirmed by the day before the init: 20 cells for the 15 October init, 9 of them in Uganda and none in Kenya.
+- `started.py` runs `indicator --rule icpac-onset --cumulative` on `live/chirps_2026.zarr` and clips it to the box (`started.zarr`). It sets each named 2026 file to 1 where the onset is confirmed by the day before the init (only in windows the blend forecasts, so GEFS's 14-day window stays empty): 20 cells for the 15 October init, 9 of them in Uganda and none in Kenya.
 
 ### 5. Maps and report
 `run_demo.sh` plots `p2026_<set>.zarr` for all cells, one panel per window (`"meta": {"facet": "window"}`), titled with the window's last day ("By 21 Oct", "By 28 Oct") through the `panel-title-1` / `panel-title-2` annotations. It clips the cells (`cells_Kenya.zarr`, `cells_Uganda.zarr`) and the ECMWF + Cumulus blend to each country, plots those, and runs:
@@ -143,6 +147,16 @@ The report has the skill table, weights and 2026 outlook for all cells, Kenya an
 | ECMWF | +0.04 / +0.00 | +0.11 / +0.07 | +0.10 / +0.04 |
 | Cumulus | +0.22 / +0.20 | +0.31 / +0.27 | +0.29 / +0.35 |
 | ECMWF + Cumulus | **+0.24 / +0.23** | **+0.33 / +0.29** | **+0.31 / +0.37** |
+
+**With GEFS**, within 7 days only, the 5 seasons the GEFS reforecast shares with ECMWF (2004, 2005, 2010, 2011, 2016):
+
+| Predictors | All cells (329 onsets) | Kenya (80) | Uganda (69) |
+|---|---|---|---|
+| ECMWF | −0.02 | +0.00 | −0.23 |
+| GEFS | +0.04 | +0.12 | −0.06 |
+| ECMWF + GEFS | **+0.09** | **+0.14** | −0.02 |
+
+Weights for 7 days: GEFS alone −3.75 + 7.97 × GEFS; ECMWF + GEFS −4.15 + 3.14 × ECMWF + 4.93 × GEFS. For 15 October 2026 the ECMWF + GEFS blend gives 26% (all cells), 7% (Kenya) and 69% (Uganda) by 21 October.
 
 **Weights** (log-odds per unit of members' onset share, fitted on all seasons):
 

@@ -1,6 +1,6 @@
 """Leave-one-season-out test of mme-fit / mme-blend for the first OND onset within 7 / 14 days of each init.
 
-Usage: python cv.py WORK [no-gefs | cumulus | cumulus-no-gefs]
+Usage: python cv.py WORK [no-gefs | gefs | cumulus | cumulus-no-gefs]
 
 For each held-out season: fit logistic weights per window on the other
 seasons with the mme-fit skill, blend the held-out season's forecasts with
@@ -48,6 +48,9 @@ if MODE == "cumulus-no-gefs":
         "clim": ["clim"],
     }
     del SRC["gefs"]
+if MODE == "gefs":
+    # GEFS has the 7-day window only; the 14-day rows come out empty.
+    CONFIGS = {"ecmwf": ["ecmwf"], "gefs": ["gefs"], "ecmwf+gefs": ["ecmwf", "gefs"], "clim": ["clim"]}
 if MODE == "no-gefs":
     CONFIGS = {"ecmwf": ["ecmwf"], "ecmwf+clim": ["ecmwf", "clim"], "clim": ["clim"]}
     del SRC["gefs"]

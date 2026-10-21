@@ -19,6 +19,8 @@ init = (run / "init.txt").read_text().strip()
 WINDOWS = [7, 14]  # days from the init
 WEEKS = [f"By {pd.Timestamp(init) + pd.Timedelta(days=w - 1):%-d %b}" for w in WINDOWS]
 SETS = {"ecmwf": "ECMWF", "cumulus": "Cumulus", "ecmwf+cumulus": "ECMWF + Cumulus"}
+GEFS_SETS = {"ecmwf": "ECMWF", "gefs": "GEFS", "ecmwf+gefs": "ECMWF + GEFS"}  # 7-day window only
+LABELS = {**SETS, **GEFS_SETS}
 
 
 def table(header, rows):
@@ -29,6 +31,8 @@ def table(header, rows):
 
 df = pd.read_csv(run / "cv_predictions_cumulus-no-gefs.csv")
 years = sorted(df.year.unique())
+gdf = pd.read_csv(run / "cv_predictions_gefs.csv")
+gyears = sorted(gdf.year.unique())
 REGIONS = {"All cells": None}
 for country in ("Kenya", "Uganda"):
     ds = xr.open_zarr(run / f"cells_{country}.zarr")
@@ -46,24 +50,25 @@ def in_region(lat, lon, mask):
     return pd.Series([(round(a, 2), round(b, 2)) in inside for a, b in zip(lat, lon, strict=True)], index=lat.index)
 
 
-def skill_section(mask):
+def skill_section(mask, df=df, sets=SETS, windows=WINDOWS):
     d = df[in_region(df.latitude, df.longitude, mask)]
     rows = []
-    for cfg, label in SETS.items():
+    for cfg, label in sets.items():
         row = [label]
-        for win in WINDOWS:
+        for win in windows:
             g = d[(d.cfg == cfg) & (d.window == win)]
             row.append(f"{1 - ((g.p - g.obs) ** 2).mean() / ((g.clim - g.obs) ** 2).mean():+.2f}")
         rows.append(row)
     first = d[d.cfg == "ecmwf"]
-    events = [int(first[first.window == w].obs.sum()) for w in WINDOWS]
-    samples = [int((first.window == w).sum()) for w in WINDOWS]
+    events = [int(first[first.window == w].obs.sum()) for w in windows]
+    samples = [int((first.window == w).sum()) for w in windows]
     return rows, events, samples
 
 
 def outlook_section(mask):
     rows = []
-    for name, label in [(f"p2026_{c}", f"{l} blend") for c, l in SETS.items()] + [
+    blends = list(SETS.items()) + [(c, l) for c, l in GEFS_SETS.items() if c != "ecmwf"]
+    for name, label in [(f"p2026_{c}", f"{l} blend") for c, l in blends] + [
         ("clim_2026_analog", "Climatology, El Niño analog years"),
         ("clim_2026_all", "Climatology, all years 1981-2025"),
     ]:
@@ -71,15 +76,17 @@ def outlook_section(mask):
         if mask is not None:
             p = p.where(mask.reindex_like(p, method="nearest", tolerance=0.01).fillna(False))
         means = p.mean(["latitude", "longitude"]).values
-        rows.append([label] + [f"{v:.0%}" for v in means])
+        rows.append([label] + ["–" if pd.isna(v) else f"{v:.0%}" for v in means])
     return rows
 
 
 weights = []
-for cfg, label in SETS.items():
+for cfg, label in list(SETS.items()) + [(c, l) for c, l in GEFS_SETS.items() if c != "ecmwf"]:
     w = xr.open_zarr(run / f"w_{cfg}.zarr").load()
     for k, week in enumerate(WEEKS):
-        coefs = ", ".join(f"{SETS[p]} {w.coef.isel(window=k).sel(predictor=p).item():.2f}" for p in w.predictor.values)
+        if not bool(w.intercept.isel(window=k).notnull()):
+            continue  # GEFS sets have no 14-day fit
+        coefs = ", ".join(f"{LABELS[p]} {w.coef.isel(window=k).sel(predictor=p).item():.2f}" for p in w.predictor.values)
         weights.append([label, f"{WINDOWS[k]} days", f"{w.intercept.isel(window=k).item():.2f}", coefs])
 
 started = xr.open_zarr(run / "started.zarr")["indicator"].sel(time=pd.Timestamp(init) - pd.Timedelta(days=1)).load() == 1
@@ -90,6 +97,11 @@ for region, mask in REGIONS.items():
     skill_md.append(f"""**{region}**{cells}: {samples[0]:,} samples, {events[0]} / {events[1]} onsets within 7 / 14 days.
 
 {table(["Predictors"] + WEEKS, rows)}
+""")
+    grows, gevents, gsamples = skill_section(mask, gdf, GEFS_SETS, [7])
+    skill_md.append(f"""*With GEFS*, within 7 days only, {len(gyears)} seasons ({", ".join(map(str, gyears))}): {gsamples[0]:,} samples, {gevents[0]} onsets.
+
+{table(["Predictors", WEEKS[0]], grows)}
 """)
     here = started if mask is None else started.where(mask.reindex_like(started, method="nearest", tolerance=0.01).fillna(False), False)
     outlook_md.append(f"""**{region}**: rains already started (CHIRPS) in {int(here.sum())} cells.
@@ -134,6 +146,9 @@ onset before {init} count as 1:
 
 ## Caveats
 - {len(years)} seasons of Cumulus hindcasts: one unusual season can change the ranking.
+- GEFS runs 35 days, so it answers the 7-day question only. Its reforecast runs on Wednesdays, so it
+  lines up with the ECMWF hindcast dates (within a day) in only some years; the GEFS scores rest on
+  {len(gyears)} seasons.
 - Live ECMWF is the current model cycle (101 members); its weights come from the 2022-cycle
   reforecast (10 members), whose member shares are coarser.
 - An onset is confirmed only 21 days after its first rains, so CHIRPS can mark only the onsets that

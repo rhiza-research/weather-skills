@@ -23,14 +23,15 @@ rm -rf "$RUN"; mkdir -p "$RUN" "$OUT"
 echo "$INIT" > "$RUN/init.txt"
 py "$HERE/members_events.py" "$ARCHIVE" "$RUN" >/dev/null 2>&1
 lap "observed onsets (CHIRPS)"
-py "$HERE/members_predictors.py" "$ARCHIVE" "$RUN" 2022 cumulus >/dev/null 2>&1
-py "$HERE/members_live.py" "$ARCHIVE" "$RUN" "$INIT" ecmwf cumulus >/dev/null 2>&1
+py "$HERE/members_predictors.py" "$ARCHIVE" "$RUN" 2022 cumulus gefs >/dev/null 2>&1
+py "$HERE/members_live.py" "$ARCHIVE" "$RUN" "$INIT" ecmwf cumulus gefs >/dev/null 2>&1
 lap "member predictors (hindcast + live)"
 EC_INIT=$INIT py "$HERE/clim.py" "$RUN" >/dev/null 2>&1
 py "$HERE/cv.py" "$RUN" cumulus-no-gefs > "$RUN/cv.txt" 2>/dev/null
+py "$HERE/cv.py" "$RUN" gefs > "$RUN/cv_gefs.txt" 2>/dev/null
 lap "cross-validation"
-py "$HERE/fit_blend.py" "$RUN" ecmwf cumulus ecmwf+cumulus >/dev/null 2>&1
-py "$HERE/started.py" "$ARCHIVE" "$RUN" "$INIT" p2026_ecmwf p2026_cumulus p2026_ecmwf+cumulus \
+py "$HERE/fit_blend.py" "$RUN" ecmwf cumulus ecmwf+cumulus gefs ecmwf+gefs >/dev/null 2>&1
+py "$HERE/started.py" "$ARCHIVE" "$RUN" "$INIT" p2026_ecmwf p2026_cumulus p2026_ecmwf+cumulus p2026_gefs p2026_ecmwf+gefs \
   clim_2026_analog clim_2026_all >/dev/null 2>&1
 lap "fit weights + blend 2026"
 # Panel titles: the last day of each window from the init (7 and 14 days).

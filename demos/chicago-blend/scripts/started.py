@@ -40,7 +40,9 @@ for name in NAMES:
     path = WORK / f"{name}.zarr"
     ds = xr.open_zarr(path).load()
     mask = started.reindex_like(ds, method="nearest", tolerance=0.01).fillna(False).drop_vars("time", errors="ignore")
-    ds["probability"] = ds["probability"].where(~mask, 1.0)
+    # Only windows the blend forecasts at all (GEFS has no 14-day window: it stays NaN).
+    forecast = ds["probability"].notnull().any(["latitude", "longitude"])
+    ds["probability"] = ds["probability"].where(~mask | ~forecast, 1.0)
     ds.attrs["comment"] = "1 where CHIRPS shows the rainy season already started before the init."
     ds.to_zarr(path, mode="w")
 
