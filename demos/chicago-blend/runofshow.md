@@ -10,7 +10,8 @@ What it does:
 
 Total time:
 - before the meeting: about 2 minutes to install and 1 minute to download;
-- during the demo: about **2½ minutes** to run.
+- during the demo: about **2½ minutes** to run;
+- after it, optionally: about 2 minutes to publish the results as a live dashboard (step 7).
 
 ## What you need
 - **A Mac or Linux machine** with `git` and `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`). `uv` installs Python itself.
@@ -71,9 +72,9 @@ Run step 5 below and check that the report and maps appear.
 
 ### 5. Run the blend (about 2½ min)
 ```bash
-bash $HERE/run_demo.sh
+bash $HERE/run_demo.sh 2>&1 | tee $OUT/run_demo.log
 ```
-It prints each stage and its time:
+It prints each stage and its time (kept in `$OUT/run_demo.log` for the dashboard in step 7):
 1. **Observed onsets:** finds when the rains really started in every season since 1981 (`indicator --rule icpac-onset`).
 2. **Member predictors:** for each past and live forecast, the share of ensemble members that start the rains within 7 and within 14 days (`indicator --probability`).
 3. **Cross-validation:** hides one season at a time, fits the blend on the rest (`mme-fit`), predicts the hidden season (`mme-blend`) and scores it.
@@ -106,6 +107,31 @@ Report back in this order:
    - The live ECMWF has 101 members, but its training years had 10.
    - CHIRPS confirms an onset only 3 weeks after the first rains, so the most recent starts aren't marked yet.
    - Only two weeks ahead, because the onset definition looks 27 days past the first rains.
+
+### 7. Publish the results as a live dashboard (about 2 min)
+A private claude.ai page with the outlook, skill, weights, maps and run time, to share after the demo.
+
+Make its files (about 1 s):
+```bash
+py $HERE/dashboard_data.py $OUT $OUT/run_demo.log
+```
+It writes `$OUT/dashboard/`:
+- `datasets.json`: the title, description and file name of each dataset (`run`, `skill`, `samples`, `weights`, `outlook`, `started`, `stages`);
+- one `<id>.json` per dataset: its rows;
+- `file_index.html.json`: the page (`scripts/dashboard.html`);
+- `file_map_<name>.js.json`: each map (`all`, `kenya`, `uganda`, `cumulus`, `ecmwf`).
+
+Then build it with the Artifact tool:
+1. `Artifact` `action: "quickstart"`, `intent: "other"`. Create the dashboard from the **Dashboard** type it names, with `title: "Rains Started? OND 2026"` and `auto_open: "after_first_write"`. Follow the instructions the result carries.
+2. Upload each `<id>.json` with `Artifact` `asset: true`, `url: <the dashboard>`. Text files go one per call. Note each reply's `/_blob/...` url.
+3. Write everything with one `ArtifactData` `batch`:
+   - `dash/meta`: `{"title": "Rains Started? OND 2026"}`;
+   - `datasets/<id>` for each id in `datasets.json`: its `title` and `description`, plus `"source": {"kind": "file", "url": "<its /_blob url>", "name": "<id>.json"}`, `"updated": {"at": "<now, ISO>", "by": "run_demo.sh"}` and `"fixed": true`;
+   - `files/index.html` with `file_path: $OUT/dashboard/file_index.html.json`;
+   - `files/map_<name>.js` with `file_path: $OUT/dashboard/file_map_<name>.js.json`, for each of the five maps.
+4. Read `data/users/me`, doc `check` (up to 5 reads), as the type's instructions say. Then give the link.
+
+Every number on the page comes from `report.md`. To refresh it after a new run, rerun `dashboard_data.py`, upload the new `<id>.json` files, `update` each `datasets/<id>`'s `source.url` and `updated`, and `set` the six `files/` documents again.
 
 ## Any event
 The blend doesn't care what the event is. `indicator` rules combine rolling sums, counts and dry or wet spells:

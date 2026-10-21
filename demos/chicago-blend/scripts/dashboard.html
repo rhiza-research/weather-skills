@@ -1,0 +1,409 @@
+<!-- The page of the live Dashboard artifact (runofshow.md step 7). dashboard_data.py wraps it as files/index.html. -->
+<style>
+  .rb { display: grid; gap: var(--cds-gap-xl); font-family: var(--font-anthropic-sans); max-width: 72rem; margin-inline: auto; }
+  .rb h1 { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); margin: 0; text-wrap: balance; }
+  .rb h2 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); margin: 0; text-wrap: balance; }
+  .rb h3 { font-size: var(--cds-font-size-body); font-weight: var(--cds-font-weight-medium); margin: 0; }
+  .rb p { margin: 0; max-width: 68ch; }
+  .rb-muted { color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); }
+  .rb-head { display: grid; gap: var(--cds-gap-sm); }
+  .rb-lede { font-size: var(--cds-font-size-body); line-height: 1.5; }
+  .rb .rb-lede b { font-weight: var(--cds-font-weight-medium); }
+  .rb-section { display: grid; gap: var(--cds-gap-md); }
+  .rb-grid { display: grid; gap: var(--cds-gap-md); grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); }
+  .rb-card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-lg); display: grid; gap: var(--cds-gap-md); align-content: start; min-width: 0; }
+  .rb-card-head { display: grid; gap: var(--cds-gap-xs); }
+  .rb-figs { display: grid; grid-template-columns: 1fr 1fr; gap: var(--cds-gap-md); }
+  .rb-fig { display: grid; gap: var(--cds-gap-xs); }
+  .rb-big { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: calc(var(--cds-font-size-title) * 1.6); line-height: 1; font-variant-numeric: tabular-nums; }
+  .rb-clim { display: grid; grid-template-columns: 1fr auto auto; gap: var(--cds-gap-xs) var(--cds-gap-md); font-size: var(--cds-font-size-caption); font-variant-numeric: tabular-nums; }
+  .rb-clim span:nth-child(3n+1) { color: var(--color-fg-muted); }
+  .rb-clim .rb-colhead { color: var(--color-fg-muted); }
+  .rb-pill { justify-self: start; font-size: var(--cds-font-size-caption); padding: 2px var(--cds-pad-sm); border-radius: 999px; border: 1px solid var(--color-border-line); }
+  .rb-map { width: 100%; height: auto; border-radius: var(--cds-radius); background: var(--color-bg); min-height: 8rem; }
+  .rb-chart { position: relative; min-height: 13rem; }
+  .rb-chart svg { display: block; overflow: visible; }
+  .rb-tip { position: absolute; pointer-events: none; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); border-radius: var(--cds-radius); box-shadow: var(--cds-shadow-popover); padding: var(--cds-pad-xs) var(--cds-pad-sm); font-size: var(--cds-font-size-caption); white-space: nowrap; }
+  .rb-tip .rb-tip-k { color: var(--cds-text-secondary); }
+  .rb-legend { display: flex; flex-wrap: wrap; gap: var(--cds-gap-md); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .rb-legend i { display: inline-block; width: .7rem; height: .7rem; border-radius: 2px; margin-right: .35rem; vertical-align: -1px; }
+  .rb-tablewrap { overflow-x: auto; }
+  .rb table { border-collapse: collapse; width: 100%; font-size: var(--cds-font-size-caption); font-variant-numeric: tabular-nums; }
+  .rb th, .rb td { text-align: left; padding: var(--cds-pad-xs) var(--cds-pad-sm); border-bottom: 1px solid var(--color-border-line); }
+  .rb th { color: var(--color-fg-muted); font-weight: var(--cds-font-weight-medium); }
+  .rb td.num, .rb th.num { text-align: right; }
+  .rb tr.rb-hl td { font-weight: var(--cds-font-weight-medium); }
+  .rb ul { margin: 0; padding-left: 1.1rem; display: grid; gap: var(--cds-gap-xs); max-width: 68ch; }
+  .rb [data-dash-source-state=empty] { color: transparent; }
+  .rb [data-dash-source-state=refreshing] { opacity: .5; transition: opacity var(--cds-dur-slow); }
+</style>
+
+<script src="map_kenya.js"></script>
+<script src="map_uganda.js"></script>
+<script src="map_all.js"></script>
+<script src="map_cumulus.js"></script>
+<script src="map_ecmwf.js"></script>
+
+<div class="rb">
+  <header class="rb-head">
+    <h1 id="top">Have the rains started? Kenya and Uganda, OND 2026</h1>
+    <p class="rb-lede">
+      In <b>Uganda</b> the rains have already started in
+      <span class="dash-skeleton" data-source="started" data-field="cells_started" data-where="region=Uganda">—</span> of its
+      <span class="dash-skeleton" data-source="started" data-field="cells_total" data-where="region=Uganda">—</span> cells, and the blend gives
+      <b class="dash-skeleton" data-source="outlook" data-field="p_7d" data-where="region=Uganda&amp;forecast=ECMWF%20%2B%20Cumulus%20blend">—</b> by <span data-source="run" data-field="by_7d">—</span>.
+      In <b>Kenya</b> they have started in
+      <span class="dash-skeleton" data-source="started" data-field="cells_started" data-where="region=Kenya">—</span> of
+      <span class="dash-skeleton" data-source="started" data-field="cells_total" data-where="region=Kenya">—</span> cells; the blend gives
+      <b class="dash-skeleton" data-source="outlook" data-field="p_7d" data-where="region=Kenya&amp;forecast=ECMWF%20%2B%20Cumulus%20blend">—</b> by <span data-source="run" data-field="by_7d">—</span> and
+      <b class="dash-skeleton" data-source="outlook" data-field="p_14d" data-where="region=Kenya&amp;forecast=ECMWF%20%2B%20Cumulus%20blend">—</b> by <span data-source="run" data-field="by_14d">—</span>, against
+      <span class="dash-skeleton" data-source="outlook" data-field="p_7d" data-where="region=Kenya&amp;forecast=Climatology%2C%20all%20years%201981-2025">—</span> and
+      <span class="dash-skeleton" data-source="outlook" data-field="p_14d" data-where="region=Kenya&amp;forecast=Climatology%2C%20all%20years%201981-2025">—</span> in an average year.
+    </p>
+    <p class="rb-muted">ECMWF + Cumulus AI ensembles blended by logistic regression (University of Chicago method). Forecast issued <span data-source="run" data-field="init_label">—</span>. Each number is the chance the season's first ICPAC rainy-season onset has happened by that date; where CHIRPS already shows the onset, it is 1.</p>
+  </header>
+
+  <section class="rb-section" id="outlook">
+    <h2>This season's outlook</h2>
+    <div class="rb-grid">
+      <article class="rb-card" id="card-kenya">
+        <div class="rb-card-head">
+          <h3>Kenya</h3>
+          <span class="rb-pill"><span class="dash-skeleton" data-source="started" data-field="cells_started" data-where="region=Kenya">—</span> of <span class="dash-skeleton" data-source="started" data-field="cells_total" data-where="region=Kenya">—</span> cells started (CHIRPS)</span>
+        </div>
+        <div class="rb-figs">
+          <div class="rb-fig"><span class="rb-muted">By <span data-source="run" data-field="by_7d">—</span></span><span class="rb-big dash-skeleton" data-source="outlook" data-field="p_7d" data-where="region=Kenya&amp;forecast=ECMWF%20%2B%20Cumulus%20blend">—</span></div>
+          <div class="rb-fig"><span class="rb-muted">By <span data-source="run" data-field="by_14d">—</span></span><span class="rb-big dash-skeleton" data-source="outlook" data-field="p_14d" data-where="region=Kenya&amp;forecast=ECMWF%20%2B%20Cumulus%20blend">—</span></div>
+        </div>
+        <div class="rb-clim">
+          <span class="rb-colhead">Compared with</span><span class="rb-colhead"><span data-source="run" data-field="by_7d">—</span></span><span class="rb-colhead"><span data-source="run" data-field="by_14d">—</span></span>
+          <span>Climatology, all years 1981–2025</span>
+          <span class="dash-skeleton" data-source="outlook" data-field="p_7d" data-where="region=Kenya&amp;forecast=Climatology%2C%20all%20years%201981-2025">—</span>
+          <span class="dash-skeleton" data-source="outlook" data-field="p_14d" data-where="region=Kenya&amp;forecast=Climatology%2C%20all%20years%201981-2025">—</span>
+          <span>Climatology, El Niño analog years</span>
+          <span class="dash-skeleton" data-source="outlook" data-field="p_7d" data-where="region=Kenya&amp;forecast=Climatology%2C%20El%20Ni%C3%B1o%20analog%20years">—</span>
+          <span class="dash-skeleton" data-source="outlook" data-field="p_14d" data-where="region=Kenya&amp;forecast=Climatology%2C%20El%20Ni%C3%B1o%20analog%20years">—</span>
+        </div>
+        <img class="rb-map" id="map-kenya" alt="Map of Kenya: blended chance the rainy season has started within 7 and 14 days">
+      </article>
+
+      <article class="rb-card" id="card-uganda">
+        <div class="rb-card-head">
+          <h3>Uganda</h3>
+          <span class="rb-pill"><span class="dash-skeleton" data-source="started" data-field="cells_started" data-where="region=Uganda">—</span> of <span class="dash-skeleton" data-source="started" data-field="cells_total" data-where="region=Uganda">—</span> cells started (CHIRPS)</span>
+        </div>
+        <div class="rb-figs">
+          <div class="rb-fig"><span class="rb-muted">By <span data-source="run" data-field="by_7d">—</span></span><span class="rb-big dash-skeleton" data-source="outlook" data-field="p_7d" data-where="region=Uganda&amp;forecast=ECMWF%20%2B%20Cumulus%20blend">—</span></div>
+          <div class="rb-fig"><span class="rb-muted">By <span data-source="run" data-field="by_14d">—</span></span><span class="rb-big dash-skeleton" data-source="outlook" data-field="p_14d" data-where="region=Uganda&amp;forecast=ECMWF%20%2B%20Cumulus%20blend">—</span></div>
+        </div>
+        <div class="rb-clim">
+          <span class="rb-colhead">Compared with</span><span class="rb-colhead"><span data-source="run" data-field="by_7d">—</span></span><span class="rb-colhead"><span data-source="run" data-field="by_14d">—</span></span>
+          <span>Climatology, all years 1981–2025</span>
+          <span class="dash-skeleton" data-source="outlook" data-field="p_7d" data-where="region=Uganda&amp;forecast=Climatology%2C%20all%20years%201981-2025">—</span>
+          <span class="dash-skeleton" data-source="outlook" data-field="p_14d" data-where="region=Uganda&amp;forecast=Climatology%2C%20all%20years%201981-2025">—</span>
+          <span>Climatology, El Niño analog years</span>
+          <span class="dash-skeleton" data-source="outlook" data-field="p_7d" data-where="region=Uganda&amp;forecast=Climatology%2C%20El%20Ni%C3%B1o%20analog%20years">—</span>
+          <span class="dash-skeleton" data-source="outlook" data-field="p_14d" data-where="region=Uganda&amp;forecast=Climatology%2C%20El%20Ni%C3%B1o%20analog%20years">—</span>
+        </div>
+        <img class="rb-map" id="map-uganda" alt="Map of Uganda: blended chance the rainy season has started within 7 and 14 days">
+      </article>
+    </div>
+  </section>
+
+  <section class="rb-section" id="skill">
+    <h2>Does the blend work?</h2>
+    <p class="rb-muted">Brier skill score against climatology in leave-one-season-out cross-validation over the six seasons ECMWF and Cumulus share (2016–2021). Above 0 beats climatology; 0.30 means 30% better.</p>
+    <div class="rb-legend" id="skill-legend" data-source="skill"></div>
+    <div class="rb-grid">
+      <article class="rb-card"><div class="rb-card-head"><h3>Kenya</h3><span class="rb-muted" id="samples-kenya"></span></div><div class="rb-chart" id="skill-kenya" data-source="skill"></div></article>
+      <article class="rb-card"><div class="rb-card-head"><h3>Uganda</h3><span class="rb-muted" id="samples-uganda"></span></div><div class="rb-chart" id="skill-uganda" data-source="skill"></div></article>
+    </div>
+  </section>
+
+  <section class="rb-section" id="weights">
+    <h2>Which models matter?</h2>
+    <div class="rb-grid">
+      <article class="rb-card">
+        <div class="rb-card-head"><h3>Weights in the ECMWF + Cumulus blend</h3><span class="rb-muted">Log-odds per unit of the members' onset share, fitted on all seasons. The AI model carries most of the weight.</span></div>
+        <div class="rb-chart" id="weights-chart" data-source="weights"></div>
+      </article>
+      <article class="rb-card">
+        <div class="rb-card-head"><h3>All fitted blends</h3><span class="rb-muted">One logistic regression per window.</span></div>
+        <div class="rb-tablewrap">
+          <table id="weights-table" data-source="weights" data-row-key="blend,window_days">
+            <thead><tr><th data-field="blend">Blend</th><th data-field="window_days" class="num">Window (days)</th><th data-field="intercept" class="num">Intercept</th><th data-field="w_ecmwf" class="num">ECMWF</th><th data-field="w_cumulus" class="num">Cumulus</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="rb-section" id="all-outlook">
+    <h2>Every forecast, every region</h2>
+    <div class="rb-grid">
+      <article class="rb-card">
+        <div class="rb-card-head"><h3>Area-mean chance the rains have started</h3><span class="rb-muted">"All cells" adds Ethiopia south of 8°N. Border cells count for both Kenya and Uganda.</span></div>
+        <div class="rb-tablewrap">
+          <table id="outlook-table" data-source="outlook" data-row-key="region,forecast">
+            <thead><tr><th data-field="region">Region</th><th data-field="forecast">Forecast</th><th data-field="p_7d" class="num">Within 7 days</th><th data-field="p_14d" class="num">Within 14 days</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </article>
+      <article class="rb-card">
+        <div class="rb-card-head"><h3>All cells, ECMWF + Cumulus</h3><span class="rb-muted">Ethiopia south of 8°N, Kenya and Uganda, 1.5° cells.</span></div>
+        <img class="rb-map" id="map-all" alt="Map of all cells: ECMWF + Cumulus blended chance the rainy season has started">
+      </article>
+      <article class="rb-card">
+        <div class="rb-card-head"><h3>Cumulus alone</h3></div>
+        <img class="rb-map" id="map-cumulus" alt="Map of all cells: Cumulus-only blend">
+      </article>
+      <article class="rb-card">
+        <div class="rb-card-head"><h3>ECMWF alone</h3></div>
+        <img class="rb-map" id="map-ecmwf" alt="Map of all cells: ECMWF-only blend">
+      </article>
+    </div>
+  </section>
+
+  <section class="rb-section" id="caveats">
+    <h2>Caveats</h2>
+    <div class="rb-grid">
+      <article class="rb-card">
+        <ul>
+          <li>Cumulus has only six seasons of hindcasts to test on; one unusual season can change the ranking.</li>
+          <li>The live ECMWF forecast has 101 members, but its weights were trained on a reforecast with 10.</li>
+          <li>CHIRPS confirms an onset only three weeks after the first rains, so the most recent starts are not marked yet.</li>
+          <li>Only two weeks ahead, because the onset rule looks 27 days past the first rains.</li>
+        </ul>
+      </article>
+      <article class="rb-card" id="card-stages">
+        <div class="rb-card-head"><h3>Demo run time</h3><span class="rb-muted">Run of <span data-source="run" data-field="made">—</span>, from the local archive: <span data-source="runtime" data-field="seconds" class="dash-skeleton">—</span> end to end.</span></div>
+        <div class="rb-chart" id="stages-chart" data-source="stages" style="min-height: 9rem"></div>
+      </article>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const maps = window.BLEND_MAPS || {};
+  for (const k of ['kenya', 'uganda', 'all', 'cumulus', 'ecmwf']) {
+    const img = document.getElementById('map-' + k);
+    if (img && maps[k]) img.src = maps[k];
+  }
+
+  dash.calc('runtime', {
+    inputs: ['stages'],
+    title: 'Total demo run time',
+    description: 'Sum of the stage times printed by run_demo.sh.',
+    fn: (stages) => [{seconds: d3.sum(stages, (s) => Number(s.seconds))}],
+  });
+
+  const pct = d3.format('.0%');
+  const signed = d3.format('+.2f');
+  const dur = (s) => (s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`);
+  const BLEND = 'ECMWF + Cumulus blend';
+  const PREDICTORS = ['ECMWF', 'Cumulus', 'ECMWF + Cumulus'];
+
+  const fmtMark = (el, v) => {
+    const f = el.dataset.field;
+    if (f === 'p_7d' || f === 'p_14d') return pct(v);
+    if (el.dataset.source === 'runtime') return dur(v);
+    return String(v);
+  };
+  const where = (el) => {
+    const o = {};
+    for (const part of (el.dataset.where || '').split('&')) {
+      if (!part) continue;
+      const [k, v] = part.split('=');
+      o[decodeURIComponent(k)] = decodeURIComponent(v);
+    }
+    return o;
+  };
+  const fillMarks = (id) => {
+    const r = dash.data(id);
+    document.querySelectorAll(`.rb [data-source="${id}"][data-field]:not(th)`).forEach((el) => {
+      if (r.status !== 'ok') { el.textContent = '—'; return; }
+      const w = where(el);
+      const row = r.data.find((d) => Object.entries(w).every(([k, v]) => String(d[k]) === v));
+      el.classList.remove('dash-skeleton');
+      el.textContent = row && row[el.dataset.field] != null ? fmtMark(el, row[el.dataset.field]) : '—';
+    });
+  };
+
+  const failed = (box) => {
+    box.innerHTML = '';
+    const line = document.createElement('div');
+    line.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:.5rem;min-height:inherit;color:var(--color-fg-muted);font-size:var(--cds-font-size-caption)';
+    const dot = document.createElement('span');
+    dot.style.cssText = 'width:.375rem;height:.375rem;border-radius:50%;background:var(--color-bad)';
+    line.append(dot, document.createTextNode('Failed to load'));
+    box.append(line);
+  };
+
+  const tip = (box) => {
+    let t = box.querySelector('.rb-tip');
+    if (!t) { t = document.createElement('div'); t.className = 'rb-tip'; t.hidden = true; box.append(t); }
+    return {
+      show(ev, key, lines) {
+        t.innerHTML = '';
+        const k = document.createElement('div'); k.className = 'rb-tip-k'; k.textContent = key; t.append(k);
+        for (const [color, name, val] of lines) {
+          const l = document.createElement('div');
+          if (color) { const i = document.createElement('i'); i.style.cssText = `display:inline-block;width:.6rem;height:.6rem;border-radius:2px;margin-right:.35rem;background:${color}`; l.append(i); }
+          l.append(document.createTextNode(`${name}: ${val}`));
+          t.append(l);
+        }
+        t.hidden = false;
+        const b = box.getBoundingClientRect();
+        const x = Math.min(ev.clientX - b.left + 12, b.width - t.offsetWidth - 4);
+        t.style.left = `${Math.max(0, x)}px`;
+        t.style.top = `${ev.clientY - b.top + 12}px`;
+      },
+      hide() { t.hidden = true; },
+    };
+  };
+
+  // Horizontal grouped bars: one row per category, one bar per series.
+  const hbars = (box, rows, {cats, series, value, catOf, fmt, domain, colors}) => {
+    box.querySelector('svg')?.remove();
+    const W = box.clientWidth || 320;
+    const svg = d3.select(box).append('svg').attr('width', '100%');
+    const probe = svg.append('text').attr('font-size', 12);
+    const labelW = d3.max(cats, (c) => { probe.text(c); return probe.node().getComputedTextLength(); }) + 12;
+    probe.text(fmt(domain[1])); const valW = probe.node().getComputedTextLength() + 8;
+    probe.remove();
+    const barH = 14, gapIn = 4, gapOut = 16, top = 4, bottom = 22;
+    const groupH = series.length * barH + (series.length - 1) * gapIn;
+    const H = top + cats.length * groupH + (cats.length - 1) * gapOut + bottom;
+    svg.attr('viewBox', `0 0 ${W} ${H}`).attr('height', H);
+    const x = d3.scaleLinear(domain, [labelW, W - valW]);
+    const g = svg.append('g');
+    g.append('g').attr('transform', `translate(0,${H - bottom + 4})`)
+      .call(d3.axisBottom(x).ticks(Math.max(2, Math.floor((W - labelW) / 70))).tickSize(0).tickFormat(fmt))
+      .attr('font-size', null).attr('font-family', null)
+      .call((a) => a.select('.domain').remove())
+      .call((a) => a.selectAll('text').attr('fill', 'var(--color-fg-muted)').style('font-size', 'var(--cds-font-size-caption)'));
+    g.append('g').selectAll('line').data(x.ticks(Math.max(2, Math.floor((W - labelW) / 70)))).join('line')
+      .attr('x1', (d) => x(d)).attr('x2', (d) => x(d)).attr('y1', top - 2).attr('y2', H - bottom)
+      .attr('stroke', (d) => (d === 0 ? 'var(--cds-chart-axis)' : 'var(--cds-chart-grid)')).attr('stroke-width', 1);
+    const t = tip(box);
+    cats.forEach((c, ci) => {
+      const y0 = top + ci * (groupH + gapOut);
+      g.append('text').attr('x', 0).attr('y', y0 + groupH / 2).attr('dy', '0.35em')
+        .attr('fill', 'var(--color-fg)').style('font-size', 'var(--cds-font-size-caption)').text(c);
+      series.forEach((s, si) => {
+        const row = rows.find((r) => catOf(r) === c);
+        if (!row) return;
+        const v = value(row, s);
+        const y = y0 + si * (barH + gapIn);
+        g.append('rect').attr('x', x(Math.min(0, v))).attr('y', y).attr('height', barH)
+          .attr('width', Math.max(1, Math.abs(x(v) - x(0)))).attr('rx', 4).attr('fill', colors[si])
+          .on('mousemove', (ev) => t.show(ev, c, series.map((s2, k) => [colors[k], s2.label, fmt(value(row, s2))])))
+          .on('mouseleave', () => t.hide());
+        g.append('text').attr('x', x(Math.max(0, v)) + 4).attr('y', y + barH / 2).attr('dy', '0.35em')
+          .attr('fill', 'var(--color-fg-muted)').style('font-size', 'var(--cds-font-size-caption)')
+          .style('font-variant-numeric', 'tabular-nums').text(fmt(v));
+      });
+    });
+  };
+
+  const fillTable = (table, rows, cells) => {
+    const tb = table.querySelector('tbody');
+    tb.innerHTML = '';
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      if (r.forecast === BLEND) tr.className = 'rb-hl';
+      for (const [v, num] of cells(r)) {
+        const td = document.createElement('td');
+        if (num) td.className = 'num';
+        td.textContent = v;
+        tr.append(td);
+      }
+      tb.append(tr);
+    }
+  };
+
+  dash.onData(() => {
+    ['outlook', 'started', 'runtime', 'run'].forEach(fillMarks);
+
+    // Skill
+    const skill = dash.data('skill');
+    const samples = dash.data('samples');
+    const legend = document.getElementById('skill-legend');
+    legend.innerHTML = '';
+    const sCols = [dash.colors[0], dash.colors[1]];
+    [['Within 7 days', sCols[0]], ['Within 14 days', sCols[1]]].forEach(([n, c]) => {
+      const s = document.createElement('span'); const i = document.createElement('i'); i.style.background = c; s.append(i, document.createTextNode(n)); legend.append(s);
+    });
+    for (const reg of ['Kenya', 'Uganda']) {
+      const box = document.getElementById('skill-' + reg.toLowerCase());
+      const note = document.getElementById('samples-' + reg.toLowerCase());
+      if (samples.status === 'ok') {
+        const s = samples.data.find((d) => d.region === reg);
+        note.textContent = s ? `${d3.format(',')(s.samples)} samples; ${s.onsets_7d} / ${s.onsets_14d} onsets within 7 / 14 days` : '';
+      } else note.textContent = '';
+      if (skill.status === 'error') { failed(box); continue; }
+      if (skill.status !== 'ok') { box.querySelector('svg')?.remove(); continue; }
+      box.querySelector('div[style]')?.remove();
+      const rows = skill.data.filter((d) => d.region === reg);
+      const hi = d3.max(skill.data.filter((d) => d.region !== 'All cells'), (d) => Math.max(d.bss_7d, d.bss_14d));
+      hbars(box, rows, {
+        cats: PREDICTORS, catOf: (r) => r.predictors,
+        series: [{key: 'bss_7d', label: 'Within 7 days'}, {key: 'bss_14d', label: 'Within 14 days'}],
+        value: (r, s) => Number(r[s.key]), fmt: signed, domain: [0, Math.ceil(hi * 10) / 10], colors: sCols,
+      });
+    }
+
+    // Weights
+    const wt = dash.data('weights');
+    const wbox = document.getElementById('weights-chart');
+    const wtab = document.getElementById('weights-table');
+    if (wt.status === 'error') { failed(wbox); }
+    else if (wt.status === 'ok') {
+      wbox.querySelector('div[style]')?.remove();
+      const both = wt.data.filter((d) => d.blend === 'ECMWF + Cumulus');
+      const wCols = [dash.colors[2], dash.colors[3]];
+      const cats = both.map((d) => `${d.window_days} days`);
+      const hi = d3.max(both, (d) => Math.max(d.w_ecmwf, d.w_cumulus));
+      hbars(wbox, both, {
+        cats, catOf: (r) => `${r.window_days} days`,
+        series: [{key: 'w_ecmwf', label: 'ECMWF'}, {key: 'w_cumulus', label: 'Cumulus'}],
+        value: (r, s) => Number(r[s.key]), fmt: d3.format('.1f'), domain: [0, Math.ceil(hi)], colors: wCols,
+      });
+      let lg = wbox.querySelector('.rb-legend');
+      if (!lg) { lg = document.createElement('div'); lg.className = 'rb-legend'; wbox.prepend(lg); }
+      lg.innerHTML = '';
+      [['ECMWF', wCols[0]], ['Cumulus', wCols[1]]].forEach(([n, c]) => {
+        const s = document.createElement('span'); const i = document.createElement('i'); i.style.background = c; s.append(i, document.createTextNode(n)); lg.append(s);
+      });
+      const f2 = d3.format('.2f');
+      fillTable(wtab, wt.data, (r) => [[r.blend], [String(r.window_days), true], [f2(r.intercept), true],
+        [r.w_ecmwf == null ? '—' : f2(r.w_ecmwf), true], [r.w_cumulus == null ? '—' : f2(r.w_cumulus), true]]);
+    } else { wbox.querySelector('svg')?.remove(); wtab.querySelector('tbody').innerHTML = ''; }
+
+    // Outlook table
+    const ol = dash.data('outlook');
+    const otab = document.getElementById('outlook-table');
+    if (ol.status === 'ok') {
+      fillTable(otab, ol.data, (r) => [[r.region], [r.forecast], [pct(r.p_7d), true], [pct(r.p_14d), true]]);
+    } else otab.querySelector('tbody').innerHTML = '';
+
+    // Stages
+    const st = dash.data('stages');
+    const sbox = document.getElementById('stages-chart');
+    document.getElementById('card-stages').hidden = st.status === 'missing';  // no run log given
+    if (st.status === 'error') failed(sbox);
+    else if (st.status === 'ok') {
+      sbox.querySelector('div[style]')?.remove();
+      const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+      hbars(sbox, st.data, {
+        cats: st.data.map((d) => cap(d.stage)), catOf: (r) => cap(r.stage),
+        series: [{key: 'seconds', label: 'Time'}], value: (r) => Number(r.seconds),
+        fmt: (v) => `${v} s`, domain: [0, d3.max(st.data, (d) => Number(d.seconds))], colors: [dash.colors[0]],
+      });
+    } else sbox.querySelector('svg')?.remove();
+  });
+})();
+</script>
