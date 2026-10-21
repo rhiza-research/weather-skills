@@ -44,6 +44,7 @@ credentialed or source-specific fetcher only when it does not.
 | `windborne-analysis-fetch` | ECMWF IFS deterministic analysis via WindBorne — 6-hourly, 0.25° global, last ~25 days → Zarr. Requires credentials. |
 | `windborne-degree-days-fetch` | WindBorne population-weighted US heating/cooling degree days by state, daily for ~16 days → Zarr. Requires credentials. |
 | `pbc-fetch` | PBC / StillLearning AI Weather Quest precip **quintile probabilities** (`era5-p_pr_19` week 3, `era5-p_pr_26` week 4), 1.5° global → Zarr. Requires credentials. |
+| `hindcast-fetch` | ECMWF IFS extended-range (WeatherBench2, public) or GEFS (Sheerwater cache, requires credentials) daily hindcasts for every init in a `--start-time`/`--end-time` window → multi-init `(time, [number,] step, lat, lon)` Zarr. |
 | `ecmwf-hres-fetch` | Deterministic ECMWF HRES forecast — 0.25°, out to 15 days, surface and pressure-level fields → Zarr. No credentials; needs the eccodes system library. |
 | `arco-era5-fetch` | ERA5 hourly reanalysis (ARCO-ERA5) → Zarr. No credentials. |
 | `cmip6-fetch` | One CMIP6 model run (historical 1850–2014 or `ssp*` to 2100) → Zarr. No credentials. |
