@@ -54,7 +54,9 @@ Prefer small steps over stuffing every filter into one call:
 - **Region:** Use `resolve-region` for a country bbox, then `clip-region` (or
   pass `--bbox` on a fetcher when the download itself should be limited).
 - **Per-region or per-season values:** `label-group` (`--level admin_1`,
-  `--geojson`, `--time MAM,OND`), then `summarize-dim --by` the label.
+  `--geojson`, `--time MAM,OND`), then `summarize-dim --by` the label. This
+  gives every region in one dataset; do not run `clip-region` once per region
+  and inspect each result.
 - **Variables / dims:** Use `select` (and fetcher `--variable` when the source
   API requires it) before transforms that operate on a single variable or
   slice. Do not expect every transform to re-accept date/region/variable filters.

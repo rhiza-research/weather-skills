@@ -1,6 +1,6 @@
 ---
 name: clip-region
-description: "Clip a gridded or station Zarr to a lat/lon box, a named region (country, province or county, multi-country region), or a GeoJSON polygon. Use to restrict any dataset to an area of interest."
+description: "Clip a gridded or station Zarr to a lat/lon box, a named region (country, province or county, multi-country region), or a GeoJSON polygon. Use to restrict any dataset to an area of interest. For values in each of several regions (per-county means or totals), use label-group then summarize-dim --by instead of one clip per region."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py *)
@@ -38,6 +38,7 @@ The input subset in space. With `--region` / `--geojson`:
 - Grids stored in `[0, 360]` longitude are wrapped to `[-180, 180)`; the output keeps the wrapped longitudes.
 - Masked integer variables become float. Variables off the grid or station axis pass through unchanged.
 - An empty selection exits 1.
+- For a statistic in each of several regions, do not clip once per region: `label-group --level admin_1` then `summarize-dim --by admin_1` writes every county's value into one dataset, in two steps.
 - Multi-country regions use coarse 1:110m outlines. Pass a detailed `--geojson` when edge cells matter.
 
 ### Example
