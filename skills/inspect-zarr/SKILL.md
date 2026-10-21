@@ -27,7 +27,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/inspect_zarr.py -i IN.zarr [--format human|js
 ### Output
 - `Dimensions`: each dim and its size.
 - `Coordinates`: name, dims, dtype, units, and values. Times print as dates; forecast `step` prints as durations (`7 days`, `0 days 03:00:00`).
-- `Data variables`: name, dims, dtype, shape, units; the attrs `long_name`, `standard_name`, `cell_methods`, `aggregation_period`, `data_interval` when set; `finite N/M`, `min`, `max`, `mean`; and a sample of the first finite values. Datetime variables get NaT counts and the date range, with no mean. An all-NaN variable shows `sample: (no finite values)`; a cut-off sample ends `(K of N finite cells)`.
+- `Data variables`: name, dims, dtype, shape, units; the attrs `long_name`, `standard_name`, `cell_methods`, `aggregation_period`, `data_interval` when set; `finite N/M`, `min`, `max`, `mean`; and a sample of values. When the whole variable fits in the sample (at most `--max-values` cells, or 256 with `0`), the sample is every value in order with NaN in place, so it lines up with the coordinate values; larger variables show their first finite values. Datetime variables get NaT counts and the date range, with no mean. An all-NaN variable shows `sample: (no finite values)`; a cut-off sample ends `(K of N finite cells)`.
 - `json`: the same as `{"dims", "coords", "data_vars"}`. Coord entries have `values`, `truncated`, `size`; variable entries have `attrs`, `n`, `n_finite`, `n_nan`, `min`, `max`, `mean`, `sample`, `sample_truncated`. NaN statistics are `null`.
 
 ### Notes

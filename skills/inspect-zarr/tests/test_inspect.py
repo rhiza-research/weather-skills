@@ -105,7 +105,30 @@ def test_nan_counts_and_json_nulls(tmp_path, inspect_zarr, capsys):
     assert precip["n_nan"] == 1
     assert precip["n_finite"] == 23
     assert precip["min"] == 1.0
-    assert None not in precip["sample"]  # the sample shows finite values only
+    # All 24 cells fit in the sample, so the NaN stays in place as null.
+    assert len(precip["sample"]) == 24
+    assert precip["sample"][0] is None
+
+
+def test_small_sample_keeps_nan_in_place_along_coord(tmp_path, inspect_zarr, capsys):
+    counties = ["kenya-baringo", "kenya-bomet", "kenya-kirinyaga", "kenya-kisii", "kenya-lamu"]
+    ds = xr.Dataset(
+        {"precip": ("admin_1", [12.8, 43.4, np.nan, 40.1, np.nan])},
+        coords={"admin_1": counties},
+    )
+    ds["precip"].attrs["units"] = "mm"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+
+    run_skill(inspect_zarr, "-i", str(src), "--format", "json", "--max-values", "0")
+
+    out = json.loads(capsys.readouterr().out)
+    labels = next(c for c in out["coords"] if c["name"] == "admin_1")["values"]
+    sample = out["data_vars"][0]["sample"]
+    assert [c for c, v in zip(labels, sample) if v is None] == ["kenya-kirinyaga", "kenya-lamu"]
+
+    run_skill(inspect_zarr, "-i", str(src), "--max-values", "0")
+
+    assert "sample: 12.8, 43.4, nan, 40.1, nan" in capsys.readouterr().out
 
 
 def test_data_sample_truncates(tmp_path, inspect_zarr, capsys):
@@ -163,7 +186,8 @@ def test_sample_skips_leading_nan_and_datetime_stats(tmp_path, inspect_zarr, cap
     onset[2, 3] = np.datetime64("2026-03-05")
     ds["onset"] = (("latitude", "longitude"), onset)
     src = write_zarr(ds, tmp_path / "in.zarr")
-    run_skill(inspect_zarr, "-i", str(src), "--format", "json")
+    # A sample smaller than the variable skips NaN to show finite values.
+    run_skill(inspect_zarr, "-i", str(src), "--format", "json", "--max-values", "4")
     by_name = {v["name"]: v for v in json.loads(capsys.readouterr().out)["data_vars"]}
     assert by_name["precip"]["sample"][:3] == [1.0, 1.0, 1.0]
     assert by_name["precip"]["n_nan"] == 8
