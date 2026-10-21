@@ -35,7 +35,11 @@ def _live_store(values=(5.0, 5.0, 5.0), members=3):
             "valid_time": (("init_time", "lead_time"), (init + leads)[None, :]),
         },
     )
-    ds[name].attrs.update(units="mm", long_name="24-hour total precipitation")
+    ds[name].attrs.update(
+        units="mm",
+        long_name="24-hour total precipitation",
+        cell_methods="time: sum (interval: 24 hours)",
+    )
     ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north")
     ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east")
     return ds
@@ -73,6 +77,7 @@ def test_fetch_writes_latest_init_as_rates(tmp_path, fetch_mod, remote):
     with xr.open_zarr(out, consolidated=True) as ds:
         assert list(ds.data_vars) == ["tp"]
         assert ds["tp"].attrs["units"] == "mm day-1"
+        assert ds["tp"].attrs["cell_methods"] == "time: mean (interval: 1 day)"
         assert ds["tp"].attrs.get("data_interval")
         days = np.asarray(ds["step"].values).astype("timedelta64[D]").astype(int)
         assert list(days) == [0, 1, 2]

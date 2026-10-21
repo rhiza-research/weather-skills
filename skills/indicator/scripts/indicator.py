@@ -6,6 +6,7 @@
 # ///
 """Apply a yes/no weather rule to each day or week of a Zarr, optionally reduced to an onset date or a probability."""
 
+import datetime
 import json
 import re
 import sys
@@ -260,16 +261,16 @@ def apply_reductions(
     detect: str | None,
     probability: bool,
     first_in: int | None = None,
+    season_start: tuple[int, int] | None = None,
 ) -> xr.Dataset:
     """Apply ``--first-in`` or ``--cumulative``, ``--detect``, ``--probability`` in that order.
 
-    ``first_in`` is the window length in steps of ``dim``.
+    ``first_in`` is the window length in steps of ``dim``; ``season_start`` is (month, day).
     """
-    if first_in is not None and (cumulative or detect or probability):
-        raise UsageError(
-            "--first-in cannot be combined with --cumulative, --detect or --probability; "
-            "for a forecast's chance of the event by each lead use --cumulative --probability"
-        )
+    if first_in is not None and (cumulative or detect):
+        raise UsageError("--first-in cannot be combined with --cumulative or --detect")
+    if season_start is not None and first_in is None:
+        raise UsageError("--season-start goes with --first-in")
     if detect is not None and cumulative:
         raise UsageError("--detect cannot be combined with --cumulative")
     if detect == "first" and probability:
@@ -280,7 +281,11 @@ def apply_reductions(
 
     field = mask
     if first_in is not None:
-        field = _first_in(field, dim, first_in)
+        # For a probability, a member whose event came earlier is not having its first
+        # event in this window: 0, not NaN (NaN stays for a gap that hides the answer).
+        past = 0.0 if probability else np.nan
+        season = None if season_start is None else _season_of(field, dim, season_start)
+        field = _first_in(field, dim, first_in, past=past, season=season)
     if cumulative:
         field = _cumulative(field, dim)
 
@@ -403,19 +408,43 @@ def _cumulative(mask: xr.DataArray, dim: str) -> xr.DataArray:
     return xr.where(seen, 1.0, mask).astype("float32")
 
 
-def _first_in(mask: xr.DataArray, dim: str, steps: int) -> xr.DataArray:
-    """1 if the first True since the start of ``dim`` falls in the ``steps`` labels from here.
+def _first_in(mask, dim, steps, past=np.nan, season=None):
+    """1 if the first True falls in the ``steps`` labels from here; 0 if none yet by the window's end.
 
-    0 if there is none yet by the window's end; NaN once it happened before this
-    label (the sample is over), or when a gap leaves the first True unknown.
+    "First" counts from the start of ``dim``, or with ``season`` (a season number per label)
+    from the start of each label's season: only that season's events count. Once the first
+    True came before this label the value is ``past`` (NaN: the sample is over; 0 for a
+    member in a probability). A gap that could hide the first True gives NaN.
     """
-    seen = mask.fillna(0).cumsum(dim) > 0
-    # A gap before the first True could hide it: unknown from there on, until a True.
-    gap = (mask.isnull() & ~seen).cumsum(dim) > 0
-    by = xr.where(seen, 1.0, xr.where(gap, np.nan, 0.0))
-    before = by.shift({dim: 1}, fill_value=0.0)
-    end = by.shift({dim: -(steps - 1)}) if steps > 1 else by
-    return xr.where(before == 0, end, np.nan)
+    if season is None:
+        seen = mask.fillna(0).cumsum(dim) > 0
+        # A gap before the first True could hide it: unknown from there on, until a True.
+        gap = (mask.isnull() & ~seen).cumsum(dim) > 0
+        by = xr.where(seen, 1.0, xr.where(gap, np.nan, 0.0))
+        before = by.shift({dim: 1}, fill_value=0.0)
+        end = by.shift({dim: -(steps - 1)}) if steps > 1 else by
+        return xr.where(before == 0, end, xr.where(before == 1, past, np.nan))
+    # One season at a time: days outside it hold no event, so its first True is its own.
+    out = xr.full_like(mask, np.nan, dtype="float32")
+    for s in np.unique(season.values):
+        in_season = season == s
+        one = _first_in(mask.where(in_season, 0.0), dim, steps, past=past)
+        out = xr.where(in_season, one, out)
+    return out
+
+
+def _season_of(mask, dim, season_start):
+    """Season number per label: the year of the most recent ``season_start`` (month, day)."""
+    month, day = season_start
+    axis = mask[dim]
+    if np.issubdtype(axis.dtype, np.datetime64):
+        valid = axis
+    elif np.issubdtype(axis.dtype, np.timedelta64) and "time" in mask.coords:
+        valid = mask["time"] + axis  # a forecast: valid date = init + lead
+    else:
+        raise UsageError(f"--season-start needs dates on {dim!r} (or a forecast's init time)")
+    before = (valid.dt.month < month) | ((valid.dt.month == month) & (valid.dt.day < day))
+    return valid.dt.year - before.astype(int)
 
 
 def _detect_any(mask: xr.DataArray, dim: str) -> xr.DataArray:
@@ -521,11 +550,18 @@ def _step_days(ds, dim: str) -> int:
     ),
 )
 @weather_skill.argument(
+    "--season-start",
+    metavar="MM-DD",
+    help="With --first-in: count only events since the most recent MM-DD (by valid date).",
+)
+@weather_skill.argument(
     "--probability",
     action="store_true",
     help="Ensemble fraction True (mean over number). No-op if there is no number dim.",
 )
-def indicator(ds, rule, variable, time_dim, detect, cumulative, first_in, probability, **kwargs):
+def indicator(
+    ds, rule, variable, time_dim, detect, cumulative, first_in, season_start, probability, **kwargs
+):
     """Apply a yes/no weather rule to each day or week of a Zarr, optionally reduced to an onset date or a probability."""
     spec = parse_rule(rule)
     dim = _axis(ds, time_dim)
@@ -536,6 +572,13 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, first_in, probab
         if not match or int(match.group(1)) < 1:
             raise UsageError(f"--first-in {first_in!r} must look like '7d' or '1w'")
         first_days = int(match.group(1)) * (7 if match.group(2).lower() == "w" else 1)
+    season = None
+    if season_start is not None:
+        try:
+            parsed = datetime.date.fromisoformat(f"2000-{season_start.strip()}")
+        except ValueError:
+            raise UsageError(f"--season-start {season_start!r} must look like 09-15") from None
+        season = (parsed.month, parsed.day)
     # Thresholds are in standard units: air temperature in degree_Celsius, precip
     # in mm per step (a rate in any units times the step; daily mm day-1 is unchanged).
     names = sorted({variable or c.variable for c in spec.clauses} & set(ds.data_vars))
@@ -551,6 +594,7 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, first_in, probab
         detect=detect,
         probability=bool(probability),
         first_in=None if first_days is None else _steps(first_days, step_days),
+        season_start=season,
     )
     payload = json.dumps(spec.to_json(), default=str)
     for name in out.data_vars:
@@ -563,6 +607,9 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, first_in, probab
             # The window each label covers, so it pairs with same-length forecast windows.
             attrs["aggregation_period"] = f"{first_days} day"
             attrs["long_name"] = f"First {spec.source} in the next {first_days} days"
+            if season is not None:
+                attrs["long_name"] += f" (first since {season_start.strip()})"
+                attrs["first_in_season_start"] = season_start.strip()
         out[name].attrs = attrs
     out.attrs["indicator_rule"] = spec.source
     out.attrs["indicator_expanded"] = spec.expanded
@@ -572,10 +619,8 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, first_in, probab
     # of the series: NaN there is "not yet known", not "no event".
     ahead = max(c.window - step_days + (c.after or c.within or 0) for c in spec.clauses)
     if ahead > 0:
-        import datetime as _dt
-
         last = ds[dim].to_index()[-1]  # Timestamp, Timedelta (step), or cftime
-        decided = last - _dt.timedelta(days=ahead)
+        decided = last - datetime.timedelta(days=ahead)
         print(
             f"Note: --rule {spec.source!r} looks {ahead} day(s) past each date, so dates "
             f"after {decided} cannot be decided from data ending {last}: NaN there means "

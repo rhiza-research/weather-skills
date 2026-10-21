@@ -16,7 +16,7 @@ Writes a 0/1 mask from a `--rule`, evaluated on each date of a daily or weekly s
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RULE [-v NAME] [--time-dim DIM] [--detect first|any] [--cumulative] [--first-in WINDOW] [--probability]
+uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RULE [-v NAME] [--time-dim DIM] [--detect first|any] [--cumulative] [--first-in WINDOW [--season-start MM-DD]] [--probability]
 ```
 
 `RULE` is an alias or clauses joined by all `and` or all `or`:
@@ -36,7 +36,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 - `--time-dim` — axis to evaluate along. Default: `time` if it has more than one value, else `step`.
 - `--detect` — collapse the axis: `first` (date of the first true day) or `any` (true at least once).
 - `--cumulative` — once true, stay true.
-- `--first-in` — window such as `7d` or `1w`: whether the first true day since the start of the input falls in the window starting on each date. Alone only.
+- `--first-in` — window such as `7d` or `1w`: whether the first true day since the start of the input falls in the window starting on each date. Combines with `--probability`.
+- `--season-start` — with `--first-in`: `MM-DD`; count only true days since the most recent `MM-DD`, by date (on a forecast, init + step). Each year's season runs to the day before the next `MM-DD`.
 - `--probability` — fraction of ensemble members (`number`) where true; unchanged if there is no `number`.
 
 ### Output
@@ -44,7 +45,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 - `--detect first`: `indicator_time` (first true date or step) and, on a datetime axis, `indicator_doy` (day of year).
 - `--detect any`: `indicator` without the time axis.
 - `--probability`: `probability` (0–1, `units: 1`).
-- `--first-in`: `indicator` is 1 when the first true day falls in the window, 0 when there is none by the window's end, NaN once it happened before the date (that date is past the event) or when a gap could hide it. Stamped `aggregation_period` = the window.
+- `--first-in`: `indicator` is 1 when the first true day falls in the window, 0 when there is none by the window's end, NaN once it happened before the date (that date is past the event) or when a gap could hide it. Stamped `aggregation_period` = the window (and `first_in_season_start` with `--season-start`).
+- `--first-in --probability`: `probability` is the share of members whose first true day falls in the window. A member whose first came earlier counts 0; a member a gap leaves undecided makes it NaN.
 - Each variable has `long_name` and `indicator_spec` (parsed rule as JSON); the store has `indicator_rule` and `indicator_expanded`.
 
 ### Notes
@@ -52,8 +54,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 - Evaluate on individual members, not an ensemble mean. Windows must be whole steps (`1w`, not `10d`, on weekly data).
 - A missing value makes every window that covers it NaN. `--detect first` gives no date when the rule is never true or when a gap comes before the first true day. `--detect any` is NaN when a gap could hide the event. `--probability` is NaN where any member is NaN.
 - The last dates of the input cannot be decided (27 days for `icpac-onset`). stderr prints the last decidable date; NaN after it means "not yet known".
-- `--detect` cannot be combined with `--cumulative`, and `--detect first` cannot be combined with `--probability`. `--first-in` combines with none of them.
-- `--first-in` counts from the first date of the input, so start the input at the season start: an event before it is not seen.
+- `--detect` cannot be combined with `--cumulative`, and `--detect first` cannot be combined with `--probability`. `--first-in` combines with `--probability` only.
+- `--first-in` counts from the first date of the input, or with `--season-start` from each season's start: an event before it is not seen. A date before the season start belongs to the previous season.
 
 ### Example
 ```bash
@@ -70,5 +72,6 @@ Writes, for each lead day of the 2026-10-12 forecast over Kenya, the fraction of
 | P(onset has happened by each date) | `--cumulative --probability` |
 | P(event happens at least once) | `--detect any --probability` |
 | Observed onset in the week starting each date, past-onset dates left out | `--first-in 7d` |
+| P(a forecast's members put the first onset since 15 Sep in each lead week) | `--first-in 7d --season-start 09-15 --probability --time-dim step` |
 
 `indicator_doy` wraps at 1 January, so a mean across members whose onsets straddle the year end is wrong. `and` / `or` stay decided when one side alone decides them (a false side makes `and` false even if the other is NaN). For calendar onset dates from a forecast, convert `step` to valid `time` first.

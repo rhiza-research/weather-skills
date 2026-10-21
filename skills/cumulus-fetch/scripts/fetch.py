@@ -20,6 +20,7 @@ from weather_skills_core.standard_utils import (
     require_env,
 )
 from weather_skills_core.units import (
+    format_cell_methods,
     precip_amounts_to_rates,
     stamp_data_interval,
     stamp_precip_amounts,
@@ -235,6 +236,8 @@ def fetch(dataset, date, bbox, variable, probe_latest, workers, **kwargs):
     stamp_precip_amounts(ds)
     ds = to_standard_units(ds)
     ds = precip_amounts_to_rates(ds, interval="1 day", deaccumulate=False)
+    # The stores' "time: sum" described the 24 h amounts; the rates are daily means.
+    ds["tp"].attrs["cell_methods"] = format_cell_methods("time", "mean", interval="1 day")
     return stamp_data_interval(ds)
 
 

@@ -565,8 +565,55 @@ def test_first_in_gap_and_tail_are_unknown(tmp_path, indicator_fn):
     np.testing.assert_array_equal(_cell(out).values, [0, 0, 0, 0, np.nan])
 
 
-@pytest.mark.parametrize("extra", [["--cumulative"], ["--probability"], ["--detect", "any"]])
+@pytest.mark.parametrize("extra", [["--cumulative"], ["--detect", "any"]])
 def test_first_in_rejects_other_reductions(tmp_path, indicator_fn, extra):
     with pytest.raises(SystemExit) as exc:
         _first_in(tmp_path, indicator_fn, [0, 20, 0], "2d", *extra)
     assert exc.value.code == 2
+
+
+def test_season_start_ignores_events_before_it(tmp_path, indicator_fn):
+    """With --season-start, an event before that date is not the season's first."""
+    ds = _daily(30, start="2026-09-01").copy(deep=True)
+    rain = np.zeros(30)
+    rain[[9, 24]] = 20  # 10 Sep (before the season) and 25 Sep (the season's first)
+    ds["precip"].values[:, 0, 0] = rain
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    plain, season = tmp_path / "plain.zarr", tmp_path / "season.zarr"
+    args = ["-i", str(src), "--rule", "precip sum 1d >= 10", "--first-in", "7d"]
+    run_skill(indicator_fn, *args, "-o", str(plain))
+    run_skill(indicator_fn, *args, "--season-start", "09-15", "-o", str(season))
+    on = {
+        d: i
+        for i, d in enumerate(
+            np.arange(np.datetime64("2026-09-01"), np.datetime64("2026-10-01")).astype(str)
+        )
+    }
+    p, s = _cell(plain).values, _cell(season).values
+    assert np.isnan(p[on["2026-09-19"]])  # without it, 10 Sep was already the first
+    assert s[on["2026-09-15"]] == 0  # window 15-21 Sep: no in-season event yet
+    assert s[on["2026-09-19"]] == 1  # window 19-25 Sep holds the first, 25 Sep
+    assert np.isnan(s[on["2026-09-26"]])  # after the season's first
+    assert _cell(season).attrs["first_in_season_start"] == "09-15"
+
+
+def test_first_in_probability_counts_members_on_valid_dates(tmp_path, indicator_fn):
+    """Members on a forecast: valid date = init + step, and a member past its first counts 0."""
+    ds = make_forecast(
+        n_step=21, lats=(1.0,), lons=(10.0,), name="precip", init="2026-09-11", members=4
+    )
+    ds["precip"].attrs.update(units="mm day-1", data_interval="1 day")
+    rain = np.zeros((4, 21))
+    rain[0, [2, 9]] = 20  # 13 Sep (before 15 Sep: ignored), then 20 Sep
+    rain[1, 5] = 20  # 16 Sep
+    rain[3, 12] = 20  # 23 Sep; member 2 stays dry
+    ds["precip"].values[:, :, 0, 0] = rain
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip sum 1d >= 10",
+        "--first-in", "7d", "--season-start", "09-15", "--probability", "--time-dim", "step",
+    )  # fmt: skip
+    p = xr.open_zarr(out)["probability"].isel(latitude=0, longitude=0).values
+    assert p[4] == pytest.approx(0.5)  # 15-21 Sep: members 0 and 1 have their first
+    assert p[11] == pytest.approx(0.25)  # 22-28 Sep: only member 3; 0 and 1 are past (0)
