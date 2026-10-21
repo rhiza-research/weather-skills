@@ -117,6 +117,15 @@
     <div class="rb-grid">
       <article class="rb-card"><div class="rb-card-head"><h3>Kenya</h3><span class="rb-muted" id="samples-kenya"></span></div><div class="rb-chart" id="skill-kenya" data-source="skill"></div></article>
       <article class="rb-card"><div class="rb-card-head"><h3>Uganda</h3><span class="rb-muted" id="samples-uganda"></span></div><div class="rb-chart" id="skill-uganda" data-source="skill"></div></article>
+      <article class="rb-card" id="card-gefs">
+        <div class="rb-card-head"><h3>With GEFS, within 7 days</h3><span class="rb-muted">GEFS runs 35 days, so it answers the 7-day question only. Seasons its reforecast shares with ECMWF: <span id="gefs-seasons" data-source="skill_gefs" data-field="seasons" data-row="0">—</span>.</span></div>
+        <div class="rb-tablewrap">
+          <table id="gefs-table" data-source="skill_gefs" data-row-key="region,predictors">
+            <thead><tr><th data-field="region">Region</th><th data-field="predictors">Predictors</th><th data-field="bss_7d" class="num">Skill within 7 days</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </article>
     </div>
   </section>
 
@@ -131,7 +140,7 @@
         <div class="rb-card-head"><h3>All fitted blends</h3><span class="rb-muted">One logistic regression per window.</span></div>
         <div class="rb-tablewrap">
           <table id="weights-table" data-source="weights" data-row-key="blend,window_days">
-            <thead><tr><th data-field="blend">Blend</th><th data-field="window_days" class="num">Window (days)</th><th data-field="intercept" class="num">Intercept</th><th data-field="w_ecmwf" class="num">ECMWF</th><th data-field="w_cumulus" class="num">Cumulus</th></tr></thead>
+            <thead><tr><th data-field="blend">Blend</th><th data-field="window_days" class="num">Window (days)</th><th data-field="intercept" class="num">Intercept</th><th data-field="w_ecmwf" class="num">ECMWF</th><th data-field="w_cumulus" class="num">Cumulus</th><th data-field="w_gefs" class="num">GEFS</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -175,6 +184,7 @@
           <li>The live ECMWF forecast has 101 members, but its weights were trained on a reforecast with 10.</li>
           <li>CHIRPS confirms an onset only three weeks after the first rains, so the most recent starts are not marked yet.</li>
           <li>Only two weeks ahead, because the onset rule looks 27 days past the first rains.</li>
+          <li>GEFS runs 35 days, so it covers the 7-day window only, and its reforecast lines up with the ECMWF hindcast dates in only five seasons.</li>
         </ul>
       </article>
       <article class="rb-card" id="card-stages">
@@ -380,15 +390,26 @@
       });
       const f2 = d3.format('.2f');
       fillTable(wtab, wt.data, (r) => [[r.blend], [String(r.window_days), true], [f2(r.intercept), true],
-        [r.w_ecmwf == null ? '—' : f2(r.w_ecmwf), true], [r.w_cumulus == null ? '—' : f2(r.w_cumulus), true]]);
+        [r.w_ecmwf == null ? '—' : f2(r.w_ecmwf), true], [r.w_cumulus == null ? '—' : f2(r.w_cumulus), true],
+        [r.w_gefs == null ? '—' : f2(r.w_gefs), true]]);
     } else { wbox.querySelector('svg')?.remove(); wtab.querySelector('tbody').innerHTML = ''; }
 
     // Outlook table
     const ol = dash.data('outlook');
     const otab = document.getElementById('outlook-table');
     if (ol.status === 'ok') {
-      fillTable(otab, ol.data, (r) => [[r.region], [r.forecast], [pct(r.p_7d), true], [pct(r.p_14d), true]]);
+      const pctOr = (v) => (v == null ? '—' : pct(v));  // GEFS has no 14-day forecast
+      fillTable(otab, ol.data, (r) => [[r.region], [r.forecast], [pctOr(r.p_7d), true], [pctOr(r.p_14d), true]]);
     } else otab.querySelector('tbody').innerHTML = '';
+
+    // GEFS skill
+    const sg = dash.data('skill_gefs');
+    const gtab = document.getElementById('gefs-table');
+    const gseasons = document.getElementById('gefs-seasons');
+    if (sg.status === 'ok') {
+      fillTable(gtab, sg.data, (r) => [[r.region], [r.predictors], [signed(Number(r.bss_7d)), true]]);
+      gseasons.textContent = sg.data[0] ? sg.data[0].seasons : '—';
+    } else { gtab.querySelector('tbody').innerHTML = ''; gseasons.textContent = '—'; }
 
     // Stages
     const st = dash.data('stages');
