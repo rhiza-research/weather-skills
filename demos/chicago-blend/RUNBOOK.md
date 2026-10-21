@@ -25,7 +25,7 @@ export SKILLS=/path/to/weather-skills/skills          # branch gates-demo
 export PLOT=/path/to/weather-skills-plotting/skills/plot/scripts/plot.py
 export HERE=/path/to/ond2026-onset/scripts
 export ARCHIVE=/path/to/archive                       # a copy of gs://sheerwater-datalake/gates-demo/archive
-export RUN=/path/to/scratch/run                       # working files, about 40 MB; rebuilt every run
+export RUN=/path/to/scratch/run                       # working files, about 370 MB; rebuilt every run
 export OUT=/path/to/results                           # report.md and the maps
 export INIT=2026-10-15                                # the live init to blend
 bash $HERE/run_demo.sh

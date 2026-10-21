@@ -14,7 +14,7 @@ Total time:
 
 ## What you need
 - **A Mac or Linux machine** with `git` and `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`). `uv` installs Python itself.
-- **About 3 GB of free disk.**
+- **About 3.5 GB of free disk:** 2.2 GB of data, 0.9 GB of Python packages and 0.4 GB of working files.
 - **The demo service-account key:** a JSON file shared by Rhiza Research, which can read `gs://sheerwater-datalake/gates-demo/`. Never print it or commit it.
 
 ## Before the meeting
