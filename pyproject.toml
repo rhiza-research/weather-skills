@@ -41,8 +41,6 @@ dev = [
 
 [tool.uv.sources]
 skills-runner = { git = "https://github.com/tescalada/skills-runner" }
-# dev tracks weather-skills-core dev; main goes back to the PyPI release.
-weather-skills-core = { git = "https://github.com/weather-skills/weather-skills-core", branch = "dev" }
 
 [tool.pytest.ini_options]
 testpaths = ["skills"]
