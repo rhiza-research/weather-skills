@@ -1,6 +1,6 @@
 # Runbook: OND 2026 onset forecast for East Africa from ensemble members (mme-fit / mme-blend)
 
-This file tells an agent how to rerun the analysis end to end. It fits one logistic regression per lead week that turns each model's **ensemble members** into a calibrated probability that the rainy season starts in that week. It checks skill by leaving one season out at a time, then blends the live 2026 forecasts. Results are reported for the whole box and for Kenya and Uganda separately.
+This file tells an agent how to rerun the analysis end to end. It fits one logistic regression per window (7 and 14 days from the forecast date) that turns each model's **ensemble members** into a calibrated chance that the rainy season has started by the end of the window. It checks skill by leaving one season out at a time, then blends the live 2026 forecasts. Places where CHIRPS already shows the onset before the forecast date are set to 1. Results are reported for the whole box and for Kenya and Uganda separately.
 
 Every script lives in `scripts/` next to this file. The previous ensemble-mean version of this analysis is in `RUNBOOK_ensmean.md`, `run_demo_ensmean.sh` and `report_ensmean.py`.
 
@@ -8,15 +8,16 @@ Never fill missing observations: the skills leave a missing sample out, and so d
 
 ## What it computes
 - **Event:** the ICPAC rainy-season onset (`icpac-onset`: a 3-day total ≥ 20 mm with no 7-day dry spell, under 1 mm a day, in the next 21 days).
-- **Target:** for lead week *k* after an init, does the season's **first onset on or after 15 September** fall in that week?
+- **Target:** for an init and a window of 7 or 14 days, does the season's **first onset on or after 15 September** come within the window from the init, i.e. have the rains started by day 7 / 14?
   - 1 if yes;
   - 0 if not yet;
-  - NaN once the onset has already happened (dropped from fitting and scoring).
+  - NaN if the onset had already happened before the init (dropped from fitting and scoring).
 
-  Built with `indicator --rule icpac-onset --first-in 7d` on each season of CHIRPS, 15 Sep – 31 Jan.
-- **Predictors:** for each model, the **share of its ensemble members** whose first onset since 15 Sep (by valid date) falls in the week. Built with `indicator --rule icpac-onset --first-in 7d --season-start 09-15 --probability --time-dim step` on the members, read at lead day 0 (week 1) and 7 (week 2). Members already past onset count as 0.
-- **Leads:** weeks 1–2 only. The onset rule looks 27 days past the trigger, so a 46-day forecast can decide it only through about day 19.
-- **Model:** `mme-fit --model logistic --fit-along step`. One unpenalized logistic regression per lead week, pooled over cells and seasons.
+  Built with `indicator --rule icpac-onset --first-in 7d` and `--first-in 14d` on each season of CHIRPS, 15 Sep – 31 Jan, stacked along a `window` dim.
+- **Predictors:** for each model, the **share of its ensemble members** whose first onset since 15 Sep (by valid date) comes within the window. Built with `indicator --rule icpac-onset --first-in 7d` / `14d` `--season-start 09-15 --probability --time-dim step` on the members, read at the init (lead 0, or the Cumulus lag), with dims `(time, step=0, window, latitude, longitude)`.
+- **Windows:** 7 and 14 days only. The onset rule looks 27 days past the trigger, so a 46-day forecast can decide it only through about day 19.
+- **Model:** `mme-fit --model logistic --fit-along window`. One unpenalized logistic regression per window, pooled over cells and seasons.
+- **Already started:** where CHIRPS (final and preliminary, 15 Sep to the day before the init) confirms an onset, the 2026 blends and climatologies are set to 1. An onset is confirmed only 21 days after its trigger, so onsets that began in the last three weeks aren't marked.
 - **Region:** the 1.5° cells centred 6°S – 7.5°N, 28.5°E – 48°E (10 × 14). Northern Ethiopia, whose main rains are June – September, is left out. Kenya and Uganda are each scored on every cell that touches the country (`clip-region --region`), so border cells count for both: 36 cells for Kenya, 17 for Uganda.
 
 ## Quick run (from the local archive)
@@ -34,21 +35,22 @@ The run only needs these parts of the archive (2.1 GB):
 - `chirps_daily_1p5.zarr`;
 - `ecmwf_reforecast.zarr`;
 - `cumulus_hindcast.zarr`;
+- `live/chirps_2026.zarr`;
 - `live/ecmwf/ecmwf_$INIT.zarr`;
 - `live/cumulus/cumulus_$INIT.zarr`.
 
-Timings on 21 Oct 2026 (Apple silicon, an archive holding only those five inputs, downloaded with `download_pack.py` in 36 s):
+Timings on 21 Oct 2026 (Apple silicon, local disk):
 
 | Stage | Script(s) | Time |
 |---|---|---|
-| Observed onsets | `members_events.py` | 15 s |
-| Member predictors, hindcast and live | `members_predictors.py ... 2022 cumulus`, `members_live.py` | 43 s |
-| Cross-validation | `clim.py`, `cv.py ... cumulus-no-gefs` | 13 s |
-| Final fits and 2026 blends | `fit_blend.py ... ecmwf cumulus ecmwf+cumulus` | 2 s |
-| Maps and report | `clip-region`, `plot` (five maps), `report.py` | 27 s |
-| **Total** | | **100 s** |
+| Observed onsets | `members_events.py` | 22 s |
+| Member predictors, hindcast and live | `members_predictors.py ... 2022 cumulus`, `members_live.py` | 91 s |
+| Cross-validation | `clim.py`, `cv.py ... cumulus-no-gefs` | 16 s |
+| Final fits, 2026 blends, already-started cells | `fit_blend.py ... ecmwf cumulus ecmwf+cumulus`, `started.py` | 3 s |
+| Maps and report | `clip-region`, `plot` (five maps), `report.py` | 26 s |
+| **Total** | | **158 s** |
 
-The report was identical to a run on the full archive.
+The member predictors run `indicator` once per window, so they take about twice as long as with one window.
 
 Every script calls the skills in-process through `scripts/skillrun.py`: the same code as `uv run <script>`, without a new process per call. Run the scripts with `uv run --project "$SKILLS/.." python -I` (define `py() { uv run --project "$SKILLS/.." python -I "$@"; }`; a `$PY` string is not split into words by zsh). `-I` keeps Python from importing from the current directory, because the scripts read downloaded data.
 
@@ -72,6 +74,7 @@ gcloud storage rsync -r gs://sheerwater-datalake/gates-demo/archive $ARCHIVE
 | `live/cumulus/` | Live Cumulus (`utmost-plane`), 30 members, 1°, inits 3 – 21 Oct 2026. | 47 MB |
 | `live/gefs/` | Live GEFS, 31 members, daily means at 1.5°, every init since 1 Sep 2026. | 64 MB |
 | `live/grid_1p5.zarr` | The 1.5° target grid. | |
+| `live/chirps_2026.zarr` | CHIRPS final and preliminary, 15 Sep – 15 Oct 2026, on the 1.5° cells (`chirps-fetch`, then `coarsen --reference-grid live/grid_1p5.zarr --method conservative`). Refresh it before a later init. | 0.1 MB |
 
 GEFS isn't in the current analysis yet. Its reforecast ends in 2019, so it overlaps Cumulus for only 4 seasons until the operational 2020 – 2025 store is finished.
 
@@ -91,15 +94,15 @@ py $HERE/members_events.py $ARCHIVE $RUN
 1. `clip-region` a live ECMWF init to the analysis box gives `grid.zarr`, the 10 × 14 target cells.
 2. `clip-region` `chirps_daily_1p5.zarr` to the same box gives `chirps15.zarr`.
 3. For each season 1981 – 2025, `select` 15 Sep – 31 Jan and run `indicator --rule icpac-onset --first-in 7d`. `--first-in` counts from the first date of its input, so it runs per season, never on a multi-season series.
-4. `concat` the seasons into `obs_event.zarr`.
+4. Stack each season's 7- and 14-day results along a `window` dim (own code: `concat` refuses inputs whose `aggregation_period` differs, which these do by design), then `concat` the seasons into `obs_event.zarr`.
 
 ### 2. Member predictors
 ```bash
 py $HERE/members_predictors.py $ARCHIVE $RUN 2022 cumulus
 py $HERE/members_live.py $ARCHIVE $RUN $INIT ecmwf cumulus
 ```
-- **ECMWF:** the 2022 model cycle's Thursday issuances (hindcast years 2002 – 2021), reshaped from WeatherBench2's issuance × hindcast-year layout to one init axis (own code, since no skill reads that layout). Then `clip-region` and `indicator`. This gives `ecmwf_hind.zarr`, 360 inits.
-- **Cumulus:** for each ECMWF init, the latest Cumulus init on or before it, at most 1 day earlier. It is read at lead day lag + 0 and lag + 7 so the weeks line up by valid date, then put on the 1.5° cells with `coarsen --method conservative`. This gives `cumulus_hind.zarr`, 108 inits (2016 – 2021).
+- **ECMWF:** the 2022 model cycle's Thursday issuances (hindcast years 2002 – 2021), reshaped from WeatherBench2's issuance × hindcast-year layout to one init axis (own code, since no skill reads that layout). Then `clip-region` and `indicator`. This gives `ecmwf_hind.zarr`, 360 inits, with dims `(time, step=0, window=7/14, latitude, longitude)`.
+- **Cumulus:** for each ECMWF init, the latest Cumulus init on or before it, at most 1 day earlier. It is read at lead day lag, so the windows start on the same valid date, then put on the 1.5° cells with `coarsen --method conservative`. This gives `cumulus_hind.zarr`, 108 inits (2016 – 2021).
 - **Live:** the same for `$INIT`, giving `live/ecmwf_wk.zarr` and `live/cumulus_wk.zarr`.
 
 Cumulus's 1° grid doesn't fully cover the southern row and the eastern column of 1.5° cells, so those are NaN for Cumulus (about 16% of cells).
@@ -109,7 +112,7 @@ Cumulus's 1° grid doesn't fully cover the southern row and the eastern column o
 EC_INIT=$INIT py $HERE/clim.py $RUN
 py $HERE/cv.py $RUN cumulus-no-gefs > $RUN/cv.txt
 ```
-- **`clim.py`** writes, for the same inits and weeks, the chance of the event on that day of the season:
+- **`clim.py`** writes, for the same inits and windows, the chance of the event from that day of the season:
   - `clim_hind.zarr`: every 1981 – 2025 season except the init's own;
   - `clim_2026_analog.zarr`: the 2026 El Niño analog years 1982 1994 1997 2006 2015 2019 2023;
   - `clim_2026_all.zarr`: all years.
@@ -117,57 +120,57 @@ py $HERE/cv.py $RUN cumulus-no-gefs > $RUN/cv.txt
 
 Other modes: `cv.py $RUN no-gefs` scores ECMWF alone and ECMWF + climatology over all 20 ECMWF seasons. The modes `cumulus` and the default include GEFS.
 
-### 4. Final fits and 2026 blends
+### 4. Final fits, 2026 blends and already-started cells
 ```bash
 py $HERE/fit_blend.py $RUN ecmwf cumulus ecmwf+cumulus
+py $HERE/started.py $ARCHIVE $RUN $INIT p2026_ecmwf p2026_cumulus p2026_ecmwf+cumulus clim_2026_analog clim_2026_all
 ```
-It fits on all seasons and blends the live forecasts, writing `w_<set>.zarr` and `p2026_<set>.zarr`.
+- `fit_blend.py` fits on all seasons (`--fit-along window`) and blends the live forecasts, writing `w_<set>.zarr` and `p2026_<set>.zarr`.
+- `started.py` runs `indicator --rule icpac-onset --cumulative` on `live/chirps_2026.zarr` and clips it to the box (`started.zarr`). It sets each named 2026 file to 1 where the onset is confirmed by the day before the init: 20 cells for the 15 October init, 9 of them in Uganda and none in Kenya.
 
 ### 5. Maps and report
-`run_demo.sh` plots `p2026_<set>.zarr` for all cells, one panel per lead week. It clips the cells (`cells_Kenya.zarr`, `cells_Uganda.zarr`) and the ECMWF + Cumulus blend to each country, plots those, and runs:
+`run_demo.sh` plots `p2026_<set>.zarr` for all cells, one panel per window (`"meta": {"facet": "window"}`), titled with the window's last day ("By 21 Oct", "By 28 Oct") through the `panel-title-1` / `panel-title-2` annotations. It clips the cells (`cells_Kenya.zarr`, `cells_Uganda.zarr`) and the ECMWF + Cumulus blend to each country, plots those, and runs:
 ```bash
 py $HERE/report.py $OUT/report.md $RUN
 ```
 The report has the skill table, weights and 2026 outlook for all cells, Kenya and Uganda.
 
 ## Results (run of 21 October 2026, init 15 October 2026)
-**Cross-validated Brier skill score against climatology**, weeks 1 / 2, 2016 – 2021 (6 seasons). Above 0 beats climatology.
+**Cross-validated Brier skill score against climatology**, by day 7 / day 14, 2016 – 2021 (6 seasons). Above 0 beats climatology.
 
-| Predictors | All cells (415 onsets a week) | Kenya (118) | Uganda (93) |
+| Predictors | All cells (415 / 693 onsets) | Kenya (118 / 217) | Uganda (93 / 144) |
 |---|---|---|---|
-| ECMWF | +0.04 / −0.06 | +0.11 / +0.06 | +0.10 / −0.04 |
-| Cumulus | +0.22 / +0.07 | +0.31 / +0.20 | +0.29 / +0.16 |
-| ECMWF + Cumulus | **+0.24 / +0.07** | **+0.33 / +0.20** | **+0.31 / +0.15** |
-
-Over all 20 ECMWF seasons (2019 cycle, 1999 – 2018, `cv.py no-gefs`), the ECMWF + climatology set scored +0.07 / +0.02 and ECMWF alone +0.02 / −0.11.
+| ECMWF | +0.04 / +0.00 | +0.11 / +0.07 | +0.10 / +0.04 |
+| Cumulus | +0.22 / +0.20 | +0.31 / +0.27 | +0.29 / +0.35 |
+| ECMWF + Cumulus | **+0.24 / +0.23** | **+0.33 / +0.29** | **+0.31 / +0.37** |
 
 **Weights** (log-odds per unit of members' onset share, fitted on all seasons):
 
-| Blend | Week | Intercept | Coefficients |
+| Blend | Window | Intercept | Coefficients |
 |---|---|---|---|
-| ECMWF | 1 / 2 | −3.50 / −3.06 | ECMWF 4.79 / 5.17 |
-| Cumulus | 1 / 2 | −3.81 / −3.17 | Cumulus 7.12 / 6.79 |
-| ECMWF + Cumulus | 1 / 2 | −3.97 / −3.19 | ECMWF 1.70 / 0.53, Cumulus 5.75 / 6.34 |
+| ECMWF | 7 / 14 days | −3.50 / −3.14 | ECMWF 4.79 / 4.61 |
+| Cumulus | 7 / 14 days | −3.81 / −3.46 | Cumulus 7.12 / 7.18 |
+| ECMWF + Cumulus | 7 / 14 days | −3.97 / −3.68 | ECMWF 1.70 / 1.90, Cumulus 5.75 / 5.61 |
 
-**2026 outlook**: the area-mean chance that the rains start in each week (15 – 21 Oct / 22 – 28 Oct).
+**2026 outlook**: the area-mean chance that the rains have started by 21 Oct / 28 Oct. Cells where CHIRPS already shows the onset count as 1.
 
-| Forecast | All cells | Kenya | Uganda |
+| Forecast | All cells (20 started) | Kenya (0 started) | Uganda (9 started) |
 |---|---|---|---|
-| ECMWF + Cumulus blend | 21% / 9% | 8% / 11% | 60% / 7% |
-| Cumulus blend | 20% / 9% | 8% / 11% | 59% / 7% |
-| ECMWF blend | 19% / 10% | 8% / 12% | 39% / 9% |
-| Climatology, all years | 17% / 13% | 11% / 8% | 39% / 37% |
+| ECMWF + Cumulus blend | 26% / 35% | 8% / 19% | 76% / 80% |
+| Cumulus blend | 26% / 34% | 8% / 19% | 77% / 80% |
+| ECMWF blend | 26% / 35% | 8% / 20% | 67% / 72% |
+| Climatology, all years | 30% / 37% | 11% / 18% | 65% / 76% |
 
 What the outlook shows:
-- **Uganda:** the blends put the start of the rains in the week of 15 – 21 October in most of the country, well above climatology.
-- **Kenya:** close to climatology, with the highest chances on the western border in week 1 and in the east and north-east in week 2.
+- **Uganda:** the rains have already started in the north and west (CHIRPS). Around Lake Victoria the blend gives high chances by 21 October, above climatology.
+- **Kenya:** none started yet. The chance by 28 October is about 1 in 5, close to climatology. It's highest near Lake Victoria and in the east and north-east.
 
 If a rerun on the same data and init gives different numbers, find out why before reporting new ones.
 
 ## Known limitations
 - **Few seasons:** Cumulus overlaps ECMWF for only 6 seasons, about 100 onsets a week per country. One unusual season can change the ranking.
 - **Member counts:** live ECMWF has 101 members, but its weights come from the 10-member reforecast, whose shares move in steps of 0.1. Cumulus has 30 members in both.
-- **Cells already past onset:** members already past onset count as 0, so the blend gives its lowest probability there. Those cells aren't masked on the maps. The target is undefined once the observed onset has happened, so the blend answers "if the rains haven't started yet".
-- **Analog climatology:** with few analog seasons still undecided late in a season, it can jump between weeks (Kenya: 43% then 6%). Use it as context, not as a forecast.
+- **Recent onsets:** CHIRPS confirms an onset only 21 days after its first rains, so places whose rains began in the three weeks before the init aren't set to 1. There the blend answers "if the rains haven't started yet".
+- **Analog climatology:** only 7 seasons, and it counts only those where the rains had not started by the same day, so it rests on very few seasons (Kenya: 43% by 21 Oct, against 11% over all years). Use it as context, not as a forecast.
 - **Cumulus checkpoint:** the match between `gratis-czajkowski` and the live run is inferred from their identical outputs and member counts. Neither folder records its checkpoint; ask the Cumulus team to confirm.
 - **Border cells:** at 1.5°, Kenya's and Uganda's border cells overlap and include parts of neighbours.

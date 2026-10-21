@@ -7,8 +7,10 @@ Usage: python members_events.py ARCHIVE WORK
      is left out).
   2. clip-region ARCHIVE/chirps_daily_1p5.zarr (CHIRPS already coarsened conservatively onto the
      archive's 1.5 deg cells) to the same box (WORK/chirps15.zarr).
-  3. For each season 1981-2025: select 15 Sep - 31 Jan and run indicator --rule icpac-onset
-     --first-in 7d.
+  3. For each season 1981-2025: select 15 Sep - 31 Jan, run indicator --rule icpac-onset
+     --first-in 7d and --first-in 14d (1 if the season's first onset falls within 7 / 14 days of the
+     date, 0 if not yet, NaN once past), and stack the two along a new window dim (7, 14). Own
+     code: concat refuses inputs with different aggregation periods, which these are by design.
   4. concat every season into WORK/obs_event.zarr.
 Seasons already in WORK/chirps are skipped.
 """
@@ -17,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import xarray as xr
 
 sys.path.insert(0, str(Path(__file__).parent))  # skillrun.py beside this script (python -I drops it)
 from skillrun import run  # noqa: E402
@@ -42,7 +45,13 @@ for y in range(1981, 2026):
     season = WORK / "chirps" / f"c15_{y}.zarr"
     run("select", "select_dim", "-i", coarse, "--dim", "time",
         *[a for d in days for a in ("--value", d)], "-o", season)
-    run("indicator", "indicator", "-i", season, "--rule", "icpac-onset", "--first-in", "7d", "-o", ev)
+    for w in (7, 14):
+        run("indicator", "indicator", "-i", season, "--rule", "icpac-onset", "--first-in", f"{w}d",
+            "-o", WORK / "chirps" / f"ev{w}_{y}.zarr")
+    both = [xr.open_zarr(WORK / "chirps" / f"ev{w}_{y}.zarr")["indicator"] for w in (7, 14)]
+    stacked = xr.concat(both, dim=pd.Index([7, 14], name="window"), combine_attrs="drop")
+    stacked.attrs = {"units": "1", "long_name": "First ICPAC onset of the season within the window (days)"}
+    stacked.to_dataset(name="indicator").to_zarr(ev, mode="w")
 
 inputs = [a for y in range(1981, 2026) for a in ("-i", WORK / "chirps" / f"ev_{y}.zarr")]
 run("concat", "concat", *inputs, "--dim", "time", "-o", WORK / "obs_event.zarr")

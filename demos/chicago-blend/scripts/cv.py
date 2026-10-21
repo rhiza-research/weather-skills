@@ -1,10 +1,10 @@
-"""Leave-one-season-out test of mme-fit / mme-blend for OND onset-in-week over Kenya.
+"""Leave-one-season-out test of mme-fit / mme-blend for the first OND onset within 7 / 14 days of each init.
 
 Usage: python cv.py WORK [no-gefs | cumulus | cumulus-no-gefs]
 
-For each held-out season: fit logistic weights per lead week on the other
+For each held-out season: fit logistic weights per window on the other
 seasons with the mme-fit skill, blend the held-out season's forecasts with
-mme-blend, and score against the observed first-onset-in-week (Brier score).
+mme-blend, and score against the observed first onset within the window (Brier score).
 Every predictor set is scored on the same inits: those every input has. With
 `cumulus`, WORK/cumulus_hind.zarr joins the inputs, which limits the inits to the
 seasons Cumulus, ECMWF and GEFS share; `cumulus-no-gefs` drops GEFS, so the
@@ -79,7 +79,7 @@ for y in years:
             "--model",
             "logistic",
             "--fit-along",
-            "step",
+            "window",
             "-o",
             FOLD / "w.zarr",
         )
@@ -97,20 +97,21 @@ for y in years:
         )
         p = xr.open_zarr(FOLD / "p.zarr").load()["probability"]
         for t in test:
-            for k, step in enumerate(p.step.values):
-                valid = (t + pd.Timedelta(step)).normalize()
+            step = p.step.values[0]  # 0: every window starts at the init
+            valid = (t + pd.Timedelta(step)).normalize()
+            for win in p.window.values:
                 # Match cells by coordinate, not array position: the inputs are not all stored
                 # in the same latitude order (CHIRPS and Cumulus north-first, ECMWF south-first).
-                pr_da = p.sel(time=t, step=step).transpose("latitude", "longitude")
+                pr_da = p.sel(time=t, step=step, window=win).transpose("latitude", "longitude")
                 cells = dict(latitude=pr_da.latitude, longitude=pr_da.longitude)
                 if valid in obs.indexes["time"]:
-                    o = obs.sel(time=valid).sel(cells).transpose("latitude", "longitude").values
+                    o = obs.sel(time=valid, window=win).sel(cells).transpose("latitude", "longitude").values
                 else:
                     o = np.full(pr_da.shape, np.nan)
                 pr = pr_da.values
                 cl = (
                     data["clim"]["probability"]
-                    .sel(time=t, step=step)
+                    .sel(time=t, step=step, window=win)
                     .sel(cells)
                     .transpose("latitude", "longitude")
                     .values
@@ -119,11 +120,11 @@ for y in years:
                 m = np.isfinite(o) & np.isfinite(pr) & np.isfinite(cl)
                 for d in data.values():
                     m &= np.isfinite(
-                        d["probability"].sel(time=t, step=step).sel(cells).transpose("latitude", "longitude").values
+                        d["probability"].sel(time=t, step=step, window=win).sel(cells).transpose("latitude", "longitude").values
                     )
                 lat, lon = np.meshgrid(pr_da.latitude.values, pr_da.longitude.values, indexing="ij")
                 rows += [
-                    dict(year=y, week=k + 1, cfg=cfg, latitude=la, longitude=lo, p=a, clim=c, obs=b)
+                    dict(year=y, window=int(win), cfg=cfg, latitude=la, longitude=lo, p=a, clim=c, obs=b)
                     for la, lo, a, c, b in zip(lat[m], lon[m], pr[m], cl[m], o[m], strict=True)
                 ]
     print(f"season {y} done", flush=True)
@@ -131,14 +132,14 @@ for y in years:
 df = pd.DataFrame(rows)
 df.to_csv(D / (f"cv_predictions_{MODE}.csv" if MODE else "cv_predictions.csv"), index=False)
 out = []
-for (cfg, week), g in df.groupby(["cfg", "week"]):
+for (cfg, window), g in df.groupby(["cfg", "window"]):
     bs = ((g.p - g.obs) ** 2).mean()
     bs_clim = ((g.clim - g.obs) ** 2).mean()
     bs_base = ((g.obs.mean() - g.obs) ** 2).mean()
     out.append(
         dict(
             cfg=cfg,
-            week=week,
+            window=window,
             n=len(g),
             events=int(g.obs.sum()),
             brier=round(bs, 4),

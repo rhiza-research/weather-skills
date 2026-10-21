@@ -1,9 +1,9 @@
-"""Climatological probability of the event in each lead week, as a forecast-shaped predictor.
+"""Climatological probability of the event in each window from the init, as a forecast-shaped predictor.
 
-From the per-season observed event series (events.py; for a first-event target NaN
-once the event has happened), for each init date and lead week: the share of
-reference seasons with the event in the week starting the same day of the season,
-among seasons where it is still possible.
+From the per-season observed event series (members_events.py: first onset within 7 / 14 days, NaN
+once the onset has happened), for each init date and window: the share of reference seasons with
+the first onset within the window from the same day of the season, among seasons where it is still
+possible.
 Training samples use every 1981-2025 season except their own; 2026 uses the
 analog seasons (analog) or all seasons (all).
 """
@@ -18,7 +18,6 @@ import xarray as xr
 D = sys.argv[1]
 ANALOGS = [1982, 1994, 1997, 2006, 2015, 2019, 2023]
 YEARS = range(1981, 2026)
-STEPS = np.array([0, 7])
 
 series = {}
 for y in YEARS:
@@ -26,6 +25,7 @@ for y in YEARS:
     dos = (pd.DatetimeIndex(ev.time.values) - pd.Timestamp(f"{y}-10-01")).days
     series[y] = ev.assign_coords(time=dos).rename(time="dos")
 E = xr.concat([series[y] for y in YEARS], dim=pd.Index(list(YEARS), name="year"), join="inner")
+E = E.transpose("year", "dos", "window", "latitude", "longitude")
 hind = xr.open_zarr(f"{D}/ecmwf_hind.zarr")
 # Same cell order as the forecasts (both on the 1.5° grid; CHIRPS may be stored north-first).
 E = E.sel(
@@ -40,18 +40,19 @@ def clim_for(inits, years_for):
         ref = E.sel(year=years_for(init.year))
         # Days before the observed season (15 Sep) have no event series: NaN, so the sample drops.
         rows.append(
-            np.stack([ref.reindex(dos=[start + s]).isel(dos=0).mean("year", skipna=True).values for s in STEPS])
+            ref.reindex(dos=[start]).isel(dos=0).mean("year", skipna=True).values
         )
     return rows
 
 
 def write(rows, inits, name, like):
     da = xr.DataArray(
-        np.stack(rows).astype("float32"),
-        dims=("time", "step", "latitude", "longitude"),
+        np.stack(rows)[:, None].astype("float32"),
+        dims=("time", "step", "window", "latitude", "longitude"),
         coords={
             "time": pd.DatetimeIndex(inits).values,
-            "step": STEPS.astype("timedelta64[D]").astype("timedelta64[ns]"),
+            "step": [np.timedelta64(0, "ns")],
+            "window": E.window.values,
             "latitude": like.latitude.values,
             "longitude": like.longitude.values,
         },
@@ -59,8 +60,7 @@ def write(rows, inits, name, like):
     ds = da.to_dataset(name="probability")
     ds["probability"].attrs.update(
         units="1",
-        aggregation_period="7 day",
-        long_name="Climatological probability of the event in the week",
+        long_name="Climatological probability of the first onset within the window",
     )
     ds.to_zarr(f"{D}/{name}.zarr", mode="w", consolidated=True)
     return da
@@ -75,6 +75,6 @@ loo = write(
 init26 = [pd.Timestamp(os.environ.get("EC_INIT", "2026-10-15"))]
 an = write(clim_for(init26, lambda y: ANALOGS), init26, "clim_2026_analog", hind)
 al = write(clim_for(init26, lambda y: list(YEARS)), init26, "clim_2026_all", hind)
-print("training clim mean by week", loo.mean(["time", "latitude", "longitude"]).values.round(3))
-print("2026 analog clim by week", an.mean(["time", "latitude", "longitude"]).values.round(3))
-print("2026 all-years clim by week", al.mean(["time", "latitude", "longitude"]).values.round(3))
+print("training clim mean by window", loo.mean(["time", "step", "latitude", "longitude"]).values.round(3))
+print("2026 analog clim by window", an.mean(["time", "step", "latitude", "longitude"]).values.round(3))
+print("2026 all-years clim by window", al.mean(["time", "step", "latitude", "longitude"]).values.round(3))

@@ -4,7 +4,7 @@ Usage: python fit_blend.py WORK SET [SET ...]      e.g.  fit_blend.py $WORK ecmw
 
 Each SET names forecasts joined by '+'. For a forecast NAME it reads the hindcast
 predictors WORK/NAME_hind.zarr and the live forecast WORK/live/NAME_wk.zarr, fits
-logistic weights per lead week against WORK/obs_event.zarr (mme-fit), and blends
+logistic weights per window against WORK/obs_event.zarr (mme-fit), and blends
 the live forecast (mme-blend). Writes WORK/w_SET.zarr and WORK/p2026_SET.zarr.
 """
 
@@ -32,7 +32,7 @@ for cfg in sys.argv[2:]:
         "--model",
         "logistic",
         "--fit-along",
-        "step",
+        "window",
         "-o",
         W / f"w_{cfg}.zarr",
     )
