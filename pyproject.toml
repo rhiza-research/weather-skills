@@ -21,7 +21,7 @@ dev = [
     "zarr",
     "cftime",
     "geopandas>=1.0",
-    "weather-skills-core>=0.1.1",
+    "weather-skills-core>=0.2.0",
     # Skill-script imports exercised by per-skill tests (mocked network).
     "requests",
     "earthaccess",
@@ -41,8 +41,6 @@ dev = [
 
 [tool.uv.sources]
 skills-runner = { git = "https://github.com/tescalada/skills-runner" }
-# dev tracks weather-skills-core dev; main goes back to the PyPI release.
-weather-skills-core = { git = "https://github.com/weather-skills/weather-skills-core", branch = "dev" }
 
 [tool.pytest.ini_options]
 testpaths = ["skills"]

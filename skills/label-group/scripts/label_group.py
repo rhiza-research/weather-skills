@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@dev",
+#   "weather-skills-core>=0.2.0",
 #   "shapely",
 # ]
 # ///
