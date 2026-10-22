@@ -552,3 +552,48 @@ def test_v3_reads_store_without_dask(tmp_path, fetch_mod, monkeypatch):
         assert _lead_hours(ds) == list(range(1, 9))
         assert ds.sizes["lat"] == 1 and ds.sizes["lon"] == 1
         assert list(ds["number"].values) == [1]
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["-v", "tp_p90"], {"tp_p90"}),
+        (["-v", "total_precipitation_1hr_p90"], {"tp_p90"}),
+        (["-v", "tp_p90", "-v", "t2m_mean"], {"tp_p90", "2m_temperature_mean"}),
+        (["-v", "tp_p90", "-v", "tp"], {"tp_mean", "tp_p10", "tp_p50", "tp_p90"}),
+        (["-v", "tp_p90", "-v", "t2m", "--statistic", "p90"], {"tp_p90", "2m_temperature_p90"}),
+    ],
+)
+def test_v3_variable_naming_a_statistic_keeps_only_it(
+    tmp_path, fetch_mod, monkeypatch, argv, expected
+):
+    out = tmp_path / "wn3_stat.zarr"
+    _mock_v3(monkeypatch, fetch_mod, _native_v3_statistics())
+    run_skill(
+        fetch_mod.fetch,
+        "--version", "3", "--product", "statistics", "--date", "2026-10-02",
+        *argv,
+        "-o", str(out),
+    )  # fmt: skip
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert set(ds.data_vars) == expected
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--product", "statistics", "-v", "tp_p90", "--statistic", "mean"],  # conflict
+        ["--product", "statistics", "-v", "tp_p25"],  # statistic not in the store
+        ["--billing-project", "p", "-v", "tp_p90"],  # ensemble has no statistics
+    ],
+)
+def test_v3_bad_statistic_variable_exits_2(tmp_path, fetch_mod, monkeypatch, argv):
+    remote = _native_v3_statistics() if "statistics" in argv else _native_v3_ensemble()
+    _mock_v3(monkeypatch, fetch_mod, remote)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch, "--version", "3", "--date", "2026-10-02", *argv,
+            "-o", str(tmp_path / "o.zarr"),
+        )  # fmt: skip
+    assert exc.value.code == 2
+

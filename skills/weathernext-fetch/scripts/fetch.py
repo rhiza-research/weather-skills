@@ -450,11 +450,11 @@ def _group_label(group) -> str:
     return f"{grid.replace('p', '.')}deg {'hourly' if hourly else '6-hourly'}"
 
 
-def _resolve_names(variable, available, normalize=lambda name: name) -> list[str]:
+def _resolve_names(variable, available) -> list[str]:
     """``--variable`` values → deduped names in ``available``; UsageError lists misses."""
     resolved, missing = [], []
     for raw in variable:
-        name = normalize(_VAR_ALIASES.get(raw, raw))
+        name = _VAR_ALIASES.get(raw, raw)
         if name not in available:
             missing.append(raw)
         elif name not in resolved:
@@ -480,14 +480,43 @@ def _select_v3(ds, variable, statistic):
     for native, out in out_names.items():
         by_base.setdefault(_split_statistic(out)[0], []).append(native)
 
+    # Base output name -> the statistics a -v named for it (None: every one).
+    picked: dict[str, set[str] | None] = {}
     if variable:
-        bases = _resolve_names(variable, by_base, lambda n: _split_statistic(_v3_output_name(n))[0])
+        missing = []
+        for raw in variable:
+            base, stat = _split_statistic(raw)
+            base = _VAR_ALIASES.get(base, base)
+            if base not in by_base or (
+                stat and not any(_split_statistic(n)[1] == stat for n in by_base[base])
+            ):
+                missing.append(raw)
+                continue
+            if stat and statistic and stat not in statistic:
+                raise UsageError(
+                    f"-v {raw} names statistic {stat}, but --statistic keeps only "
+                    f"{', '.join(statistic)}."
+                )
+            if stat is None or picked.get(base, set()) is None:
+                picked[base] = None
+            else:
+                picked.setdefault(base, set()).add(stat)
+        if missing:
+            raise UsageError(
+                f"variable(s) not in this WeatherNext product: {', '.join(missing)}.\n"
+                f"Available: {', '.join(sorted(by_base))}"
+            )
     else:
-        bases = [
-            b for b, names in by_base.items() if _field_group(ds[names[0]])[0] == _V3_DEFAULT_GRID
-        ]
+        for b, names in by_base.items():
+            if _field_group(ds[names[0]])[0] == _V3_DEFAULT_GRID:
+                picked[b] = None
 
-    natives = [n for b in bases for n in by_base[b]]
+    natives = [
+        n
+        for b, stats in picked.items()
+        for n in by_base[b]
+        if stats is None or _split_statistic(n)[1] in stats
+    ]
     if statistic:
         natives = [n for n in natives if _split_statistic(n)[1] in statistic]
 
