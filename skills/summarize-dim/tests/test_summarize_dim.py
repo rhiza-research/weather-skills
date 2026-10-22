@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 import xarray as xr
-from conftest import load_skill, make_gridded, run_skill, write_zarr
+from conftest import load_skill, make_gridded, make_point_obs, run_skill, write_zarr
 from weather_skills_core.provenance import load_history
 from weather_skills_core.units import units_equal
 
@@ -167,7 +167,10 @@ def test_by_label_collapses_its_dims(tmp_path, summarize_dim):
 
 
 def test_by_two_labels_with_extra_dim(tmp_path, summarize_dim):
-    src = write_zarr(_labeled(), tmp_path / "in.zarr")
+    ds = _labeled().drop_vars("half")
+    ds = ds.assign_coords(dayofyear=("time", ds["time"].dt.dayofyear.values))
+    ds["precip"].attrs.update(units="mm", cell_methods="time: sum")
+    src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
 
     run_skill(
@@ -179,15 +182,15 @@ def test_by_two_labels_with_extra_dim(tmp_path, summarize_dim):
         "--by",
         "region",
         "--by",
-        "half",
+        "dayofyear",
         "--method",
         "sum",
     )
 
     ds = xr.open_zarr(out, consolidated=True)
-    assert set(ds["precip"].dims) == {"region", "half"}
-    # region a, half x: cells 0, 1 at times 0, 1 -> 0 + 1 + 6 + 7
-    assert ds["precip"].sel(region="a", half="x").item() == 14.0
+    assert set(ds["precip"].dims) == {"region", "dayofyear"}
+    # region a, day 2: cells 0, 1 at time 1 -> 6 + 7
+    assert ds["precip"].sel(region="a", dayofyear=2).item() == 13.0
 
 
 def test_by_rejects_dim_coord(tmp_path, summarize_dim, capsys):
@@ -293,3 +296,137 @@ def test_by_same_dims_combination_without_cells_is_nan(tmp_path, summarize_dim):
     assert r.sel(region="a", zone="e").item() == 1.0
     assert r.sel(region="b", zone="e").item() == 5.0
     assert r.sel(region="b", zone="w").item() == 4.0
+
+
+def _seasons(n_time=275, start="2020-04-01"):
+    """Two stations of daily totals with year and MAM / OND labels; S1 misses 10 OND days."""
+    import numpy as np
+
+    ds = make_point_obs(n_time=n_time, start=start, fill=1.0)
+    ds["precip"].attrs.update(
+        units="mm", standard_name="lwe_thickness_of_precipitation_amount", cell_methods="time: sum"
+    )
+    month = ds["time"].dt.month.values
+    ds["precip"].values[1, np.nonzero(month == 11)[0][:10]] = np.nan
+    group = np.where(np.isin(month, [3, 4, 5]), "MAM", np.where(month >= 10, "OND", ""))
+    ds["elevation"] = ("point_id", [10.0, 20.0])
+    return ds.assign_coords(year=("time", ds["time"].dt.year.values), month_group=("time", group))
+
+
+def _by_season(summarize_dim, tmp_path, *extra):
+    src = write_zarr(_seasons(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month_group",
+        "--method",
+        "sum",
+        *extra,
+    )
+    return xr.open_zarr(out, consolidated=True)
+
+
+def test_by_season_blanks_incomplete_groups(tmp_path, summarize_dim, capsys):
+    """April-May is a partial MAM (61 of 92 days) and S1 misses 10 OND days: both blanked."""
+    import numpy as np
+
+    ds = _by_season(summarize_dim, tmp_path)
+
+    precip = ds["precip"].sel(year=2020)  # integer label
+    assert precip.dims == ("point_id", "month_group")
+    assert precip.sel(point_id="S0", month_group="OND").item() == 92.0
+    assert np.isnan(precip.sel(month_group="MAM")).all()
+    assert np.isnan(precip.sel(point_id="S1", month_group="OND").item())
+    assert "blanked 3 of 4 value(s)" in capsys.readouterr().err
+    assert "precip_coverage" not in ds
+    # A variable without the label dims passes through.
+    assert ds["elevation"].values.tolist() == [10.0, 20.0]
+
+
+def test_min_coverage_keeps_partial_sums_with_warning(tmp_path, summarize_dim, capsys):
+    ds = _by_season(summarize_dim, tmp_path, "--min-coverage", "0.5")
+
+    precip = ds["precip"].sel(year=2020)
+    assert precip.sel(point_id="S0", month_group="MAM").item() == 61.0  # not scaled up
+    assert precip.sel(point_id="S1", month_group="OND").item() == 82.0
+    assert "estimates from partial data" in capsys.readouterr().err
+    coverage = ds["precip_coverage"].sel(year=2020)
+    assert coverage.sel(point_id="S1", month_group="MAM").item() == pytest.approx(61 / 92)
+    assert coverage.sel(point_id="S1", month_group="OND").item() == pytest.approx(82 / 92)
+    assert coverage.sel(point_id="S0", month_group="OND").item() == 1.0
+    assert ds["precip"].attrs["ancillary_variables"] == "precip_coverage"
+
+
+def test_season_crossing_december_takes_its_start_year(tmp_path, summarize_dim):
+    """Dec 2020 - Feb 2021 is one complete DJF (90 days) labelled 2020."""
+    import numpy as np
+
+    ds = make_gridded(n_time=90, start="2020-12-01", lats=(1.0,), lons=(10.0,))
+    ds["precip"].attrs.update(units="mm", cell_methods="time: sum")
+    month = ds["time"].dt.month.values
+    ds = ds.assign_coords(
+        year=("time", ds["time"].dt.year.values - (month < 12)),
+        month_group=("time", np.full(90, "DJF")),
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month_group",
+        "--method",
+        "sum",
+    )
+
+    result = xr.open_zarr(out, consolidated=True)["precip"]
+    assert result.sel(year=2020, month_group="DJF").values.ravel().tolist() == [90.0]
+
+
+def test_sum_of_rates_over_time_is_refused(tmp_path, summarize_dim, capsys):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--dim",
+            "time",
+            "--method",
+            "sum",
+        )
+    assert "convert the rates to period totals first" in capsys.readouterr().err
+
+
+def test_min_coverage_needs_a_time_label(tmp_path, summarize_dim, capsys):
+    src = write_zarr(_labeled(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "region",
+            "--method",
+            "mean",
+            "--min-coverage",
+            "0.5",
+        )
+    assert "--min-coverage needs a --by label along time" in capsys.readouterr().err
