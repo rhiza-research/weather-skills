@@ -36,9 +36,7 @@ Pass `--dim`, `--by`, or both.
 - `--by L`: the dims of `L` become a dim `L` holding each label once; several `--by` give one dim each. The `""` label is left out. Other label coords on those dims are dropped; only variables carrying all of the label's dims are summarized.
 - NaNs are skipped. `sum` of an all-NaN slice is NaN, not 0. `std` is the sample standard deviation (`ddof=1`), so `std` over a dim of size 1 is NaN.
 - `units` and other attrs are kept as they are, including after `sum` (no unit change). So `sum` over `time` or `step` of a rate (e.g. `mm day-1`) is refused: convert rates to period totals first (`convert-to-totals`).
-- Coverage (with a `--by` time label) is per input station or grid cell: its time steps with data over the steps the group's full calendar period holds at the data's step (MAM of daily data: 92). Input `aggregation_coverage` counts as that fraction. A season cut by the record's start or end is incomplete. Cells below `--min-coverage` are left out before any spatial reduction (a regional value uses complete cells only, NaN if none), counted on stderr; missing steps are never filled.
 - `sum` with `--min-coverage` below 1: kept sums of incomplete groups are partial-data estimates; stderr warns, and `<var>_coverage` (0–1, the least-covered cell used) is written, linked by `ancillary_variables`.
-- The statistic is appended to CF `cell_methods` (e.g. `number: standard_deviation`, `latitude: longitude: mean`, `latitude: longitude: mean (grouped by admin_1)`). `std` and `sum` also set `long_name` (`Standard deviation of Total precipitation across number`) and drop `GRIB_name`, `short_name`, and `comment`; `standard_name` stays.
 
 ### Notes
 - Write to a new path: an `--output` equal to the input destroys the input.
@@ -50,3 +48,7 @@ Pass `--dim`, `--by`, or both.
 uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i ecmwf_s2s_kenya.zarr -o ecmwf_s2s_kenya_spread.zarr --dim number --method std
 ```
 Writes the ensemble spread (standard deviation across the 101 members) of the ECMWF forecast, in the input units.
+
+## Details
+- Coverage (with a `--by` time label) is per input station or grid cell: its time steps with data over the steps the group's full calendar period holds at the data's step (MAM of daily data: 92). Input `aggregation_coverage` counts as that fraction. A season cut by the record's start or end is incomplete. Cells below `--min-coverage` are left out before any spatial reduction (a regional value uses complete cells only, NaN if none), counted on stderr; missing steps are never filled.
+- The statistic is appended to CF `cell_methods` (e.g. `number: standard_deviation`, `latitude: longitude: mean`, `latitude: longitude: mean (grouped by admin_1)`). `std` and `sum` also set `long_name` (`Standard deviation of Total precipitation across number`) and drop `GRIB_name`, `short_name`, and `comment`; `standard_name` stays.
