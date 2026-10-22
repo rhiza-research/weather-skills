@@ -4,8 +4,6 @@
 #   "weather-skills-core>=0.2.0",
 #   "cftime>=1.6",
 #   "netcdf4>=1.7",
-#   "numpy>=2.4",
-#   "xarray>=2026.4",
 # ]
 # ///
 """Export a weather-skills Zarr to a NetCDF file, or read NetCDF files into a Zarr."""

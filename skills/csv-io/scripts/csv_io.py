@@ -3,10 +3,8 @@
 # dependencies = [
 #   "weather-skills-core>=0.2.0",
 #   "cftime>=1.6",
-#   "numpy>=2.4",
 #   "openpyxl>=3.1",
 #   "pandas>=2.2",
-#   "xarray>=2026.4",
 # ]
 # ///
 """Export a weather-skills Zarr to a CSV table, or read a CSV or Excel sheet into a Zarr."""
