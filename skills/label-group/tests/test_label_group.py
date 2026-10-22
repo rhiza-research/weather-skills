@@ -200,3 +200,142 @@ def test_overlapping_units_are_reported(tmp_path, label_group, capsys):
     # Column lon=11 is in both boxes: 3 cells, kept by the first unit.
     assert "3 cell(s)/station(s) lie in two overlapping units" in capsys.readouterr().err
     assert (xr.open_zarr(out, consolidated=True)["basin"].sel(longitude=11.0) == "a").all()
+
+
+def _stations(lats, lons):
+    ds = make_point_obs(n_points=len(lats))
+    return ds.assign_coords(latitude=("point_id", list(lats)), longitude=("point_id", list(lons)))
+
+
+def test_coastal_stations_join_nearest_country(tmp_path, label_group, capsys):
+    """Mogadishu airport and Lamu lie ~1 km off the 1:50m outlines; open ocean stays ""."""
+    src = write_zarr(
+        _stations((2.014, -2.2524, 0.0), (45.305, 40.9131, 50.0)), tmp_path / "in.zarr"
+    )
+    out = tmp_path / "out.zarr"
+
+    run_skill(label_group, "-i", str(src), "-o", str(out), "--level", "country")
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds["country"].values.tolist() == ["somalia", "kenya", ""]
+    assert ds["country_name"].values.tolist() == ["Somalia", "Kenya", ""]
+    assert "2 station(s) outside every unit joined the nearest unit" in capsys.readouterr().err
+
+
+def test_grid_cells_do_not_snap(tmp_path, label_group):
+    """Cell centres 0.05° outside a polygon stay unlabelled; stations that close snap."""
+    zones = _geojson(tmp_path, _box("west", 9.5, 0.5, 11.95, 3.5))
+    grid = write_zarr(make_gridded(), tmp_path / "grid.zarr")
+    run_skill(
+        label_group,
+        "-i",
+        str(grid),
+        "-o",
+        str(tmp_path / "g.zarr"),
+        "--geojson",
+        zones,
+        "--property",
+        "basin",
+    )
+    assert xr.open_zarr(tmp_path / "g.zarr", consolidated=True)["basin"].sel(
+        longitude=12.0
+    ).values.tolist() == ["", "", ""]
+
+    points = write_zarr(_stations((1.0, 1.0), (12.0, 12.2)), tmp_path / "pts.zarr")
+    run_skill(
+        label_group,
+        "-i",
+        str(points),
+        "-o",
+        str(tmp_path / "p.zarr"),
+        "--geojson",
+        zones,
+        "--property",
+        "basin",
+    )
+    # 0.05° away snaps; 0.25° away is beyond the 0.1° tolerance.
+    assert xr.open_zarr(tmp_path / "p.zarr", consolidated=True)["basin"].values.tolist() == [
+        "west",
+        "",
+    ]
+
+
+def test_antimeridian_grid_in_0_360_queries_two_spans(tmp_path, monkeypatch):
+    module = load_skill("label-group", "label_group")
+    seen = []
+
+    def spy(level, bbox):
+        seen.append(bbox)
+        return region_mod.level_features(level, bbox)
+
+    monkeypatch.setattr(module, "level_features", spy)
+    src = write_zarr(
+        make_gridded(lats=(-17.8, -16.0), lons=(175.0, 178.0, 181.0)), tmp_path / "in.zarr"
+    )
+    out = tmp_path / "out.zarr"
+
+    run_skill(module.label_group, "-i", str(src), "-o", str(out), "--level", "country")
+
+    north, west, south, east = seen[0]
+    assert (west, east) == (175.0, -179.0)  # west > east: 175E to 179W, not the whole band
+    assert (
+        xr.open_zarr(out, consolidated=True)["country"].sel(latitude=-17.8, longitude=178.0).item()
+        == "fiji"
+    )
+
+
+def test_existing_name_coord_is_refused(tmp_path, label_group, capsys):
+    ds = make_gridded().assign_coords(country_name=("latitude", ["a", "b", "c"]))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(label_group, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--level", "country")
+    assert "'country_name' already exists" in capsys.readouterr().err
+
+
+def _fake_admin(monkeypatch):
+    """Kenya admin layers: Nairobi and Kiambu (admin_1), and Kiambu Town in Kiambu (admin_2)."""
+
+    def unit(name, west, south, east, north):
+        feature = _box(name, west, south, east, north)
+        feature["properties"] = {"shapeName": name}
+        return feature
+
+    layers = {
+        1: [unit("Nairobi", 36.6, -1.45, 37.1, -1.15), unit("Kiambu", 36.6, -1.15, 37.1, -0.75)],
+        2: [
+            unit("Kiambu Town", 36.7, -1.1, 36.9, -0.9),
+            unit("Westlands", 36.6, -1.45, 37.1, -1.15),
+        ],
+    }
+
+    def fake(iso3, level):
+        if iso3 != "KEN":
+            raise region_mod._AdminMissing("not in this test")
+        return {"type": "FeatureCollection", "features": layers[level]}
+
+    region_mod._admin_collection.cache_clear()
+    monkeypatch.setattr("weather_skills_core.region._load_admin_geojson", fake)
+
+
+def test_level_admin_1_labels_grid(tmp_path, label_group, monkeypatch):
+    _fake_admin(monkeypatch)
+    src = write_zarr(make_gridded(lats=(-1.3, -1.0), lons=(36.8,)), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(label_group, "-i", str(src), "-o", str(out), "--level", "admin_1")
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds["admin_1"].values.ravel().tolist() == ["kenya-nairobi", "kenya-kiambu"]
+    assert ds["admin_1_name"].values.ravel().tolist() == ["Nairobi", "Kiambu"]
+
+
+def test_level_admin_2_keys_name_their_admin_1(tmp_path, label_group, monkeypatch):
+    _fake_admin(monkeypatch)
+    src = write_zarr(_stations((-1.3, -1.0), (36.8, 36.8)), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(label_group, "-i", str(src), "-o", str(out), "--level", "admin_2")
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds["admin_2"].values.tolist() == ["kenya-nairobi-westlands", "kenya-kiambu-kiambu_town"]
+    assert ds["admin_2_name"].values.tolist() == ["Westlands", "Kiambu Town"]

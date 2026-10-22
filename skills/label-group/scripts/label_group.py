@@ -23,6 +23,9 @@ _SKILL_VERSION = "0.0.1"
 
 _TIME_PARTS = ("month", "year", "dayofyear")
 _INITIALS = "JFMAMJJASOND"
+# Stations outside every outline join the nearest unit this close (degrees, ~11 km): the
+# bundled 1:50m outlines cut corners, leaving coastal stations just offshore.
+_SNAP_DEG = 0.1
 
 
 def _month_group(token):
@@ -94,14 +97,27 @@ def label_group(ds, level, geojson, property, time, **kwargs):
             raise UsageError("--level / --geojson need latitude/longitude dims or station coords")
         lon2d = (lon2d + 180.0) % 360.0 - 180.0  # match against [-180, 180) outlines
 
+        stations = space_dims != (lat_dim, lon_dim)
+
         if level is not None:
-            bbox = (
-                float(np.nanmax(lat2d)),
-                float(np.nanmin(lon2d)),
-                float(np.nanmin(lat2d)),
-                float(np.nanmax(lon2d)),
-            )
-            features = level_features(level, bbox)
+            south, north = float(np.nanmin(lat2d)), float(np.nanmax(lat2d))
+            lon360 = lon2d % 360.0
+            if np.nanmax(lon360) - np.nanmin(lon360) < np.nanmax(lon2d) - np.nanmin(lon2d):
+                # Crosses 180°: a box with west > east, which level_features reads as two spans.
+                west, east = float(np.nanmin(lon360)), float(np.nanmax(lon360)) - 360.0
+            else:
+                west, east = float(np.nanmin(lon2d)), float(np.nanmax(lon2d))
+            if stations:
+                # Also fetch the units a station can snap to.
+                south, north = south - _SNAP_DEG, north + _SNAP_DEG
+                west, east = west - _SNAP_DEG, east + _SNAP_DEG
+                if west < -180.0 and east > 180.0:
+                    west, east = -180.0, 180.0
+                elif west < -180.0:
+                    west += 360.0
+                elif east > 180.0:
+                    east -= 360.0
+            features = level_features(level, (north, west, south, east))
             coord = level
             labels = [f["properties"]["region_name"] for f in features]
             names = [f["properties"]["name"] for f in features]
@@ -123,8 +139,9 @@ def label_group(ds, level, geojson, property, time, **kwargs):
             coord = property
             labels = [str(f["properties"][property]) for f in features]
             names = None
-        if coord in ds.variables:
-            raise UsageError(f"{coord!r} already exists in the dataset")
+        for name in (coord, f"{coord}_name") if names is not None else (coord,):
+            if name in ds.variables:
+                raise UsageError(f"{name!r} already exists in the dataset")
 
         # Each cell centre / station takes the first unit that contains it.
         out = np.full(lat2d.shape, "", dtype=object)
@@ -147,6 +164,27 @@ def label_group(ds, level, geojson, property, time, **kwargs):
             out[inside] = labels[i]
             if names is not None:
                 out_names[inside] = names[i]
+        if stations:
+            # A station in no unit joins the nearest one within _SNAP_DEG; ties keep the first.
+            lost = np.nonzero((out == "") & np.isfinite(lon2d) & np.isfinite(lat2d))[0]
+            points = shapely.points(lon2d[lost], lat2d[lost])
+            best = np.full(lost.shape, np.inf)
+            nearest = np.zeros(lost.shape, dtype=int)
+            for i, feature in enumerate(features if lost.size else []):
+                distance = shapely.distance(shape(feature["geometry"]), points)
+                nearest = np.where(distance < best, i, nearest)
+                best = np.minimum(distance, best)
+            snap = best <= _SNAP_DEG
+            out[lost[snap]] = [labels[i] for i in nearest[snap]]
+            if names is not None:
+                out_names[lost[snap]] = [names[i] for i in nearest[snap]]
+            if snap.any():
+                print(
+                    f"{int(snap.sum())} station(s) outside every unit joined the nearest unit "
+                    f"within {_SNAP_DEG}° (~11 km)",
+                    file=sys.stderr,
+                )
+            empty = [label for label in empty if label not in set(out)]
         if empty:
             shown = ", ".join(empty[:10]) + (" ..." if len(empty) > 10 else "")
             print(
