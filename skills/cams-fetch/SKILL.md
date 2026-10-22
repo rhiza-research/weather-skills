@@ -38,7 +38,7 @@ Requests CAMS fields from the ADS with the box cut server-side, so only the regi
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox N/W/S/E --date YYYY-MM-DD [--cycle 00|12] [--max-lead-hours H] [--lead-step H] [-v VAR ...] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox N/W/S/E --date YYYY-MM-DD [--cycle 00|12] [--max-lead 48h] [--lead-step H] [-v VAR ...] -o OUT.zarr
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset eac4 --bbox N/W/S/E --start-time YYYY-MM-DD --end-time YYYY-MM-DD [-v VAR ...] -o OUT.zarr
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [forecast|eac4]
 ```
@@ -47,8 +47,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [forecast|eac4]
 - `--bbox` — `N/W/S/E` decimal degrees. Required. A box crossing the antimeridian (W > E) is sent as two requests.
 - `--dataset` — `forecast` (CAMS global composition forecast) or `eac4` (reanalysis). Default: `forecast`.
 - `--date` — forecast only: init day, `YYYY-MM-DD`, from 2015-01-01.
-- `--cycle` — forecast only: init hour, `00` or `12` UTC. Default: `00`.
-- `--max-lead-hours` — forecast only: last lead hour, 0–120. Default: 120.
+- `--cycle` — forecast only: init hour, `00` or `12` UTC (`0` also works). Default: `00`.
+- `--max-lead` — forecast only: last lead, as hours (`48`) or a timedelta (`48h`, `2D`), up to `120h`. Default: `120h`.
 - `--lead-step` — forecast only: lead spacing in hours. Default: 3. `1` works for `pm*`, `*aod550` and `tc*`; the gases are 3-hourly.
 - `--start-time`, `--end-time` — eac4 only: inclusive range of days, from 2003-01-01. All eight 3-hourly analyses per day; one ADS request per calendar month.
 - `--variable`, `-v` — fields: `pm25`, `pm10`, `no2`, `o3`, `aod550`, `so2`, `co`, `pm1`, `duaod550`, `tcno2`, `tco3`, `tcco`, `tcso2`. Several per flag, repeated, or comma-separated; ADS names (`particulate_matter_2.5um`) also work. Default: `pm25`.
@@ -69,7 +69,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [forecast|eac4]
 ### Example
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox 5.1/33.9/-4.8/41.9 --date 2026-10-05 --cycle 12 \
-  --max-lead-hours 48 -v pm25 no2 o3 -o cams_kenya.zarr
+  --max-lead 48h -v pm25 no2 o3 -o cams_kenya.zarr
 ```
 Writes the first 48 h of the 12 UTC forecast of PM2.5 and near-surface NO2 and O3 over Kenya, 3-hourly.
 

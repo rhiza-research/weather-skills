@@ -88,11 +88,15 @@ def test_month_chunks(mod):
 
 
 def test_lead_hours(mod):
-    assert mod._lead_hours(12, 3) == ["0", "3", "6", "9", "12"]
+    assert mod._lead_hours("12", 3) == ["0", "3", "6", "9", "12"]
+    assert mod._lead_hours("12h", 3) == ["0", "3", "6", "9", "12"]
+    assert mod._lead_hours("2D", 24) == ["0", "24", "48"]
+    assert mod._lead_hours("0h", 3) == ["0"]
+    for bad in ("200", "6D", "-3h", "90min", "soon"):
+        with pytest.raises(UsageError):
+            mod._lead_hours(bad, 3)
     with pytest.raises(UsageError):
-        mod._lead_hours(200, 3)
-    with pytest.raises(UsageError):
-        mod._lead_hours(12, 0)
+        mod._lead_hours("12", 0)
 
 
 def test_split_wrapped_area(mod):
@@ -210,10 +214,12 @@ def test_forecast_end_to_end_units_and_shape(mod, monkeypatch, tmp_path):
     out = tmp_path / "f.zarr"
     run_skill(
         mod.fetch, "--bbox", KENYA, "--date", "2026-10-05", "-v", "pm25", "no2", "o3",
-        "--max-lead-hours", "6", "-o", str(out),
+        "--max-lead", "6h", "--cycle", "0", "-o", str(out),
     )  # fmt: skip
     assert [s[0] for s in submitted] == ["cams-global-atmospheric-composition-forecasts"] * 2
     assert submitted[1][1]["model_level"] == ["137"]
+    assert submitted[0][1]["leadtime_hour"] == ["0", "3", "6"]
+    assert submitted[0][1]["time"] == ["00:00"]
 
     ds = xr.open_zarr(out)
     assert set(ds.data_vars) == {"pm25", "no2", "o3"}
@@ -247,3 +253,4 @@ def test_eac4_end_to_end_concatenates_months(mod, monkeypatch, tmp_path):
     assert ds.sizes["time"] == 16
     assert ds["aod550"].attrs["units"] == "1"
     assert "step" not in ds.coords
+

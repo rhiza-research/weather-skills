@@ -217,12 +217,21 @@ def _api_key() -> str:
     )
 
 
-def _lead_hours(max_lead: int, lead_step: int) -> list[str]:
-    if not 0 <= max_lead <= _MAX_LEAD_HOURS:
-        raise UsageError(f"--max-lead-hours must be 0..{_MAX_LEAD_HOURS}.")
+def _lead_hours(max_lead: str, lead_step: int) -> list[str]:
+    """``--max-lead`` (bare hours or a timedelta such as 48h, 2D) -> ADS lead hours."""
+    import pandas as pd
+
+    text = str(max_lead).strip()
+    try:
+        lead = pd.Timedelta(int(text), "h") if text.isdigit() else pd.Timedelta(text)
+    except ValueError:
+        raise UsageError(f"--max-lead {max_lead!r} is not a lead (48, 48h, 2D).") from None
+    hours = lead / pd.Timedelta(1, "h")
+    if hours != int(hours) or not 0 <= hours <= _MAX_LEAD_HOURS:
+        raise UsageError(f"--max-lead must be whole hours in 0..{_MAX_LEAD_HOURS}h.")
     if lead_step < 1:
         raise UsageError("--lead-step must be a positive number of hours.")
-    return [str(h) for h in range(0, max_lead + 1, lead_step)]
+    return [str(h) for h in range(0, int(hours) + 1, lead_step)]
 
 
 def _month_chunks(start: dt.date, end: dt.date) -> list[tuple[dt.date, dt.date]]:
@@ -469,15 +478,16 @@ def _probe_latest(dataset: str) -> str:
 )
 @weather_skill.argument(
     "--cycle",
+    type=lambda hour: hour.zfill(2),
     choices=("00", "12"),
     default="00",
-    help="Forecast init hour (UTC). Default 00.",
+    help="Forecast init hour (UTC): 00 or 12 (0 also works). Default 00.",
 )
 @weather_skill.argument(
-    "--max-lead-hours",
-    type=int,
-    default=_MAX_LEAD_HOURS,
-    help=f"Forecast: last lead hour to fetch (0..{_MAX_LEAD_HOURS}). Default {_MAX_LEAD_HOURS}.",
+    "--max-lead",
+    default=f"{_MAX_LEAD_HOURS}h",
+    help=f"Forecast: last lead to fetch, in hours (48) or as a timedelta (48h, 2D); "
+    f"0..{_MAX_LEAD_HOURS}h. Default {_MAX_LEAD_HOURS}h.",
 )
 @weather_skill.argument(
     "--lead-step",
@@ -508,7 +518,7 @@ def fetch(
     end_time,
     variable,
     cycle,
-    max_lead_hours,
+    max_lead,
     lead_step,
     **kwargs,
 ):
@@ -528,7 +538,7 @@ def fetch(
             raise UsageError("--dataset forecast takes --date (the init day), not a range.")
         if date < _FIRST_DAY["forecast"]:
             raise UsageError("the CAMS global forecast on the ADS starts 2015-01-01.")
-        leads = _lead_hours(max_lead_hours, lead_step)
+        leads = _lead_hours(max_lead, lead_step)
         chunks = [(date, date)]
         label = f"{date.isoformat()} {cycle}Z"
     else:
