@@ -284,7 +284,9 @@ def fetch(
     semantic_name = clim.attrs.get("variable", variable)
     # The years the mirror averaged over, when it records them (not all do).
     base_period = {
-        f"climatology_{key}": clim.attrs[key] for key in ("start_time", "end_time") if key in clim.attrs
+        f"climatology_{key}": clim.attrs[key]
+        for key in ("start_time", "end_time")
+        if key in clim.attrs
     }
     if not base_period:
         print(

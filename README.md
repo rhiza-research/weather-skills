@@ -83,6 +83,7 @@ credentialed or source-specific fetcher only when it does not.
 | `csv-io` | Export a Zarr to a CSV table (units in the headers), or read a CSV — station records, a gridded table, or one gauge (`--point`) — into a Zarr. Day-first dates need `--date-format`; missing codes need `--na-value`. |
 | `netcdf-io` | Export a Zarr to a NetCDF `.nc` file (attrs and history kept), or read one or more `.nc` files into a Zarr. Variables without units need `--units VAR=UNITS`. |
 | `difference` | Subtract one dataset from another (A − B) with inner-join alignment and broadcasting — anomalies vs a baseline, scenario-minus-historical change maps |
+| `climatology` | Daily climatology (mean, std, count per calendar day across years) computed from a multi-year daily Zarr, optional `--window` day pooling, laid onto a `--start-time`/`--end-time` window in `clim-fetch`'s layout — for a known base period or anything `clim-fetch` doesn't mirror |
 | `standardize-anomaly` | Standardized anomaly aka z-score: `(field − clim_avg) / clim_std` against a climatology (e.g. `clim-fetch`) — dimensionless output, errors on units mismatch. For a plain physical-unit anomaly, use `difference` instead. |
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
 | `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). |
