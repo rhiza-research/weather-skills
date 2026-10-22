@@ -26,11 +26,13 @@ Fetches WindBorne's ranked, human-readable conditions for points from the latest
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --point LAT,LON[,ID] [--point ...] [--period daily|day_night|hourly] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
 ### Arguments
 - `--point` — `LAT,LON[,ID]`, repeatable; at least one. IDs default to `P0`, `P1`, …. Points outside the region the key may read return 403.
 - `--period` — `daily` (default, 16 days), `day_night` (daytime and night halves split at local sunrise and sunset), or `hourly` (360 hours).
+- `--probe-latest [IDENT]` — print the latest run's init date on stdout and exit; stderr lists every available run. `IDENT` is ignored.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output

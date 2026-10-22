@@ -69,7 +69,18 @@ def _parse_time(text: str) -> dt.datetime:
     default="daily",
     help="Summary length: daily (16 days), day_night (day and night halves), or hourly. Default daily.",
 )
-def fetch(point, period, **kwargs):
+@weather_skill.argument(
+    "--probe-latest",
+    nargs="?",
+    const="",
+    metavar="IDENT",
+    probe=True,
+    help=(
+        "Print the latest init date (YYYY-MM-DD) on stdout and exit; stderr lists "
+        "every available run. Conditions always come from the latest run."
+    ),
+)
+def fetch(point, period, probe_latest, **kwargs):
     """Fetch WindBorne's plain-language forecast conditions at chosen locations as a weather-skills Zarr."""
     import numpy as np
     import requests
@@ -82,6 +93,17 @@ def fetch(point, period, **kwargs):
     )
     session = requests.Session()
     session.auth = (client_id, api_key)
+
+    if probe_latest is not None:
+        runs = [_parse_time(t) for t in _get(session, f"{_API}/initialization_times")["available"]]
+        latest = max(runs)
+        print(
+            "Available runs: " + ", ".join(f"{t:%Y-%m-%d %HZ}" for t in sorted(runs)),
+            file=sys.stderr,
+        )
+        print(f"Latest run: {latest:%Y-%m-%d %H} UTC", file=sys.stderr)
+        print(latest.strftime("%Y-%m-%d"))
+        return
 
     rows = [p.split(",") for p in point]
     if any(len(r) not in (2, 3) for r in rows):

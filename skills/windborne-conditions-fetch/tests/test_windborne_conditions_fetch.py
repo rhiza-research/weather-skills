@@ -71,3 +71,11 @@ def test_point_count_mismatch_errors(mod, monkeypatch, tmp_path):
     _fake_api(monkeypatch, {"forecasts": [], "forecast_zero": "", "initialization_time": ""})
     with pytest.raises(SystemExit):
         run_skill(mod.fetch, "--point", "-1,36", "-o", str(tmp_path / "x.zarr"))
+
+
+def test_probe_latest(mod, monkeypatch, capsys):
+    _fake_api(monkeypatch, {"available": ["2026-10-19T00:00:00Z", "2026-10-20T06:00:00Z"]})
+    run_skill(mod.fetch, "--probe-latest")
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "2026-10-20"
+    assert "2026-10-20 06 UTC" in captured.err
