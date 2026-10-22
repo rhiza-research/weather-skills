@@ -16,6 +16,7 @@ import re
 import sys
 from pathlib import Path
 
+import cftime
 import numpy as np
 import pandas as pd
 from weather_skills_core import Dataset, UsageError, weather_skill
@@ -46,10 +47,15 @@ COLUMN_ROLES = {
     "number": "number",
     "member": "number",
     "realization": "number",
+    # Not "pressure": in a station table that is a measurement.
     "level": "level",
-    "pressure": "level",
+    "pressure_level": "level",
+    "plev": "level",
     "isobaricinhpa": "level",
 }
+# Headers that name the station only when no column is called station_id; beside
+# one (a 3dpaws-fetch export has station_id and site), they are ordinary columns.
+STATION_ALIASES = {"station", "point_id", "site"}
 COORD_ATTRS = {
     "latitude": {"standard_name": "latitude", "units": "degrees_north", "axis": "Y"},
     "longitude": {"standard_name": "longitude", "units": "degrees_east", "axis": "X"},
@@ -62,6 +68,30 @@ SITE_COLUMN = re.compile(r"(latitude|longitude|altitude|elevation)$", re.IGNOREC
 EXCEL_SUFFIXES = (".xlsx", ".xlsm")
 # "rain [mm]" or "Rainfall (mm)".
 HEADER_UNITS = re.compile(r"^\s*(?P<name>.+?)\s*(\[(?P<u1>[^\]]*)\]|\((?P<u2>[^)]*)\))\s*$")
+# A time column of a non-standard calendar is written "time [noleap]" and read back as cftime.
+CALENDARS = {
+    "standard",
+    "gregorian",
+    "proleptic_gregorian",
+    "julian",
+    "noleap",
+    "365_day",
+    "all_leap",
+    "366_day",
+    "360_day",
+}
+CFTIME_TEXT = re.compile(r"(\d+)-(\d+)-(\d+)(?:[ T](\d+):(\d+)(?::(\d+))?)?")
+
+
+def _clean_name(col):
+    """Header -> (CF-safe column name, units or None): "Rain (mm)" -> ("Rain", "mm")."""
+    m = HEADER_UNITS.match(str(col))
+    name = m["name"] if m else str(col).strip()
+    # CF lists coordinates space-separated, so names cannot hold spaces.
+    name = re.sub(r"\W+", "_", name).strip("_") or "column"
+    if m is None:
+        return name, None
+    return name, (m["u1"] if m["u1"] is not None else m["u2"]).strip()
 
 
 def _export(ds, output, variable, dropna, max_rows):
@@ -100,6 +130,13 @@ def _export(ds, output, variable, dropna, max_rows):
     for name in df.columns:
         if name in ds.data_vars and units[name]:
             renames[name] = f"{name} [{units[name]}]"
+        elif len(df) and isinstance(df[name].iloc[0], cftime.datetime):
+            # cftime dates (noleap, 360_day, ...) as text, with the calendar in
+            # the header so a read gets the same dates back.
+            midnight = all((t.hour, t.minute, t.second) == (0, 0, 0) for t in df[name])
+            fmt = "%Y-%m-%d" if midnight else "%Y-%m-%d %H:%M:%S"
+            renames[name] = f"{name} [{df[name].iloc[0].calendar}]"
+            df[name] = [t.strftime(fmt) for t in df[name]]
         elif pd.api.types.is_timedelta64_dtype(df[name]):
             # Leads as plain numbers so a spreadsheet can read them.
             whole_days = (df[name] % pd.Timedelta(days=1) == pd.Timedelta(0)).all()
@@ -166,8 +203,16 @@ def _read(
             raise UsageError(f"--names has {len(names)} names for {len(header)} columns")
         opts.update(names=names, header=0)
         header = names
-    # Station ids as text, so 00123 keeps its leading zeros.
-    id_cols = {c: str for c in header if COLUMN_ROLES.get(str(c).strip().lower()) == "station_id"}
+    # Station ids as text, so 00123 keeps its leading zeros; roles go by the cleaned
+    # name ("Station ID" -> Station_ID), as below.
+    cleaned = {c: _clean_name(c)[0].lower() for c in header}
+    has_station_id = "station_id" in cleaned.values()
+    id_cols = {
+        c: str
+        for c, name in cleaned.items()
+        if COLUMN_ROLES.get(name) == "station_id"
+        and not (has_station_id and name in STATION_ALIASES)
+    }
     df = read(**opts, na_values=na_value or None, dtype=id_cols or None)
     # Spacer rows in a sheet are blank, not records.
     df = df.dropna(how="all")
@@ -185,13 +230,10 @@ def _read(
     # "precip [mm]" -> column precip with units mm; --units fills or overrides.
     col_units, renames = {}, {}
     for col in df.columns:
-        m = HEADER_UNITS.match(str(col))
-        name = m["name"] if m else str(col).strip()
-        # CF lists coordinates space-separated, so names cannot hold spaces.
-        name = re.sub(r"\W+", "_", name).strip("_") or "column"
+        name, unit = _clean_name(col)
         renames[col] = name
-        if m:
-            col_units[name] = (m["u1"] if m["u1"] is not None else m["u2"]).strip()
+        if unit is not None:
+            col_units[name] = unit
     df = df.rename(columns=renames)
     for name in drop_column or []:
         if name not in df.columns:
@@ -228,16 +270,32 @@ def _read(
 
     # Known coordinate headers -> canonical names (station -> station_id, date -> time, ...).
     roles = {}
+    has_station_id = "station_id" in (c.lower() for c in df.columns)
     for col in df.columns:
         role = COLUMN_ROLES.get(col.lower())
-        if role is None:
+        if role is None or (has_station_id and col.lower() in STATION_ALIASES):
             continue
         if role in roles.values():
             raise UsageError(f"columns {col!r} and another both look like {role}; rename one")
         roles[col] = role
     df = df.rename(columns=roles)
+    col_units = {roles.get(k, k): v for k, v in col_units.items()}
 
-    if "time" in df.columns:
+    calendar = col_units.pop("time", None) if "time" in df.columns else None
+    if calendar in CALENDARS:
+        # "time [360_day]": dates of that calendar, as an export of cftime dates writes them.
+        dates = {}
+        for text in df["time"].astype(str).unique():
+            m = CFTIME_TEXT.fullmatch(text.strip())
+            if m is None:
+                raise UsageError(f"time values like {text!r} are not YYYY-MM-DD[ HH:MM[:SS]]")
+            parts = [int(x) for x in m.groups(default="0")]
+            try:
+                dates[text] = cftime.datetime(*parts, calendar=calendar)
+            except ValueError as exc:
+                raise UsageError(f"time {text!r} is not a {calendar} date ({exc})") from None
+        df["time"] = df["time"].astype(str).map(dates)
+    elif "time" in df.columns:
         # Without --date-format only ISO dates: 01/10/2026 is ambiguous (1 Oct or 10 Jan).
         try:
             df["time"] = pd.to_datetime(df["time"], format=date_format or "ISO8601")
@@ -384,8 +442,7 @@ def _read(
 )
 @weather_skill.argument(
     "--point",
-    help="Read: LAT,LON[,ID] for a single-site CSV. Use --point=-1.29,36.82 for a negative "
-    "latitude.",
+    help="Read: LAT,LON[,ID] for a single-site CSV, e.g. -1.29,36.82,dagoretti.",
 )
 @weather_skill.argument(
     "--index",

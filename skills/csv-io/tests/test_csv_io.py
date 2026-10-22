@@ -218,6 +218,68 @@ def test_read_keeps_leading_zeros_in_station_ids(tmp_path, csv_io):
     assert list(_open(out)["station_id"].values) == ["00123"]
 
 
+def test_read_keeps_leading_zeros_under_a_spaced_header(tmp_path, csv_io):
+    src = _write(tmp_path, "Station ID,lat,lon,date,rain\n00123,1,10,2026-10-01,1\n")
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    assert list(_open(out)["station_id"].values) == ["00123"]
+
+
+def test_station_round_trip_keeps_site_and_pressure(tmp_path, csv_io):
+    # A 3dpaws-fetch-like store: station_id dim, a site coord, station pressure in hPa.
+    ds = make_point_obs(n_time=2, n_points=2).rename(point_id="station_id")
+    ds = ds.assign_coords(station_id=["1", "4"], site=("station_id", ["KMD HQ", "Kitui"]))
+    ds["pressure"] = (("station_id", "time"), [[850.5, 851.0], [892.5, np.nan]])
+    ds["pressure"].attrs["units"] = "hPa"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+
+    run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    assert {"station_id", "site", "pressure [hPa]"} <= set(pd.read_csv(csv).columns)
+    run_skill(csv_io, "--csv", str(csv), "-o", str(back))
+
+    res = _open(back)
+    assert list(res["station_id"].values) == ["1", "4"]
+    assert list(res["site"].values) == ["KMD HQ", "Kitui"]
+    assert res["pressure"].dims == ("station_id", "time")
+    assert "level" not in res.dims
+    np.testing.assert_allclose(res["pressure"].values, ds["pressure"].values, equal_nan=True)
+
+
+def test_read_station_pressure_is_data_not_a_level(tmp_path, csv_io):
+    src = _write(
+        tmp_path,
+        "station_id,latitude,longitude,time,pressure [hPa],precip [mm day-1]\n"
+        "TA00025,-1.3,36.8,2026-10-01,850.5,0\nTA00025,-1.3,36.8,2026-10-02,851.0,2\n",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    res = _open(out)
+    assert res["pressure"].dims == ("station_id", "time")
+    assert res["pressure"].attrs["units"] == "hPa"
+
+
+def test_non_standard_calendar_round_trip(tmp_path, csv_io):
+    ds = make_gridded(n_time=3, lats=(1.0,), lons=(10.0,))
+    times = xr.date_range("2026-02-29", periods=3, freq="D", calendar="360_day", use_cftime=True)
+    ds = ds.assign_coords(time=times)
+    ds["precip"].values[:, 0, 0] = [1.0, 2.0, 3.0]
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+
+    run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    df = pd.read_csv(csv)
+    assert list(df["time [360_day]"]) == ["2026-02-29", "2026-02-30", "2026-03-01"]
+    run_skill(csv_io, "--csv", str(csv), "-o", str(back))
+
+    res = _open(back)
+    assert res["time"].dt.calendar == "360_day"
+    assert [t.strftime("%Y-%m-%d") for t in res["time"].values] == list(df["time [360_day]"])
+    np.testing.assert_allclose(res["precip"].values[:, 0, 0], [1.0, 2.0, 3.0])
+
+
 def test_read_refuses_ambiguous_dates(tmp_path, csv_io):
     src = _write(tmp_path, "station,lat,lon,date,rain\nA,1,10,01/10/2026,1\n")
     with pytest.raises(SystemExit) as exc:
@@ -231,7 +293,7 @@ def test_read_single_site_with_point(tmp_path, csv_io):
 
     run_skill(
         csv_io, "--csv", str(src), "-o", str(out),
-        "--point=-1.29,36.82,nairobi", "--units", "rain=mm",
+        "--point", "-1.29,36.82,nairobi", "--units", "rain=mm",
     )  # fmt: skip
 
     res = _open(out)
