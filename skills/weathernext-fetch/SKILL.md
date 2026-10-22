@@ -72,7 +72,7 @@ Needs Google Cloud Application Default Credentials (`GOOGLE_APPLICATION_CREDENTI
 
 ### Output
 - Dims `(number, step, [level,] lat, lon)`, scalar `time` = init, `valid_time` on `step`. Statistics have no `number` and name variables `<name>_<stat>`.
-- `tp` (and `imerg_tp`, `experimental_tp`) is a rate in `mm day-1` and `ssrd` a 1 h total in `J m-2`, labelled at period start. Other fields are instants at `init + step`. Fetched together, the step axis starts at 0: the period fields are NaN at the last lead and the instants at 0 h. Do not run `deaccumulate` on the output.
+- `tp` (and `imerg_tp`, `experimental_tp`) is a rate in `mm day-1` and `ssrd` a 1 h total in `J m-2`, labelled at period start. Other fields are instants at `init + step`. Fetched together, the step axis starts at 0: the period fields are NaN at the last lead and the instants at 0 h. Never `deaccumulate` it.
 - Air temperatures are `degree_Celsius`; other fields keep ERA5-style units.
 
 ### Notes
