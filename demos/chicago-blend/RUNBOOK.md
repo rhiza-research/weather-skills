@@ -31,7 +31,7 @@ export OUT=/path/to/results                           # report.md and the maps
 export INIT=2026-10-15                                # the live init to blend
 bash $HERE/run_demo.sh
 ```
-The run only needs these parts of the archive (3.6 GB):
+The run only needs these parts of the archive (3.3 GB):
 - `chirps_daily_1p5.zarr`;
 - `ecmwf_reforecast.zarr`;
 - `cumulus_hindcast.zarr`;
@@ -98,7 +98,7 @@ if the organization restricts IAM members to its own domain.
 | `ecmwf_realtime.zarr` | The same issuances' real-time forecasts, 50 members. | 203 MB |
 | `cumulus_hindcast.zarr` | Cumulus (Aurora S2S) hindcast run `gratis-czajkowski`, the one matching the live run: 558 Sep – Dec inits 2016 – 2024 (every 2 days) × **30 members** × 46 daily steps, 1° IMERG-trained `precip` in mm day-1. | 1.3 GB |
 | `gefs_reforecast.zarr` | Sheerwater GEFSv12 reforecast: 1073 Wednesday inits 1999 – 2019 × **11 members** × 35 daily leads, 1°. Open with `decode_times=False` (`init_time` in days since 1960-01-01). | 203 MB |
-| `gefs_operational.zarr` | Operational GEFS, every Sep – Dec init 2020 – 2025 (702, from 1 Oct 2020), 31 members, 35 daily steps, daily means on the 1.5° cells (`precipitation_surface`, mm day-1). Built on a cloud VM with skills only (`scripts/gefs_job/`). | 1.3 GB |
+| `gefs_operational.zarr` | Operational GEFS, every Sep – Dec init 2020 – 2025 (702, from 1 Oct 2020), 31 members, 35 daily steps, daily means on the 1.5° cells (`precipitation_surface`, mm day-1). Built on a cloud VM with skills only (`scripts/gefs_job/`); stored one chunk per init (716 files), so it downloads in seconds. | 0.85 GB |
 | `chirps_daily.zarr` | CHIRPS final, Sep – Jan of each season 1981 – 2026, daily, 0.05°, mm day-1. | 1.6 GB |
 | `chirps_daily_1p5.zarr` | The same, coarsened conservatively onto the 1.5° cells of `live/grid_1p5.zarr` (15 × 14). | 3.5 MB |
 | `tahmo/` | TAHMO daily station observations, Ethiopia, Kenya and Uganda, one file per year 2015 – 2026, plus `stations.csv`. | 10 MB |
