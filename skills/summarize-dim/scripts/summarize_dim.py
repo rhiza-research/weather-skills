@@ -54,7 +54,14 @@ _SPATIAL_DIMS = frozenset((*names_for("lat"), *names_for("lon"), *names_for("poi
 @weather_skill.argument(
     "--method",
     required=True,
-    choices=["mean", "std", "min", "max", "sum", "median"],
+    choices=["mean", "std", "min", "max", "sum", "median", "quantile"],
+)
+@weather_skill.argument(
+    "--quantile",
+    "-q",
+    type=float,
+    action="append",
+    help="Quantile between 0 and 1 for --method quantile (repeatable: 0.1 and 0.9 for a band).",
 )
 @weather_skill.argument(
     "--lat-weighted",
@@ -69,7 +76,7 @@ _SPATIAL_DIMS = frozenset((*names_for("lat"), *names_for("lon"), *names_for("poi
         "(0-1) of its full calendar period. Default 1.0."
     ),
 )
-def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **kwargs):
+def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_coverage, **kwargs):
     """Collapse named dimensions of a Zarr, or each group of a label coord, with a statistic."""
     if not dim and not by:
         raise UsageError("pass --dim, --by, or both")
@@ -84,6 +91,13 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
             raise UsageError(f"--by {b!r} is not a label coord (have {labels})")
     if by and lat_weighted:
         raise UsageError("--lat-weighted cannot be combined with --by")
+    if (method == "quantile") != bool(quantile):
+        raise UsageError("--quantile goes with --method quantile, which needs at least one")
+    quantile = list(dict.fromkeys(quantile or []))
+    if any(not 0 <= q <= 1 for q in quantile):
+        raise UsageError(f"--quantile must be between 0 and 1, got {quantile}")
+    if by and len(quantile) > 1:
+        raise UsageError("--by takes one --quantile; run once per quantile")
     time_by = [b for b in by if "time" in ds[b].dims]
     if min_coverage is not None and not time_by:
         raise UsageError(
@@ -325,6 +339,8 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
         if by:
             # min_count=1 / ddof=1 as below. Combinations with no cells stay NaN.
             kw = {"min_count": 1} if method == "sum" else {"ddof": 1} if method == "std" else {}
+            if method == "quantile":
+                kw = {"q": quantile[0]}
             kept = [d for d in da.dims if d not in rdims]
             da = da.pint.dequantify()  # values are filled into numpy; units go back on below
             values = None
@@ -401,6 +417,12 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
             out[var] = da.sum(dim=rdims, keep_attrs=True, min_count=1)
         elif method == "std":
             out[var] = da.std(dim=rdims, keep_attrs=True, ddof=1)
+        elif method == "quantile":
+            # One quantile leaves a scalar quantile coord; several add a quantile dim.
+            q = quantile[0] if len(quantile) == 1 else quantile
+            out[var] = da.pint.dequantify().quantile(q, dim=rdims, keep_attrs=True)
+            if da.pint.units is not None:
+                out[var] = out[var].copy(data=out[var].data * da.pint.units)
         elif method == "mean" and lat_weighted and lat_dim in rdims:
             out[var] = (
                 da.pint.dequantify()
@@ -411,11 +433,23 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
                 out[var] = out[var].copy(data=out[var].data * da.pint.units)
         else:
             out[var] = getattr(da, method)(dim=rdims, keep_attrs=True)
+        if method == "quantile":
+            # xarray's quantile drops coords the reduction leaves alone (a forecast's
+            # scalar init time); keep them, as the other statistics do.
+            out[var] = out[var].assign_coords(
+                {
+                    c: v
+                    for c, v in ds[var].coords.items()
+                    if c not in out[var].coords and not set(v.dims) & {*rdims, *by}
+                }
+            )
         # Record the statistic (CF cell_methods). A spread or a sum is not the
         # input quantity, so its long_name must not read "Total precipitation".
         attrs = dict(out[var].attrs)
         cf_method = {"std": "standard_deviation", "min": "minimum", "max": "maximum"}
         step = f"{': '.join(rdims)}: {cf_method.get(method, method)}"
+        if method == "quantile":
+            step += f" {', '.join(f'{q:g}' for q in quantile)}"
         if by:
             step += f" (grouped by {', '.join(by)})"
         attrs["cell_methods"] = (
