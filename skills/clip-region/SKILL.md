@@ -1,6 +1,6 @@
 ---
 name: clip-region
-description: "Clip a gridded or station Zarr to a lat/lon box, a named region (country, province or county, multi-country region), or a GeoJSON polygon. Use to restrict any dataset to an area of interest. For values in each of several regions (per-county means or totals), use label-group then summarize-dim --by instead of one clip per region."
+description: "Clip a gridded or station Zarr to a lat/lon box, a named region (country, province or county, multi-country region), or a GeoJSON polygon. Use to restrict any dataset to an area of interest."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py *)
