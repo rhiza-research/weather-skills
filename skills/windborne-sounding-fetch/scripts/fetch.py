@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import sys
 import time
 
 from weather_skills_core import DataError, UsageError, weather_skill
@@ -92,7 +93,18 @@ def _parse_time(text: str) -> dt.datetime:
     action="append",
     help="Lead hour from forecast zero, a multiple of 3 up to 360 (repeatable). Default 0.",
 )
-def fetch(point, date, run, lead, **kwargs):
+@weather_skill.argument(
+    "--probe-latest",
+    nargs="?",
+    const="",
+    metavar="IDENT",
+    probe=True,
+    help=(
+        "Print the latest init date (YYYY-MM-DD, usable as --date) on stdout and "
+        "exit; stderr lists every available run. Does not download soundings."
+    ),
+)
+def fetch(point, date, run, lead, probe_latest, **kwargs):
     """Fetch WindBorne WeatherMesh-6 vertical soundings at chosen locations as a weather-skills Zarr."""
     import numpy as np
     import requests
@@ -105,6 +117,19 @@ def fetch(point, date, run, lead, **kwargs):
     )
     session = requests.Session()
     session.auth = (client_id, api_key)
+    runs = [_parse_time(t) for t in _get(session, f"{_API}/initialization_times")["available"]]
+    if probe_latest is not None:
+        latest = max(runs)
+        print(
+            "Available runs: " + ", ".join(f"{t:%Y-%m-%d %HZ}" for t in sorted(runs)),
+            file=sys.stderr,
+        )
+        print(
+            f"Latest run: {latest:%Y-%m-%d %H} UTC (--date {latest:%Y-%m-%d} --run {latest.hour})",
+            file=sys.stderr,
+        )
+        print(latest.strftime("%Y-%m-%d"))
+        return
 
     rows = [p.split(",") for p in point]
     if any(len(r) not in (2, 3) for r in rows):
@@ -122,7 +147,6 @@ def fetch(point, date, run, lead, **kwargs):
     # The sounding endpoint needs an explicit init: default to the latest run.
     if date is None and run is not None:
         raise UsageError("--run needs --date.")
-    runs = [_parse_time(t) for t in _get(session, f"{_API}/initialization_times")["available"]]
     if date is None:
         init = max(runs)
     elif run is None:

@@ -95,3 +95,12 @@ def test_lead_must_be_multiple_of_three(mod, monkeypatch, tmp_path):
     _fake_api(monkeypatch, _respond)
     with pytest.raises(SystemExit):
         run_skill(mod.fetch, "--point", "-1,36", "--lead", "4", "-o", str(tmp_path / "x.zarr"))
+
+
+def test_probe_latest(mod, monkeypatch, tmp_path, capsys):
+    calls = _fake_api(monkeypatch, _respond)
+    run_skill(mod.fetch, "--probe-latest")
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "2026-10-19"
+    assert "--date 2026-10-19 --run 20" in captured.err
+    assert [c[0] for c in calls] == ["initialization_times"]
