@@ -416,20 +416,29 @@ def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max
     if is_forecast and len(ds.data_vars) > 0:
         # Read the subset once: the NaN checks below would otherwise re-read it.
         ds = ds.load()
+        # Only lead 0 kept (--max-lead below the first interval's end): interval
+        # fields have no value there. Drop them and keep the instant fields.
+        if ds.sizes["step"] == 1 and ds["step"].values[0] == np.timedelta64(0, "ns"):
+            no_lead0 = [name for name in ds.data_vars if bool(ds[name].isnull().all())]
+            if len(no_lead0) == len(ds.data_vars):
+                raise UsageError(
+                    f"{', '.join(no_lead0)} has no value at lead 0: {dataset} labels "
+                    "averaged and accumulated fields at the end of their interval, and "
+                    "--max-lead kept only lead 0. Pass a --max-lead that reaches past the "
+                    "first lead (e.g. 3h or 6h)."
+                )
+            if no_lead0:
+                print(
+                    f"WARNING: dropped {', '.join(no_lead0)}: no value at lead 0 ({dataset} "
+                    "labels averaged and accumulated fields at the end of their interval). "
+                    "Pass a --max-lead that reaches past the first lead to keep them.",
+                    file=sys.stderr,
+                )
+                ds = ds.drop_vars(no_lead0)
         empty = np.ones(ds.sizes["step"], dtype=bool)
         for name in ds.data_vars:
             other = [d for d in ds[name].dims if d != "step"]
             empty &= ds[name].isnull().all(other).values
-        if (
-            empty.all()
-            and ds.sizes["step"] == 1
-            and ds["step"].values[0] == np.timedelta64(0, "ns")
-        ):
-            raise UsageError(
-                f"{', '.join(ds.data_vars)} has no value at lead 0: {dataset} labels averaged "
-                "and accumulated fields at the end of their interval. Pass --max-lead with "
-                "the first interval (e.g. 3h or 6h) instead of 0h."
-            )
         if empty.all():
             raise DataError(
                 f"{dataset} {date_iso} init has no data for the requested variables and "

@@ -583,7 +583,19 @@ def test_max_lead_zero_on_end_labelled_field_exits_2(tmp_path, mod, fetch, capsy
     with pytest.raises(SystemExit) as exc:
         _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "--max-lead", "0h")
     assert exc.value.code == 2
-    assert "no value at lead 0" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "no value at lead 0" in err
+    assert "past the first lead" in err
+
+
+def test_max_lead_zero_with_mixed_fields_drops_interval_fields(tmp_path, mod, fetch, capsys):
+    ds = _end_labelled_forecast_ds()
+    written = _fetch_forecast(
+        tmp_path, mod, fetch, ds, "-v", "precip", "-v", "temperature_2m", "--max-lead", "0h"
+    )
+    assert list(written.data_vars) == ["temperature_2m"]
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0]
+    assert "dropped precipitation_surface" in capsys.readouterr().err
 
 
 def test_max_lead_negative_exits_2(tmp_path, mod, fetch, capsys):
