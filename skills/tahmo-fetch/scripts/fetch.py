@@ -347,14 +347,18 @@ def fetch(
     if probe_latest is not None:
         from datetime import UTC, datetime, timedelta
 
-        end = datetime.now(UTC).date()
+        now = datetime.now(UTC)
+        end = now.date()
         start = end - timedelta(days=14)
+        # Day D ends at D+1 HH:00 UTC, so the newest day that can be complete
+        # is the one that ended last; before HH:00 that is two days back.
+        newest = (now - timedelta(hours=day_start_hour)).date() - timedelta(days=1)
         if station or bbox is not None:
             selected = _select_stations(stations, station, bbox)
         else:
             selected = _ta_stations(stations).head(3)
-        # Today cannot be complete yet, so stop at the first station with a
-        # complete yesterday instead of downloading every station in the box.
+        # Stop at the first station with that day complete instead of
+        # downloading every station in the box.
         latest = None
         pool = ThreadPoolExecutor(max_workers=workers)
         futures = [
@@ -377,7 +381,7 @@ def fetch(
                 continue
             day = observed.index.max().date()
             latest = day if latest is None else max(latest, day)
-            if latest >= end - timedelta(days=1):
+            if latest >= newest:
                 break
         pool.shutdown(wait=False, cancel_futures=True)
         if latest is None:
