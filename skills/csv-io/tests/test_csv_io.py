@@ -138,6 +138,79 @@ def test_read_station_sheet(tmp_path, csv_io):
     assert np.isnan(res["Rainfall"].sel(station_id="9039000").values[2])
 
 
+def test_read_excel_sheet(tmp_path, csv_io):
+    src = tmp_path / "in.xlsx"
+    df = pd.DataFrame(
+        {
+            "Station": ["00123", "00123", "00456"],
+            "Lat": [-1.3, -1.3, -4.0],
+            "Lon": [36.8, 36.8, 39.6],
+            "Date": pd.to_datetime(["2026-10-01", "2026-10-02", "2026-10-01"]),
+            "Rainfall (mm)": [0.0, -99, 3.2],
+        }
+    )
+    with pd.ExcelWriter(src) as writer:
+        pd.DataFrame({"notes": ["cover sheet"]}).to_excel(writer, sheet_name="About", index=False)
+        df.to_excel(writer, sheet_name="Daily", index=False)
+    out = tmp_path / "out.zarr"
+
+    run_skill(csv_io, "--csv", str(src), "-o", str(out), "--sheet", "Daily", "--na-value", "-99")
+
+    res = _open(out)
+    assert res["Rainfall"].dims == ("station_id", "time")
+    assert sorted(res["station_id"].values) == ["00123", "00456"]
+    assert units_equal(res["Rainfall"].attrs["units"], "mm")
+    np.testing.assert_allclose(res["Rainfall"].sel(station_id="00123").values, [0.0, np.nan])
+    with pytest.raises(SystemExit):
+        run_skill(csv_io, "--csv", str(src), "-o", str(tmp_path / "x.zarr"), "--sheet", "Nope")
+
+
+def test_read_wide_sheet_with_unpivot(tmp_path, csv_io):
+    # A met-service sheet: title line, blank headers, one column per day, a total, "tr".
+    src = _write(
+        tmp_path,
+        "DAILY RAINFALL OCTOBER 2026\n"
+        ",,,15th,16th,17th,Total\n"
+        "35.6,3.1,LODWAR,0.0,tr,1.0,1.0\n"
+        ",,,,,,\n"
+        "39.1,3.5,MOYALE,4.1,,tr,4.1\n",
+    )
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        csv_io, "--csv", str(src), "-o", str(out), "--skip-rows", "1",
+        "--names", "lon,lat,station,2026-10-15,2026-10-16,2026-10-17,total",
+        "--drop-column", "total", "--replace", "tr=0",
+        "--unpivot", "time=precip", "--units", "precip=mm",
+    )  # fmt: skip
+
+    res = _open(out)
+    assert res["precip"].dims == ("station_id", "time")
+    assert sorted(res["station_id"].values) == ["LODWAR", "MOYALE"]
+    assert str(res["time"].values[0])[:10] == "2026-10-15"
+    assert units_equal(res["precip"].attrs["units"], "mm")
+    assert float(res["longitude"].sel(station_id="MOYALE")) == pytest.approx(39.1)
+    np.testing.assert_allclose(res["precip"].sel(station_id="LODWAR").values, [0.0, 0.0, 1.0])
+    # A blank cell stays missing; only the "tr" code becomes 0.
+    np.testing.assert_allclose(res["precip"].sel(station_id="MOYALE").values, [4.1, np.nan, 0.0])
+
+
+def test_unpivot_refuses_unmapped_text(tmp_path, csv_io):
+    src = _write(tmp_path, "lon,lat,station,2026-10-15\n35.6,3.1,LODWAR,tr\n")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"),
+                  "--unpivot", "time=precip")  # fmt: skip
+    assert exc.value.code == 2
+
+
+def test_names_must_match_column_count(tmp_path, csv_io):
+    src = _write(tmp_path, ",,,15th\n35.6,3.1,LODWAR,0\n")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"),
+                  "--names", "lon,lat,station")  # fmt: skip
+    assert exc.value.code == 2
+
+
 def test_read_keeps_leading_zeros_in_station_ids(tmp_path, csv_io):
     src = _write(tmp_path, "station,lat,lon,date,rain\n00123,1,10,2026-10-01,1\n")
     out = tmp_path / "out.zarr"

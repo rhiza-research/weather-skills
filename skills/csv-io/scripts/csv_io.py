@@ -4,11 +4,12 @@
 #   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@dev",
 #   "cftime>=1.6",
 #   "numpy>=2.4",
+#   "openpyxl>=3.1",
 #   "pandas>=2.2",
 #   "xarray>=2026.4",
 # ]
 # ///
-"""Export a weather-skills Zarr to a CSV table, or read a CSV into a weather-skills Zarr."""
+"""Export a weather-skills Zarr to a CSV table, or read a CSV or Excel sheet into a Zarr."""
 
 import hashlib
 import re
@@ -58,6 +59,7 @@ COORD_ATTRS = {
 STEP_UNITS = {"days": "D", "day": "D", "d": "D", "hours": "h", "hour": "h", "h": "h"}
 # Numeric per-station columns that describe the site rather than measure weather.
 SITE_COLUMN = re.compile(r"(latitude|longitude|altitude|elevation)$", re.IGNORECASE)
+EXCEL_SUFFIXES = (".xlsx", ".xlsm")
 # "rain [mm]" or "Rainfall (mm)".
 HEADER_UNITS = re.compile(r"^\s*(?P<name>.+?)\s*(\[(?P<u1>[^\]]*)\]|\((?P<u2>[^)]*)\))\s*$")
 
@@ -125,22 +127,60 @@ def _parse_point(point):
     return lat, lon, parts[2] if len(parts) == 3 else "P0"
 
 
-def _read(path, units, na_value, date_format, point, index):
-    """Build a standard dataset from a tidy CSV."""
+def _read(
+    path,
+    units,
+    na_value,
+    date_format,
+    point,
+    index,
+    sheet,
+    names,
+    skip_rows,
+    replace,
+    drop_column,
+    unpivot,
+):
+    """Build a standard dataset from a tidy CSV or Excel sheet."""
     if not path.is_file():
         raise UsageError(f"CSV not found: {path}")
+    if path.suffix.lower() in EXCEL_SUFFIXES:
+        book = pd.ExcelFile(path, engine="openpyxl")
+        if sheet is not None and sheet not in book.sheet_names:
+            raise UsageError(
+                f"--sheet {sheet!r} not in {path.name}; sheets: {', '.join(book.sheet_names)}"
+            )
+        read, opts = pd.read_excel, {"io": book, "sheet_name": sheet or 0}
+    elif path.suffix.lower() == ".xls":
+        raise UsageError("old-style .xls is not supported; save it as .xlsx or .csv")
+    elif sheet is not None:
+        raise UsageError(f"--sheet is for Excel files ({', '.join(EXCEL_SUFFIXES)})")
+    else:
+        read = pd.read_csv
+        opts = {"filepath_or_buffer": path, "encoding": "utf-8-sig", "skipinitialspace": True}
+    opts["skiprows"] = skip_rows
+    header = read(**opts, nrows=0).columns
+    if names:
+        names = names.split(",")
+        if len(names) != len(header):
+            raise UsageError(f"--names has {len(names)} names for {len(header)} columns")
+        opts.update(names=names, header=0)
+        header = names
     # Station ids as text, so 00123 keeps its leading zeros.
-    header = pd.read_csv(path, encoding="utf-8-sig", nrows=0).columns
     id_cols = {c: str for c in header if COLUMN_ROLES.get(str(c).strip().lower()) == "station_id"}
-    df = pd.read_csv(
-        path,
-        encoding="utf-8-sig",
-        na_values=na_value or None,
-        skipinitialspace=True,
-        dtype=id_cols or None,
-    )
+    df = read(**opts, na_values=na_value or None, dtype=id_cols or None)
+    # Spacer rows in a sheet are blank, not records.
+    df = df.dropna(how="all")
     if df.empty:
         raise UsageError(f"{path} has no rows")
+    for spec in replace or []:
+        text, sep, value = spec.partition("=")
+        try:
+            value = float(value)
+        except ValueError:
+            raise UsageError(f"--replace expects TEXT=NUMBER, e.g. tr=0; got {spec!r}") from None
+        df = df.replace(text, value)
+    df = df.infer_objects()
 
     # "precip [mm]" -> column precip with units mm; --units fills or overrides.
     col_units, renames = {}, {}
@@ -153,6 +193,33 @@ def _read(path, units, na_value, date_format, point, index):
         if m:
             col_units[name] = (m["u1"] if m["u1"] is not None else m["u2"]).strip()
     df = df.rename(columns=renames)
+    for name in drop_column or []:
+        if name not in df.columns:
+            raise UsageError(f"--drop-column {name!r} not in columns: {', '.join(df.columns)}")
+        df = df.drop(columns=name)
+
+    # Wide table -> long: coordinate columns stay, every other column becomes rows.
+    if unpivot:
+        label, sep, value = unpivot.partition("=")
+        if not sep or not re.fullmatch(r"\w+", label) or not re.fullmatch(r"\w+", value):
+            raise UsageError(f"--unpivot expects NAME=VALUE, e.g. time=precip; got {unpivot!r}")
+        keep = [c for c in df.columns if c.lower() in COLUMN_ROLES or SITE_COLUMN.search(c)]
+        stacked = [c for c in df.columns if c not in keep]
+        if not stacked:
+            raise UsageError("--unpivot found no columns to stack beside the coordinates")
+        # Stacked headers as written in the file (2026-10-15, not 2026_10_15).
+        raw = {renames[c]: c for c in renames}
+        df = df.melt(id_vars=keep, value_vars=stacked, var_name=label, value_name=value)
+        df[label] = df[label].map(raw)
+        numbers = pd.to_numeric(df[value], errors="coerce")
+        bad = df.loc[numbers.isna() & df[value].notna(), value].unique()
+        if len(bad):
+            raise UsageError(
+                f"--unpivot: non-numeric values {', '.join(map(repr, bad[:10]))}; map them "
+                "with --replace TEXT=NUMBER or --na-value TEXT"
+            )
+        df[value] = numbers
+
     for spec in units or []:
         name, sep, unit = spec.partition("=")
         if not sep or name not in df.columns:
@@ -296,7 +363,9 @@ def _read(path, units, na_value, date_format, point, index):
 @weather_skill.argument(
     "-i", "--input", type=Dataset("any"), help="Zarr to export; -o names the .csv to write."
 )
-@weather_skill.argument("--csv", type=Path, help="CSV to read; -o names the .zarr to write.")
+@weather_skill.argument(
+    "--csv", type=Path, help="CSV or Excel (.xlsx) to read; -o names the .zarr to write."
+)
 @weather_skill.argument("--variable", "-v", action="append")
 @weather_skill.argument(
     "--dropna", action="store_true", help="Export: skip rows where every variable is NaN."
@@ -323,6 +392,19 @@ def _read(path, units, na_value, date_format, point, index):
     action="append",
     help="Read: column to use as a dim (repeatable; overrides detection).",
 )
+@weather_skill.argument("--sheet", help="Read: Excel sheet name. Default: the first sheet.")
+@weather_skill.argument("--names", help="Read: comma-separated names replacing the header row.")
+@weather_skill.argument(
+    "--skip-rows", type=int, default=0, help="Read: lines to skip above the header row."
+)
+@weather_skill.argument(
+    "--replace", action="append", help="Read: TEXT=NUMBER for a cell code, e.g. tr=0."
+)
+@weather_skill.argument("--drop-column", action="append", help="Read: column to leave out.")
+@weather_skill.argument(
+    "--unpivot",
+    help="Read: NAME=VALUE; stack the non-coordinate columns, headers into NAME, cells into VALUE.",
+)
 def csv_io(
     ds,
     output,
@@ -335,21 +417,53 @@ def csv_io(
     date_format,
     point,
     index,
+    sheet,
+    names,
+    skip_rows,
+    replace,
+    drop_column,
+    unpivot,
     **kwargs,
 ):
-    """Export a weather-skills Zarr to a CSV table, or read a CSV into a weather-skills Zarr."""
+    """Export a weather-skills Zarr to a CSV table, or read a CSV or Excel sheet into a Zarr."""
     if (ds is None) == (csv is None):
         raise UsageError("pass exactly one of -i/--input (Zarr to export) or --csv (CSV to read)")
     if ds is not None:
         if output.suffix.lower() != ".csv":
             raise UsageError(f"export writes CSV; -o should end in .csv (got {output})")
-        if any((units, na_value, date_format, point, index)):
-            raise UsageError("--units, --na-value, --date-format, --point, --index are for --csv")
+        read_only = (
+            units,
+            na_value,
+            date_format,
+            point,
+            index,
+            sheet,
+            names,
+            skip_rows,
+            replace,
+            drop_column,
+            unpivot,
+        )
+        if any(read_only):
+            raise UsageError("reading options (--units, --sheet, --unpivot, ...) are for --csv")
         _export(ds, output, variable, dropna, max_rows)
         return None
     if output.suffix.lower() == ".csv":
         raise UsageError("reading a CSV writes a Zarr; -o should not end in .csv")
-    out = _read(csv, units, na_value, date_format, point, index)
+    out = _read(
+        csv,
+        units,
+        na_value,
+        date_format,
+        point,
+        index,
+        sheet,
+        names,
+        skip_rows,
+        replace,
+        drop_column,
+        unpivot,
+    )
     missing = [v for v in variable or [] if v not in out.data_vars]
     if missing:
         raise UsageError(
