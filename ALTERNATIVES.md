@@ -52,7 +52,7 @@ access patterns, or production ops scale past that.
 - CLI for computing climate indicators (frost days, heating degree days, etc.)
   on netCDF.
 - Narrow purpose — indicator calculation, not generic slicing/aggregation.
-- Relevant if we ever add an `indicators` skill.
+- Overlaps the `indicator` skill for threshold and spell rules.
 
 ### icclim (Python)
 - <https://pypi.org/project/icclim/>

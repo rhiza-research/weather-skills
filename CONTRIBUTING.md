@@ -3,7 +3,7 @@
 ## Publish model
 
 `main` is the consumer-facing branch. Anything merged to `main` is considered
-published — there is no separate release, dev, or deploy branch. Downstream
+published. Work collects on `dev` and is merged to `main` in bulk. Downstream
 consumers (rhiza-agents, skillkit, the demo's `uv tool install ../`, standalone
 single-file copies) read from `main`, so every merge to `main` is a release.
 
@@ -18,12 +18,14 @@ contributors never edit either by hand.
 
 ## PR workflow
 
-1. Branch off `main`.
-2. Open a PR back into `main`.
+1. Branch off `dev`.
+2. Open a PR back into `dev`. `dev` reaches `main` through one dev→main PR.
+   While on `dev`, skills may pin `weather-skills-core` to its git `dev`
+   branch; switch every pin back to a PyPI release before that PR merges.
 3. CI must pass (the `CI` workflow runs ruff format-check, ruff check, inline-dep
    validation, pytest for skill correctness tests, and a `--help` invocation per
    script).
-4. Rebase onto `main` before merging — linear history is required.
+4. Rebase onto the target branch before merging — linear history is required.
 5. Use the GitHub merge button (squash-merge or rebase-merge, per-PR choice).
 
 Authors **must not** edit any `metadata.version` field by hand. The version

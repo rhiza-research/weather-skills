@@ -16,7 +16,6 @@ Next steps:
 # Export your credentials
 
 # ecmwf-fetch — ECMWF S2S forecasts via the ECMWF Data Stores (ECDS)
-export ECMWF_DATASTORES_URL=https://ecds.ecmwf.int/api
 export ECMWF_DATASTORES_KEY=
 
 # imerg-fetch — NASA Earthdata (urs.earthdata.nasa.gov)
@@ -26,6 +25,10 @@ export EARTHDATA_PASSWORD=
 # tahmo-fetch — TAHMO station API
 export TAHMO_API_USERNAME=
 export TAHMO_API_PASSWORD=
+
+# Other credentialed skills list their variables in their SKILL.md
+# `compatibility:` line (windborne-*, 3dpaws-fetch, cams-fetch,
+# meteosat-fetch, weathernext-fetch, openaq-fetch, ...).
 
 
 # Then run the agent
