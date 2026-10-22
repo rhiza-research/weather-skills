@@ -179,6 +179,14 @@ _PRECIP_LONG_NAMES = {
     "experimental_tp": "Experimental total precipitation",
     "imerg_tp": "IMERG-calibrated total precipitation",
 }
+# Period totals labelled at the end of their period: precipitation and the
+# WeatherNext 3 1 h solar radiation sums (kept as J m-2 per hour, as other
+# fetchers keep ssrd, not turned into a W m-2 flux).
+_PERIOD_TOTALS = (
+    *_PRECIP_LONG_NAMES,
+    "surface_solar_radiation_downwards_1hr",
+    "total_sky_direct_solar_radiation_at_surface_1hr",
+)
 
 # Aliases shared by both versions, resolved to the *output* name. v3 native
 # names come from _V3_RENAME; lookups fall back to the name itself.
@@ -786,18 +794,19 @@ def fetch(
     stamp_precip_amounts(ds)
     ds = to_standard_units(ds)
     ds = precip_amounts_to_rates(ds, interval=product.precip_interval, deaccumulate=False)
-    # Precipitation is a period total labelled at its end: relabel it to the
-    # period start. Every other field is instantaneous at init + step and keeps
-    # its lead. With both, the merged axis runs from 0: precipitation is NaN at
-    # the last lead and the instantaneous fields at 0 (gaps, not filled).
-    precip = [n for n in ds.data_vars if _split_statistic(n)[0] in _PRECIP_LONG_NAMES]
-    if precip:
+    # Precipitation and solar radiation are period totals labelled at their end:
+    # relabel them to the period start. Every other field is instantaneous at
+    # init + step and keeps its lead. With both, the merged axis runs from 0: the
+    # totals are NaN at the last lead and the instantaneous fields at 0 (gaps,
+    # not filled).
+    totals = [n for n in ds.data_vars if _split_statistic(n)[0] in _PERIOD_TOTALS]
+    if totals:
         import xarray as xr
 
         had_valid = "valid_time" in ds.coords
         ds = ds.drop_vars("valid_time", errors="ignore")
-        shifted = _shift_step_origin_to_zero(ds[precip])
-        rest = ds.drop_vars(precip)
+        shifted = _shift_step_origin_to_zero(ds[totals])
+        rest = ds.drop_vars(totals)
         ds = (
             xr.merge([rest, shifted], join="outer", compat="override")
             if rest.data_vars

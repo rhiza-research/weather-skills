@@ -597,3 +597,30 @@ def test_v3_bad_statistic_variable_exits_2(tmp_path, fetch_mod, monkeypatch, arg
         )  # fmt: skip
     assert exc.value.code == 2
 
+
+def test_v3_solar_radiation_moves_to_period_start_in_j_m2(tmp_path, fetch_mod, monkeypatch):
+    """ssrd is a 1 h total ending at init + step, like tp: relabelled to its start."""
+    remote = _native_v3_ensemble(members=1)
+    dims = remote["temperature_2m"].dims
+    remote["surface_solar_radiation_downwards_1hr"] = (
+        dims,
+        np.full(remote["temperature_2m"].shape, 3.6e6, dtype=np.float32),
+    )
+    _mock_v3(monkeypatch, fetch_mod, remote)
+    out = tmp_path / "wn3_ssrd.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--version", "3", "--date", "2026-10-02", "--billing-project", "p",
+        "-v", "ssrd", "-v", "t2m",
+        "-o", str(out),
+    )  # fmt: skip
+    with xr.open_zarr(out, consolidated=True) as ds:
+        ssrd = ds["surface_solar_radiation_downwards_1hr"]
+        assert _lead_hours(ds) == list(range(13))
+        assert ssrd.attrs["units"] == "J m-2"
+        assert ssrd.attrs["standard_name"].startswith("integral_wrt_time_of_")
+        # The 0-1 h total sits at step 0; nothing after the last period.
+        np.testing.assert_allclose(ssrd.values[0, :-1], 3.6e6, rtol=1e-6)
+        assert np.isnan(ssrd.values[0, -1]).all()
+        assert np.isnan(ds["2m_temperature"].values[0, 0]).all()
+
