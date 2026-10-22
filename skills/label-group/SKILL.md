@@ -43,7 +43,7 @@ The input with new coords; data variables are unchanged.
 ### Notes
 - A grid cell belongs to the unit containing its centre. A unit too small to contain any cell centre gets no cells; such units are listed on stderr.
 - Each country's admin layer is drawn separately, so neighbouring layers overlap slightly along borders and in disputed areas (Ilemi Triangle: Turkana and Eastern Equatoria). A cell in two units keeps the first, in order of country ISO3 code; stderr counts these cells for each pair of units. Pass `--geojson` with your own boundaries when border cells matter.
-- Admin levels download one layer per country that overlaps the input (about 1 MB per country for admin_1); stderr warns when more than 60 countries overlap (a continent or the globe).
+- Admin levels download one layer per country that overlaps the input (about 1 MB per country for admin_1); stderr warns when more than 30 countries overlap.
 - Labels are resolve-region keys, so one label can be passed to `clip-region --region` or `resolve-region`. An admin_2 key names its admin_1 (`kenya-kiambu-kiambu`), so a county name used in several states stays distinct. A key still repeated within a country gets `_2`, `_3`, ... appended, numbered the same whatever the input's extent; those keys do not resolve.
 - Month groups may not share a month. Single initials such as `J` match several months and are refused.
 - `--time` needs a `time` dimension; relabel a forecast's lead axis with `step-to-time` first.
