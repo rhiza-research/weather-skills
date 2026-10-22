@@ -37,14 +37,21 @@ _SKILL_VERSION = "0.0.3"
 @weather_skill.argument(
     "--method",
     required=True,
-    choices=["mean", "std", "min", "max", "sum", "median"],
+    choices=["mean", "std", "min", "max", "sum", "median", "quantile"],
+)
+@weather_skill.argument(
+    "--quantile",
+    "-q",
+    type=float,
+    action="append",
+    help="Quantile between 0 and 1 for --method quantile (repeatable: 0.1 and 0.9 for a band).",
 )
 @weather_skill.argument(
     "--lat-weighted",
     action="store_true",
     help="cos(lat) weights for --method mean over latitude.",
 )
-def summarize_dim(ds, variable, dim, by, method, lat_weighted, **kwargs):
+def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, **kwargs):
     """Collapse named dimensions of a Zarr, or each group of a label coord, with a statistic."""
     if not dim and not by:
         raise UsageError("pass --dim, --by, or both")
@@ -59,6 +66,13 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, **kwargs):
             raise UsageError(f"--by {b!r} is not a label coord (have {labels})")
     if by and lat_weighted:
         raise UsageError("--lat-weighted cannot be combined with --by")
+    if (method == "quantile") != bool(quantile):
+        raise UsageError("--quantile goes with --method quantile, which needs at least one")
+    quantile = list(dict.fromkeys(quantile or []))
+    if any(not 0 <= q <= 1 for q in quantile):
+        raise UsageError(f"--quantile must be between 0 and 1, got {quantile}")
+    if by and len(quantile) > 1:
+        raise UsageError("--by takes one --quantile; run once per quantile")
     # The dims a label spans collapse into one entry per label.
     group_dims = list(dict.fromkeys(d for b in by for d in ds[b].dims))
     dims = list(dict.fromkeys([*group_dims, *dims]))
@@ -126,6 +140,8 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, **kwargs):
         if by:
             # min_count=1 / ddof=1 as below. Combinations with no cells stay NaN.
             kw = {"min_count": 1} if method == "sum" else {"ddof": 1} if method == "std" else {}
+            if method == "quantile":
+                kw = {"q": quantile[0]}
             kept = [d for d in da.dims if d not in rdims]
             units = da.pint.units
             da = da.pint.dequantify()  # values are filled into numpy; units go back on below
@@ -159,6 +175,12 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, **kwargs):
             out[var] = da.sum(dim=rdims, keep_attrs=True, min_count=1)
         elif method == "std":
             out[var] = da.std(dim=rdims, keep_attrs=True, ddof=1)
+        elif method == "quantile":
+            # One quantile leaves a scalar quantile coord; several add a quantile dim.
+            q = quantile[0] if len(quantile) == 1 else quantile
+            out[var] = da.pint.dequantify().quantile(q, dim=rdims, keep_attrs=True)
+            if da.pint.units is not None:
+                out[var] = out[var].copy(data=out[var].data * da.pint.units)
         elif method == "mean" and lat_weighted and lat_dim in rdims:
             out[var] = (
                 da.pint.dequantify()
@@ -174,6 +196,8 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, **kwargs):
         attrs = dict(out[var].attrs)
         cf_method = {"std": "standard_deviation", "min": "minimum", "max": "maximum"}
         step = f"{': '.join(rdims)}: {cf_method.get(method, method)}"
+        if method == "quantile":
+            step += f" {', '.join(f'{q:g}' for q in quantile)}"
         if by:
             step += f" (grouped by {', '.join(by)})"
         attrs["cell_methods"] = (

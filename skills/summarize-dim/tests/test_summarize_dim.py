@@ -293,3 +293,108 @@ def test_by_same_dims_combination_without_cells_is_nan(tmp_path, summarize_dim):
     assert r.sel(region="a", zone="e").item() == 1.0
     assert r.sel(region="b", zone="e").item() == 5.0
     assert r.sel(region="b", zone="w").item() == 4.0
+
+
+def _members(n=11):
+    import numpy as np
+
+    ds = make_gridded(n_time=2)
+    ds = ds.expand_dims(number=np.arange(n)).copy(deep=True)
+    # Member k holds k everywhere: quantiles are easy to read off.
+    ds["precip"].values[:] = np.arange(n, dtype=float)[:, None, None, None]
+    ds["precip"].attrs.update(units="mm day-1")
+    return ds
+
+
+def test_quantiles_add_a_quantile_dim(tmp_path, summarize_dim):
+    src = write_zarr(_members(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "number",
+        "--method",
+        "quantile",
+        "-q",
+        "0.1",
+        "-q",
+        "0.9",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert "number" not in ds.dims
+    assert ds["quantile"].values.tolist() == [0.1, 0.9]
+    assert ds["precip"].sel(quantile=0.1).values == pytest.approx(1.0)
+    assert ds["precip"].sel(quantile=0.9).values == pytest.approx(9.0)
+    assert ds["precip"].attrs["units"] == "mm day-1"
+    assert ds["precip"].attrs["cell_methods"].endswith("number: quantile 0.1, 0.9")
+
+
+def test_one_quantile_keeps_a_scalar_coord(tmp_path, summarize_dim):
+    src = write_zarr(_members(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "number",
+        "--method",
+        "quantile",
+        "-q",
+        "0.5",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert "quantile" not in ds.dims
+    assert float(ds["quantile"]) == 0.5
+    assert ds["precip"].values == pytest.approx(5.0)
+
+
+def test_quantile_by_label(tmp_path, summarize_dim):
+    src = write_zarr(_labeled(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "region",
+        "--method",
+        "quantile",
+        "-q",
+        "0.5",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    # time 0: a = median(0, 1), b = median(3, 4, 5)
+    assert ds["precip"].isel(time=0).values.tolist() == [0.5, 4.0]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--method", "quantile"),
+        ("--method", "mean", "-q", "0.5"),
+        ("--method", "quantile", "-q", "1.5"),
+    ],
+)
+def test_quantile_arguments_checked(tmp_path, summarize_dim, capsys, args):
+    src = write_zarr(_members(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            summarize_dim, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--dim", "number", *args
+        )
+    assert exc.value.code == 2
+    assert "--quantile" in capsys.readouterr().err
