@@ -180,6 +180,8 @@ def fetch(bbox, start_time, end_time, variable, level, probe_latest, **kwargs):
     for token in variable or DEFAULT_VARIABLES:
         if token not in VARIABLES:
             raise UsageError(f"unknown variable {token!r}. Available: {', '.join(VARIABLES)}")
+        if any(f[0] == token for f in fields):
+            continue
         wb_name, upper = VARIABLES[token]
         if upper:
             if not level:
@@ -190,6 +192,8 @@ def fetch(bbox, start_time, end_time, variable, level, probe_latest, **kwargs):
                     f"level(s) {bad} not served; available: {', '.join(map(str, LEVELS))}."
                 )
         fields.append((token, wb_name, sorted(level) if upper else None))
+    if level and not any(f[2] for f in fields):
+        raise UsageError("--level is only for pressure-level fields (t, z, q, u, v).")
 
     print(
         f"Fetching ECMWF analysis via WindBorne: {len(times)} times, "
@@ -256,31 +260,35 @@ def fetch(bbox, start_time, end_time, variable, level, probe_latest, **kwargs):
 
     ds = xr.Dataset(variables).sortby("latitude")
     if "tp" in ds.data_vars:
-        # total_precipitation_1h is the hour before each analysis time: a mm day-1
-        # rate over that one hour, labelled at the analysis time. The other five
-        # hours of each 6 h step are not served, so it is not a 6-hourly mean.
+        # total_precipitation_1h covers (T-1h, T] before each analysis time T: a
+        # mm day-1 rate over that one hour, labelled at its start T-1h like the
+        # other fetchers. The other five hours of each 6 h step are not served,
+        # so it is not a 6-hourly mean. The other fields keep their analysis
+        # times; the merged axis is NaN where a field has no value (not filled).
         units = str(ds["tp"].attrs.get("units") or "mm")
         tp, _ = convert_dataarray(ds["tp"], "mm") if units != "mm" else (ds["tp"], None)
-        ds["tp"] = tp * 24.0
-        ds["tp"].attrs.update(units="mm day-1", windborne_name="total_precipitation_1h")
+        tp = tp * 24.0
+        tp.attrs.update(units="mm day-1", windborne_name="total_precipitation_1h")
+        tp = tp.assign_coords(time=tp["time"] - np.timedelta64(1, "h"))
+        rest = ds.drop_vars("tp")
+        ds = xr.merge([rest, tp], join="outer") if rest.data_vars else tp.to_dataset()
     ds.attrs.update(
         Conventions="CF-1.13",
         weather_skills_source="windborne-ecmwf-analysis",
         source="ECMWF IFS Analysis (Deterministic) via WindBorne",
     )
     stamp_cf_attrs(ds)
-    tp = ds["tp"] if "tp" in ds.data_vars else None
-    ds = to_standard_units(ds.drop_vars("tp") if tp is not None else ds)
+    ds = to_standard_units(ds, [name for name in ds.data_vars if name != "tp"])
     for name in ds.data_vars:
         if ds[name].attrs.get("windborne_name") in _KELVIN and ds[name].attrs.get("units") == "K":
             converted, _ = convert_dataarray(ds[name], "degree_Celsius")
             converted.attrs["units"] = "degree_Celsius"
             ds[name] = converted
-    if tp is not None:
-        ds["tp"] = tp
-    if ds.sizes["time"] > 1:
+    # data_interval is per variable: the analysis fields are 6-hourly samples
+    # (stamped when there is more than one), tp a one-hour rate.
+    if len(times) > 1:
         ds = stamp_data_interval(ds, "6 hour")
-    if tp is not None:
+    if "tp" in ds.data_vars:
         ds["tp"].attrs["data_interval"] = "1 hour"
     return ds
 

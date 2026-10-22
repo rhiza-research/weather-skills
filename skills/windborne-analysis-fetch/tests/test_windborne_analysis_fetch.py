@@ -97,17 +97,41 @@ def test_range_bbox_units(mod, monkeypatch, tmp_path):
         str(out),
     )
     ds = xr.open_zarr(out)
+    # tp covers the hour before each analysis and is labelled at its start;
+    # t2m keeps the analysis times. Each is NaN at the other's times.
     assert list(ds["time"].values) == [
+        np.datetime64("2026-10-19T05:00"),
         np.datetime64("2026-10-19T06:00"),
+        np.datetime64("2026-10-19T11:00"),
         np.datetime64("2026-10-19T12:00"),
     ]
+    t2m = ds["t2m"].isel(latitude=0, longitude=0).values
+    tp = ds["tp"].isel(latitude=0, longitude=0).values
+    np.testing.assert_allclose(t2m, [np.nan, 26.85, np.nan, 26.85], rtol=1e-5)
+    np.testing.assert_allclose(tp, [12.0, np.nan, 12.0, np.nan])
     assert list(ds["longitude"].values) == [0, 30, 60]
     assert list(ds["latitude"].values) == [-30, 0, 30]
-    assert float(ds["t2m"].max()) == pytest.approx(26.85)
-    np.testing.assert_allclose(float(ds["tp"].max()), 12.0)
     assert ds["tp"].attrs["data_interval"] == "1 hour"
     assert ds["t2m"].attrs["data_interval"] == "6 hour"
     assert ds["z"].dims == ("time", "vertical", "latitude", "longitude")
+
+
+def test_repeated_variable_fetched_once(mod, monkeypatch, tmp_path):
+    import xarray as xr
+
+    _fake_api(monkeypatch, tmp_path)
+    out = tmp_path / "anl.zarr"
+    run_skill(mod.fetch, "-v", "t2m", "-v", "t2m", "-o", str(out))
+    ds = xr.open_zarr(out)
+    assert list(ds.data_vars) == ["t2m"]
+    assert ds["time"].values.tolist() == [np.datetime64("2026-10-19T12:00", "ns").tolist()]
+
+
+def test_level_without_pressure_level_field_errors(mod, monkeypatch, tmp_path):
+    _fake_api(monkeypatch, tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(mod.fetch, "-v", "t2m", "--level", "500", "-o", str(tmp_path / "x.zarr"))
+    assert exc.value.code == 2
 
 
 def test_probe_latest(mod, monkeypatch, tmp_path, capsys):
