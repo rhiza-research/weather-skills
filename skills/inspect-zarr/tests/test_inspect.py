@@ -197,3 +197,14 @@ def test_sample_skips_leading_nan_and_datetime_stats(tmp_path, inspect_zarr, cap
     assert by_name["onset"]["n_finite"] == 1
     assert by_name["onset"]["min"] == "2026-03-05"
     assert by_name["onset"]["mean"] is None
+
+
+def test_small_all_nan_variable_says_no_finite_values(tmp_path, inspect_zarr, capsys):
+    ds = make_gridded(n_time=1, lats=(1.0,), lons=(10.0, 11.0, 12.0), fill=np.nan)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+
+    run_skill(inspect_zarr, "-i", str(src))
+
+    out = capsys.readouterr().out
+    assert "sample: (no finite values)" in out
+    assert "nan, nan" not in out

@@ -125,9 +125,10 @@ def _data_var(name, da, max_values):
                 stats["mean"] = _jsonable(total / n_finite)
     else:
         sample = [_fmt(v) for v in arr.reshape(-1)[:want]]
-    if n <= want:
+    if n <= want and stats["n_finite"] != 0:
         # The whole variable fits: show every value in place, NaN included, so
         # the sample lines up with the coordinate values (e.g. which county is empty).
+        # An all-NaN variable keeps the empty sample: "(no finite values)".
         sample = [_fmt(v) for v in arr.reshape(-1)]
     truncated = stats["n_finite"] is not None and stats["n_finite"] > len(sample)
     truncated = truncated or (stats["n_finite"] is None and n > len(sample))
