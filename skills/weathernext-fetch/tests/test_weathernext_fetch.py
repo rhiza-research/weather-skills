@@ -624,3 +624,23 @@ def test_v3_solar_radiation_moves_to_period_start_in_j_m2(tmp_path, fetch_mod, m
         assert np.isnan(ssrd.values[0, -1]).all()
         assert np.isnan(ds["2m_temperature"].values[0, 0]).all()
 
+
+def test_max_lead_and_cycle_accept_both_spellings(tmp_path, fetch_mod, monkeypatch):
+    seen = _mock_v3(monkeypatch, fetch_mod, _native_v3_ensemble())
+    for max_lead in ("8", "8h"):
+        out = tmp_path / f"wn3_{max_lead}.zarr"
+        run_skill(
+            fetch_mod.fetch,
+            "--version", "3", "--date", "2026-10-02", "--cycle", "6",
+            "--billing-project", "p", "-v", "t2m", "--max-lead", max_lead,
+            "-o", str(out),
+        )  # fmt: skip
+        assert seen["open"][0] == "20261002_06hr_01_preds"
+        with xr.open_zarr(out, consolidated=True) as ds:
+            assert _lead_hours(ds) == list(range(1, 9))
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch, "--version", "3", "--date", "2026-10-02", "--billing-project", "p",
+            "-v", "t2m", "--max-lead", "soon", "-o", str(tmp_path / "o.zarr"),
+        )  # fmt: skip
+    assert exc.value.code == 2

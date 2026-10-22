@@ -372,7 +372,7 @@ def _resolve_stamp(date, cycle: str | None, product: _Product, billing_project: 
                 "(`--probe-latest`), or omit --date to take the latest. Inits are "
                 f"{'/'.join(_SYNOPTIC_CYCLES)} UTC (`--cycle`)"
                 + (
-                    "; WeatherNext 3 also has 48h interim inits every other hour"
+                    "; WeatherNext 3 also has 48h interim inits at the other (non-00/06/12/18) hours"
                     if product.version == "3"
                     else ""
                 )
@@ -628,8 +628,8 @@ def _prepare_dataset(ds, product: _Product):
     return ds
 
 
-def _trim_leads(ds, product: _Product, max_lead: int):
-    """Keep native leads up to ``max_lead`` hours, before anything is read.
+def _trim_leads(ds, product: _Product, max_lead):
+    """Keep native leads up to ``max_lead`` (timedelta64), before anything is read.
 
     WeatherNext 3 hourly fields sit in 6 h ``lead_time`` blocks; a block is kept
     when its first hour is in range, and the hours past ``max_lead`` are cut
@@ -645,10 +645,11 @@ def _trim_leads(ds, product: _Product, max_lead: int):
         lead = _as_hours(ds["lead_time"].values)
         if "lead_subtime" in ds.dims:
             lead = lead + _as_hours(ds["lead_subtime"].values).min()
-    keep = lead <= np.timedelta64(max_lead, "h")
+    keep = lead <= max_lead
     if not keep.any():
         first = int(lead[0] / np.timedelta64(1, "h"))
-        raise UsageError(f"--max-lead {max_lead} keeps no leads (first lead is {first}h).")
+        limit = max_lead / np.timedelta64(1, "h")
+        raise UsageError(f"--max-lead {limit:g}h keeps no leads (first lead is {first}h).")
     return ds.isel({dim: np.flatnonzero(keep)})
 
 
@@ -674,10 +675,11 @@ def _trim_leads(ds, product: _Product, max_lead: int):
 @weather_skill.argument("--date")
 @weather_skill.argument(
     "--cycle",
+    type=lambda hour: hour.zfill(2),
     choices=list(_ALL_CYCLES),
-    help="Init hour UTC. Version 2: 00/06/12/18. Version 3 adds 48h interim inits at "
-    "every other hour. Default: 00 with --date; the latest 00/06/12/18 init when "
-    "--date is omitted.",
+    help="Init hour UTC (6 and 06 both work). Version 2: 00/06/12/18. Version 3 adds 48h "
+    "interim inits at the other (non-00/06/12/18) hours. Default: 00 with --date; the "
+    "latest 00/06/12/18 init when --date is omitted.",
 )
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v", action="append")
@@ -703,9 +705,8 @@ def _trim_leads(ds, product: _Product, max_lead: int):
 )
 @weather_skill.argument(
     "--max-lead",
-    type=int,
-    metavar="HOURS",
-    help="Keep only leads up to this many hours after init. Applied before download — "
+    help="Keep only leads up to this one after init: hours (72) or a timedelta (72h, 3D). "
+    "Applied before download — "
     "store chunks are one global field per lead, so this (with -v and --member) is what "
     "cuts read size for a short-range fetch.",
 )
@@ -748,6 +749,17 @@ def fetch(
         raise UsageError("--member needs ensemble members; --product statistics has none.")
     if statistic and product.ensemble:
         raise UsageError("--statistic is only valid with --version 3 --product statistics.")
+    if max_lead is not None:
+        import pandas as pd
+
+        text = max_lead.strip()
+        try:
+            lead = pd.Timedelta(int(text), "h") if text.isdigit() else pd.Timedelta(text)
+        except ValueError:
+            raise UsageError(f"--max-lead {max_lead!r} is not a lead (72, 72h, 3D).") from None
+        if lead < pd.Timedelta(0):
+            raise UsageError("--max-lead must not be negative.")
+        max_lead = lead.to_timedelta64().astype("timedelta64[ns]")
 
     if probe_latest is not None:
         stamp = _latest_stamp(product, cycle, billing_project)
@@ -783,7 +795,7 @@ def fetch(
 
     ds = _prepare_dataset(ds.load(), product)
     if max_lead is not None:
-        ds = ds.isel(step=np.flatnonzero(ds["step"].values <= np.timedelta64(max_lead, "h")))
+        ds = ds.isel(step=np.flatnonzero(ds["step"].values <= max_lead))
     ds.attrs.update(
         Conventions="CF-1.13",
         title=product.title,
