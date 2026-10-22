@@ -44,6 +44,25 @@ def _readings(start, days, interval_min, make):
     ]
 
 
+def _free_running(start, days, make, pad_hours=0):
+    """1-minute readings on a station's own timer: 60-61 s apart, seconds drifting.
+
+    ``pad_hours`` adds readings either side, as a station that keeps reporting sends.
+    """
+    pad = pd.Timedelta(hours=pad_hours)
+    lo = pd.Timestamp(start) - pad
+    hi = pd.Timestamp(start) + pd.Timedelta(days=days) + pad
+    times = pd.date_range(lo, hi, freq="60400ms", inclusive="left").floor("s")
+    return [
+        {"time": t.strftime("%Y-%m-%dT%H:%M:%SZ"), "test": "false", "measurements": make(t)}
+        for t in times
+    ]
+
+
+def _dry(t):
+    return {"rg1": 0.0, "rg2": 0.0, "mt1": 20.0}
+
+
 def _fake_get_json(points_by_station):
     """Serve instruments/sites listings and the per-station data in the requested window."""
 
@@ -70,14 +89,14 @@ def _fake_get_json(points_by_station):
 
 def _run(tmp_path, mod, fetch, points_by_station, *extra):
     out = tmp_path / "out.zarr"
+    stations = [arg for sid in points_by_station for arg in ("--station", sid)]
     with (
         patch.dict(os.environ, CREDS),
         patch.object(mod, "_get_json", side_effect=_fake_get_json(points_by_station)),
     ):
         run_skill(
             fetch,
-            "--station",
-            "1",
+            *stations,
             "--start-time",
             "2026-10-01",
             "--end-time",
@@ -159,8 +178,8 @@ def test_daily_values_and_qc(tmp_path, mod, fetch):
             # 0.1 mm every 15 min on day 1 only -> 9.6 mm; gauge 2 agrees.
             "rg1": 0.1 if t.day == 1 else 0.0,
             "rg2": 0.1 if t.day == 1 else 0.0,
-            # -999.9 at one reading must be ignored, not drag the min down.
-            "mt1": -999.9 if t.hour == 3 and t.minute == 0 else 20.0 + t.hour / 2,
+            # A -999.9 failed read on day 2 is a missing reading, not a low.
+            "mt1": -999.9 if t.day == 2 and t.hour == 3 and t.minute == 0 else 20.0 + t.hour / 2,
             "sh1": 80.0,
             "bp1": 0,  # no pressure sensor fitted
             "ws": 2.0,
@@ -173,10 +192,13 @@ def test_daily_values_and_qc(tmp_path, mod, fetch):
     np.testing.assert_allclose(precip, [9.6, 0.0])
     assert ds["tmin"].sel(station_id="1").values[0] == pytest.approx(20.0)
     assert ds["tmax"].sel(station_id="1").values[0] == pytest.approx(31.5)
+    assert np.isnan(ds["tmin"].sel(station_id="1").values[1])
     assert ds["wind_gust"].sel(station_id="1").values[0] == pytest.approx(5.0)
     assert "pressure" not in ds  # all readings were the 0 sentinel
     assert ds["precip"].attrs["units"] == "mm day-1"
-    assert ds["humidity"].attrs["units"] == "%"
+    assert "cell_methods" not in ds["precip"].attrs
+    assert ds["humidity"].attrs["units"] == "1"
+    assert ds["humidity"].values[0, 0] == pytest.approx(0.8)
     assert ds["latitude"].values[0] == pytest.approx(-1.3)
     assert str(ds["site"].values[0]) == "KMD HQ"
     assert ds.attrs["featureType"] == "timeSeries"
@@ -187,7 +209,7 @@ def test_outage_blanks_the_day(tmp_path, mod, fetch):
         return {"rg1": 0.0, "rg2": 0.0, "mt1": 20.0}
 
     points = _readings("2026-10-01", 2, 15, make)
-    # Drop three hours of day 2: longer than three reporting intervals.
+    # Drop three hours of day 2.
     points = [
         p
         for p in points
@@ -197,6 +219,79 @@ def test_outage_blanks_the_day(tmp_path, mod, fetch):
     assert not np.isnan(ds["precip"].values[0, 0])
     assert np.isnan(ds["precip"].values[1, 0])
     assert np.isnan(ds["temperature"].values[1, 0])
+
+
+def test_single_missing_reading_blanks_the_day(tmp_path, mod, fetch):
+    points = _readings("2026-10-01", 2, 15, _dry)
+    points = [p for p in points if p["time"] != "2026-10-02T14:15:00Z"]
+    ds = _run(tmp_path, mod, fetch, {"1": points})
+    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
+    np.testing.assert_array_equal(np.isnan(ds["temperature"].values[:, 0]), [False, True])
+
+
+def test_missing_first_reading_of_the_day_blanks_that_day(tmp_path, mod, fetch):
+    points = _readings("2026-10-01", 2, 15, _dry)
+    points = [p for p in points if p["time"] != "2026-10-02T00:00:00Z"]
+    ds = _run(tmp_path, mod, fetch, {"1": points})
+    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
+
+
+def test_every_other_reading_dropped_is_not_double_the_interval(tmp_path, mod, fetch):
+    # A 1-minute station loses every other reading on day 2.
+    points = _free_running("2026-10-01", 2, _dry, pad_hours=1)
+    points = [p for i, p in enumerate(points) if not (p["time"] >= "2026-10-02" and i % 2)]
+    # A 15-minute station reporting on the quarter hour does the same.
+    points15 = _readings("2026-10-01", 2, 15, _dry)
+    points15 = [p for i, p in enumerate(points15) if not (p["time"] >= "2026-10-02" and i % 2)]
+    ds = _run(tmp_path, mod, fetch, {"1": points, "2": points15})
+    for sid in ("1", "2"):
+        precip = ds["precip"].sel(station_id=sid).values
+        np.testing.assert_array_equal(np.isnan(precip), [False, True])
+
+
+def test_one_and_fifteen_minute_stations_both_complete(tmp_path, mod, fetch):
+    def wet(t):
+        return {"rg1": 0.01, "rg2": 0.01, "mt1": 20.0}
+
+    ds = _run(
+        tmp_path,
+        mod,
+        fetch,
+        {
+            "1": _free_running("2026-10-01", 2, wet, pad_hours=1),
+            "2": _readings("2026-10-01", 2, 15, wet),
+        },
+    )
+    assert not np.isnan(ds["precip"].values).any()
+    assert not np.isnan(ds["temperature"].values).any()
+    # 96 readings a day at the 15-minute station.
+    np.testing.assert_allclose(ds["precip"].sel(station_id="2").values, [0.96, 0.96])
+
+
+def test_interval_change_mid_request(tmp_path, mod, fetch):
+    # 1 minute on its own timer for day 1, then 15 minutes on the clock for day 2.
+    points = _free_running("2026-10-01", 1, _dry) + _readings("2026-10-02", 1, 15, _dry)
+    ds = _run(tmp_path, mod, fetch, {"1": points})
+    assert not np.isnan(ds["precip"].values).any()
+    # A dropped reading after the change still blanks the day.
+    points = [p for p in points if p["time"] != "2026-10-02T09:30:00Z"]
+    ds = _run(tmp_path, mod, fetch, {"1": points})
+    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
+
+
+def test_duplicate_readings_count_once(tmp_path, mod, fetch):
+    def make(t):
+        wet = t == pd.Timestamp("2026-10-01T06:00")
+        return {"rg1": 1.0 if wet else 0.0, "rg2": 1.0 if wet else 0.0, "mt1": 20.0}
+
+    points = _readings("2026-10-01", 2, 15, make)
+    wet = next(p for p in points if p["time"] == "2026-10-01T06:00:00Z")
+    # Day 2 loses a reading; a resent copy of another does not make up for it.
+    points = [p for p in points if p["time"] != "2026-10-02T08:00:00Z"]
+    points += [wet, dict(points[-1])]
+    ds = _run(tmp_path, mod, fetch, {"1": points})
+    np.testing.assert_allclose(ds["precip"].values[0, 0], 1.0)
+    assert np.isnan(ds["precip"].values[1, 0])
 
 
 def test_gauges_disagree_gives_nan(tmp_path, mod, fetch):

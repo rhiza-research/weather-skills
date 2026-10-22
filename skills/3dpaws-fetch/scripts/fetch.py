@@ -68,7 +68,7 @@ ZERO_IS_MISSING = {"mt1", "sh1", "bp1"}
 GAUGE_TOLERANCE_MM = 1.0
 GAUGE_TOLERANCE_FRAC = 0.25
 CF_META = {
-    "precip": ("lwe_precipitation_rate", "mm day-1", "time: sum", "daily rainfall"),
+    "precip": ("lwe_precipitation_rate", "mm day-1", None, "daily rainfall"),
     "temperature": (
         "air_temperature",
         "degree_Celsius",
@@ -77,7 +77,7 @@ CF_META = {
     ),
     "tmax": ("air_temperature", "degree_Celsius", "time: maximum", "daily maximum air temperature"),
     "tmin": ("air_temperature", "degree_Celsius", "time: minimum", "daily minimum air temperature"),
-    "humidity": ("relative_humidity", "%", "time: mean", "daily mean relative humidity"),
+    "humidity": ("relative_humidity", "1", "time: mean", "daily mean relative humidity"),
     "pressure": ("surface_air_pressure", "hPa", "time: mean", "daily mean station pressure"),
     "wind_speed": ("wind_speed", "m s-1", "time: mean", "daily mean wind speed"),
     "wind_gust": ("wind_speed_of_gust", "m s-1", "time: maximum", "daily maximum wind gust"),
@@ -116,18 +116,21 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     """Download one station's readings and reduce them to daily values.
 
     Days ``start`` .. ``end`` inclusive, each starting at ``day_start_hour`` UTC.
-    Returns ``(daily DataFrame, reporting interval in minutes)``, or ``(None, None)``
-    when the station sent nothing. Days without a complete record are NaN.
+    Returns ``(daily DataFrame, reporting intervals in minutes)``, or ``(None, None)``
+    when the station sent nothing. Days missing any expected reading are NaN.
     """
     import pandas as pd
 
     offset = pd.Timedelta(hours=day_start_hour)
     first = start + offset
     last = end + pd.Timedelta(days=1) + offset
+    # Fetch an hour either side, so a gap at the edge of the first or last day
+    # is measured against the readings next to it.
+    pad = pd.Timedelta(hours=1)
     rows = []
-    chunk_start = first
-    while chunk_start < last:
-        chunk_end = min(chunk_start + pd.Timedelta(days=CHUNK_DAYS), last)
+    chunk_start = first - pad
+    while chunk_start < last + pad:
+        chunk_end = min(chunk_start + pd.Timedelta(days=CHUNK_DAYS), last + pad)
         params = {
             "start": chunk_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end": chunk_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -145,19 +148,12 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
 
     raw = pd.DataFrame(rows)
     raw["time"] = pd.to_datetime(raw["time"], utc=True).dt.tz_convert(None)
+    # A reading sent twice counts once.
     raw = raw.drop_duplicates("time").set_index("time").sort_index()
-    raw = raw[(raw.index >= first) & (raw.index < last)].apply(pd.to_numeric, errors="coerce")
+    raw = raw[(raw.index >= first - pad) & (raw.index < last + pad)]
+    raw = raw.apply(pd.to_numeric, errors="coerce")
     # Gauge 1 is "rg1" on newer stations and "rg" on older ones.
     raw = raw.rename(columns={"rg": "rg1"})
-
-    # The station's reporting interval (1, 10 or 15 minutes on most portals).
-    interval_min = max(1, round(raw.index.to_series().diff().dt.total_seconds().median() / 60))
-    # A day is complete when every slot of the day holds at least one valid
-    # reading. The slot is 3 reporting intervals (at least 5 minutes) rounded up
-    # to a divisor of the day, so a few late or dropped readings are tolerated
-    # but any longer outage blanks the day.
-    need = max(5, 3 * interval_min)
-    slot_min = next(m for m in range(need, 1441) if 1440 % m == 0)
 
     clean = pd.DataFrame(index=raw.index)
     for short, (lo, hi) in VALID_RANGE.items():
@@ -168,30 +164,79 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
             values = values.where(values != 0)
         # A sensor that sent only missing codes is treated as not fitted.
         if values.notna().any():
-            clean[short] = values
+            # Relative humidity is stored as a fraction, as tahmo-fetch does.
+            clean[short] = values / 100 if short == "sh1" else values
     # Shift by the day-start hour so each day bins as one calendar day labelled
     # by the date it starts on.
     clean.index = clean.index - offset
-    filled_slots = clean.notna().resample(f"{slot_min}min").sum() > 0
-    complete = filled_slots.resample("D").sum() == 1440 // slot_min
-    days = clean.resample("D")
+    times = clean.index.to_series()
 
-    daily = pd.DataFrame(index=complete.index)
+    # Reporting interval, in whole minutes: the modal spacing of the readings.
+    # 1-minute stations run on their own timer, so readings drift 60-61 s apart
+    # through the day; 15-minute stations report a few seconds after each
+    # quarter hour. Ties go to the shorter interval.
+    spacing = (times.diff().dt.total_seconds() / 60).round()
+    spacing = spacing[spacing >= 1]
+    station_min = int(spacing.mode().iloc[0]) if len(spacing) else 1
+
+    def on_clock(t, minutes):
+        """True when nearly every reading falls just after a ``minutes``-minute clock mark."""
+        seconds = (t - t.dt.floor("D")).dt.total_seconds()
+        return bool(((seconds % (60 * minutes)) < 6 * minutes).mean() >= 0.9)
+
+    # Each day's interval is that day's modal spacing, so a station whose
+    # interval changes is judged by the new one. A spacing that is a whole
+    # multiple of the station's usual interval is read as dropped readings
+    # (every other one missing looks like double the interval) unless the
+    # station moved from its own timer to reporting on the clock at it.
+    station_on_clock = on_clock(times, station_min)
+    day_modes = spacing.groupby(spacing.index.floor("D")).agg(lambda s: s.mode().iloc[0])
+    day_min = {}
+    for day, day_times in times.groupby(times.dt.floor("D")):
+        minutes = int(day_modes.get(day, station_min))
+        if (
+            minutes > station_min
+            and minutes % station_min == 0
+            and (station_on_clock or not on_clock(day_times, minutes))
+        ):
+            minutes = station_min
+        day_min[day] = minutes
+
+    # A day is complete for a variable only when it has every expected
+    # reading: no two consecutive valid readings (or a valid reading and the
+    # edge of the fetch) are more than 1.5 intervals apart, which allows for
+    # clock jitter but not one missing reading. A gap blanks each day that
+    # its missing readings fall in.
+    window = [first - pad - offset, last + pad - offset]
+    all_days = pd.date_range(window[0].floor("D"), window[1].floor("D"), freq="D")
+    complete = pd.DataFrame(True, index=all_days, columns=clean.columns)
+    for short in clean.columns:
+        t = pd.Series([window[0], *clean.index[clean[short].notna()], window[1]])
+        k = pd.to_timedelta(t.dt.floor("D").map(day_min).fillna(station_min), unit="min")
+        prev, k = t.shift(), k.shift()
+        gap = (t - prev) > 1.5 * k
+        for a, b in zip(prev[gap] + k[gap], t[gap] - k[gap], strict=True):
+            complete.loc[min(a, b).floor("D") : max(a, b).floor("D"), short] = False
+
+    days = clean.resample("D")
+    wanted = pd.date_range(start, end, freq="D", name="time")
+    complete = complete.reindex(wanted, fill_value=False)
+    daily = pd.DataFrame(index=wanted)
     for name, (short, stat) in SENSORS.items():
         if short in clean.columns:
-            daily[name] = days[short].agg(stat).where(complete[short])
+            daily[name] = days[short].agg(stat).reindex(wanted).where(complete[short])
     if "rg1" in clean.columns:
-        total = days["rg1"].sum().where(complete["rg1"])
+        total = days["rg1"].sum().reindex(wanted).where(complete["rg1"])
         if "rg2" in clean.columns:
             # Both gauges must report a complete day and agree; a disagreement
             # means one gauge is faulty and there is no way to tell which.
-            total2 = days["rg2"].sum().where(complete["rg2"])
+            total2 = days["rg2"].sum().reindex(wanted).where(complete["rg2"])
             larger = pd.concat([total, total2], axis=1).max(axis=1)
             tolerance = (GAUGE_TOLERANCE_FRAC * larger).clip(lower=GAUGE_TOLERANCE_MM)
             total = total.where((total - total2).abs() <= tolerance)
         daily["precip"] = total
-    daily = daily.reindex(pd.date_range(start, end, freq="D", name="time"))
-    return daily, interval_min
+    intervals = sorted({day_min.get(day, station_min) for day in wanted})
+    return daily, intervals
 
 
 @weather_skill(
@@ -388,7 +433,7 @@ def fetch(
             row = futures[fut]
             sid = row["station_id"]
             try:
-                daily, interval_min = fut.result()
+                daily, intervals = fut.result()
             except UsageError:
                 raise
             except Exception as exc:  # noqa: BLE001
@@ -402,7 +447,7 @@ def fetch(
                 print(f"{sid}: no complete day for any variable", file=sys.stderr)
                 continue
             print(
-                f"{sid} ({row['name']}): reports every {interval_min} min, "
+                f"{sid} ({row['name']}): reports every {' / '.join(map(str, intervals))} min, "
                 f"{complete}/{len(daily)} days with a complete record",
                 file=sys.stderr,
             )
@@ -438,10 +483,12 @@ def fetch(
         ds[var].attrs.update(
             standard_name=std_name,
             units=units,
-            cell_methods=cell_methods,
             long_name=long_name,
             coordinates="latitude longitude",
         )
+        # Precip is a rate (mm day-1) with no cell_methods, as other station fetchers write it.
+        if cell_methods:
+            ds[var].attrs["cell_methods"] = cell_methods
     ds.attrs.update(
         featureType="timeSeries",
         Conventions="CF-1.13",
