@@ -1,7 +1,5 @@
 """Correctness tests for windborne-analysis-fetch (mocked WindBorne API)."""
 
-import uuid
-
 import numpy as np
 import pytest
 from conftest import load_skill, run_skill
@@ -28,14 +26,21 @@ def _netcdf(tmp_path, name, value, units):
         },
         coords={"latitude": lat, "longitude": lon},
     )
-    # Unique per call: the skill fetches times in parallel threads.
-    path = tmp_path / f"src_{uuid.uuid4().hex}.nc"
+    path = tmp_path / f"src_{name}.nc"
     ds.to_netcdf(path)
     return path.read_bytes()
 
 
 def _fake_api(monkeypatch, tmp_path):
     import requests
+
+    # Built up front: the skill fetches times in parallel threads, and netCDF4
+    # writes are not thread-safe.
+    files = {
+        "temperature_2m": _netcdf(tmp_path, "temperature_2m", 300.0, "K"),
+        "total_precipitation_1h": _netcdf(tmp_path, "total_precipitation_1h", 0.5, "mm"),
+        "geopotential_500": _netcdf(tmp_path, "geopotential_500", 57000.0, "m2 s-2"),
+    }
 
     class _Resp:
         status_code = 200
@@ -62,12 +67,7 @@ def _fake_api(monkeypatch, tmp_path):
                         ]
                     }
                 )
-            name = params["variable"]
-            if name == "temperature_2m":
-                return _Resp(content=_netcdf(tmp_path, name, 300.0, "K"))
-            if name == "total_precipitation_1h":
-                return _Resp(content=_netcdf(tmp_path, name, 0.5, "mm"))
-            return _Resp(content=_netcdf(tmp_path, name, 57000.0, "m2 s-2"))
+            return _Resp(content=files[params["variable"]])
 
     monkeypatch.setattr(requests, "Session", _Session)
     monkeypatch.setenv("WB_CLIENT_ID", "id")
