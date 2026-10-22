@@ -119,3 +119,51 @@ def test_lead_with_no_source_value_past_dec31_warns_and_stays_nan(tmp_path, mod,
     err = capsys.readouterr().err
     assert "7 of 11 dates have no climatology value" in err
     assert "2026-01-01" in err and "2026-01-07" in err and "2026-01-08" not in err
+
+
+@pytest.mark.parametrize("recorded", [True, False])
+def test_base_period_is_carried_through_or_reported_missing(tmp_path, mod, capsys, recorded):
+    import numpy as np
+    import pandas as pd
+    import xarray as xr
+
+    inits = pd.date_range("1904-01-01", "1904-12-31", freq="D")
+    values = np.ones((len(inits), 1, 2, 2), dtype="float32")
+    attrs = {"variable": "precip", "units": "mm / day"}
+    if recorded:
+        attrs.update(start_time="1998-01-01", end_time="2024-12-31")
+    source = xr.Dataset(
+        {
+            "avg": (("init_time", "prediction_timedelta", "lat", "lon"), values),
+            "std": (("init_time", "prediction_timedelta", "lat", "lon"), values),
+        },
+        coords={
+            "init_time": inits,
+            "prediction_timedelta": np.array([0], dtype="timedelta64[D]").astype("timedelta64[ns]"),
+            "lat": [0.0, 0.1],
+            "lon": [36.0, 36.1],
+        },
+        attrs=attrs,
+    )
+    out_path = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_zarr_or_none", return_value=source):
+        run_skill(
+            mod.fetch,
+            "--dataset",
+            "imerg_final",
+            "--start-time",
+            "2026-03-01",
+            "--end-time",
+            "2026-03-02",
+            "-o",
+            str(out_path),
+        )
+    out = xr.open_zarr(out_path)
+    err = capsys.readouterr().err
+    if recorded:
+        assert out.attrs["climatology_start_time"] == "1998-01-01"
+        assert out.attrs["climatology_end_time"] == "2024-12-31"
+        assert "does not record which years" not in err
+    else:
+        assert "climatology_start_time" not in out.attrs
+        assert "does not record which years" in err
