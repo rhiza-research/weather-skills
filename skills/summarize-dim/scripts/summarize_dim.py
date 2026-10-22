@@ -191,6 +191,16 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, **kwarg
                 out[var] = out[var].copy(data=out[var].data * da.pint.units)
         else:
             out[var] = getattr(da, method)(dim=rdims, keep_attrs=True)
+        if method == "quantile":
+            # xarray's quantile drops coords the reduction leaves alone (a forecast's
+            # scalar init time); keep them, as the other statistics do.
+            out[var] = out[var].assign_coords(
+                {
+                    c: v
+                    for c, v in ds[var].coords.items()
+                    if c not in out[var].coords and not set(v.dims) & {*rdims, *by}
+                }
+            )
         # Record the statistic (CF cell_methods). A spread or a sum is not the
         # input quantity, so its long_name must not read "Total precipitation".
         attrs = dict(out[var].attrs)

@@ -398,3 +398,28 @@ def test_quantile_arguments_checked(tmp_path, summarize_dim, capsys, args):
         )
     assert exc.value.code == 2
     assert "--quantile" in capsys.readouterr().err
+
+
+def test_quantile_keeps_scalar_coords(tmp_path, summarize_dim):
+    # A forecast's init time is a scalar coord; xarray's quantile alone would drop it.
+    src = write_zarr(_members().isel(time=0), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "number",
+        "--method",
+        "quantile",
+        "-q",
+        "0.1",
+        "-q",
+        "0.9",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert "time" in ds.coords and ds["time"].ndim == 0
