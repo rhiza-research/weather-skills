@@ -284,12 +284,30 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
             kept = [d for d in da.dims if d not in rdims]
             da = da.pint.dequantify()  # values are filled into numpy; units go back on below
             values = None
+            dropped = 0
             for parts in itertools.product(*groups):
                 index = {d: i for _, isel, _, _ in parts for d, i in isel.items()}
                 sub = da.isel(index)
                 for _, _, box, _ in parts:
                     if box is not None:
                         sub = sub.where(box)
+                if time_by:
+                    # Coverage is per input cell (station, grid cell, member):
+                    # a cell missing too many of the group's calendar steps is
+                    # left out before any spatial reduction, so cells missing
+                    # different days never add up to a complete group.
+                    present = sub.notnull()
+                    if weight is not None:
+                        present = present * xr.DataArray(weight[index["time"]], dims="time")
+                    expected = next(n for _, _, _, n in parts if n is not None)
+                    cell_share = present.sum("time") / expected
+                    complete = cell_share >= min_coverage - 1e-12
+                    dropped += int(((cell_share > 0) & ~complete).sum())
+                    sub = sub.where(complete)
+                    others = [d for d in rdims if d != "time"]
+                    # The least-covered cell that went into each value.
+                    share = cell_share.where(complete)
+                    share = share.min(others) if others else share
                 reduced = getattr(sub, method)(dim=rdims, keep_attrs=True, **kw)
                 if values is None:
                     template = reduced
@@ -299,30 +317,17 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
                 where = {b: i for labels, _, _, _ in parts for b, i in labels.items()}
                 values[(..., *(where[b] for b in by))] = reduced.transpose(*kept).values
                 if time_by:
-                    # A step counts when any cell of the group has data at it.
-                    present = sub.notnull()
-                    if len(rdims) > 1:
-                        present = present.any([d for d in rdims if d != "time"])
-                    if weight is not None:
-                        present = present * xr.DataArray(weight[index["time"]], dims="time")
-                    expected = next(n for _, _, _, n in parts if n is not None)
-                    share = present.sum("time") / expected
                     coverage[(..., *(where[b] for b in by))] = share.transpose(*kept).values
             coords = {
                 **{c: v for c, v in template.coords.items() if set(v.dims) <= set(kept)},
                 **{b: label_values[b] for b in by},
             }
-            if time_by:
-                low = coverage < min_coverage - 1e-12
-                blanked = int((low & np.isfinite(values)).sum())
-                values[low] = np.nan
-                if blanked:
-                    print(
-                        f"{var}: blanked {blanked} of {values.size} value(s) whose group has "
-                        f"data for less than --min-coverage {min_coverage:g} of its calendar "
-                        "time steps",
-                        file=sys.stderr,
-                    )
+            if dropped:
+                print(
+                    f"{var}: left out {dropped} cell-group(s) with data for less than "
+                    f"--min-coverage {min_coverage:g} of the group's calendar time steps",
+                    file=sys.stderr,
+                )
             out[var] = xr.DataArray(values, dims=[*kept, *by], coords=coords, attrs=template.attrs)
             if time_by and method == "sum" and min_coverage < 1.0:
                 # Kept so the output records which sums are estimates.

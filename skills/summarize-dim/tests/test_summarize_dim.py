@@ -344,10 +344,39 @@ def test_by_season_blanks_incomplete_groups(tmp_path, summarize_dim, capsys):
     assert precip.sel(point_id="S0", month_group="OND").item() == 92.0
     assert np.isnan(precip.sel(month_group="MAM")).all()
     assert np.isnan(precip.sel(point_id="S1", month_group="OND").item())
-    assert "blanked 3 of 4 value(s)" in capsys.readouterr().err
+    assert "left out 3 cell-group(s)" in capsys.readouterr().err
     assert "precip_coverage" not in ds
     # A variable without the label dims passes through.
     assert ds["elevation"].values.tolist() == [10.0, 20.0]
+
+
+def test_coverage_is_per_station_before_a_regional_sum(tmp_path, summarize_dim, capsys):
+    """Two stations missing different days are never pooled into a complete OND."""
+    import numpy as np
+
+    ds = _seasons()
+    month = ds["time"].dt.month.values
+    ds["precip"].values[0, np.nonzero(month == 12)[0][:5]] = np.nan  # S0 misses Dec days
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "point_id",
+        "--by",
+        "year",
+        "--by",
+        "month_group",
+        "--method",
+        "sum",
+    )
+    result = xr.open_zarr(out, consolidated=True)["precip"].sel(year=2020, month_group="OND")
+    assert np.isnan(result.item())
+    assert "left out" in capsys.readouterr().err
 
 
 def test_min_coverage_keeps_partial_sums_with_warning(tmp_path, summarize_dim, capsys):
