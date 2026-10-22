@@ -24,7 +24,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/label_group.py -i IN.zarr -o OUT.zarr \
 ### Arguments
 - `--input`, `-i` — input Zarr, gridded or station.
 - `--output`, `-o` — output Zarr, replaced if it exists.
-- `--level` — label each cell or station with the unit at this level that contains it. `country` and `admin_1` / `admin_2` use geoBoundaries outlines, as `clip-region` does; `subregion` (UN, e.g. Eastern Africa) and `continent` use Natural Earth 1:110m outlines.
+- `--level` — label each cell or station with the unit at this level that contains it. Every level uses geoBoundaries outlines, as `clip-region` does; a `subregion` (UN, e.g. Eastern Africa) or `continent` is the outlines of its member countries, so its edges match theirs. `admin_2` needs shapely, which the script installs.
 - `--geojson` — label by the polygons of this GeoJSON FeatureCollection instead.
 - `--property` — with `--geojson`: the feature property that holds each polygon's label.
 - `--time` — repeatable. `month`, `year`, or `dayofyear` labels each time step with that calendar part. A comma-separated list of month groups, written as runs of month initials (`MAM,OND`, `DJF,MAM,JJA,SON`, `OND`), labels each time step with its group.
@@ -33,7 +33,7 @@ Pass at least one of `--level`, `--geojson`, `--time`. `--level` and `--geojson`
 
 ### Output
 The input with new coords; data variables are unchanged.
-- `--level L`: coord `L` on the grid's lat/lon dims or the station dim, holding resolve-region keys (`kenya`, `kenya-nairobi`, `eastern_africa`), plus `L_name` with display names (`Nairobi`).
+- `--level L`: coord `L` on the grid's lat/lon dims or the station dim, holding resolve-region keys (`kenya`, `kenya-nairobi`, `kenya-kiambu-kiambu` for admin_2, `eastern_africa`), plus `L_name` with display names (`Nairobi`).
 - `--geojson`: coord named after `--property`, holding that property as text.
 - `--time month|year|dayofyear`: coord of that name along `time` (integers).
 - `--time GROUPS`: coord `month_group` along `time`, holding the group (`MAM`).
@@ -43,8 +43,8 @@ The input with new coords; data variables are unchanged.
 ### Notes
 - A grid cell belongs to the unit containing its centre. A unit too small to contain any cell centre gets no cells; such units are listed on stderr.
 - Each country's admin layer is drawn separately, so neighbouring layers overlap slightly along borders and in disputed areas (Ilemi Triangle: Turkana and Eastern Equatoria). A cell in two units keeps the first, in order of country ISO3 code; stderr counts these cells for each pair of units. Pass `--geojson` with your own boundaries when border cells matter.
-- Admin outlines are downloaded only for countries that overlap the input (about 1 MB per country for admin_1). Labelling a whole continent at admin_2 downloads every country's layer.
-- Labels are resolve-region keys, so one label can be passed to `clip-region --region` or `resolve-region`. An admin name repeated within a country gets `_2`, `_3`, ... appended; those keys do not resolve.
+- Outlines are downloaded only for countries that overlap the input (about 1 MB per country for admin_1); every level downloads one per country. Labelling a whole continent downloads every country's layer, and stderr warns when more than 25 countries overlap.
+- Labels are resolve-region keys, so one label can be passed to `clip-region --region` or `resolve-region`. An admin_2 key names its admin_1 (`kenya-kiambu-kiambu`), so a county name used in several states stays distinct. A key still repeated within a country gets `_2`, `_3`, ... appended, numbered the same whatever the input's extent; those keys do not resolve.
 - Month groups may not share a month. Single initials such as `J` match several months and are refused.
 - `--time` needs a `time` dimension; relabel a forecast's lead axis with `step-to-time` first.
 
