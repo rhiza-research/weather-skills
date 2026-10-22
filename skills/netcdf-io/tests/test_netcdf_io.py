@@ -91,6 +91,48 @@ def test_reads_several_files_joined_on_time(tmp_path, netcdf_io):
     assert res.attrs["weather_skills_source"] == "netcdf:day0.nc,day1.nc,day2.nc,day3.nc"
 
 
+def test_refuses_files_that_overlap_in_time(tmp_path, netcdf_io, capsys):
+    full = make_gridded(n_time=4)
+    full.isel(time=[0, 1, 2]).to_netcdf(tmp_path / "a.nc")
+    full.isel(time=[2, 3]).to_netcdf(tmp_path / "b.nc")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            netcdf_io, "--netcdf", str(tmp_path / "a.nc"), "--netcdf", str(tmp_path / "b.nc"),
+            "-o", str(tmp_path / "out.zarr"),
+        )  # fmt: skip
+    assert exc.value.code == 2
+    assert "2026-01-03" in capsys.readouterr().err
+
+
+def test_merges_files_with_the_same_coords_and_other_variables(tmp_path, netcdf_io):
+    ds = make_gridded(n_time=2)
+    ds.to_netcdf(tmp_path / "a.nc")
+    ds.rename(precip="t2m").to_netcdf(tmp_path / "b.nc")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        netcdf_io, "--netcdf", str(tmp_path / "a.nc"), "--netcdf", str(tmp_path / "b.nc"),
+        "-o", str(out),
+    )  # fmt: skip
+    assert set(_open(out).data_vars) == {"precip", "t2m"}
+
+
+def test_export_writes_bool_and_other_attrs(tmp_path, netcdf_io):
+    ds = make_gridded(n_time=2)
+    ds.attrs.update(flag=True, extra={"a": 1})
+    ds["precip"].attrs.update(masked=np.bool_(False), flags=[True, False])
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.nc"
+
+    run_skill(netcdf_io, "-i", str(src), "-o", str(out))
+
+    res = xr.open_dataset(out)
+    assert res.attrs["flag"] == 1
+    assert res.attrs["extra"] == "{'a': 1}"
+    assert res["precip"].attrs["masked"] == 0
+    np.testing.assert_array_equal(res["precip"].attrs["flags"], [1, 0])
+    res.close()
+
+
 def test_read_wraps_0_360_longitude_and_keeps_variable(tmp_path, netcdf_io):
     ds = make_gridded(lons=(0.0, 90.0, 180.0, 270.0))
     ds["t2m"] = ds["precip"] * 0 + 290.0
