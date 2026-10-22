@@ -3,16 +3,20 @@
 Download, satpy calibration, and resampling were verified by running the skill
 against the live EUMETSAT Data Store (FCI 0deg, SEVIRI 0deg, SEVIRI IODC over
 Kenya/West Africa); these tests cover band/time/instrument resolution, the
-geostationary geometry used to pick FCI chunks, credential lookup, and the output
-grid.
+geostationary geometry used to pick FCI chunks, credential lookup, the output
+grid, and fetch() end to end with the Data Store and satpy stubbed.
 """
 
+import sys
 import types
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
-from conftest import load_skill
+import xarray as xr
+from conftest import load_skill, run_skill
 from weather_skills_core import DataError, UsageError
 
 KENYA = (5.506, 33.894, -4.677, 41.855)
@@ -146,3 +150,93 @@ def test_cell_centres_match_get_lonlats(mod):
     np.testing.assert_allclose(lat, lats[:, 0], rtol=0, atol=1e-9)
     np.testing.assert_allclose(lon, lons[0, :], rtol=0, atol=1e-9)
 
+
+def test_fetch_end_to_end_mocked(mod, monkeypatch, tmp_path):
+    body = "W_XX-...-FD--CHK-BODY---NC4E_C_EUMT_x_N__O_0072_{:04d}.nc"
+    slots = [datetime(2026, 10, 6, 12, 0), datetime(2026, 10, 6, 12, 10)]
+
+    class Product:
+        def __init__(self, start):
+            self.sensing_start = start
+            self.size = 4_000_000
+            self.satellite = "MTG-I1"
+            self.entries = [body.format(i) for i in range(1, 41)] + ["manifest.xml"]
+
+        def __str__(self):
+            return f"FCI-{self.sensing_start:%H%M}"
+
+    products = [Product(slot + timedelta(seconds=5)) for slot in slots]
+
+    class Collection:
+        def search(self, dtstart, dtend):
+            return [p for p in products if dtstart <= p.sensing_start < dtend]
+
+    eumdac = types.ModuleType("eumdac")
+    eumdac.AccessToken = lambda credentials: credentials
+    eumdac.DataStore = lambda token: types.SimpleNamespace(get_collection=lambda cid: Collection())
+    monkeypatch.setitem(sys.modules, "eumdac", eumdac)
+    monkeypatch.setenv("EUMETSAT_CONSUMER_KEY", "k")
+    monkeypatch.setenv("EUMETSAT_CONSUMER_SECRET", "s")
+
+    downloaded = []
+
+    def fake_download(product, entries, workdir, workers):
+        downloaded.append(entries)
+        return [workdir / Path(e).name for e in entries]
+
+    lat = np.array([0.75, 0.25, -0.25])
+    lon = np.array([36.25, 36.75])
+    scans = iter([280.0, 290.0])
+
+    def fake_process(files, instrument, bands, bbox):
+        assert instrument == "fci" and bands == ["vis_06", "ir_105"]
+        bt = next(scans)
+        values = {
+            "vis_06": np.full((3, 2), 40.0, dtype="float32"),
+            "ir_105": np.full((3, 2), bt, dtype="float32"),
+        }
+        attrs = {
+            "vis_06": {
+                "units": "%",
+                "standard_name": "toa_bidirectional_reflectance",
+                "wavelength": types.SimpleNamespace(central=0.64),
+            },
+            "ir_105": {"units": None, "standard_name": None, "wavelength": None},
+        }
+        return lat, lon, values, attrs
+
+    monkeypatch.setattr(mod, "_download", fake_download)
+    monkeypatch.setattr(mod, "_process_scan", fake_process)
+
+    out = tmp_path / "fci.zarr"
+    run_skill(
+        mod.fetch, "--date", "2026-10-06", "--time", "12:00,12:14", "--bbox", "1/36/-0.5/37",
+        "-v", "vis_06,ir_105", "-o", str(out),
+    )  # fmt: skip
+
+    # Only the BODY chunks covering the bbox (plus a margin) are downloaded.
+    chunks = mod._fci_chunks((1.0, 36.0, -0.5, 37.0), 0.0)
+    assert downloaded == [[body.format(i) for i in chunks]] * 2
+
+    ds = xr.open_zarr(out)
+    assert ds["ir_105"].dims == ("time", "latitude", "longitude")
+    assert dict(ds.sizes) == {"time": 2, "latitude": 3, "longitude": 2}
+    np.testing.assert_array_equal(ds["time"].values, pd.DatetimeIndex(slots).values)
+    np.testing.assert_array_equal(
+        ds["scan_start"].values, pd.DatetimeIndex([p.sensing_start for p in products]).values
+    )
+    np.testing.assert_allclose(ds["latitude"].values, lat)
+    np.testing.assert_allclose(ds["ir_105"].values[:, 0, 0], [280.0, 290.0])
+    assert ds["vis_06"].attrs["units"] == "%"
+    assert ds["vis_06"].attrs["standard_name"] == "toa_bidirectional_reflectance"
+    assert ds["vis_06"].attrs["central_wavelength_um"] == pytest.approx(0.64)
+    # satpy attrs missing -> fallback units and standard_name, no wavelength.
+    assert ds["ir_105"].attrs["units"] == "K"
+    assert ds["ir_105"].attrs["standard_name"] == "toa_brightness_temperature"
+    assert "central_wavelength_um" not in ds["ir_105"].attrs
+    assert ds.attrs["Conventions"] == "CF-1.13"
+    assert ds.attrs["weather_skills_source"] == "eumetsat-datastore:EO:EUM:DAT:0662"
+    assert ds.attrs["platform"] == "MTG-I1"
+    assert ds.attrs["instrument"] == "FCI"
+    assert ds.attrs["eumetsat_service"] == "0deg"
+    assert ds.attrs["sub_satellite_longitude"] == 0.0
