@@ -10,10 +10,13 @@
 from __future__ import annotations
 
 import datetime as dt
+import sys
 import time
 
 from weather_skills_core import DataError, UsageError, weather_skill
+from weather_skills_core.cf import stamp_cf_attrs
 from weather_skills_core.standard_utils import require_env
+from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
@@ -67,7 +70,18 @@ def _parse_time(text: str) -> dt.datetime:
     metavar="HOUR",
     help="Init hour UTC (0-23). Default: the latest available run on --date.",
 )
-def fetch(date, run, **kwargs):
+@weather_skill.argument(
+    "--probe-latest",
+    nargs="?",
+    const="",
+    metavar="IDENT",
+    probe=True,
+    help=(
+        "Print the latest init date (YYYY-MM-DD, usable as --date) on stdout and "
+        "exit; stderr lists every available run. Does not download degree days."
+    ),
+)
+def fetch(date, run, probe_latest, **kwargs):
     """Fetch WindBorne's WeatherMesh-6 population-weighted US degree-day forecast as a weather-skills Zarr."""
     import numpy as np
     import requests
@@ -87,6 +101,18 @@ def fetch(date, run, **kwargs):
         _parse_time(t)
         for t in _get(session, f"{_API}/forecasts/v1/wm-6/initialization_times")["available"]
     ]
+    if probe_latest is not None:
+        latest = max(runs)
+        print(
+            "Available runs: " + ", ".join(f"{t:%Y-%m-%d %HZ}" for t in sorted(runs)),
+            file=sys.stderr,
+        )
+        print(
+            f"Latest run: {latest:%Y-%m-%d %H} UTC (--date {latest:%Y-%m-%d} --run {latest.hour})",
+            file=sys.stderr,
+        )
+        print(latest.strftime("%Y-%m-%d"))
+        return
     if date is None:
         init = max(runs)
     elif run is None:
@@ -121,7 +147,7 @@ def fetch(date, run, **kwargs):
         data_vars[name] = (
             ("region", "time"),
             values,
-            {"units": "degree_Fahrenheit day", "long_name": long_name, "data_interval": "1 day"},
+            {"units": "degree_Fahrenheit day", "long_name": long_name},
         )
     ds = xr.Dataset(
         data_vars,
@@ -131,13 +157,15 @@ def fetch(date, run, **kwargs):
         },
     )
     ds.attrs.update(
+        Conventions="CF-1.13",
         weather_skills_source="windborne-wm6",
         windborne_model="wm-6",
         windborne_initialization_time=hdd.get("metadata", {}).get(
             "initialization_time", f"{init:%Y-%m-%dT%H:00:00Z}"
         ),
     )
-    return ds
+    stamp_cf_attrs(ds)
+    return stamp_data_interval(ds, "1 day")
 
 
 if __name__ == "__main__":

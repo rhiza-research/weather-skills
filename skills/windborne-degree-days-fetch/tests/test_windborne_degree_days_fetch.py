@@ -10,8 +10,31 @@ def mod():
     return load_skill("windborne-degree-days-fetch", "fetch")
 
 
-def test_states_by_day_drops_empty_days(mod, monkeypatch, tmp_path):
+def _fake_api(monkeypatch, payloads):
     import requests
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class _Session:
+        auth = None
+
+        def get(self, url, params=None, timeout=None):
+            return _Resp(payloads[url.rsplit("/", 1)[-1]])
+
+    monkeypatch.setattr(requests, "Session", _Session)
+    monkeypatch.setenv("WB_CLIENT_ID", "id")
+    monkeypatch.setenv("WB_API_KEY", "key")
+
+
+def test_states_by_day_drops_empty_days(mod, monkeypatch, tmp_path):
     import xarray as xr
 
     meta = {"initialization_time": "2026-10-19T20:00:00Z"}
@@ -35,25 +58,7 @@ def test_states_by_day_drops_empty_days(mod, monkeypatch, tmp_path):
         },
     }
 
-    class _Resp:
-        status_code = 200
-        text = ""
-
-        def __init__(self, payload):
-            self._payload = payload
-
-        def json(self):
-            return self._payload
-
-    class _Session:
-        auth = None
-
-        def get(self, url, params=None, timeout=None):
-            return _Resp(payloads[url.rsplit("/", 1)[-1]])
-
-    monkeypatch.setattr(requests, "Session", _Session)
-    monkeypatch.setenv("WB_CLIENT_ID", "id")
-    monkeypatch.setenv("WB_API_KEY", "key")
+    _fake_api(monkeypatch, payloads)
     out = tmp_path / "dd.zarr"
     run_skill(mod.fetch, "-o", str(out))
     ds = xr.open_zarr(out)
@@ -61,3 +66,14 @@ def test_states_by_day_drops_empty_days(mod, monkeypatch, tmp_path):
     assert ds.sizes["time"] == 2
     np.testing.assert_allclose(ds["hdd"].sel(region="Iowa").values, [11.0, 12.0])
     np.testing.assert_allclose(ds["cdd"].sel(region="Texas").values, [3.0, 4.0])
+    assert ds["hdd"].attrs["data_interval"] == "1 day"
+    assert ds.attrs["Conventions"] == "CF-1.13"
+    assert ds["time"].attrs["axis"] == "T"
+
+
+def test_probe_latest(mod, monkeypatch, capsys):
+    _fake_api(monkeypatch, {"initialization_times": {"available": ["2026-10-19T20:00:00Z"]}})
+    run_skill(mod.fetch, "--probe-latest")
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "2026-10-19"
+    assert "--date 2026-10-19 --run 20" in captured.err
