@@ -2,6 +2,7 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core>=0.2.0",
+#   "pandas",
 #   "requests",
 # ]
 # ///
@@ -10,6 +11,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import sys
 import time
 
 from weather_skills_core import DataError, UsageError, weather_skill
@@ -70,8 +72,8 @@ _UPPER = frozenset(
 )
 
 
-def _units_for(wb_name: str) -> str:
-    """Units the point endpoint returns (it converts to display units: °C, hPa)."""
+def _units_for(wb_name: str) -> str | None:
+    """Units the point endpoint returns (it converts to display units: °C, hPa), or None if unknown."""
     if "temperature" in wb_name or "dewpoint" in wb_name:
         return "degree_Celsius"
     if "pressure" in wb_name:
@@ -82,6 +84,8 @@ def _units_for(wb_name: str) -> str:
         return "m s-1"
     if "geopotential" in wb_name:
         return "m2 s-2"
+    if wb_name == "total_column_water_vapour":
+        return "kg m-2"
     if "humidity" in wb_name:
         return "kg kg-1"
     if "cloud_cover" in wb_name or wb_name.startswith("soil_moisture"):
@@ -92,7 +96,7 @@ def _units_for(wb_name: str) -> str:
         return "J m-2"
     if "height" in wb_name:
         return "m"
-    return ""
+    return None
 
 
 def _get(session, url, params=None):
@@ -168,19 +172,33 @@ def _parse_time(text: str) -> dt.datetime:
     action="store_true",
     help=(
         "Also write the ensemble distribution of each -v field: <name>_std and, "
-        "where served, percentiles (<name>_p10 …) and tp exceedance probabilities "
-        "(tp_gt_2p5mm …). Needs -v."
+        "where served, percentiles (<name>_p01 … <name>_p99) and tp exceedance "
+        "probabilities (tp_gt_0p25mm … tp_gt_50mm). Needs -v."
     ),
 )
 @weather_skill.argument(
     "--max-lead",
-    type=int,
     default=_MAX_LEAD_HOURS,
-    help="Last lead hour to fetch (multiple of 3, up to 360). Default 360.",
+    help=(
+        "Last lead to fetch: hours (48) or a timedelta (48h, 2D); a multiple of 3 h "
+        "up to 360 h. Default 360."
+    ),
 )
-def fetch(point, date, run, variable, level, distribution, max_lead, **kwargs):
+@weather_skill.argument(
+    "--probe-latest",
+    nargs="?",
+    const="",
+    metavar="IDENT",
+    probe=True,
+    help=(
+        "Print the latest init date (YYYY-MM-DD, usable as --date) on stdout and "
+        "exit; stderr lists every available run. Does not download forecasts."
+    ),
+)
+def fetch(point, date, run, variable, level, distribution, max_lead, probe_latest, **kwargs):
     """Fetch a WindBorne WeatherMesh-6 point forecast at chosen locations as a weather-skills station Zarr."""
     import numpy as np
+    import pandas as pd
     import requests
     import xarray as xr
 
@@ -192,6 +210,24 @@ def fetch(point, date, run, variable, level, distribution, max_lead, **kwargs):
     session = requests.Session()
     session.auth = (client_id, api_key)
 
+    if probe_latest is not None:
+        available = sorted(
+            _parse_time(t) for t in _get(session, f"{_API}/initialization_times")["available"]
+        )
+        if not available:
+            raise DataError("WindBorne lists no available WeatherMesh-6 runs.")
+        latest = available[-1]
+        print(
+            "Available runs: " + ", ".join(f"{t:%Y-%m-%d %HZ}" for t in available),
+            file=sys.stderr,
+        )
+        print(
+            f"Latest run: {latest:%Y-%m-%d %H} UTC (--date {latest:%Y-%m-%d} --run {latest.hour})",
+            file=sys.stderr,
+        )
+        print(latest.strftime("%Y-%m-%d"))
+        return
+
     rows = [p.split(",") for p in point]
     if any(len(r) not in (2, 3) for r in rows):
         raise UsageError("--point expects LAT,LON[,ID]")
@@ -201,8 +237,15 @@ def fetch(point, date, run, variable, level, distribution, max_lead, **kwargs):
     except ValueError:
         raise UsageError("point lat/lon must be numeric") from None
     ids = [r[2] if len(r) == 3 else f"P{i}" for i, r in enumerate(rows)]
+    # Bare numbers are hours; anything else is a timedelta string (48h, 2D).
+    text = str(max_lead).strip()
+    try:
+        max_lead = pd.Timedelta(f"{text}h" if text.isdigit() else text) / pd.Timedelta(1, "h")
+    except ValueError:
+        raise UsageError(f"--max-lead {text!r} is not a lead (48, 48h, 2D).") from None
     if max_lead % 3 or not 0 <= max_lead <= _MAX_LEAD_HOURS:
-        raise UsageError(f"--max-lead must be a multiple of 3 in 0..{_MAX_LEAD_HOURS}.")
+        raise UsageError(f"--max-lead must be a multiple of 3 h in 0..{_MAX_LEAD_HOURS} h.")
+    max_lead = int(max_lead)
     if distribution and not variable:
         raise UsageError("--distribution needs -v (the default bundle has no distribution).")
 
@@ -238,6 +281,20 @@ def fetch(point, date, run, variable, level, distribution, max_lead, **kwargs):
             requests_to_make += [(wb_name, lev) for lev in sorted(level)]
         else:
             requests_to_make.append((wb_name, None))
+    if level and all(lev is None for _, lev in requests_to_make):
+        raise UsageError("--level is only for pressure-level fields (t, z, q, u, v, ...).")
+    # Precipitation (the default bundle's `precipitation`, tp) and `_3h` fields
+    # cover the 3 h ending at their lead, so lead 0 holds nothing inside the run.
+    interval = [
+        "tp (in the default bundle)" if wb_name is None else wb_name
+        for wb_name, _ in requests_to_make
+        if wb_name is None or wb_name.endswith("_3h")
+    ]
+    if interval and max_lead == 0:
+        raise UsageError(
+            f"{', '.join(interval)} has no value at lead 0: it covers the 3 h ending at "
+            "each lead. Pass --max-lead 3 or more, or leave it out of -v."
+        )
 
     short_of = {wb: short for short, wb in VARIABLES.items()} | _DEFAULT_NAMES
     columns: dict[str, dict] = {}
@@ -268,6 +325,7 @@ def fetch(point, date, run, variable, level, distribution, max_lead, **kwargs):
                 "values": [[rec.get(key) for rec in s] for s in series],
                 "units": _units_for(stem),
                 "windborne_name": key,
+                "interval": stem == "precipitation" or stem.endswith("_3h"),
             }
             for stat in series[0][0].get("distribution", {}):
                 if stat == "mean":
@@ -282,6 +340,7 @@ def fetch(point, date, run, variable, level, distribution, max_lead, **kwargs):
                     "values": [[rec["distribution"].get(stat) for rec in s] for s in series],
                     "units": units,
                     "windborne_name": f"{key} {stat}",
+                    "interval": columns[name]["interval"],
                 }
 
     if not times:
@@ -293,7 +352,9 @@ def fetch(point, date, run, variable, level, distribution, max_lead, **kwargs):
             name: (
                 ("station_id", "step"),
                 np.array(col["values"], dtype="float64"),
-                {"units": col["units"], "windborne_name": col["windborne_name"]},
+                # A field whose units are not known gets no units attr.
+                {"windborne_name": col["windborne_name"]}
+                | ({"units": col["units"]} if col["units"] else {}),
             )
             for name, col in columns.items()
         },
@@ -306,23 +367,29 @@ def fetch(point, date, run, variable, level, distribution, max_lead, **kwargs):
         },
     )
 
-    # Precip at lead h is the amount over (h-3, h]: make it a mm day-1 rate
-    # labelled at the interval start, and drop lead 0 (before forecast zero).
-    tp_names = [
-        n for n in ds.data_vars if n == "tp" or (n.startswith("tp_") and not n.startswith("tp_gt_"))
-    ]
-    if tp_names:
-        for name in tp_names:
+    # Precip amounts per 3 h (tp, its spread and percentiles) become mm day-1
+    # rates; exceedance probabilities (tp_gt_*) stay probabilities.
+    for name in list(ds.data_vars):
+        if name == "tp" or (name.startswith("tp_") and not name.startswith("tp_gt_")):
             ds[name] = ds[name] * 8.0
             ds[name].attrs.update(units="mm day-1", windborne_name=columns[name]["windborne_name"])
-        ds = ds.isel(step=slice(1, None))
-        ds = ds.assign_coords(step=ds["step"] - np.timedelta64(3, "h"))
+    # Interval fields (tp and its distribution, `_3h` fields) at lead h cover
+    # (h-3, h]: label them at the interval start, and drop lead 0 (the 3 h
+    # before forecast zero). Instantaneous fields keep their lead; the merged
+    # axis is NaN where a field has no value (not filled).
+    interval = [name for name, col in columns.items() if col["interval"]]
+    if interval:
+        shifted = ds[interval].isel(step=slice(1, None))
+        shifted = shifted.assign_coords(step=shifted["step"] - np.timedelta64(3, "h"))
+        rest = ds.drop_vars(interval)
+        ds = xr.merge([rest, shifted], join="outer") if rest.data_vars else shifted
 
     ds.attrs.update(
         Conventions="CF-1.13",
         weather_skills_source="windborne-wm6",
         windborne_model="wm-6",
         windborne_initialization_time=init,
+        windborne_ensemble="mean",
     )
     stamp_cf_attrs(ds)
     return stamp_data_interval(ds, "3 hour")

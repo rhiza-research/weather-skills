@@ -71,12 +71,15 @@ def test_default_bundle_two_points(mod, monkeypatch, tmp_path):
     ds = xr.open_zarr(out)
     assert list(ds["station_id"].values) == ["nairobi", "P1"]
     assert ds["time"].values == np.datetime64("2026-10-19T18:00")
-    # Lead 0 (3 h before forecast zero) dropped; the rest labelled at interval start.
-    assert list(ds["step"].values.astype("timedelta64[h]").astype(int)) == [0, 3]
-    np.testing.assert_allclose(ds["tp"].sel(station_id="nairobi").values, [4.0, 8.0])
+    # tp at lead h covers (h-3, h]: lead 0 (3 h before forecast zero) dropped,
+    # the rest labelled at the interval start; nothing covers [6 h, 9 h).
+    assert list(ds["step"].values.astype("timedelta64[h]").astype(int)) == [0, 3, 6]
+    np.testing.assert_allclose(ds["tp"].sel(station_id="nairobi").values, [4.0, 8.0, np.nan])
     assert ds["tp"].attrs["units"] == "mm day-1"
-    np.testing.assert_allclose(ds["t2m"].sel(station_id="P1").values, [14, 20])
+    # t2m is instantaneous and keeps its lead.
+    np.testing.assert_allclose(ds["t2m"].sel(station_id="P1").values, [15, 14, 20])
     assert ds["t2m"].attrs["units"] == "degree_Celsius"
+    assert ds.attrs["windborne_ensemble"] == "mean"
 
 
 def test_level_and_distribution(mod, monkeypatch, tmp_path):
@@ -118,6 +121,78 @@ def test_level_and_distribution(mod, monkeypatch, tmp_path):
     assert ds["t850_std"].attrs["units"] == "K"
     assert ds["t850_p90"].attrs["units"] == "degree_Celsius"
     assert ds.sizes["step"] == 3
+
+
+def test_tp_distribution_shifts_with_tp(mod, monkeypatch, tmp_path):
+    import xarray as xr
+
+    def respond(url, params):
+        assert params["max_forecast_hour"] == 48
+        recs = _series(-1.29, 36.82, {"total_precipitation_3h": [0.0, 1.0, 2.0]})
+        for r in recs:
+            r["distribution"] = {
+                "mean": r["total_precipitation_3h"],
+                "std": 0.5,
+                "p90": r["total_precipitation_3h"] * 2,
+                "gt_0p25mm": 0.5,
+            }
+        return _body(recs)
+
+    _fake_api(monkeypatch, respond)
+    out = tmp_path / "pt.zarr"
+    run_skill(
+        mod.fetch,
+        "--point",
+        "-1.29,36.82",
+        "-v",
+        "tp",
+        "--distribution",
+        "--max-lead",
+        "2D",
+        "-o",
+        str(out),
+    )
+    ds = xr.open_zarr(out)
+    assert set(ds.data_vars) == {"tp", "tp_std", "tp_p90", "tp_gt_0p25mm"}
+    assert list(ds["step"].values.astype("timedelta64[h]").astype(int)) == [0, 3]
+    np.testing.assert_allclose(ds["tp_p90"].values[0], [16.0, 32.0])
+    np.testing.assert_allclose(ds["tp_gt_0p25mm"].values[0], [0.5, 0.5])
+    assert ds["tp_gt_0p25mm"].attrs["units"] == "1"
+
+
+def test_units_for_unknown_field_left_unset(mod):
+    assert mod._units_for("total_column_water_vapour") == "kg m-2"
+    assert mod._units_for("boundary_layer_height") == "m"
+    assert mod._units_for("mystery_index") is None
+
+
+def test_max_lead_zero_with_default_bundle_errors(mod, monkeypatch, tmp_path, capsys):
+    _fake_api(monkeypatch, lambda url, params: {})
+    with pytest.raises(SystemExit) as exc:
+        run_skill(mod.fetch, "--point", "-1,36", "--max-lead", "0", "-o", str(tmp_path / "x.zarr"))
+    assert exc.value.code == 2
+    assert "no value at lead 0" in capsys.readouterr().err
+
+
+def test_level_without_pressure_level_field_errors(mod, monkeypatch, tmp_path):
+    _fake_api(monkeypatch, lambda url, params: {})
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            mod.fetch, "--point", "-1,36", "-v", "t2m", "--level", "500", "-o", str(tmp_path / "x")
+        )
+    assert exc.value.code == 2
+
+
+def test_probe_latest(mod, monkeypatch, tmp_path, capsys):
+    calls = _fake_api(
+        monkeypatch,
+        lambda url, params: {"available": ["2026-10-19T00:00:00Z", "2026-10-19T20:00:00Z"]},
+    )
+    run_skill(mod.fetch, "--probe-latest")
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "2026-10-19"
+    assert "--date 2026-10-19 --run 20" in captured.err
+    assert [c[0] for c in calls] == ["initialization_times"]
 
 
 def test_pressure_level_needs_level(mod, monkeypatch, tmp_path):
