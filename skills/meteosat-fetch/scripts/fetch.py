@@ -228,6 +228,16 @@ def _grid(bbox, res):
     return w, s, e, n
 
 
+def _cell_centres(area):
+    """1-D (lat, lon) cell centres of a lat/lon AreaDefinition, rows north to south."""
+    import numpy as np
+
+    west, _, _, north = area.area_extent
+    lon = west + (np.arange(area.width) + 0.5) * area.pixel_size_x
+    lat = north - (np.arange(area.height) + 0.5) * area.pixel_size_y
+    return lat.astype("float64"), lon.astype("float64")
+
+
 def _with_retry(fn, attempts=3):
     for i in range(attempts):
         try:
@@ -305,14 +315,14 @@ def _process_scan(files, instrument, bands, bbox):
         units="degrees",
     )
     out = scn.resample(area, resampler="nearest", radius_of_influence=4 * pixel_m)
-    lons, lats = area.get_lonlats()
+    lat, lon = _cell_centres(area)
     computed = dask.compute(*(out[b].data for b in bands))
     values = {b: np.asarray(v, dtype="float32") for b, v in zip(bands, computed, strict=True)}
     attrs = {
         b: {k: scn[b].attrs.get(k) for k in ("units", "standard_name", "wavelength")} for b in bands
     }
     del out, scn, full
-    return lats[:, 0].astype("float64"), lons[0, :].astype("float64"), values, attrs
+    return lat, lon, values, attrs
 
 
 def _latest(collection, instrument):

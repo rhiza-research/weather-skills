@@ -3,11 +3,14 @@
 Download, satpy calibration, and resampling were verified by running the skill
 against the live EUMETSAT Data Store (FCI 0deg, SEVIRI 0deg, SEVIRI IODC over
 Kenya/West Africa); these tests cover band/time/instrument resolution, the
-geostationary geometry used to pick FCI chunks, and credential lookup.
+geostationary geometry used to pick FCI chunks, credential lookup, and the output
+grid.
 """
 
+import types
 from datetime import date, datetime, timedelta
 
+import numpy as np
 import pytest
 from conftest import load_skill
 from weather_skills_core import DataError, UsageError
@@ -121,3 +124,25 @@ def test_find_products_picks_scan_in_slot(mod):
 
     with pytest.raises(DataError, match="no seviri scan"):
         mod._find_products(_Coll([]), [slot], "seviri")
+
+
+def test_cell_centres_from_area_extent(mod):
+    area = types.SimpleNamespace(
+        area_extent=(33.0, -1.0, 34.0, 1.0), width=2, height=4, pixel_size_x=0.5, pixel_size_y=0.5
+    )
+    lat, lon = mod._cell_centres(area)
+    np.testing.assert_allclose(lon, [33.25, 33.75])
+    np.testing.assert_allclose(lat, [0.75, 0.25, -0.25, -0.75])
+
+
+def test_cell_centres_match_get_lonlats(mod):
+    pyresample = pytest.importorskip("pyresample")
+    w, s, e, n = mod._grid(KENYA, 0.03)
+    area = pyresample.create_area_def(
+        "bbox", "EPSG:4326", area_extent=(w, s, e, n), resolution=0.03, units="degrees"
+    )
+    lons, lats = area.get_lonlats()
+    lat, lon = mod._cell_centres(area)
+    np.testing.assert_allclose(lat, lats[:, 0], rtol=0, atol=1e-9)
+    np.testing.assert_allclose(lon, lons[0, :], rtol=0, atol=1e-9)
+
