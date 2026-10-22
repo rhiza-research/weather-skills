@@ -1,8 +1,12 @@
 """Correctness tests for windborne-clim-fetch (mocked WindBorne API)."""
 
+import datetime as dt
+
 import numpy as np
 import pytest
 from conftest import load_skill, run_skill
+
+START = dt.datetime(2026, 7, 15)
 
 
 @pytest.fixture(scope="module")
@@ -26,12 +30,13 @@ def test_hourly_normals_with_rate_precip(mod, monkeypatch, tmp_path):
                 "climatologies": [
                     [
                         {
-                            "time": f"2026-07-15T{h:02d}:00:00Z",
+                            "time": f"{START + dt.timedelta(hours=h):%Y-%m-%dT%H}:00:00Z",
                             "temperature_2m": 15.0 + h,
-                            "precipitation": 0.5,
+                            "precipitation": 0.5 + h,
                             "pressure_msl": None,
                         }
-                        for h in range(3)
+                        # 00Z on 15 Jul through 00Z on 16 Jul.
+                        for h in range(25)
                     ]
                 ],
             }
@@ -62,10 +67,23 @@ def test_hourly_normals_with_rate_precip(mod, monkeypatch, tmp_path):
     )
     ds = xr.open_zarr(out)
     assert seen["start_time"] == "2026-07-15T00:00:00Z"
-    assert seen["end_time"] == "2026-07-15T23:00:00Z"
+    # 00Z the next day carries the precipitation of the last hour.
+    assert seen["end_time"] == "2026-07-16T00:00:00Z"
     assert seen["rolling_average_days"] == 7
     assert "msl" not in ds.data_vars
-    np.testing.assert_allclose(ds["tp"].values[0], [12.0, 12.0, 12.0])
-    # Precip over the preceding hour is labelled at the hour's start.
-    assert ds["time"].values[0] == np.datetime64("2026-07-14T23:00")
+    # Exactly the requested day, hourly.
+    assert ds.sizes["time"] == 24
+    assert ds["time"].values[0] == np.datetime64("2026-07-15T00:00")
+    assert ds["time"].values[-1] == np.datetime64("2026-07-15T23:00")
+    # t2m is instantaneous and keeps its hour.
+    np.testing.assert_allclose(ds["t2m"].values[0], 15.0 + np.arange(24))
+    # Precip over (t-1h, t] is labelled at t-1h: 00Z holds the 01Z amount.
+    np.testing.assert_allclose(ds["tp"].values[0], (1.5 + np.arange(24)) * 24.0)
     assert ds["t2m"].attrs["units"] == "degree_Celsius"
+
+
+def test_probe_latest_prints_none(mod, monkeypatch, capsys):
+    monkeypatch.delenv("WB_CLIENT_ID", raising=False)
+    monkeypatch.delenv("WB_API_KEY", raising=False)
+    run_skill(mod.fetch, "--probe-latest")
+    assert capsys.readouterr().out.strip() == "none"

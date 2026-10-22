@@ -33,17 +33,19 @@ Fetches hourly ERA5 1991–2020 normals at points from the WindBorne climatology
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --point LAT,LON[,ID] [--point ...] --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--rolling-days N] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
 ### Arguments
 - `--point` — `LAT,LON[,ID]`, repeatable; at least one. IDs default to `P0`, `P1`, …. Not limited to the forecast region.
 - `--start-time`, `--end-time` — inclusive dates; the normals for every hour between them, laid on those real dates. Three months at once works.
 - `--rolling-days` — smooth with a centred rolling mean over this many days. Default: 0 (raw hourly normals).
+- `--probe-latest [IDENT]` — print `none` and exit: the normals are static, with no latest date. Needs no credentials. `IDENT` is ignored.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- Dims `(station_id, time)`, hourly, with `latitude` and `longitude` on `station_id`.
-- `t2m`, `d2m` in `degree_Celsius`; winds in `m s-1`. `tp` is a rate in `mm day-1` over `[time, time + 1 h)`.
+- Dims `(station_id, time)`, hourly from 00Z on `--start-time` to 23Z on `--end-time`, with `latitude` and `longitude` on `station_id`.
+- `t2m`, `d2m` in `degree_Celsius`; winds in `m s-1`; these are valid at `time`. `tp` is a rate in `mm day-1` over `[time, time + 1 h)`.
 - Mean sea-level pressure is not served, so it is left out.
 - Stamps `data_interval = 1 hour`, `weather_skills_source=windborne-climatology` and `climatology_normal`.
 

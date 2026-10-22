@@ -82,11 +82,23 @@ def _get(session, url, params=None):
     default=0,
     help="Smooth the normals with a centred rolling mean over this many days. Default 0 (none).",
 )
-def fetch(point, start_time, end_time, rolling_days, **kwargs):
+@weather_skill.argument(
+    "--probe-latest",
+    nargs="?",
+    const="",
+    metavar="IDENT",
+    probe=True,
+    help="Print `none` and exit: the normals are static, with no latest date. No credentials needed.",
+)
+def fetch(point, start_time, end_time, rolling_days, probe_latest, **kwargs):
     """Fetch WindBorne's ERA5 1991-2020 hourly climatology at chosen locations as a weather-skills station Zarr."""
     import numpy as np
     import requests
     import xarray as xr
+
+    if probe_latest is not None:
+        print("none")
+        return
 
     client_id, api_key = require_env(
         "WB_CLIENT_ID",
@@ -108,11 +120,14 @@ def fetch(point, start_time, end_time, rolling_days, **kwargs):
     if rolling_days < 0:
         raise UsageError("--rolling-days must be 0 or more.")
 
-    # Hourly normals for every hour of the inclusive date range.
+    # Hourly normals for every hour of the inclusive date range, plus 00Z the
+    # next day: its precipitation covers the range's last hour.
+    first = np.datetime64(f"{start_time:%Y-%m-%d}T00:00", "ns")
+    last = np.datetime64(f"{end_time:%Y-%m-%d}T23:00", "ns")
     params = {
         "coordinates": ";".join(f"{lat},{lon}" for lat, lon in zip(lats, lons, strict=True)),
         "start_time": f"{start_time:%Y-%m-%d}T00:00:00Z",
-        "end_time": f"{end_time:%Y-%m-%d}T23:00:00Z",
+        "end_time": f"{end_time + dt.timedelta(days=1):%Y-%m-%d}T00:00:00Z",
     }
     if rolling_days:
         params["rolling_average_days"] = rolling_days
@@ -144,11 +159,16 @@ def fetch(point, start_time, end_time, rolling_days, **kwargs):
     )
 
     # ERA5 hourly precipitation at hour t is the amount over (t-1h, t]: make it
-    # a mm day-1 rate labelled at the interval start.
+    # a mm day-1 rate labelled at the interval start. The other fields are
+    # instantaneous and keep their hour. Both are then cut to the requested
+    # days; an hour a field lacks stays NaN (not filled).
     if "tp" in ds.data_vars:
-        ds["tp"] = ds["tp"] * 24.0
-        ds["tp"].attrs.update(units="mm day-1", windborne_name="precipitation")
-        ds = ds.assign_coords(time=ds["time"] - np.timedelta64(1, "h"))
+        tp = ds["tp"] * 24.0
+        tp.attrs.update(units="mm day-1", windborne_name="precipitation")
+        tp = tp.assign_coords(time=tp["time"] - np.timedelta64(1, "h"))
+        rest = ds.drop_vars("tp")
+        ds = xr.merge([rest, tp], join="outer") if rest.data_vars else tp.to_dataset()
+    ds = ds.sel(time=slice(first, last))
 
     ds.attrs.update(
         Conventions="CF-1.13",
