@@ -110,6 +110,72 @@ def test_sub_daily_input_is_refused(tmp_path, mod, capsys):
     assert "aggregate-temporal" in capsys.readouterr().err
 
 
+def test_output_opens_as_a_skill_input(tmp_path, mod):
+    """The count is a coordinate: as a data variable 'precip_count' reads as precip."""
+    from weather_skills_core.decorator import _open_zarr
+
+    _run(mod, tmp_path, _record(tmp_path), "--start-time", "2026-01-01", "--end-time", "2026-01-02")
+    out = _open_zarr(tmp_path / "out.zarr")
+    assert "precip_count" in out.coords
+    assert set(out.data_vars) == {"precip_avg", "precip_std"}
+
+
+def test_weekly_forecast_inits_keep_member_and_lead_dims(tmp_path, mod, capsys):
+    """Sparse init dates are accepted; each member and lead gets its own climatology."""
+    inits = pd.date_range("2021-01-06", "2023-12-27", freq="7D")
+    steps = np.array([0, 1], dtype="timedelta64[D]").astype("timedelta64[ns]")
+    values = np.empty((len(inits), 2, 2, 1, 1))
+    values[:] = (inits.year - 2021).to_numpy()[:, None, None, None, None]  # 0, 1, 2 by year
+    values[:, :, 1] += 10  # lead 1 is 10 higher
+    ds = xr.Dataset(
+        {"precip": (("time", "number", "step", "latitude", "longitude"), values)},
+        coords={
+            "time": inits,
+            "number": [0, 1],
+            "step": steps,
+            "latitude": [0.0],
+            "longitude": [36.0],
+        },
+    )
+    ds["precip"].attrs.update(units="mm day-1", aggregation_period="1 day")
+    ds.to_zarr(tmp_path / "fc.zarr", mode="w")
+    out = _run(
+        mod,
+        tmp_path,
+        tmp_path / "fc.zarr",
+        "--start-time",
+        "2026-01-01",
+        "--end-time",
+        "2026-12-31",
+        "--window",
+        "7",
+    )
+    assert out["precip_avg"].dims == ("time", "number", "step", "latitude", "longitude")
+    lead0, lead1 = (out["precip_avg"].sel(step=s) for s in steps)
+    assert float((lead1 - lead0).max()) == pytest.approx(10.0)
+    assert float(lead0.mean()) == pytest.approx(1.0, abs=0.1)  # roughly one init a year each
+    assert int(out["precip_count"].min()) >= 2
+    assert "at least 7 days apart" in capsys.readouterr().err
+
+
+def test_weekly_means_are_refused(tmp_path, mod, capsys):
+    path = _record(tmp_path)
+    ds = xr.open_zarr(path).load()
+    ds["precip"].attrs["aggregation_period"] = "7 day"
+    ds.to_zarr(tmp_path / "weekly.zarr", mode="w")
+    with pytest.raises(SystemExit):
+        _run(
+            mod,
+            tmp_path,
+            tmp_path / "weekly.zarr",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+        )
+    assert "needs daily values" in capsys.readouterr().err
+
+
 def test_single_year_is_refused(tmp_path, mod, capsys):
     with pytest.raises(SystemExit):
         _run(

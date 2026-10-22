@@ -24,7 +24,12 @@ import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
 from weather_skills_core.standard_dataset import detect_time_dim
-from weather_skills_core.units import dequantify_dataset, stamp_data_interval
+from weather_skills_core.units import (
+    AGGREGATION_PERIOD_ATTR,
+    dequantify_dataset,
+    parse_aggregation_period,
+    stamp_data_interval,
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
@@ -54,11 +59,18 @@ def climatology(ds, start_time, end_time, variable, window, **kwargs):
         raise UsageError(f"--window must be a positive odd number of days; got {window}")
     time_dim = detect_time_dim(ds)
     times = pd.DatetimeIndex(ds[time_dim].values)
-    steps = np.diff(times.values) / np.timedelta64(1, "D")
-    if len(steps) == 0 or steps.min() != 1:
+    # Dates may be sparse (weekly forecast inits), never closer than a day.
+    spacing = np.diff(times.values) / np.timedelta64(1, "D")
+    if spacing.size and spacing.min() < 1:
         raise UsageError(
-            f"input must be daily (smallest spacing 1 day); got {steps.min() if len(steps) else 'one'} "
-            "day(s). Roll sub-daily data up with aggregate-temporal first."
+            f"input has dates {spacing.min() * 24:g} hours apart; it must hold one value per day. "
+            "Roll sub-daily data up with aggregate-temporal first."
+        )
+    if spacing.size and spacing.min() > 1:
+        print(
+            f"climatology: dates are at least {spacing.min():g} days apart, so most calendar days "
+            "rest on few values; consider --window.",
+            file=sys.stderr,
         )
     years = sorted(set(times.year))
     if len(years) < 2:
@@ -68,6 +80,14 @@ def climatology(ds, start_time, end_time, variable, window, **kwargs):
     for name in names:
         if name not in ds.data_vars or time_dim not in ds[name].dims:
             raise UsageError(f"--variable {name!r} is not a data variable along {time_dim!r}")
+        period = ds[name].attrs.get(AGGREGATION_PERIOD_ATTR)
+        if period is not None and parse_aggregation_period(period) != parse_aggregation_period(
+            "1 day"
+        ):
+            raise UsageError(
+                f"{name!r} holds {period} values; a daily climatology needs daily values. "
+                "Roll it up or down to 1 day with aggregate-temporal first."
+            )
 
     slots = _slot_1904(times)
     target = pd.date_range(start_time, end_time, freq="D")
@@ -120,11 +140,17 @@ def climatology(ds, start_time, end_time, variable, window, **kwargs):
             coords=coords,
             attrs={**attrs, "units": units},
         )
-        out[f"{name}_count"] = xr.DataArray(
-            count[target_slots].reshape(shape).astype(np.int32),
-            dims=dims,
-            coords=coords,
-            attrs={"long_name": f"Number of values averaged for {name}"},
+        # A coordinate, like aggregate-temporal's coverage: as a data variable
+        # its name ("precip_count") would read as a precip field downstream.
+        out = out.assign_coords(
+            {
+                f"{name}_count": xr.DataArray(
+                    count[target_slots].reshape(shape).astype(np.int32),
+                    dims=dims,
+                    coords=coords,
+                    attrs={"long_name": f"Number of values averaged for {name}", "units": "1"},
+                )
+            }
         )
 
         # Dates with no value anywhere stay NaN, never filled: say so.
