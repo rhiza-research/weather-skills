@@ -2,6 +2,7 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core>=0.2.0",
+#   "pandas",
 #   "cftime",
 #   "ecmwf-datastores-client==0.4.2",
 #   "requests",
