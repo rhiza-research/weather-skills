@@ -2,6 +2,7 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core>=0.2.0",
+#   "pandas",
 #   "requests",
 #   "zarr>=3",
 # ]
@@ -148,9 +149,11 @@ def _get(session, url, params=None, *, binary=False):
 )
 @weather_skill.argument(
     "--max-lead",
-    type=int,
     default=_MAX_LEAD_HOURS,
-    help="Last lead hour to fetch (multiple of 3, up to 360). Default 360.",
+    help=(
+        "Last lead to fetch: hours (48) or a timedelta (48h, 2D); a multiple of 3 h "
+        "up to 360 h. Default 360."
+    ),
 )
 @weather_skill.argument(
     "--probe-latest",
@@ -166,6 +169,7 @@ def _get(session, url, params=None, *, binary=False):
 def fetch(bbox, date, run, variable, level, ensemble, max_lead, probe_latest, **kwargs):
     """Fetch a WindBorne WeatherMesh-6 gridded forecast from the WindBorne API as a weather-skills Zarr."""
     import numpy as np
+    import pandas as pd
     import requests
     import xarray as xr
     import zarr
@@ -225,8 +229,15 @@ def fetch(bbox, date, run, variable, level, ensemble, max_lead, probe_latest, **
     else:
         init = dt.datetime.combine(date, dt.time(run))
 
+    # Bare numbers are hours; anything else is a timedelta string (48h, 2D).
+    text = str(max_lead).strip()
+    try:
+        max_lead = pd.Timedelta(f"{text}h" if text.isdigit() else text) / pd.Timedelta(1, "h")
+    except ValueError:
+        raise UsageError(f"--max-lead {text!r} is not a lead (48, 48h, 2D).") from None
     if max_lead % 3 or not 0 <= max_lead <= _MAX_LEAD_HOURS:
-        raise UsageError(f"--max-lead must be a multiple of 3 in 0..{_MAX_LEAD_HOURS}.")
+        raise UsageError(f"--max-lead must be a multiple of 3 h in 0..{_MAX_LEAD_HOURS} h.")
+    max_lead = int(max_lead)
 
     # Resolve -v tokens to (output name, WindBorne name, level or None).
     catalog = _get(session, f"{_API}/variables")
@@ -257,6 +268,16 @@ def fetch(bbox, date, run, variable, level, ensemble, max_lead, probe_latest, **
         if any(f[1] == wb_name for f in fields):
             continue
         fields.append((short, wb_name, sorted(level) if upper else None))
+    if level and not any(f[2] for f in fields):
+        raise UsageError("--level is only for pressure-level fields (t, z, q, u, v, ...).")
+    # `_3h` fields cover the 3 h ending at their lead, so lead 0 holds nothing
+    # inside the run (see the relabelling below).
+    interval = [f[0] for f in fields if f[1].endswith("_3h")]
+    if interval and max_lead == 0:
+        raise UsageError(
+            f"{', '.join(interval)} has no value at lead 0: it covers the 3 h ending at "
+            "each lead. Pass --max-lead 3 or more, or leave it out of -v."
+        )
 
     leads = list(range(0, max_lead + 1, 3))
     # Request flag and the group the array sits in, per --ensemble.
@@ -368,17 +389,23 @@ def fetch(bbox, date, run, variable, level, ensemble, max_lead, probe_latest, **
     ds = ds.sortby("latitude")
 
     if "tp" in ds.data_vars:
-        # total_precipitation_3h at lead h is the amount over (h-3, h]. Turn it
-        # into a mm day-1 rate labelled at the interval start, like the other
-        # forecast fetchers; lead 0 covers the 3 h before forecast zero, so drop it.
+        # total_precipitation_3h is the amount over 3 h: a mm day-1 rate.
         ds["tp"] = ds["tp"] * 8.0
         ds["tp"].attrs.update(
             units="mm day-1",
             long_name="Total precipitation rate",
             windborne_name="total_precipitation_3h",
         )
-        ds = ds.isel(step=slice(1, None))
-        ds = ds.assign_coords(step=ds["step"] - np.timedelta64(3, "h"))
+    if interval:
+        # `_3h` fields (tp, tmax, tmin, ssrd, ...) at lead h cover (h-3, h]:
+        # label them at the interval start, like the other forecast fetchers.
+        # Lead 0 covers the 3 h before forecast zero, so it is dropped. Every
+        # other field is instantaneous at forecast zero + step and keeps its
+        # lead; the merged axis is NaN where a field has no value (not filled).
+        shifted = ds[interval].isel(step=slice(1, None))
+        shifted = shifted.assign_coords(step=shifted["step"] - np.timedelta64(3, "h"))
+        rest = ds.drop_vars(interval)
+        ds = xr.merge([rest, shifted], join="outer") if rest.data_vars else shifted
 
     ds.attrs.update(
         Conventions="CF-1.13",
