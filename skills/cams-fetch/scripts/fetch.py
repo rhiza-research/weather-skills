@@ -362,6 +362,9 @@ def _concat_lon(datasets: list):
         return datasets[0]
     normed = [ensure_normalized_longitude(d) for d in datasets]
     combined = xr.concat(normed, dim="longitude")
+    # The first leg ends at 180 and the second starts at -180: one meridian.
+    lon = combined["longitude"]
+    combined = combined.assign_coords(longitude=lon.copy(data=np.where(lon == 180.0, -180.0, lon)))
     _, idx = np.unique(combined["longitude"].values, return_index=True)
     return combined.isel(longitude=np.sort(idx)).sortby("longitude")
 

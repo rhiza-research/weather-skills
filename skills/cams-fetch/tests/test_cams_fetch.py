@@ -254,3 +254,24 @@ def test_eac4_end_to_end_concatenates_months(mod, monkeypatch, tmp_path):
     assert ds["aod550"].attrs["units"] == "1"
     assert "step" not in ds.coords
 
+
+def test_antimeridian_box_has_one_seam_meridian(mod, monkeypatch, tmp_path):
+    def decode(req):
+        n, w, s, e = req["area"]
+        lons = [170.0, 175.0, 180.0] if w == 170 else [-180.0, -175.0, -170.0]
+        fill = 1e-8 if w == 170 else 2e-8
+        ds = _cfgrib_forecast({"pm2p5": fill})
+        return ds.assign_coords(longitude=lons)
+
+    submitted = _fake_ads(monkeypatch, mod, decode)
+    out = tmp_path / "wrap.zarr"
+    run_skill(
+        mod.fetch, "--bbox", "10/170/0/-170", "--date", "2026-10-05", "--max-lead", "6",
+        "-o", str(out),
+    )  # fmt: skip
+    assert [s[1]["area"] for s in submitted] == [[10, 170, 0, 180.0], [10, -180.0, 0, -170]]
+    ds = xr.open_zarr(out)
+    lons = ds["longitude"].values.tolist()
+    assert lons == [-180.0, -175.0, -170.0, 170.0, 175.0]
+    # Each leg's values stay on its own longitudes.
+    np.testing.assert_allclose(ds["pm25"].isel(step=0, latitude=0).values, [10, 20, 20, 10, 10])
