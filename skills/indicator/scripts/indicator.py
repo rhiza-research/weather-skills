@@ -259,15 +259,15 @@ def apply_reductions(
     cumulative: bool,
     detect: str | None,
     probability: bool,
-    first_in: int | None = None,
+    first_within: int | None = None,
 ) -> xr.Dataset:
-    """Apply ``--first-in`` or ``--cumulative``, ``--detect``, ``--probability`` in that order.
+    """Apply ``--first-within`` or ``--cumulative``, ``--detect``, ``--probability`` in that order.
 
-    ``first_in`` is the window length in steps of ``dim``.
+    ``first_within`` is the window length in steps of ``dim``.
     """
-    if first_in is not None and (cumulative or detect or probability):
+    if first_within is not None and (cumulative or detect or probability):
         raise UsageError(
-            "--first-in cannot be combined with --cumulative, --detect or --probability; "
+            "--first-within cannot be combined with --cumulative, --detect or --probability; "
             "for a forecast's chance of the event by each lead use --cumulative --probability"
         )
     if detect is not None and cumulative:
@@ -279,8 +279,8 @@ def apply_reductions(
         )
 
     field = mask
-    if first_in is not None:
-        field = _first_in(field, dim, first_in)
+    if first_within is not None:
+        field = _first_within(field, dim, first_within)
     if cumulative:
         field = _cumulative(field, dim)
 
@@ -403,11 +403,11 @@ def _cumulative(mask: xr.DataArray, dim: str) -> xr.DataArray:
     return xr.where(seen, 1.0, mask).astype("float32")
 
 
-def _first_in(mask: xr.DataArray, dim: str, steps: int) -> xr.DataArray:
-    """1 if the first True since the start of ``dim`` falls in the ``steps`` labels from here.
+def _first_within(mask: xr.DataArray, dim: str, steps: int) -> xr.DataArray:
+    """1 on the first True along ``dim`` and the ``steps - 1`` labels before it.
 
-    0 if there is none yet by the window's end; NaN once it happened before this
-    label (the sample is over), or when a gap leaves the first True unknown.
+    0 on earlier labels; NaN after the first True (the sample is over), or from a
+    gap on when the gap leaves the first True unknown.
     """
     seen = mask.fillna(0).cumsum(dim) > 0
     # A gap before the first True could hide it: unknown from there on, until a True.
@@ -513,11 +513,11 @@ def _step_days(ds, dim: str) -> int:
     help="Once True, stay True (has the event happened yet?).",
 )
 @weather_skill.argument(
-    "--first-in",
+    "--first-within",
     metavar="WINDOW",
     help=(
-        "Window such as 7d or 1w: 1 if the first event since the series start falls in "
-        "the window from each date, 0 if none yet, NaN once it already happened."
+        "Window such as 7d or 1w: 1 on the first event and the WINDOW-1 dates "
+        "before it, 0 on earlier dates, NaN after it."
     ),
 )
 @weather_skill.argument(
@@ -525,16 +525,18 @@ def _step_days(ds, dim: str) -> int:
     action="store_true",
     help="Ensemble fraction True (mean over number). No-op if there is no number dim.",
 )
-def indicator(ds, rule, variable, time_dim, detect, cumulative, first_in, probability, **kwargs):
+def indicator(
+    ds, rule, variable, time_dim, detect, cumulative, first_within, probability, **kwargs
+):
     """Apply a yes/no weather rule to each day or week of a Zarr, optionally reduced to an onset date or a probability."""
     spec = parse_rule(rule)
     dim = _axis(ds, time_dim)
     step_days = _step_days(ds, dim)
     first_days = None
-    if first_in is not None:
-        match = _WINDOW_RE.fullmatch(first_in.strip())
+    if first_within is not None:
+        match = _WINDOW_RE.fullmatch(first_within.strip())
         if not match or int(match.group(1)) < 1:
-            raise UsageError(f"--first-in {first_in!r} must look like '7d' or '1w'")
+            raise UsageError(f"--first-within {first_within!r} must look like '7d' or '1w'")
         first_days = int(match.group(1)) * (7 if match.group(2).lower() == "w" else 1)
     # Thresholds are in standard units: air temperature in degree_Celsius, precip
     # in mm per step (a rate in any units times the step; daily mm day-1 is unchanged).
@@ -550,7 +552,7 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, first_in, probab
         cumulative=bool(cumulative),
         detect=detect,
         probability=bool(probability),
-        first_in=None if first_days is None else _steps(first_days, step_days),
+        first_within=None if first_days is None else _steps(first_days, step_days),
     )
     payload = json.dumps(spec.to_json(), default=str)
     for name in out.data_vars:
