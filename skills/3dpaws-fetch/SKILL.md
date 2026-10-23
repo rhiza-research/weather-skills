@@ -53,9 +53,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--station ID | --bbo
 ### Output
 - Dims `(time, station_id)`; coords `latitude`, `longitude`, `name`, `site`. `time` is every requested day, labelled by its start date.
 - Whichever the stations report: `precip` (`mm day-1`), `temperature` / `tmax` / `tmin` (`degree_Celsius`), `humidity` (fraction), `pressure` (station pressure, `hPa`), `wind_speed` (mean, `m s-1`), `wind_gust` (max, `m s-1`).
+- Each has a `<var>_coverage` (0-1): the share of the day with readings, listed in the variable's `ancillary_variables`.
 
 ### Notes
-- A day is NaN unless the station sent every expected reading that day. Missing data is never filled, so a multi-day total over a station with a NaN day is NaN. stderr reports complete days per station and per variable.
+- Temperature, humidity, pressure and wind are the daily statistic of the readings there are, NaN only with no readings; check `<var>_coverage` before trusting a partly covered day (a `tmax` from half a day can miss the peak). `precip` is NaN unless coverage is 1, because part of a day's rain is not its total. Missing data is never filled. stderr reports per variable the station-days with a value and those fully covered.
 - Needs `CHORDS_EMAIL` and `CHORDS_API_KEY` (from the portal's `/users` page, with download access); missing or rejected exits 2. A station that fails to download is dropped with a stderr line.
 
 ### Example
@@ -66,7 +67,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --station 1 --station 4 --start-time
 
 ## Details
 
-- **Complete days.** The reporting interval is the station's most common spacing over the fetch; days at another spacing come out NaN. A day is complete for a variable when no two valid readings are more than 1.5 intervals apart. Rain gauges may skip up to 3 intervals, because each reading holds the rain since the last one.
+- **Coverage.** The reporting interval is the station's most common spacing over the fetch. A gap of up to 3 intervals between valid readings counts as covered (1-minute stations skip about one reading every 15 minutes, and a rain reading holds the rain since the last one). A longer gap is uncovered from one interval after the last reading to the next, split across the days it spans. Days at a longer spacing than the station's interval come out with low coverage.
 - **Quality control.** Out-of-range readings (including `-999.9`) are dropped, as is an exact `0` for temperature, humidity or pressure (no sensor fitted) and readings flagged as test data.
-- **Two rain gauges.** `precip` is gauge 1 where gauge 2 also has a complete day and the totals agree within 1 mm or 25 %; otherwise NaN. A station with one gauge uses it.
-- 1-minute stations often skip readings, so many of their days are NaN. A few test instruments sit in Boulder; a bbox excludes them.
+- **Two rain gauges.** `precip` is gauge 1 where gauge 2 also covers the day and the totals agree within 1 mm or 25 %; otherwise NaN, and a disagreeing day has `precip_coverage` 0. A station with one gauge uses it.
+- A few test instruments sit in Boulder; a bbox excludes them.

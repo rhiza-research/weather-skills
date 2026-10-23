@@ -58,9 +58,11 @@ ZERO_IS_MISSING = {"mt1", "sh1", "bp1"}
 # Two gauges agree when their daily totals differ by at most this much.
 GAUGE_TOLERANCE_MM = 1.0
 GAUGE_TOLERANCE_FRAC = 0.25
-# Longest gap between rain-gauge readings, in reporting intervals, that still
-# counts as a complete record (3 min at 1-minute stations).
-RAIN_GAP_INTERVALS = 3
+# Longest gap between readings, in reporting intervals, that still counts as
+# covered (3 min at 1-minute stations). A rain reading holds the rain since the
+# previous one (checked against FEWS NET running totals, Oct 2026), so a skip
+# loses no rain.
+GAP_INTERVALS = 3
 CF_META = {
     "precip": ("lwe_precipitation_rate", "mm day-1", None, "daily rainfall"),
     "temperature": (
@@ -173,39 +175,53 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     interval_min = int(spacing.mode().iloc[0]) if len(spacing) else 1
     interval = pd.Timedelta(minutes=interval_min)
 
-    # A day is complete for a variable when no two valid readings (or a reading
-    # and the fetch edge) are over 1.5 intervals apart. Rain gauges may skip
-    # RAIN_GAP_INTERVALS: each reading holds the rain since the previous one
-    # (checked against FEWS NET running totals, Oct 2026). A gap blanks every
-    # day its missing readings fall in.
+    # Coverage: the share of each day with readings. A gap of up to
+    # GAP_INTERVALS counts as covered (1-minute stations skip about one reading
+    # every 15 minutes); a longer one is uncovered from the reading after the
+    # last valid one to the next valid one, split across the days it spans.
     edge0, edge1 = fetch_start - offset, fetch_end - offset
     all_days = pd.date_range(edge0.floor("D"), edge1.floor("D"), freq="D")
-    complete = pd.DataFrame(True, index=all_days, columns=clean.columns)
+    one_day = pd.Timedelta(days=1)
+    coverage = pd.DataFrame(1.0, index=all_days, columns=clean.columns)
     for short in clean.columns:
         t = pd.Series([edge0, *clean.index[clean[short].notna()], edge1])
         prev = t.shift()
-        allowed = (RAIN_GAP_INTERVALS if short in ("rg1", "rg2") else 1) + 0.5
-        gap = (t - prev) > allowed * interval
-        for a, b in zip(prev[gap] + interval, t[gap] - interval, strict=True):
-            complete.loc[min(a, b).floor("D") : max(a, b).floor("D"), short] = False
+        gap = (t - prev) > (GAP_INTERVALS + 0.5) * interval
+        for a, b in zip(prev[gap] + interval, t[gap], strict=True):
+            day = a.floor("D")
+            while day < b:
+                missed = min(b, day + one_day) - max(a, day)
+                coverage.loc[day, short] -= missed / one_day
+                day += one_day
+    coverage = coverage.clip(lower=0.0).reindex(pd.date_range(start, end, freq="D"), fill_value=0.0)
 
     days = clean.resample("D")
     wanted = pd.date_range(start, end, freq="D", name="time")
-    complete = complete.reindex(wanted, fill_value=False)
     daily = pd.DataFrame(index=wanted)
+    # Temperature, humidity, pressure and wind: the statistic of the readings
+    # there are; <var>_coverage says how much of the day they span.
     for name, (short, stat) in SENSORS.items():
         if short in clean.columns:
-            daily[name] = days[short].agg(stat).reindex(wanted).where(complete[short])
+            daily[name] = days[short].agg(stat).reindex(wanted).where(coverage[short] > 0)
+            daily[f"{name}_coverage"] = coverage[short].to_numpy()
+    # Rain is a total, and part of a day's rain is not that day's total, so
+    # precip is kept only for a fully covered day; scaling it up would be filling.
     if "rg1" in clean.columns:
-        total = days["rg1"].sum().reindex(wanted).where(complete["rg1"])
+        full = coverage["rg1"] >= 1.0
+        total = days["rg1"].sum().reindex(wanted).where(full)
+        precip_coverage = coverage["rg1"]
         if "rg2" in clean.columns:
-            # Both gauges must report a complete day and agree; a disagreement
-            # means one gauge is faulty and there is no way to tell which.
-            total2 = days["rg2"].sum().reindex(wanted).where(complete["rg2"])
+            # Both gauges must cover the day and agree; a disagreement means one
+            # gauge is faulty and there is no way to tell which.
+            total2 = days["rg2"].sum().reindex(wanted).where(coverage["rg2"] >= 1.0)
             larger = pd.concat([total, total2], axis=1).max(axis=1)
             tolerance = (GAUGE_TOLERANCE_FRAC * larger).clip(lower=GAUGE_TOLERANCE_MM)
-            total = total.where((total - total2).abs() <= tolerance)
+            rejected = total.notna() & total2.notna() & ((total - total2).abs() > tolerance)
+            total = total.where(total2.notna() & ~rejected)
+            # A rejected day has no usable rain, whatever its readings spanned.
+            precip_coverage = coverage[["rg1", "rg2"]].min(axis=1).where(~rejected, 0.0)
         daily["precip"] = total
+        daily["precip_coverage"] = precip_coverage.to_numpy()
     return daily, interval_min
 
 
@@ -396,13 +412,14 @@ def fetch(
             if daily is None:
                 print(f"{sid}: no readings in range", file=sys.stderr)
                 continue
-            complete = int(daily.notna().any(axis=1).sum())
-            if complete == 0:
-                print(f"{sid}: no complete day for any variable", file=sys.stderr)
+            values = daily[[c for c in daily.columns if not c.endswith("_coverage")]]
+            with_data = int(values.notna().any(axis=1).sum())
+            if with_data == 0:
+                print(f"{sid}: no usable day for any variable", file=sys.stderr)
                 continue
             print(
                 f"{sid} ({row['name']}): reports every {interval_min} min, "
-                f"{complete}/{len(daily)} days with a complete record",
+                f"{with_data}/{len(daily)} days with data",
                 file=sys.stderr,
             )
             daily["station_id"] = sid
@@ -410,7 +427,7 @@ def fetch(
             meta_rows.append(row)
 
     if not frames:
-        raise DataError("no complete daily data for any station.")
+        raise DataError("no usable daily data for any station.")
 
     df = pd.concat(frames).reset_index().set_index(["time", "station_id"])
     meta = pd.DataFrame(meta_rows).set_index("station_id")
@@ -432,31 +449,38 @@ def fetch(
     ds["station_id"].attrs.update(cf_role="timeseries_id", long_name="CHORDS instrument id")
     ds["name"].attrs.update(long_name="instrument name")
     ds["site"].attrs.update(long_name="site name")
-    for var in ds.data_vars:
+    for var in [v for v in ds.data_vars if v in CF_META]:
         std_name, units, cell_methods, long_name = CF_META[var]
         ds[var].attrs.update(
             standard_name=std_name,
             units=units,
             long_name=long_name,
             coordinates="latitude longitude",
+            ancillary_variables=f"{var}_coverage",
         )
         # Precip has no cell_methods, as other station fetchers write it.
         if cell_methods:
             ds[var].attrs["cell_methods"] = cell_methods
+        # A station absent from the fetch has no readings: coverage 0.
+        ds[f"{var}_coverage"] = ds[f"{var}_coverage"].fillna(0.0).astype("float32")
+        ds[f"{var}_coverage"].attrs.update(
+            long_name=f"share of the day with {var} data",
+            units="1",
+            valid_min=0.0,
+            valid_max=1.0,
+            coordinates="latitude longitude",
+        )
     ds.attrs.update(
         featureType="timeSeries",
         Conventions="CF-1.13",
         weather_skills_source="3dpaws",
         source_url=portal,
     )
-    # A station is complete when it reported every requested day; multi-day
-    # totals are only meaningful for those (missing days are never filled).
-    n_days = (end - start).days + 1
-    for name in sorted(ds.data_vars):
-        complete = int((ds[name].notnull().sum("time") == n_days).sum())
+    # Station-days with a value, and with the whole day covered.
+    for name in sorted(v for v in ds.data_vars if v in CF_META):
         print(
-            f"{name}: {complete} of {ds.sizes['station_id']} stations complete "
-            f"(all {n_days} days {start:%Y-%m-%d} → {end:%Y-%m-%d})",
+            f"{name}: {int(ds[name].notnull().sum())} of {ds[name].size} station-days with "
+            f"a value, {int((ds[f'{name}_coverage'] >= 1).sum())} fully covered",
             file=sys.stderr,
         )
     return stamp_data_interval(ds, period="1 day")
