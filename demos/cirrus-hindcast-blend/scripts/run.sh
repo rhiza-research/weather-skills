@@ -1,71 +1,100 @@
 #!/bin/bash
-# Cirrus onset blend from Sheerwater's tiled hindcast stores, weather-skills only.
-# Usage: WORK=/path/to/scratch CACHE=/path/to/cache bash run.sh
-#   WORK (default ./work) is emptied every run. CACHE (default ./cache) keeps the fetched hindcasts
-#   between runs, one store per set of fetch arguments; delete it to fetch fresh copies.
+# Onset blend (mme-fit logistic) from Sheerwater's tiled hindcast stores, for any country, weather-skills only.
 #
-# Event: the season's first ICPAC onset since 15 Sep falls within 7 days of the init.
+# Usage: COUNTRY=Kenya MODELS="ec cu" bash run.sh
+#   COUNTRY       country name or ISO3 code (resolve-region / clip-region). Default Kenya.
+#   MODELS        any of ec (ECMWF), cu (Cumulus), ge (GEFS). Default "ec cu". The seasons are those all
+#                 the chosen models have hindcasts for: ec+cu 2016-2021, ec+ge 1999-2018, ec+cu+ge 2016-2018.
+#   SEASON_START  MM-DD the onset count restarts each year. Default 09-15 (East African short rains).
+#   INIT_DAYS     inits from SEASON_START to this many days later. Default 107 (to 31 Dec).
+#   RULE          indicator rule for the onset. Default icpac-onset (chc-onset is the other alias).
+#   WINDOW        days from the init within which the onset must fall, 7 or 14. Default 7 (GEFS: 7 only).
+#   FIRST, LAST   limit the seasons (years the seasons start in). Default: every season available.
+#   WORK          working files, emptied every run. Default ./work.
+#   CACHE         fetched hindcasts kept between runs, one store per season, model and box. Default ./cache.
+# Event: the season's first onset since SEASON_START falls within WINDOW days of the init.
 # Predictor: each model's share of members whose first onset falls in that window.
-# Inits: 15 Sep - 31 Dec 2016-2018, on dates ECMWF, Cumulus and GEFS all ran.
-# Skill: leave one season out, pooled Brier skill score vs the observed base rate.
+# Skill: leave one season out; the held-out seasons scored together (Brier skill vs the base rate),
+# on the 1.5 deg cells that touch the country.
 set -euo pipefail
 SK=$(cd "$(dirname "$0")/../../../skills" && pwd)
+COUNTRY=${COUNTRY:-Kenya}; MODELS=${MODELS:-ec cu}; SEASON_START=${SEASON_START:-09-15}
+INIT_DAYS=${INIT_DAYS:-107}; RULE=${RULE:-icpac-onset}; WINDOW=${WINDOW:-7}
 W=${WORK:-$(dirname "$0")/work}; rm -rf "$W"; mkdir -p "$W"
 CACHE=${CACHE:-$(dirname "$0")/cache}; mkdir -p "$CACHE"
 sk() { local s=$1; shift; uv run -q "$SK/$s" "$@"; }
-YEARS="2016 2017 2018"
+py() { uv run -q --with xarray --with zarr python -c "$@"; }
+case " $MODELS " in *" ge "*) [ "$WINDOW" = 7 ] || { echo "GEFS runs 35 days: WINDOW must be 7" >&2; exit 2; };; esac
 
-# Hindcasts, from CACHE when the same fetch ran before; otherwise fetched there (to a temporary name,
-# renamed only once the fetch succeeds). ECMWF on its 1.5 deg cells; the 1 deg models over a wider
-# box so every cell is covered.
+# The country's box, as the 1.5 deg ECMWF cell centres that cover it, a box 1.5 deg wider for the
+# 1 deg models, and the cells' edges for CHIRPS.
+read -r EC_BOX WIDE_BOX CH_BOX <<< "$(py "
+import math
+n, w, s, e = map(float, '$(sk resolve-region/scripts/resolve.py "$COUNTRY")'.split('/'))
+c = [math.ceil(n / 1.5) * 1.5, math.floor(w / 1.5) * 1.5, math.floor(s / 1.5) * 1.5, math.ceil(e / 1.5) * 1.5]
+box = lambda pad: '/'.join(f'{v:g}' for v in (c[0] + pad, c[1] - pad, c[2] - pad, c[3] + pad))
+print(box(0), box(1.5), box(0.75))")"
+# Seasons every chosen model has hindcasts in (first and last init of each store).
+YEARS=$(py "
+import datetime as d
+span = {'ec': ('1996-01-04', '2021-12-29'), 'ge': ('1998-12-30', '2019-08-28'), 'cu': ('2016-01-03', '2024-12-31')}
+mm, dd = map(int, '$SEASON_START'.split('-'))
+ok = lambda y, m: str(d.date(y, mm, dd)) <= span[m][1] and str(d.date(y, mm, dd) + d.timedelta($INIT_DAYS)) >= span[m][0]
+print(' '.join(str(y) for y in range(${FIRST:-1996}, ${LAST:-2024} + 1) if all(ok(y, m) for m in '$MODELS'.split())))")
+echo "$COUNTRY: cells $EC_BOX, seasons $YEARS, models $MODELS, $RULE within $WINDOW days from $SEASON_START"
+
+# Hindcasts, from CACHE when the same fetch ran before (renamed in only once it succeeds).
 hindcast() {  # name in WORK, then hindcast-fetch arguments
   local name=$1; shift
   local key; key=$(echo "$*" | sed 's/--//g; s/[ /]/_/g')
-  if [ -d "$CACHE/$key.zarr" ]; then
-    echo "$name: cached $CACHE/$key.zarr"
-  else
+  if [ ! -d "$CACHE/$key.zarr" ]; then
     rm -rf "$CACHE/$key.partial.zarr"
     sk hindcast-fetch/scripts/fetch.py "$@" -o "$CACHE/$key.partial.zarr"
     mv "$CACHE/$key.partial.zarr" "$CACHE/$key.zarr"
   fi
   ln -s "$CACHE/$key.zarr" "$W/$name.zarr"
 }
-hindcast ec --dataset ecmwf --members --start-time 2016-09-15 --end-time 2018-12-31 --bbox 7.5/28.5/-6/48
-hindcast cu --dataset cumulus --start-time 2016-09-15 --end-time 2018-12-31 --bbox 9/27/-8/50
-hindcast ge --dataset gefs --start-time 2016-09-15 --end-time 2018-12-31 --bbox 9/27/-8/50
+dataset() { case $1 in ec) echo "ecmwf --members --bbox $EC_BOX";; cu) echo "cumulus --bbox $WIDE_BOX";; ge) echo "gefs --bbox $WIDE_BOX";; esac; }
 
-# Observed event: CHIRPS on the same cells; --season-start restarts the count every 15 Sep.
-sk chirps-fetch/scripts/fetch.py --start-time 2016-09-15 --end-time 2019-01-31 --bbox 8.25/27.75/-6.75/48.75 -o "$W/chirps.zarr"
-sk coarsen/scripts/coarsen.py -i "$W/chirps.zarr" --reference-grid "$W/ec.zarr" --method conservative -o "$W/chirps15.zarr"
-sk indicator/scripts/indicator.py -i "$W/chirps15.zarr" --rule icpac-onset --first-in 7d --season-start 09-15 -v precip -o "$W/obs.zarr"
-
-# Predictors, per season: the inits all three ran (mme-fit pairs identical init dates), then each
-# model's member share at step 0, on the 1.5 deg cells.
 for y in $YEARS; do
-  dates=$(uv run -q --with xarray --with zarr python -c "
+  read -r start end obs_end <<< "$(py "
+import datetime as d
+s = d.date($y, *map(int, '$SEASON_START'.split('-')))
+print(s, s + d.timedelta($INIT_DAYS), s + d.timedelta($INIT_DAYS + 32))")"
+  for m in $MODELS; do hindcast "${m}_${y}_raw" --dataset $(dataset $m) --start-time $start --end-time $end; done
+  # Inits every chosen model ran this season (mme-fit pairs identical init dates).
+  dates=$(py "
 import xarray as xr
-inits = [set(xr.open_zarr('$W/' + m + '.zarr')['time'].values.astype('datetime64[D]').astype(str)) for m in ('ec', 'cu', 'ge')]
-print(' '.join(f'--value {t}' for t in sorted(set.intersection(*inits)) if '$y-09-15' <= t <= '$y-12-31'))")
-  for m in ec cu ge; do
-    sk select/scripts/select_dim.py -i "$W/$m.zarr" --dim time $dates -o "$W/${m}_$y.zarr"
-    sk indicator/scripts/indicator.py -i "$W/${m}_$y.zarr" --rule icpac-onset --first-in 7d --season-start 09-15 \
+inits = [set(xr.open_zarr('$W/' + m + '_${y}_raw.zarr')['time'].values.astype('datetime64[D]').astype(str)) for m in '$MODELS'.split()]
+print(' '.join(f'--value {t}' for t in sorted(set.intersection(*inits))))")
+  echo "$y: $(echo $dates | wc -w | awk '{print $1 / 2}') shared inits"
+  for m in $MODELS; do
+    sk select/scripts/select_dim.py -i "$W/${m}_${y}_raw.zarr" --dim time $dates -o "$W/${m}_$y.zarr"
+    sk indicator/scripts/indicator.py -i "$W/${m}_$y.zarr" --rule $RULE --first-in ${WINDOW}d --season-start $SEASON_START \
       --probability --time-dim step -v precip -o "$W/${m}_${y}_share.zarr"
-    sk select/scripts/select_dim.py -i "$W/${m}_${y}_share.zarr" --dim step --index 0 -o "$W/p_${m}_$y.zarr"
-    [ $m = ec ] || sk coarsen/scripts/coarsen.py -i "$W/p_${m}_$y.zarr" --reference-grid "$W/ec.zarr" \
-      --method conservative -o "$W/p_${m}_${y}_1p5.zarr"
+    sk select/scripts/select_dim.py -i "$W/${m}_${y}_share.zarr" --dim step --index 0 -o "$W/${m}_${y}_step0.zarr"
+    if [ $m = ec ]; then mv "$W/${m}_${y}_step0.zarr" "$W/p_${m}_$y.zarr"
+    else sk coarsen/scripts/coarsen.py -i "$W/${m}_${y}_step0.zarr" --reference-grid "$W/ec_${y}_raw.zarr" --method conservative -o "$W/p_${m}_$y.zarr"; fi
   done
+  # Observed onset this season: CHIRPS from the season start on the 1.5 deg cells.
+  sk chirps-fetch/scripts/fetch.py --start-time $start --end-time $obs_end --bbox $CH_BOX -o "$W/chirps_$y.zarr"
+  sk coarsen/scripts/coarsen.py -i "$W/chirps_$y.zarr" --reference-grid "$W/ec_${y}_raw.zarr" --method conservative -o "$W/chirps15_$y.zarr"
+  sk indicator/scripts/indicator.py -i "$W/chirps15_$y.zarr" --rule $RULE --first-in ${WINDOW}d -v precip -o "$W/obs_$y.zarr"
 done
-p() { [ $1 = ec ] && echo "$W/p_ec_$2.zarr" || echo "$W/p_${1}_${2}_1p5.zarr"; }   # model, year
+# Score only the cells that touch the country: the obs elsewhere are left out of every fit and score.
+sk concat/scripts/concat.py $(for y in $YEARS; do echo -i "$W/obs_$y.zarr"; done) --dim time -o "$W/obs_box.zarr"
+sk clip-region/scripts/clip.py -i "$W/obs_box.zarr" --region "$COUNTRY" -o "$W/obs.zarr"
 
-# Leave one season out: fit on the other two, blend the held-out one; score all held-out together.
-for set in ec cu ge "ec cu ge"; do
-  names=$(echo "$set" | sed 's/ec/ecmwf/; s/cu/cumulus/; s/ge/gefs/; s/ /,/g')
+# Leave one season out: fit on the others, blend the held-out one; score all held-out seasons together.
+sets="$MODELS"; [ "$(echo $MODELS | wc -w)" -gt 1 ] && sets="$MODELS ${MODELS// /+}"
+for set in $sets; do
+  names=$(echo "${set//+/ }" | sed 's/ec/ecmwf/; s/cu/cumulus/; s/ge/gefs/; s/ /,/g')
   held=()
   for test in $YEARS; do
     train=(); blend=()
-    for m in $set; do
-      sk concat/scripts/concat.py $(for y in $YEARS; do [ $y = $test ] || echo -i "$(p $m $y)"; done) --dim time -o "$W/train_$m.zarr"
-      train+=(--forecast "$W/train_$m.zarr"); blend+=(--forecast "$(p $m $test)")
+    for m in ${set//+/ }; do
+      sk concat/scripts/concat.py $(for y in $YEARS; do [ $y = $test ] || echo -i "$W/p_${m}_$y.zarr"; done) --dim time -o "$W/train_$m.zarr"
+      train+=(--forecast "$W/train_$m.zarr"); blend+=(--forecast "$W/p_${m}_$test.zarr")
     done
     sk mme-fit/scripts/mme_fit.py "${train[@]}" --names "$names" -v probability --obs "$W/obs.zarr" --model logistic -o "$W/w.zarr"
     sk mme-blend/scripts/mme_blend.py "${blend[@]}" --names "$names" -v probability --weights "$W/w.zarr" -o "$W/blend_$test.zarr"

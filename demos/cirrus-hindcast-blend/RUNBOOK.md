@@ -1,36 +1,57 @@
-# Runbook: Cirrus onset blend from the tiled hindcast stores (skills only)
+# Runbook: onset blend from the tiled hindcast stores, any African country (skills only)
 
-This tests the Cirrus method, a logistic regression (`mme-fit`) that turns each model's ensemble members into a calibrated chance that the East African OND rains have started within 7 days. It uses only weather-skills: hindcasts from Sheerwater's tiled stores through `hindcast-fetch`, observations from CHIRPS, and the skill score from `verify --probability`. Shell only loops over seasons and folds, and one line of Python finds the init dates all three hindcasts share.
+This tests the Cirrus / University of Chicago blend, a logistic regression (`mme-fit`) that turns each model's ensemble members into a calibrated chance that the rainy season has started within 7 (or 14) days, for any country. It uses only weather-skills: hindcasts from Sheerwater's tiled stores through `hindcast-fetch`, observations from CHIRPS, the country from `resolve-region` and `clip-region`, and the skill score from `verify --probability`. Shell loops over seasons and folds; short Python lines only do date and box arithmetic and find the init dates the chosen models share.
 
 Never fill missing observations or forecasts: the skills leave a missing sample out.
 
 ## Run
 ```bash
-WORK=/path/to/scratch CACHE=/path/to/cache bash demos/cirrus-hindcast-blend/scripts/run.sh
+COUNTRY=Kenya MODELS="ec cu" bash demos/cirrus-hindcast-blend/scripts/run.sh
 ```
-About 5 minutes the first time and 3 minutes after that, with about 1 GB of working files. `WORK` (default `scripts/work/`) is emptied at the start of every run.
+Settings (environment variables):
 
-`CACHE` (default `scripts/cache/`) keeps the three fetched hindcasts between runs, about 0.9 GB. Each store is named after its exact `hindcast-fetch` arguments (dataset, dates, bbox, members), so changing any of them fetches a new one, and a fetch is renamed into the cache only once it succeeds. The cache never notices when a source store is rewritten (as the Cumulus store was when its negatives were clipped): delete `CACHE` then.
+| Variable | Default | Meaning |
+|---|---|---|
+| `COUNTRY` | `Kenya` | Country name or ISO3 code (`Ghana`, `COD`). |
+| `MODELS` | `ec cu` | Any of `ec` (ECMWF), `cu` (Cumulus), `ge` (GEFS). Each is scored alone, and all together. |
+| `SEASON_START` | `09-15` | `MM-DD` the onset count restarts each year. |
+| `INIT_DAYS` | `107` | Inits from `SEASON_START` to this many days later (107: to 31 Dec). |
+| `RULE` | `icpac-onset` | `indicator` onset rule: `icpac-onset`, `chc-onset`, or a clause string. |
+| `WINDOW` | `7` | Days from the init within which the onset must fall: 7 or 14 (GEFS: 7 only). |
+| `FIRST`, `LAST` | all | Limit the seasons (the years they start in). |
+| `WORK` | `scripts/work/` | Working files, emptied at the start of every run. |
+| `CACHE` | `scripts/cache/` | Fetched hindcasts kept between runs. |
 
-Credentials: ECMWF, GEFS and CHIRPS are public. Cumulus is in the private `gs://sheerwater-datalake/hindcasts/cumulus_precip.zarr` and needs Google Cloud access to it: Application Default Credentials, `GOOGLE_APPLICATION_CREDENTIALS` (a service-account key file) or `NEURAL_GCM_SERVICE_CREDENTIALS` (the key JSON itself). The Gates demo account `gates-demo-reader` reads only `gates-demo/` unless it is also granted `hindcasts/cumulus_`; without that the Cumulus fetch exits 1.
+**Seasons** are the years every chosen model has hindcasts for: ECMWF 1996–2021, GEFS Dec 1998 – Aug 2019, Cumulus 2016–2024.
+
+| `MODELS` | Seasons (Sep start) |
+|---|---|
+| `ec cu` | 2016–2021 (6) |
+| `ec ge` | 1999–2018 (20) |
+| `ec cu ge` | 2016–2018 (3) |
+| `ec` | 1996–2021 (26) |
+
+**Season start and rule** depend on the region's rainfall regime; the defaults are the East African short rains. Starting points to adapt: East African long rains `03-01`; West Africa and the Sahel `03-01` to `05-01` with `chc-onset`; southern Africa `10-01` (the season crosses New Year, which the script handles).
+
+**Time:** Kenya with `ec cu` (6 seasons) took 12 minutes with an empty cache; Ghana 10. Longer runs (`ec ge`, 20 seasons) scale with the number of seasons. A rerun reads the hindcasts from `CACHE`.
+
+**Credentials:** ECMWF, GEFS and CHIRPS are public. Cumulus is in the private `gs://sheerwater-datalake/hindcasts/cumulus_precip.zarr`: Application Default Credentials, `GOOGLE_APPLICATION_CREDENTIALS` (a service-account key file) or `NEURAL_GCM_SERVICE_CREDENTIALS` (the key JSON). The Gates demo account `gates-demo-reader` can read it.
+
+**Cache:** one store per season, model and box, named after its exact `hindcast-fetch` arguments; a fetch is renamed in only once it succeeds. The cache never notices when a source store is rewritten: delete `CACHE` then.
 
 ## What it computes
-- **Event:** the season's first ICPAC onset (`icpac-onset`: a 3-day total ≥ 20 mm with no 7-day dry spell under 1 mm a day in the next 21 days) on or after 15 Sep falls within 7 days of the init: 1 if it does, 0 if not yet, NaN if the onset already happened. `indicator --first-in 7d --season-start 09-15` on CHIRPS 15 Sep 2016 – 31 Jan 2019, put on the 1.5° cells with `coarsen --method conservative`.
-- **Predictors:** each model's share of members whose first onset since 15 Sep falls within 7 days of the init: `indicator --rule icpac-onset --first-in 7d --season-start 09-15 --probability --time-dim step`, then `select --dim step --index 0`. Cumulus and GEFS (1°) are then put on the 1.5° cells with `coarsen --method conservative`.
-- **Hindcasts:** `hindcast-fetch` reads `ecmwf_ifs_precip.zarr` (10 perturbed members, 1.5°, newest run per date), `gefs_precip.zarr` (11 members, 1°, Wednesdays) and `cumulus_precip.zarr` (run `gratis-czajkowski`, 30 members, 1°, negatives set to 0).
-- **Inits:** 15 Sep – 31 Dec of 2016, 2017 and 2018 (the only autumns all three share: GEFS ends in August 2019), on dates all three ran: 7, 8 and 6 inits. `mme-fit` pairs forecasts on identical init dates.
-- **Model:** `mme-fit --model logistic`, unpenalized, pooled over cells and inits. Sets: ECMWF, Cumulus, GEFS, and all three together.
-- **Skill:** leave one season out (fit on two, `mme-blend` the third), the three held-out seasons scored together with `verify --metric brier --probability`. The BSS reference is the observed base rate. Every set has the same 972 cell-inits.
-- **Grid:** the 140 ECMWF 1.5° cells 6°S – 7.5°N, 28.5°E – 48°E.
+- **Cells:** the 1.5° ECMWF cells covering the country's box (`resolve-region`). The 1° models are fetched over a box 1.5° wider and put on those cells with `coarsen --method conservative`. Only cells that touch the country (`clip-region --region`) count in the fits and scores.
+- **Event:** the season's first onset (`RULE`) on or after `SEASON_START` falls within `WINDOW` days of the init: 1 if it does, 0 if not yet, NaN if the onset already happened. `indicator --first-in` on each season of CHIRPS from `SEASON_START`, on the 1.5° cells.
+- **Predictors:** each model's share of members whose first onset since `SEASON_START` falls within the window: `indicator --first-in --season-start --probability --time-dim step`, then `select --dim step --index 0`.
+- **Inits:** per season, the dates every chosen model ran (`mme-fit` pairs identical init dates). ECMWF runs almost daily, Cumulus every second day, GEFS on Wednesdays. The ECMWF store has fewer dates in its last years (2020, 2021).
+- **Model:** `mme-fit --model logistic`, unpenalized, pooled over cells and inits.
+- **Skill:** leave one season out (fit on the others, `mme-blend` the held-out one), all held-out seasons scored together with `verify --metric brier --probability`. The BSS reference is the observed base rate, not a day-of-season climatology.
 
-## Results (23 Oct 2026)
-Brier skill score within 7 days (base rate 5%):
+## Results (23 Oct 2026, `MODELS="ec cu"`, 2016–2021, within 7 days)
 
-| Predictors | Brier | BSS |
-|---|---|---|
-| ECMWF | 0.0413 | +0.185 |
-| Cumulus | 0.0294 | **+0.420** |
-| GEFS | 0.0457 | +0.098 |
-| ECMWF + Cumulus + GEFS | 0.0307 | +0.394 |
+| Country, season, rule | Base rate | ECMWF | Cumulus | ECMWF + Cumulus |
+|---|---|---|---|---|
+| Kenya, from 15 Sep, `icpac-onset` | 7% | +0.139 | +0.316 | **+0.326** |
+| Ghana, from 1 Mar, `chc-onset` | 25% | +0.095 | +0.287 | **+0.289** |
 
-Cumulus carries the skill; blending in ECMWF and GEFS does not improve on it. Three seasons and 21 inits only, so differences of a few hundredths are within the noise.
+Kenya with all three models over 2016–2018 only: ECMWF +0.185, Cumulus +0.420, GEFS +0.098, all three +0.394 (base rate 5%). Cumulus carries most of the skill; over six seasons, adding ECMWF helps a little.
