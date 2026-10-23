@@ -18,7 +18,7 @@ contributors never edit either by hand.
 
 ## PR workflow
 
-1. Branch off `main` or `dev`; either is fine.
+1. Branch off `dev`, which holds the most recent work.
 2. Open a PR into `dev`. `dev` reaches `main` through one dev→main PR.
    Most changes work with the released `weather-skills-core` and need no new
    pin. Only a change that needs unreleased core may pin `weather-skills-core`
