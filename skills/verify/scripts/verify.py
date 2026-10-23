@@ -28,6 +28,7 @@ _METRICS = (
     "mae",
     "brier",
     "crps",
+    "crps_fair",
     "rps",
     "rmse",
     "spread",
@@ -42,10 +43,11 @@ _VAR = {
     "mae": "mae",
     "brier": "brier",
     "crps": "crps",
+    "crps_fair": "crps_fair",
     "rps": "rps",
 }
 # Scored from every ensemble member; the others score the ensemble mean.
-_ENSEMBLE_METRICS = ("brier", "crps", "spread", "reliability", "roc")
+_ENSEMBLE_METRICS = ("brier", "crps", "crps_fair", "spread", "reliability", "roc")
 # Pooled over time (one value per cell) or over every cell and time (a curve).
 _POOLED_METRICS = ("rmse", "spread", "contingency", "corr", "reliability", "roc")
 _EVENT_METRICS = ("hits", "brier", "contingency", "reliability", "roc")
@@ -275,7 +277,7 @@ def _rps(fc, truth, fc_name, obs_name):
     "--metric",
     choices=list(_METRICS),
     default="hits",
-    help="Verification metric. Per time: hits, bias, mae, brier, crps, rps. Over time per "
+    help="Verification metric. Per time: hits, bias, mae, brier, crps, crps_fair, rps. Over time per "
     "cell: rmse, spread, contingency, corr. Curves: reliability, roc.",
 )
 @weather_skill.argument(
@@ -397,15 +399,19 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
         prob = fc_event.mean("number") if "number" in fc.dims else fc_event
         obs_event = truth >= threshold
         field = (prob.astype(float) - obs_event.astype(float)) ** 2
-    elif metric == "crps" and "number" in fc.dims:
+    elif metric == "crps_fair" and fc.sizes.get("number", 0) < 2:
+        raise UsageError("--metric crps_fair needs an ensemble forecast with at least 2 members.")
+    elif metric in ("crps", "crps_fair") and "number" in fc.dims:
         # CRPS = E|X - y| - E|X - X'| / 2, with E|X - X'| from the sorted members.
+        # The fair score averages over the m(m-1) distinct member pairs, not all m^2.
         m = fc.sizes["number"]
         ranked = xr.apply_ufunc(
             np.sort, fc, input_core_dims=[["number"]], output_core_dims=[["number"]],
             kwargs={"axis": -1},
         )  # fmt: skip
         rank_weight = xr.DataArray(2.0 * np.arange(1, m + 1) - m - 1, dims="number")
-        spread = 2.0 * (ranked * rank_weight).sum("number") / m**2
+        pairs = m * (m - 1) if metric == "crps_fair" else m**2
+        spread = 2.0 * (ranked * rank_weight).sum("number") / pairs
         field = np.abs(fc - truth).mean("number") - 0.5 * spread
     else:
         # mae, and crps of a single forecast, which is its absolute error.
@@ -437,6 +443,10 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
     elif metric == "crps":
         attrs.update(
             long_name="Continuous ranked probability score", units=error.attrs.get("units")
+        )
+    elif metric == "crps_fair":
+        attrs.update(
+            long_name="Fair continuous ranked probability score", units=error.attrs.get("units")
         )
     else:
         attrs.update(long_name="Mean absolute error", units=error.attrs.get("units"))
@@ -479,6 +489,8 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
             summary = f"Brier {value:.3g}  {skill} vs base rate {rate:.0%}  ({how})"
         elif metric == "crps":
             summary = f"CRPS {value:.2g}{u_suffix}  ({how})"
+        elif metric == "crps_fair":
+            summary = f"fair CRPS {value:.2g}{u_suffix}  ({how})"
         else:
             summary = f"MAE {value:.2g}{u_suffix}  ({how})"
     print(f"verify  {summary}")

@@ -36,6 +36,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr [
 | `mae` | `mae` per time | ensemble mean | MAE |
 | `brier` | `brier` per time | member fraction ≥ threshold | Brier and BSS vs the observed base rate |
 | `crps` | `crps` per time | every member | CRPS |
+| `crps_fair` | `crps_fair` per time | every member | fair CRPS |
 | `rps` | `rps` per time | quintile probabilities | RPS and RPSS vs climatology |
 | `rmse` | `rmse` per cell | ensemble mean | RMSE |
 | `spread` | `spread_skill` per cell | every member | spread / skill ratio |
@@ -47,9 +48,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr [
 ### Output
 - Per-time metrics keep the input dims (time, grid or stations), float32. Per-cell metrics collapse `time`. Curves pool every cell and time, cos-latitude weighted (equal weights on stations).
 - `event_hit` is `1` hit (both ≥ threshold), `-1` disagree (only one is), `0` both below, with CF `flag_values` / `flag_meanings`.
-- `bias`, `mae`, `crps` and `rmse` are in the forecast's units (a temperature error is `delta_degC`); the others are unitless.
+- `bias`, `mae`, `crps`, `crps_fair` and `rmse` are in the forecast's units (a temperature error is `delta_degC`); the others are unitless.
 - `brier` is (p − o)², where p is the fraction of members ≥ `--threshold` (0 or 1 without members) and o is 1 when the obs are ≥ it. BSS compares with always forecasting the observed base rate.
 - `crps` is E|X − y| − ½E|X − X′| over the members; for a single forecast it equals the absolute error. Compare two forecasts' CRPS for a CRPSS.
+- `crps_fair` averages |X − X′| over the m(m−1) distinct member pairs instead of all m², an unbiased estimate of the score an infinitely large ensemble would get (Ferro 2014), so ensembles of different sizes compare fairly. It needs at least 2 members.
 - `rps` is the squared error between the forecast and observed quintile CDFs, summed over the four inner edges. RPSS compares with climatology (0.2 for each quintile).
 - `spread_skill` is √(mean ensemble variance × (m+1)/m) / RMSE of the ensemble mean, for m members: 1 is calibrated, below 1 overconfident, above 1 underconfident.
 - `contingency` counts hits, false alarms and misses over time: POD = hits / observed events, FAR = false alarms / forecast events, frequency bias = forecast events / observed events, ETS = equitable threat score (0 no skill, 1 perfect).

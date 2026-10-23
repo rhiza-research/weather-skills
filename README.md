@@ -86,7 +86,7 @@ credentialed or source-specific fetcher only when it does not.
 | `climatology` | Daily climatology (mean, std, count per calendar day across years) computed from a multi-year daily Zarr, optional `--window` day pooling, laid onto a `--start-time`/`--end-time` window in `clim-fetch`'s layout — for a known base period or anything `clim-fetch` doesn't mirror |
 | `standardize-anomaly` | Standardized anomaly aka z-score: `(field − clim_avg) / clim_std` against a climatology (e.g. `clim-fetch`) — dimensionless output, errors on units mismatch. For a plain physical-unit anomaly, use `difference` instead. |
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
-| `verify` | Forecast vs obs verification: per time (`hits`, `bias`, `mae`, `brier`, `crps`, quintile `rps`), per cell over time (`rmse`, `spread`, `contingency` POD/FAR/bias/ETS, `corr`), or `reliability` / `roc` curves. |
+| `verify` | Forecast vs obs verification: per time (`hits`, `bias`, `mae`, `brier`, `crps`, `crps_fair`, quintile `rps`), per cell over time (`rmse`, `spread`, `contingency` POD/FAR/bias/ETS, `corr`), or `reliability` / `roc` curves. |
 | `pbc-correct` | Probabilistic bias correction (PBC) of an ensemble's quintile probabilities: Debias++, Persistence++ and Climatology++ trained on hindcasts and obs; `--components raw` puts a raw ensemble on the same quintiles. |
 | `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
 

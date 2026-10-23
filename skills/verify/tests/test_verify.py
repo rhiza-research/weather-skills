@@ -432,6 +432,34 @@ def test_crps_two_members(tmp_path, verify_fn):
     np.testing.assert_allclose(ds["crps"].isel(time=0).values, [[0.5, 0.0]])
 
 
+def test_crps_fair_matches_the_pairwise_definition(tmp_path, verify_fn):
+    # The fair score averages |X - X'| over the m(m-1) distinct pairs, not all m^2.
+    rng = np.random.default_rng(1)
+    members = rng.gamma(2.0, 2.0, (11, 1, 2))
+    obs = np.array([[3.0, 0.5]])
+    ds = _verify(tmp_path, verify_fn, _members(members), _day_obs(obs), "--metric", "crps_fair")
+
+    m = members.shape[0]
+    pair_sum = np.abs(members[:, None] - members[None]).sum(axis=(0, 1))
+    expected = np.abs(members - obs).mean(axis=0) - 0.5 * pair_sum / (m * (m - 1))
+    np.testing.assert_allclose(ds["crps_fair"].isel(time=0).values, expected, rtol=1e-5)
+    assert ds["crps_fair"].attrs["units"] == "mm day-1"
+    assert ds.attrs["verify_score_summary"].startswith("fair CRPS ")
+
+
+def test_crps_fair_two_members(tmp_path, verify_fn):
+    # Members 0 and 2 against 1: E|X - y| = 1, |X - X'| over the 2 distinct pairs = 2 -> 0.
+    fc = _members([[[0.0, 0.0]], [[2.0, 0.0]]])
+    ds = _verify(tmp_path, verify_fn, fc, _day_obs([[1.0, 0.0]]), "--metric", "crps_fair")
+    np.testing.assert_allclose(ds["crps_fair"].isel(time=0).values, [[0.0, 0.0]], atol=1e-6)
+
+
+def test_crps_fair_needs_two_members(tmp_path, verify_fn):
+    fc = make_gridded(n_time=1, lats=(1.0,), lons=(10.0, 11.0), fill=2.0)
+    with pytest.raises(SystemExit):
+        _verify(tmp_path, verify_fn, fc, _day_obs([[5.0, 0.0]]), "--metric", "crps_fair")
+
+
 def test_crps_of_a_single_forecast_is_its_absolute_error(tmp_path, verify_fn):
     fc = make_gridded(n_time=1, lats=(1.0,), lons=(10.0, 11.0), fill=2.0)
     ds = _verify(tmp_path, verify_fn, fc, _day_obs([[5.0, 0.0]]), "--metric", "crps")
