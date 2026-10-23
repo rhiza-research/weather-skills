@@ -263,3 +263,19 @@ def test_missing_credentials_exit(mod, monkeypatch, tmp_path):
     with pytest.raises(SystemExit) as exc:
         run_skill(mod.fetch, "--probe-latest")
     assert exc.value.code == 2
+
+
+def test_flag_for_another_product_errors(mod, monkeypatch, tmp_path, capsys):
+    _fake_api(monkeypatch, mod, tmp_path, lambda p: {})
+    with pytest.raises(SystemExit) as exc:
+        run_skill(mod.fetch, "--point", "-1,36", "--period", "hourly", "-o", str(tmp_path / "x"))
+    assert exc.value.code == 2
+    assert "--product grid does not take --point, --period" in capsys.readouterr().err
+
+
+def test_point_product_needs_point(mod, monkeypatch, tmp_path, capsys):
+    _fake_api(monkeypatch, mod, tmp_path, lambda p: {})
+    with pytest.raises(SystemExit) as exc:
+        run_skill(mod.fetch, "--product", "sounding", "-o", str(tmp_path / "x"))
+    assert exc.value.code == 2
+    assert "needs --point" in capsys.readouterr().err

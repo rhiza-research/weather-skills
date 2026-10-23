@@ -27,7 +27,7 @@ export TAHMO_API_USERNAME=
 export TAHMO_API_PASSWORD=
 
 # Other credentialed skills list their variables in their SKILL.md
-# `compatibility:` line (windborne-*, 3dpaws-fetch, cams-fetch,
+# `compatibility:` line (windborne-fetch, 3dpaws-fetch, cams-fetch,
 # meteosat-fetch, weathernext-fetch, openaq-fetch, ...).
 
 

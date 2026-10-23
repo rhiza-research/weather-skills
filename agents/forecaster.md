@@ -130,7 +130,7 @@ Required names (from each skill's `metadata.openclaw.requires.env`):
 - `openaq-fetch` — `OPENAQ_API_KEY`
 - `cams-fetch` — `ADS_API_KEY` (not needed for `--probe-latest`)
 - `meteosat-fetch` — `EUMETSAT_CONSUMER_KEY`, `EUMETSAT_CONSUMER_SECRET`
-- `windborne-*` — `WB_CLIENT_ID`, `WB_API_KEY`
+- `windborne-fetch` — `WB_CLIENT_ID`, `WB_API_KEY`
 - `3dpaws-fetch` — `CHORDS_EMAIL`, `CHORDS_API_KEY`
 - `weathernext-fetch` — `GOOGLE_APPLICATION_CREDENTIALS` (plus `GOOGLE_CLOUD_PROJECT` for the requester-pays WeatherNext 3 ensemble)
 - `cumulus-fetch` — `AZURE_STORAGE_SAS_TOKEN`
@@ -138,7 +138,7 @@ Required names (from each skill's `metadata.openclaw.requires.env`):
 
 `--probe-latest` still needs credentials when the probe talks to a keyed
 API (`openaq-fetch`, `tahmo-fetch`, `imerg-fetch`, `smap-fetch`, `meteosat-fetch`,
-`3dpaws-fetch`, `windborne-*`). ECMWF
+`3dpaws-fetch`, `windborne-fetch`). ECMWF
 `--probe-latest` is calendar math only and does not. Never read, print, or echo the
 values, and never open a `.env` or credential file. If a named secret is not
 available to inject, report that to the user instead of calling the skill.

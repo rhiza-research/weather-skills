@@ -1,4 +1,4 @@
-"""Correctness tests for windborne-degree-days-fetch (mocked WindBorne API)."""
+"""Correctness tests for windborne-fetch --product degree-days (mocked WindBorne API)."""
 
 import numpy as np
 import pytest
@@ -7,7 +7,7 @@ from conftest import load_skill, run_skill
 
 @pytest.fixture(scope="module")
 def mod():
-    return load_skill("windborne-degree-days-fetch", "fetch")
+    return load_skill("windborne-fetch", "fetch")
 
 
 def _fake_api(monkeypatch, payloads):
@@ -60,7 +60,7 @@ def test_states_by_day_drops_empty_days(mod, monkeypatch, tmp_path):
 
     _fake_api(monkeypatch, payloads)
     out = tmp_path / "dd.zarr"
-    run_skill(mod.fetch, "-o", str(out))
+    run_skill(mod.fetch, "--product", "degree-days", "-o", str(out))
     ds = xr.open_zarr(out)
     assert list(ds["region"].values) == ["Iowa", "Texas"]
     assert ds.sizes["time"] == 2
@@ -73,7 +73,7 @@ def test_states_by_day_drops_empty_days(mod, monkeypatch, tmp_path):
 
 def test_probe_latest(mod, monkeypatch, capsys):
     _fake_api(monkeypatch, {"initialization_times": {"available": ["2026-10-19T20:00:00Z"]}})
-    run_skill(mod.fetch, "--probe-latest")
+    run_skill(mod.fetch, "--product", "degree-days", "--probe-latest")
     captured = capsys.readouterr()
     assert captured.out.strip() == "2026-10-19"
     assert "--date 2026-10-19 --run 20" in captured.err

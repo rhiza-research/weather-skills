@@ -1,4 +1,4 @@
-"""Correctness tests for windborne-clim-fetch (mocked WindBorne API)."""
+"""Correctness tests for windborne-fetch --product clim (mocked WindBorne API)."""
 
 import datetime as dt
 
@@ -11,7 +11,7 @@ START = dt.datetime(2026, 7, 15)
 
 @pytest.fixture(scope="module")
 def mod():
-    return load_skill("windborne-clim-fetch", "fetch")
+    return load_skill("windborne-fetch", "fetch")
 
 
 def test_hourly_normals_with_rate_precip(mod, monkeypatch, tmp_path):
@@ -54,6 +54,8 @@ def test_hourly_normals_with_rate_precip(mod, monkeypatch, tmp_path):
     out = tmp_path / "clim.zarr"
     run_skill(
         mod.fetch,
+        "--product",
+        "clim",
         "--point",
         "-1.29,36.82",
         "--start-time",
@@ -85,5 +87,5 @@ def test_hourly_normals_with_rate_precip(mod, monkeypatch, tmp_path):
 def test_probe_latest_prints_none(mod, monkeypatch, capsys):
     monkeypatch.delenv("WB_CLIENT_ID", raising=False)
     monkeypatch.delenv("WB_API_KEY", raising=False)
-    run_skill(mod.fetch, "--probe-latest")
+    run_skill(mod.fetch, "--product", "clim", "--probe-latest")
     assert capsys.readouterr().out.strip() == "none"
