@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 #   "pandas",
 # ]
 # ///
@@ -11,6 +11,7 @@ import re
 import sys
 
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.cf import measured_variables
 from weather_skills_core.units import (
     AGGREGATION_COVERAGE_COORD,
     AGGREGATION_PERIOD_ATTR,
@@ -19,6 +20,7 @@ from weather_skills_core.units import (
     assert_nonoverlapping_intervals,
     classify_variable,
     coverage_values,
+    coverage_variable,
     filter_min_coverage,
     format_cell_methods,
     looks_like_rate_display_name,
@@ -73,8 +75,9 @@ def _sum_cell_methods_dim(da, dim: str | None) -> str:
     type=float,
     default=1.0,
     help=(
-        "Drop intervals whose aggregation_coverage is below this (0–1). Default 1.0; "
-        "lower only when a task explicitly wants estimated totals from incomplete bins."
+        "Blank each cell whose <var>_coverage is below this (0-1), and drop intervals with "
+        "no such cell. Default 1.0; lower only when a task explicitly wants estimated "
+        "totals from incomplete bins."
     ),
 )
 @weather_skill.argument("--time-dim")
@@ -85,7 +88,7 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
         name: classify_variable(
             name, units=variable_units(da), standard_name=da.attrs.get("standard_name")
         )
-        for name, da in ds.data_vars.items()
+        for name, da in ds[measured_variables(ds)].data_vars.items()
     }
     if variable is None:
         names = [name for name, kind in kinds.items() if kind == "precip"]
@@ -125,6 +128,7 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
                 f"{np.array2string(np.asarray(cov.values), precision=3)}, below "
                 f"--min-coverage {min_coverage}. {recovery}"
             )
+        ds = filter_min_coverage(ds, None, min_coverage)
     else:
         cov = coverage_values(ds, dim)
         if cov.size == ds.sizes[dim]:
@@ -180,19 +184,27 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
         # Keep aggregation_period so plotters can crop the nested precip palette.
         out[name] = plain
         out[name].attrs = attrs
-    if AGGREGATION_COVERAGE_COORD in out.coords:
+    # Each converted cell kept below full coverage is an estimate.
+    partial = 0
+    for name in names:
+        cov = coverage_variable(ds, name)
+        if cov is not None:
+            partial += int((out[name].notnull() & (cov < 1 - 1e-12)).sum())
+    if AGGREGATION_COVERAGE_COORD in out.coords and not partial:
         partial = int((out[AGGREGATION_COVERAGE_COORD] < 1).sum())
-        if partial == 0:
-            out = out.drop_vars(AGGREGATION_COVERAGE_COORD)
-        else:
-            # Kept so the output records which bins are estimates.
-            print(
-                f"WARNING: {partial} incomplete bin(s) converted (--min-coverage "
-                f"{min_coverage}); their missing samples are filled with the bin's mean "
-                f"rate, so those totals are estimates, not observed totals. See "
-                f"{AGGREGATION_COVERAGE_COORD!r} in the output.",
-                file=sys.stderr,
-            )
+    if partial == 0:
+        covs = [coverage_variable(ds, name) for name in names]
+        out = out.drop_vars([c.name for c in covs if c is not None])
+        out = out.drop_vars(AGGREGATION_COVERAGE_COORD, errors="ignore")
+    else:
+        # Kept so the output records which cells are estimates.
+        print(
+            f"WARNING: {partial} incomplete cell value(s) converted (--min-coverage "
+            f"{min_coverage}); their missing samples are filled with the mean rate, so "
+            "those totals are estimates, not observed totals. See <var>_coverage in the "
+            "output.",
+            file=sys.stderr,
+        )
     return out
 
 

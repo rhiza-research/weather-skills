@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 #   "cftime>=1.6",
 # ]
 # ///
@@ -9,6 +9,7 @@
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import DIMS, has_dim
+from weather_skills_core.units import COVERAGE_SUFFIX
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
@@ -50,6 +51,11 @@ def edit_coords(ds, swap_dims, rename, **kwargs):
             f"--swap-dims: {not_coords} are not coordinates; to rename a dim use --rename"
         )
 
+    # A renamed variable keeps its coverage: <old>_coverage follows as <new>_coverage.
+    for old, new in list(renames.items()):
+        cov = f"{old}{COVERAGE_SUFFIX}"
+        if old in ds.data_vars and cov in str(ds[old].attrs.get("ancillary_variables", "")).split():
+            renames.setdefault(cov, f"{new}{COVERAGE_SUFFIX}")
     before = {d for d in DIMS if has_dim(ds, d)}
     try:
         ds = ds.swap_dims(swaps)
@@ -59,6 +65,10 @@ def edit_coords(ds, swap_dims, rename, **kwargs):
         raise UsageError(str(exc)) from None
     if dupes:
         raise UsageError(f"--swap-dims: {dupes} have duplicate values and cannot index a dim")
+    for da in ds.data_vars.values():
+        if "ancillary_variables" in da.attrs:
+            listed = str(da.attrs["ancillary_variables"]).split()
+            da.attrs["ancillary_variables"] = " ".join(renames.get(a, a) for a in listed)
 
     lost = sorted(d for d in before if not has_dim(ds, d))
     if lost:

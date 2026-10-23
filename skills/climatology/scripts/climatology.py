@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 #   "numpy",
 #   "pandas",
 #   "xarray",
@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
-from weather_skills_core.cf import stamp_cf_attrs
+from weather_skills_core.cf import measured_variables, stamp_cf_attrs
 from weather_skills_core.standard_dataset import detect_time_dim
 from weather_skills_core.units import (
     AGGREGATION_PERIOD_ATTR,
@@ -76,7 +76,7 @@ def climatology(ds, start_time, end_time, variable, window, **kwargs):
     if len(years) < 2:
         raise UsageError(f"input spans only {years}; a climatology needs at least two years")
 
-    names = variable or [n for n in ds.data_vars if time_dim in ds[n].dims]
+    names = variable or [n for n in measured_variables(ds) if time_dim in ds[n].dims]
     for name in names:
         if name not in ds.data_vars or time_dim not in ds[name].dims:
             raise UsageError(f"--variable {name!r} is not a data variable along {time_dim!r}")

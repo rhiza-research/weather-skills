@@ -22,7 +22,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/difference.py -i A.zarr -i B.zarr -o OUT.zarr
 ### Arguments
 - `--input`, `-i` — pass exactly twice: first A (the field), then B (what is subtracted).
 - `--output`, `-o` — output Zarr, replaced if it exists. Do not point it at an input.
-- `--variable`, `-v` — difference only these variables; each must be in both inputs. Repeatable. Default: every data variable the inputs share.
+- `--variable`, `-v` — difference only these variables; each must be in both inputs. Repeatable. Default: every data variable the inputs share, except coverage variables.
 
 ### Output
 - One variable per differenced name, holding A − B on the aligned dims. Variables not differenced are dropped.
@@ -30,6 +30,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/difference.py -i A.zarr -i B.zarr -o OUT.zarr
 - `long_name` gains ` difference`: `Sea Surface Temperature difference`, also when B is a climatology. To call it an anomaly, set that in the figure's colorbar title. `standard_name` is kept.
 - B is converted to A's units before subtracting (°C minus K works). A temperature difference is written in `delta_degC`, the unit of a temperature change (1 delta_degC = 1 K).
 - Boolean and unsigned-integer inputs become signed integers, so negative results stay negative.
+- A per-cell `<var>_coverage` on either input is kept: the smaller of the two where both have one.
 
 ### Notes
 - Shared dims keep only labels present in both inputs (an inner join). Lat/lon are rounded to 5 decimals on open, but offset grids (CHIRPS 0.05° centres vs a 0.1° grid) share few labels: put both on one exact grid first. No overlap along a dim exits 2.

@@ -132,3 +132,11 @@ def test_warns_without_units_or_standard_name(tmp_path, deaccumulate, capsys):
 
     assert "no units or standard_name" in capsys.readouterr().err
     np.testing.assert_allclose(xr.open_zarr(out)["foo"].values.ravel(), [2.0, 3.0])
+
+
+def test_default_variable_skips_its_coverage(tmp_path, deaccumulate):
+    from conftest import with_coverage
+
+    ds = make_forecast(n_step=3)
+    src = write_zarr(with_coverage(ds, "tp"), tmp_path / "in.zarr")
+    run_skill(deaccumulate, "-i", str(src), "-o", str(tmp_path / "out.zarr"))

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 # ]
 # ///
 """Find the local highs or lows of a gridded field and write them as station-style points."""
@@ -16,6 +16,7 @@ import sys
 import numpy as np
 import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.cf import measured_variables
 from weather_skills_core.standard_dataset import detect_spatial_dims
 from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset
@@ -71,9 +72,9 @@ def local_extrema(ds, kind, radius, variable, **kwargs):
     if not np.isfinite(radius) or radius <= 0:
         raise UsageError("--radius must be a positive number of degrees")
     if variable is None:
-        if len(ds.data_vars) != 1:
-            raise UsageError(f"pass --variable; the input has {sorted(ds.data_vars)}")
-        variable = next(iter(ds.data_vars))
+        if len(measured_variables(ds)) != 1:
+            raise UsageError(f"pass --variable; the input has {sorted(measured_variables(ds))}")
+        variable = measured_variables(ds)[0]
     if variable not in ds.data_vars:
         raise UsageError(f"--variable {variable!r} not in the input; have {sorted(ds.data_vars)}")
     lat_dim, lon_dim = detect_spatial_dims(ds)

@@ -25,7 +25,7 @@ Pass `--dim`, `--by`, or both:
 - `--by admin_1` — one value per label: the dims `admin_1` lies on (latitude, longitude) become one `admin_1` dim.
 - `--dim time --by admin_1` — both: one value per county over all times.
 - Several `--by` on the same dims give each label pair (county × zone); on different dims, each combination (county × season).
-- Add `--lat-weighted` (mean only) to weight by area; add `--min-coverage` to a `--by` time label to set how complete a group must be.
+- Add `--lat-weighted` (mean only) to weight by area; `--min-coverage` sets how complete a `--by` time group must be.
 
 ### Methods
 Every method skips NaN.
@@ -48,12 +48,12 @@ Every method skips NaN.
 
 ### Output
 - Collapsed dims are removed; each `--by` label becomes a dim holding each label once. The `""` label is left out; a label pair with no cells is NaN.
-- Variables not selected, or lacking a grouped dim, pass through unchanged. Other label coords on the grouped dims are dropped.
-- Units are kept, except `std` of an offset unit (above).
+- Variables not selected, or lacking a grouped dim, pass through unchanged. Grouped dims' other label coords and a reduced variable's `<var>_coverage` are dropped.
+- Units are kept, except `std` of an offset unit.
 - `sum` with `--min-coverage` below 1 also writes `<var>_coverage` (0–1, the least-covered cell used); stderr warns that those sums are partial-data estimates.
 
 ### Notes
-- Keep `--min-coverage 1.0` unless a task explicitly accepts estimates. Spatial labels have no coverage check; other labels along time are refused.
+- Keep `--min-coverage 1.0` unless a task accepts estimates. Spatial labels have no coverage check; other time labels are refused.
 
 ### Example
 ```bash
@@ -67,5 +67,5 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i chirps_kenya_daily_mm_lab
 Writes each county's total rainfall for each complete season of each year.
 
 ## Details
-- Coverage is per input station or grid cell: its steps with data over the steps the group's full calendar period holds at the data's step (MAM of daily data: 92). An input `aggregation_coverage` counts as that fraction of a step. A season cut by the record's start or end is incomplete. Cells below `--min-coverage` are left out before cells are pooled, so a regional value uses complete cells only (NaN if none); stderr counts them. Missing steps are never filled.
+- Coverage is per input station or grid cell: its steps with data over the steps the group's full calendar period holds at the data's step (MAM of daily data: 92). An input `<var>_coverage` (or `aggregation_coverage`) counts as that fraction of a step at that cell. A season cut by the record's start or end is incomplete. Cells below `--min-coverage` are left out before cells are pooled, so a regional value uses complete cells only (NaN if none); stderr counts them. Missing steps are never filled.
 - The statistic is appended to CF `cell_methods` (`number: standard_deviation`, `latitude: longitude: mean (grouped by admin_1)`). `std` and `sum` also set `long_name` (`Standard deviation of Total precipitation across number`) and drop `GRIB_name`, `short_name`, and `comment`; `standard_name` stays.

@@ -550,3 +550,37 @@ def test_quantile_errors(tmp_path, summarize_dim, capsys, args, message):
             *args,
         )
     assert message in capsys.readouterr().err
+
+
+def test_weekly_coverage_counts_toward_a_season_and_is_dropped(tmp_path, summarize_dim):
+    """MAM summed from weekly totals: a station's own weekly coverage decides completeness."""
+    import numpy as np
+    from conftest import with_coverage
+
+    ds = make_point_obs(n_time=92, start="2020-03-01", fill=1.0)
+    ds["precip"].attrs.update(units="mm", cell_methods="time: sum")
+    cov = np.ones(ds["precip"].shape)
+    cov[1, 10] = 0.5
+    ds = with_coverage(ds, "precip", cov)
+    ds = ds.assign_coords(
+        year=("time", np.full(92, 2020)), month_group=("time", np.full(92, "MAM"))
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month_group",
+        "--method",
+        "sum",
+    )
+    res = xr.open_zarr(out, consolidated=True)
+    assert res["precip"].sel(point_id="S0").item() == 92.0
+    assert np.isnan(res["precip"].sel(point_id="S1").item())
+    assert "precip_coverage" not in res

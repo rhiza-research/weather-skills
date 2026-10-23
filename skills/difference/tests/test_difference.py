@@ -156,3 +156,26 @@ def test_difference_no_shared_variable_names_the_rename(tmp_path, difference, ca
         _run(tmp_path, difference, a, b)
     assert exc.value.code == 2
     assert "edit-coords --rename OLD=NEW" in capsys.readouterr().err
+
+
+def test_coverage_is_the_smaller_of_both_inputs(tmp_path, difference):
+    import numpy as np
+    from conftest import with_coverage
+
+    a = with_coverage(make_gridded(fill=3.0), "precip", np.full((2, 3, 4), 0.5))
+    b = with_coverage(make_gridded(fill=1.0), "precip", np.full((2, 3, 4), 0.25))
+    out = tmp_path / "d.zarr"
+    run_skill(
+        difference,
+        "-i",
+        str(write_zarr(a, tmp_path / "a.zarr")),
+        "-i",
+        str(write_zarr(b, tmp_path / "b.zarr")),
+        "-o",
+        str(out),
+    )
+    ds = xr.open_zarr(out, consolidated=True)
+    assert list(ds.data_vars) == ["precip", "precip_coverage"]
+    assert float(ds["precip"].max()) == 2.0
+    assert float(ds["precip_coverage"].max()) == 0.25
+    assert ds["precip"].attrs["ancillary_variables"] == "precip_coverage"
