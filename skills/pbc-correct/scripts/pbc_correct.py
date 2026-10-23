@@ -97,7 +97,8 @@ def _doy_distance(dates, target):
     "--weights",
     choices=["equal", "skill"],
     default="equal",
-    help="Blend components equally, or by each one's past RPSS on the training hindcasts.",
+    help="Blend components equally, or with the weights that minimise the blend's past RPS "
+    "on the training hindcasts.",
 )
 def pbc_correct(
     forecast,
@@ -310,26 +311,46 @@ def pbc_correct(
     past = {}  # hindcast index -> its components, for --weights skill
 
     def weights_for(train, y_h):
-        """Blend weights from each component's past RPSS on the training hindcasts.
+        """Blend weights that minimise the blend's RPS on the training hindcasts.
 
-        Each training hindcast is corrected from its own past, so the score is out of
-        sample. Weight = max(RPSS, 0); equal weights when no component beats climatology.
+        Each training hindcast is corrected from its own past, so the fit is out of
+        sample. RPS is a sum of squared CDF errors, so the best non-negative weights
+        summing to 1 solve a small least-squares problem; every subset of components
+        is tried and the best feasible one kept.
         """
-        rps = np.zeros(len(parts))
-        ref = 0.0
+        k = len(parts)
+        gram, cross = np.zeros((k, k)), np.zeros(k)
         for n, i in enumerate(train):
             if i not in past:
                 past[i] = correct(hc_inits[i], hc_vals[i])[0]
             comps = np.stack(past[i])
             ok = np.isfinite(comps).all(axis=(0, 1)) & np.isfinite(y_h[n]).all(axis=0)
-            rps += np.where(ok, ((comps - y_h[n]) ** 2).sum(axis=1), 0.0).sum(axis=(1, 2))
-            ref += float(
-                np.where(ok, ((_QUINTILES[:, None, None] - y_h[n]) ** 2).sum(axis=0), 0.0).sum()
-            )
-        if ref == 0:
-            return np.full(len(parts), 1.0 / len(parts))
-        w = np.clip(1 - rps / ref, 0, None)
-        return w / w.sum() if w.sum() > 0 else np.full(len(parts), 1.0 / len(parts))
+            c = np.where(ok, comps, 0.0).reshape(k, -1)
+            gram += c @ c.T
+            cross += c @ np.where(ok, y_h[n], 0.0).ravel()
+        best, best_loss = np.full(k, 1.0 / k), np.inf
+        if not gram.any():
+            return best
+        for mask in range(1, 2**k):
+            use = [j for j in range(k) if mask >> j & 1]
+            m = len(use)
+            # Minimise w'Gw - 2c'w over the chosen components with sum(w) = 1.
+            system = np.zeros((m + 1, m + 1))
+            system[:m, :m] = gram[np.ix_(use, use)]
+            system[:m, m] = system[m, :m] = 1.0
+            rhs = np.append(cross[use], 1.0)
+            try:
+                sol = np.linalg.solve(system, rhs)[:m]
+            except np.linalg.LinAlgError:
+                continue
+            if (sol < -1e-12).any():
+                continue
+            w = np.zeros(k)
+            w[use] = np.clip(sol, 0, None)
+            loss = w @ gram @ w - 2 * cross @ w
+            if loss < best_loss:
+                best, best_loss = w / w.sum(), loss
+        return best
 
     probabilities, edge_rows, notes, used_weights = [], [], [], []
     for t, init in enumerate(fc_inits):
