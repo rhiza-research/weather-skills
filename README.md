@@ -265,12 +265,6 @@ Fetchers read credentials from environment variables (or `.netrc` where
 supported by the underlying client). Nothing is hardcoded. See each skill's
 `compatibility:` frontmatter for the specific vars required.
 
-## Alternatives considered
-
-See [`ALTERNATIVES.md`](ALTERNATIVES.md) for the tools we surveyed (CDO, GDAL,
-xcube, xclim, zarrs_tools, …) and why the current lightweight xarray-based
-implementations are the right trade at this scale.
-
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the publishing model (`main` is the
