@@ -3,6 +3,7 @@
 # dependencies = [
 #   "weather-skills-core>=0.2.0",
 #   "pandas",
+#   "gcsfs",
 #   "tahmo",
 # ]
 #
@@ -17,15 +18,20 @@
 #     tahmo-fetch --list-stations --bbox N/W/S/E
 #
 # Then fetch chosen station IDs (and/or every TA station in a bbox).
+#
+# With ``--gridded``, reads Sheerwater's historical 0.25° TAHMO precip grid
+# from private GCS instead (Google credentials, no TAHMO login).
 
 import csv
+import json
+import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import udunits_error
-from weather_skills_core.standard_utils import is_transient, require_env
+from weather_skills_core.standard_utils import bbox_subset, is_transient, require_env
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
@@ -77,6 +83,117 @@ _TAHMO_UNITS = {
     "degrees Celsius": "degree_Celsius",
     "degree Celsius": "degree_Celsius",
 }
+
+
+# Historical daily precip: QC'd TAHMO station days averaged within each 0.25°
+# cell. Dims (time, lat, lon); lat/lon list only the cells that ever had a
+# station, so the skill puts them back on the regular 0.25° grid.
+_GRIDDED_STORE = "sheerwater-datalake/hindcasts/tahmo_precip.zarr"
+_GRID_STEP = 0.25
+_GRIDDED_AUTH_MSG = (
+    f"cannot read gs://{_GRIDDED_STORE} (private GCS). Set "
+    "NEURAL_GCM_SERVICE_CREDENTIALS to the full service-account key JSON "
+    "(no file needed), GOOGLE_APPLICATION_CREDENTIALS to a service-account "
+    "JSON file path, or run `gcloud auth application-default login`."
+)
+
+
+def _gcs():
+    """Authenticated GCS filesystem: NEURAL_GCM_SERVICE_CREDENTIALS, then
+    GOOGLE_APPLICATION_CREDENTIALS / Application Default Credentials.
+    """
+    import gcsfs
+
+    creds_json = os.environ.get("NEURAL_GCM_SERVICE_CREDENTIALS")
+    if creds_json:
+        try:
+            info = json.loads(creds_json)
+        except json.JSONDecodeError as exc:
+            raise DataError(f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
+        try:
+            return gcsfs.GCSFileSystem(token=info)
+        except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
+            raise DataError(f"{_GRIDDED_AUTH_MSG} ({exc})") from None
+    try:
+        return gcsfs.GCSFileSystem()
+    except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
+        raise DataError(f"{_GRIDDED_AUTH_MSG} ({exc})") from None
+
+
+def _open_gridded():
+    """Open the gridded store lazily (no dask), lat/lon renamed to the standard names."""
+    import xarray as xr
+
+    try:
+        ds = xr.open_zarr(_gcs().get_mapper(_GRIDDED_STORE), chunks=None)
+    except Exception as exc:  # noqa: BLE001
+        raise DataError(f"{_GRIDDED_AUTH_MSG} Opening it failed: {exc}") from None
+    return ds[["precip"]].rename({"lat": "latitude", "lon": "longitude"})
+
+
+def _fetch_gridded(start_time, end_time, bbox):
+    """Historical gridded TAHMO precip for ``start_time``..``end_time`` on a regular 0.25° grid."""
+    import numpy as np
+    import pandas as pd
+
+    ds = _open_gridded()
+    times = pd.DatetimeIndex(ds["time"].values)
+    keep = (times >= pd.Timestamp(start_time)) & (times <= pd.Timestamp(end_time))
+    if not keep.any():
+        raise DataError(
+            f"no gridded TAHMO day in {start_time}..{end_time} (store runs "
+            f"{times.min().date()} to {times.max().date()})."
+        )
+    ds = ds.isel(time=np.nonzero(keep)[0])
+
+    # Cell centres are multiples of 0.25°; rebuild the full regular grid over the
+    # store's extent. Cells with no station stay NaN (no data, nothing filled).
+    def regular(values):
+        steps = np.rint(np.asarray(values) / _GRID_STEP).astype(int)
+        return np.arange(steps.min(), steps.max() + 1) * _GRID_STEP
+
+    lat = ds["latitude"].values
+    lon = ds["longitude"].values
+    ds = ds.assign_coords(
+        latitude=np.rint(lat / _GRID_STEP) * _GRID_STEP,
+        longitude=np.rint(lon / _GRID_STEP) * _GRID_STEP,
+    )
+    ds = ds.reindex(latitude=regular(lat), longitude=regular(lon))
+    if bbox is not None:
+        ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
+    ds = ds.load()
+    # Never fill: a day is a cell's mean of the stations that reported it.
+    reported = ds["precip"].notnull()
+    if not bool(reported.any()):
+        raise DataError(
+            "no gridded TAHMO cell has data in this --bbox and date range (cells with data "
+            f"span lat {lat.min():g}..{lat.max():g}, lon {lon.min():g}..{lon.max():g})."
+        )
+    n_days = ds.sizes["time"]
+    cells = reported.any("time")
+    complete = reported.all("time")
+    print(
+        f"precip: {int(cells.sum())} cells with data, {int(complete.sum())} complete "
+        f"(all {n_days} days {start_time} → {end_time})",
+        file=sys.stderr,
+    )
+
+    ds["precip"].attrs = {
+        "standard_name": "lwe_precipitation_rate",
+        "units": "mm day-1",
+        "long_name": "daily precipitation, mean of the TAHMO stations in each 0.25° cell",
+        "cell_methods": "time: sum area: mean",
+    }
+    ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north", axis="Y")
+    ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east", axis="X")
+    ds["time"].attrs.update(
+        standard_name="time", axis="T", comment="day D is the UTC calendar date D"
+    )
+    ds.attrs = {
+        "Conventions": "CF-1.13",
+        "weather_skills_source": f"sheerwater:{_GRIDDED_STORE.split('/', 1)[1]}",
+    }
+    return stamp_data_interval(ds.transpose("time", "latitude", "longitude"), period="1 day")
 
 
 def _pint_units(raw) -> str | None:
@@ -294,6 +411,15 @@ def _ensure_setup(state):
     ),
 )
 @weather_skill.argument(
+    "--gridded",
+    action="store_true",
+    default=False,
+    help=(
+        "Read Sheerwater's historical daily TAHMO precip grid (0.25° cell means of "
+        "QC'd stations, private GCS, Google credentials) instead of the TAHMO API."
+    ),
+)
+@weather_skill.argument(
     "--list-stations",
     action="store_true",
     default=False,
@@ -322,6 +448,7 @@ def fetch(
     bbox,
     station,
     day_start_hour,
+    gridded,
     list_stations,
     probe_latest,
     **kwargs,
@@ -332,6 +459,24 @@ def fetch(
 
     if not 0 <= day_start_hour <= 23:
         raise UsageError(f"--day-start-hour must be 0-23, got {day_start_hour}.")
+
+    if gridded:
+        if station or list_stations:
+            raise UsageError(
+                "--gridded reads whole cells: use --bbox, not --station or --list-stations."
+            )
+        if day_start_hour != 0:
+            raise UsageError("--gridded days are UTC calendar dates; --day-start-hour must be 0.")
+        if probe_latest is not None:
+            import numpy as np
+
+            ds = _open_gridded()
+            has_data = ds["precip"].notnull().any(["latitude", "longitude"]).values
+            if not has_data.any():
+                raise DataError("gridded TAHMO store has no data")
+            print(str(ds["time"].values[np.nonzero(has_data)[0][-1]])[:10])
+            return
+        return _fetch_gridded(start_time, end_time, bbox)
 
     if list_stations and bbox is None:
         raise UsageError("--list-stations requires --bbox N/W/S/E.")
