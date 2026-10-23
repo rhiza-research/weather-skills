@@ -275,9 +275,10 @@ def _open_dataset(state, dataset) -> dict:
 @weather_skill.argument(
     "--max-lead",
     help=(
-        "Forecasts only: keep leads up to this one (pandas timedelta: 240h, 10D; "
-        "0h keeps only the initial state of instant fields). "
-        "Only those leads are downloaded. Default: every lead."
+        "Forecasts only: download leads up to this one (pandas timedelta: 240h, 10D). "
+        "Counts catalog leads, which mark precip at the end of each interval: the "
+        "first precip interval (output step 0) needs 24h on the 46-day product, "
+        "3h or 6h on GFS / IFS. 0h gives only instant fields. Default: every lead."
     ),
 )
 def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max_lead, **kwargs):
