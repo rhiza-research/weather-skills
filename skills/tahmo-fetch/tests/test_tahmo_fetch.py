@@ -570,3 +570,151 @@ def test_probe_latest_stops_early_with_a_late_day_start_hour(capsys, mod, fetch)
 
     assert capsys.readouterr().out.strip() == newest.isoformat()
     assert len(fetched) < len(stations)
+
+
+def _gridded_store():
+    """Sparse store like tahmo_precip.zarr: lat/lon list only cells with a station."""
+    import numpy as np
+
+    times = pd.date_range("2024-03-01", "2024-03-03", freq="D")
+    precip = np.full((3, 2, 2), np.nan, dtype="float32")
+    precip[:, 0, 0] = [1.0, 2.0, 3.0]  # cell (-1.0, 36.0): every day
+    precip[1, 1, 1] = 5.5  # cell (0.5, 37.25): one day only
+    return xr.Dataset(
+        {"precip": (("time", "latitude", "longitude"), precip)},
+        coords={"time": times, "latitude": [-1.0, 0.5], "longitude": [36.0, 37.25]},
+    )
+
+
+def test_gridded_fills_regular_grid_without_tahmo_credentials(tmp_path, mod, fetch, capsys):
+    import numpy as np
+
+    out = tmp_path / "out.zarr"
+    env = {
+        k: v for k, v in os.environ.items() if k not in ("TAHMO_API_USERNAME", "TAHMO_API_PASSWORD")
+    }
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch.object(mod, "_open_gridded", return_value=_gridded_store()),
+    ):
+        run_skill(
+            fetch,
+            "--gridded",
+            "--start-time",
+            "2024-03-01",
+            "--end-time",
+            "2024-03-03",
+            "-o",
+            str(out),
+        )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    np.testing.assert_allclose(ds["latitude"].values, np.arange(-1.0, 0.75, 0.25))
+    np.testing.assert_allclose(ds["longitude"].values, np.arange(36.0, 37.5, 0.25))
+    p = ds["precip"]
+    assert p.dims == ("time", "latitude", "longitude")
+    assert list(p.sel(latitude=-1.0, longitude=36.0).values) == [1.0, 2.0, 3.0]
+    assert float(p.sel(latitude=0.5, longitude=37.25).isel(time=1)) == 5.5
+    # Only the store's values: nothing filled in between.
+    assert int(p.notnull().sum()) == 4
+    assert p.attrs["units"] == "mm day-1"
+    assert p.attrs.get("data_interval") == "1 day"
+    assert ds.attrs["weather_skills_source"] == "sheerwater:hindcasts/tahmo_precip.zarr"
+    assert "precip: 2 cells with data, 1 complete (all 3 days" in capsys.readouterr().err
+    quantify_dataset(ds)
+
+
+def test_gridded_bbox_and_date_range(tmp_path, mod, fetch):
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_gridded", return_value=_gridded_store()):
+        run_skill(
+            fetch,
+            "--gridded",
+            "--start-time",
+            "2024-03-02",
+            "--end-time",
+            "2024-03-02",
+            "--bbox",
+            "1/37/0/38",
+            "-o",
+            str(out),
+        )
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds.sizes["time"] == 1
+    assert float(ds["latitude"].min()) >= 0 and float(ds["longitude"].min()) >= 37
+    assert float(ds["precip"].sel(latitude=0.5, longitude=37.25).squeeze()) == 5.5
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [["--station", "TA00001"], ["--list-stations"], ["--day-start-hour", "6"]],
+)
+def test_gridded_rejects_station_options(tmp_path, mod, fetch, extra):
+    with (
+        patch.object(mod, "_open_gridded", return_value=_gridded_store()),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_skill(
+            fetch,
+            "--gridded",
+            "--start-time",
+            "2024-03-01",
+            "--end-time",
+            "2024-03-03",
+            *extra,
+            "-o",
+            str(tmp_path / "out.zarr"),
+        )
+    assert exc.value.code == 2
+
+
+def test_gridded_range_outside_store_exits_1(tmp_path, mod, fetch):
+    with (
+        patch.object(mod, "_open_gridded", return_value=_gridded_store()),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_skill(
+            fetch,
+            "--gridded",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-31",
+            "-o",
+            str(tmp_path / "out.zarr"),
+        )
+    assert exc.value.code == 1
+
+
+def test_gridded_bad_service_account_json_exits_1(tmp_path, fetch):
+    with (
+        patch.dict(os.environ, {"NEURAL_GCM_SERVICE_CREDENTIALS": "{not json"}),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_skill(
+            fetch,
+            "--gridded",
+            "--start-time",
+            "2024-03-01",
+            "--end-time",
+            "2024-03-03",
+            "-o",
+            str(tmp_path / "out.zarr"),
+        )
+    assert exc.value.code == 1
+
+
+def test_gridded_probe_latest_prints_last_day_with_data(capsys, mod, fetch):
+    store = _gridded_store()
+    store["precip"][2] = float("nan")  # last day all NaN
+    with patch.object(mod, "_open_gridded", return_value=store):
+        run_skill(
+            fetch,
+            "--gridded",
+            "--probe-latest",
+            "--start-time",
+            "2024-03-01",
+            "--end-time",
+            "2024-03-01",
+        )
+    assert capsys.readouterr().out.strip() == "2024-03-02"
