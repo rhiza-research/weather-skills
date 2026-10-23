@@ -55,7 +55,7 @@ Every dataset has `precip` and `tmp2m`.
 
 ### Notes
 - `ecmwf` is one time series. ECMWF re-ran each issue's calendar date in each of the 20 years before it, so most dates were run by several issues; the store keeps the newest issue's run of each date. The model cycle still varies from date to date, so a trend across inits can be a model change.
-- `ecmwf` `precip` is clipped at 0 in its store. `cumulus` `precip` keeps the model's small negative values; stderr reports the minimum. Clip or average over a week before treating daily values as amounts.
+- `precip` is clipped at 0 in every store: ECMWF's daily values come from differenced accumulations, and Cumulus's model output can dip slightly below 0. A store with negative `precip` is reported on stderr and kept as published.
 - `cumulus` `tmp2m` is the model's 2 m temperature as published, one value per lead day; the source does not say whether it is a daily mean or the value at the end of the day.
 - `gefs` `tmp2m` is one value per day as the source publishes it; the source does not say whether it is a daily mean.
 - Stores of one model can skip different inits (GEFS `precip` and `tmp2m` do). A variable is NaN on inits its store lacks, never filled; stderr lists them. The stores' grids must match exactly, or the call exits 1.
@@ -82,4 +82,4 @@ Writes 10-member daily precipitation and 2 m temperature hindcasts over Kenya fo
 
 **GEFS.** Both stores are Sheerwater's public copies of its CHC GEFSv12 reforecast caches. Dims `(init_time, member, prediction_timedelta, lat, lon)`.
 
-**Cumulus.** Both stores are the `gratis-czajkowski` Cumulus (Aurora S2S) hindcast run at 1°: member 0 is the run from the `cf` files, 1–29 those from the `pf` files. `prediction_timedelta` d holds the model's lead of (d + 1) × 24 h; for `precip` that is the 24 h total ending then, labelled by its start.
+**Cumulus.** Both stores are the `gratis-czajkowski` Cumulus (Aurora S2S) hindcast run at 1°: member 0 is the run from the `cf` files, 1–29 those from the `pf` files. `prediction_timedelta` d holds the model's lead of (d + 1) × 24 h; for `precip` that is the 24 h total ending then, labelled by its start, with negative model output set to 0 as in the live forecast export.
