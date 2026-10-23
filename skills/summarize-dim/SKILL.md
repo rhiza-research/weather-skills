@@ -11,37 +11,49 @@ metadata:
 
 # summarize-dim
 
-Applies one statistic along the named dimensions of each data variable, removing those dimensions. With `--by`, it applies the statistic separately to each group of a label coord.
+Reduces each data variable with one statistic, over whole dimensions or once per label (a county, a season).
 
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i IN.zarr -o OUT.zarr (--dim DIM ... | --by LABEL ... | both) --method mean|std|min|max|sum|median [-v VAR ...] [--lat-weighted] [--min-coverage 1.0]
+uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i IN.zarr -o OUT.zarr (--dim DIM ... | --by LABEL ... | both) --method METHOD [--q Q ...] [-v VAR ...] [--lat-weighted] [--min-coverage 1.0]
 ```
+
+### Modes
+Pass `--dim`, `--by`, or both:
+- `--dim time` — collapse whole dims: a time mean in every cell.
+- `--by admin_1` — one value per label: the dims `admin_1` lies on (latitude, longitude) become one `admin_1` dim.
+- `--dim time --by admin_1` — both: one value per county over all times.
+- Several `--by` on the same dims give each label pair (county × zone); on different dims, each combination (county × season).
+- Add `--lat-weighted` (mean only) to weight by area; add `--min-coverage` to a `--by` time label to set how complete a group must be.
+
+### Methods
+Every method skips NaN.
+- `mean` — the average; with `--lat-weighted`, each latitude row counts by cos(latitude).
+- `std` — sample standard deviation (`ddof=1`); NaN from fewer than 2 values. `degree_Celsius` becomes `delta_degC`.
+- `min`, `max`, `median` — as named.
+- `quantile` — the `--q` quantiles, in input units, on a new leading `quantile` dim (`median` is `--q 0.5`); no `--lat-weighted`.
+- `sum` — the total; NaN, not 0, when every value is NaN. Refused for rates over `time` or `step` (`mm day-1`: run `convert-to-totals` first) and for `degree_Celsius`.
 
 ### Arguments
 - `--input`, `-i` — input Zarr.
-- `--output`, `-o` — output Zarr, replaced if it exists.
-- `--dim` — dimension to summarize (repeatable); must be a dim of the input.
-- `--by` — label coord to group by, such as one from `label-group`; repeatable (`--by admin_1 --by month_group`). Its dims collapse to one value per label; `--dim` dims collapse within each group too.
-- `--method` — `mean`, `std`, `min`, `max`, `sum`, or `median`. Required.
-- `--variable`, `-v` — summarize only this variable (repeatable). Default: all.
-- `--lat-weighted` — with `--method mean` and the latitude dim in `--dim`: weight each row by cos(latitude), so a regional mean reflects true area. Not available with `--by`.
-- `--min-coverage` — with a `--by` time label from `label-group` (`year`, `month`, `dayofyear`, `month_group`): leave out each station or cell whose data covers less than this share (0–1) of a group's calendar period. Default `1.0`.
-
-Pass `--dim`, `--by`, or both.
+- `--output`, `-o` — output Zarr, replaced if it exists. Use a new path, not the input.
+- `--dim` — dimension to collapse (repeatable).
+- `--by` — label coord to group by (repeatable), such as `admin_1` or `month_group` from `label-group`. Not a dim itself.
+- `--method` — `mean`, `std`, `min`, `max`, `sum`, `median`, or `quantile`. Required.
+- `--q` — quantiles for `--method quantile` (required there), each in [0, 1]: `--q 0.1 0.5 0.9`.
+- `--variable`, `-v` — variable to reduce (repeatable). Default: all.
+- `--lat-weighted` — area-weight a `mean` over latitude. Latitude must be in `--dim` or under a `--by` label. Default: off (every cell counts the same).
+- `--min-coverage` — only with a `--by` time label (`year`, `month`, `dayofyear`, `month_group`): the share (0–1) of a group's calendar period each station or cell needs to count. Default: `1.0` (complete groups only).
 
 ### Output
-- Each selected variable is summarized over the requested dims it has; other variables pass through unchanged. A summarized dim is removed once no variable carries it.
-- `--by L`: the dims of `L` become a dim `L` holding each label once; several `--by` give one dim each. The `""` label is left out. Other label coords on those dims are dropped; only variables carrying all of the label's dims are summarized.
-- NaNs are skipped. `sum` of an all-NaN slice is NaN, not 0. `std` is the sample standard deviation (`ddof=1`), so `std` over a dim of size 1 is NaN.
-- `units` and other attrs are kept as they are, including after `sum` (no unit change). So `sum` over `time` or `step` of a rate (e.g. `mm day-1`) is refused: convert rates to period totals first (`convert-to-totals`).
-- `sum` with `--min-coverage` below 1: kept sums of incomplete groups are partial-data estimates; stderr warns, and `<var>_coverage` (0–1, the least-covered cell used) is written, linked by `ancillary_variables`.
+- Collapsed dims are removed; each `--by` label becomes a dim holding each label once. The `""` label is left out; a label pair with no cells is NaN.
+- Variables not selected, or lacking a grouped dim, pass through unchanged. Other label coords on the grouped dims are dropped.
+- Units are kept, except `std` of an offset unit (above).
+- `sum` with `--min-coverage` below 1 also writes `<var>_coverage` (0–1, the least-covered cell used); stderr warns that those sums are partial-data estimates.
 
 ### Notes
-- Write to a new path: an `--output` equal to the input destroys the input.
-- `--by` gives each grid cell equal weight in a group (not area-weighted).
-- Keep `--min-coverage 1.0` unless a task explicitly accepts estimates. Spatial labels have no coverage check. Other labels along time are refused.
+- Keep `--min-coverage 1.0` unless a task explicitly accepts estimates. Spatial labels have no coverage check; other labels along time are refused.
 
 ### Example
 ```bash
@@ -49,6 +61,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i ecmwf_s2s_kenya.zarr -o e
 ```
 Writes the ensemble spread (standard deviation across the 101 members) of the ECMWF forecast, in the input units.
 
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i chirps_kenya_daily_mm_labeled.zarr -o chirps_kenya_county_season.zarr --dim time --by admin_1 --by year --by month_group --method sum
+```
+Writes each county's total rainfall for each complete season of each year.
+
 ## Details
-- Coverage (with a `--by` time label) is per input station or grid cell: its time steps with data over the steps the group's full calendar period holds at the data's step (MAM of daily data: 92). Input `aggregation_coverage` counts as that fraction. A season cut by the record's start or end is incomplete. Cells below `--min-coverage` are left out before any spatial reduction (a regional value uses complete cells only, NaN if none), counted on stderr; missing steps are never filled.
-- The statistic is appended to CF `cell_methods` (e.g. `number: standard_deviation`, `latitude: longitude: mean`, `latitude: longitude: mean (grouped by admin_1)`). `std` and `sum` also set `long_name` (`Standard deviation of Total precipitation across number`) and drop `GRIB_name`, `short_name`, and `comment`; `standard_name` stays.
+- Coverage is per input station or grid cell: its steps with data over the steps the group's full calendar period holds at the data's step (MAM of daily data: 92). An input `aggregation_coverage` counts as that fraction of a step. A season cut by the record's start or end is incomplete. Cells below `--min-coverage` are left out before cells are pooled, so a regional value uses complete cells only (NaN if none); stderr counts them. Missing steps are never filled.
+- The statistic is appended to CF `cell_methods` (`number: standard_deviation`, `latitude: longitude: mean (grouped by admin_1)`). `std` and `sum` also set `long_name` (`Standard deviation of Total precipitation across number`) and drop `GRIB_name`, `short_name`, and `comment`; `standard_name` stays.

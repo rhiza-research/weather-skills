@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@reduce-module",
 #   "shapely",
 # ]
 # ///
@@ -17,35 +17,15 @@ from shapely.geometry import shape
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.region import LEVELS, level_features
 from weather_skills_core.standard_dataset import detect_spatial_dims, names_for
+from weather_skills_core.standard_utils import calendar_labels
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
 
 _TIME_PARTS = ("month", "year", "dayofyear")
-_INITIALS = "JFMAMJJASOND"
 # Stations outside every outline join the nearest unit this close (degrees, ~11 km): the
 # bundled 1:50m outlines cut corners, leaving coastal stations just offshore.
 _SNAP_DEG = 0.1
-
-
-def _month_group(token):
-    """Months (1-12) of a run of month initials such as MAM or DJF."""
-    hits = [
-        start
-        for start in range(12)
-        if len(token) <= 12 and all(_INITIALS[(start + i) % 12] == c for i, c in enumerate(token))
-    ]
-    if not token or len(hits) != 1:
-        why = (
-            "matches more than one run of months"
-            if len(hits) > 1 and token
-            else "is not a run of months"
-        )
-        raise UsageError(
-            f"--time {token!r} {why}; pass month, year, dayofyear, or uppercase month "
-            "initials like MAM,OND or DJF"
-        )
-    return [(hits[0] + i) % 12 + 1 for i in range(len(token))]
 
 
 @weather_skill(
@@ -218,34 +198,13 @@ def label_group(ds, level, geojson, property, time, **kwargs):
         group_specs = [p for p in parts if p not in _TIME_PARTS]
         if len(group_specs) > 1:
             raise UsageError("pass one --time month-group list, e.g. --time MAM,OND")
-        month = ds["time"].dt.month.values
-        group_label = np.full(month.shape, "", dtype=object)
-        # Month -> first month of its group's year, for groups that cross December.
-        begins_last_year = np.zeros(month.shape, dtype=bool)
-        if group_specs:
-            taken = set()
-            for token in group_specs[0].split(","):
-                token = token.strip()
-                months = _month_group(token)
-                if taken & set(months):
-                    raise UsageError(f"--time month groups share a month ({group_specs[0]})")
-                taken |= set(months)
-                in_group = np.isin(month, months)
-                group_label[in_group] = token
-                begins_last_year |= in_group & (month < months[0])
-
+        tokens = [t.strip() for t in group_specs[0].split(",")] if group_specs else []
+        labels = calendar_labels(ds.indexes["time"], tokens)
         for part in parts:
             coord = "month_group" if part in group_specs else part
             if coord in ds.variables:
                 raise UsageError(f"{coord!r} already exists in the dataset")
-            if part == "year":
-                # A group crossing December takes the year it begins (DJF 2023 = Dec 2023-Feb 2024).
-                values = ds["time"].dt.year.values - begins_last_year
-            elif part in _TIME_PARTS:
-                values = getattr(ds["time"].dt, part).values
-            else:
-                values = group_label.astype(str)
-            ds = ds.assign_coords({coord: ("time", values)})
+            ds = ds.assign_coords({coord: ("time", labels[coord])})
     return ds
 
 
