@@ -616,3 +616,230 @@ def test_probe_latest_warns_only_when_last_lead_missing(mod, fetch, capsys, publ
     captured = capsys.readouterr()
     assert captured.out.strip() == "2026-01-01"
     assert ("still publishing" in captured.err) == publishing
+
+
+def _gefs_hindcast_store(source, inits, value=2.0):
+    """A GEFS hindcast store as _open_gefs_hindcast returns it (init_time decoded)."""
+    shape = (len(inits), 2, 3, 2, 2)
+    return xr.Dataset(
+        {
+            source: (
+                ("init_time", "member", "prediction_timedelta", "lat", "lon"),
+                np.full(shape, value, np.float32),
+            )
+        },
+        coords={
+            "init_time": np.array(inits, dtype="datetime64[ns]"),
+            "member": np.array([0, 1], np.int32),
+            "prediction_timedelta": np.array([0, 1, 2]),
+            "lat": np.array([0.0, 1.0], np.float32),
+            "lon": np.array([10.0, 190.0], np.float32),
+        },
+    )
+
+
+@pytest.fixture
+def gefs_hindcast(mod, monkeypatch):
+    stores = {
+        "precipitation_surface": _gefs_hindcast_store(
+            "precip", ["2017-10-04", "2017-10-11", "2017-10-18"]
+        ),
+        "temperature_2m": _gefs_hindcast_store("tmp2m", ["2017-10-11"], value=25.0),
+    }
+    monkeypatch.setattr(mod, "_open_gefs_hindcast", lambda name: stores[name])
+    monkeypatch.setattr(
+        mod, "_open_dataset", lambda *a: pytest.fail("hindcasts must not open the catalog")
+    )
+    return stores
+
+
+def test_gefs_hindcast_window_and_layout(tmp_path, fetch, gefs_hindcast):
+    out = tmp_path / "gefs_hc.zarr"
+    run_skill(
+        fetch,
+        "--dataset",
+        "noaa-gefs-forecast-35-day",
+        "--hindcast",
+        "--start-time",
+        "2017-10-05",
+        "--end-time",
+        "2017-10-18",
+        "-v",
+        "precip",
+        "-o",
+        str(out),
+    )
+    with xr.open_zarr(out) as ds:
+        assert list(ds.data_vars) == ["precipitation_surface"]
+        assert ds["precipitation_surface"].dims == (
+            "time",
+            "number",
+            "step",
+            "latitude",
+            "longitude",
+        )
+        assert [str(t)[:10] for t in ds["time"].values] == ["2017-10-11", "2017-10-18"]
+        assert ds["step"].values[1] == np.timedelta64(1, "D")
+        assert list(ds["number"].values) == [0, 1]
+        assert sorted(ds["longitude"].values) == [-170.0, 10.0]
+        assert ds["precipitation_surface"].attrs["units"] == "mm day-1"
+        assert ds["precipitation_surface"].attrs["data_interval"] == "1 day"
+        assert ds.attrs["weather_skills_source"] == "sheerwater:hindcasts/gefs_precip"
+
+
+def test_gefs_hindcast_keeps_inits_missing_from_one_variable(
+    tmp_path, fetch, gefs_hindcast, capsys
+):
+    out = tmp_path / "gefs_both.zarr"
+    run_skill(
+        fetch,
+        "--dataset",
+        "noaa-gefs-forecast-35-day",
+        "--hindcast",
+        "--start-time",
+        "2017-10-01",
+        "--end-time",
+        "2017-10-31",
+        "-v",
+        "precip",
+        "-v",
+        "t2m",
+        "-o",
+        str(out),
+    )
+    with xr.open_zarr(out) as ds:
+        assert ds.sizes["time"] == 3
+        t2m = ds["temperature_2m"].isel(number=0, step=0, latitude=0, longitude=0)
+        assert int(t2m.notnull().sum()) == 1
+        assert ds["temperature_2m"].attrs["units"] == "degree_Celsius"
+        assert float(t2m.sel(time="2017-10-11")) == 25.0
+        assert (
+            ds.attrs["weather_skills_source"]
+            == "sheerwater:hindcasts/gefs_precip+gefs_chc_raw/tmp2m"
+        )
+    assert "temperature_2m hindcast has no run for 2 init(s)" in capsys.readouterr().err
+
+
+def test_gefs_hindcast_probe_latest(fetch, gefs_hindcast, capsys):
+    run_skill(fetch, "--dataset", "noaa-gefs-forecast-35-day", "--hindcast", "--probe-latest")
+    assert capsys.readouterr().out.strip() == "2017-10-18"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [
+            "--dataset",
+            "noaa-gfs-forecast",
+            "--start-time",
+            "2017-10-01",
+            "--end-time",
+            "2017-10-31",
+        ],
+        ["--dataset", "noaa-gefs-forecast-35-day", "--date", "2017-10-11"],
+        [
+            "--dataset",
+            "noaa-gefs-forecast-35-day",
+            "--start-time",
+            "2017-10-01",
+            "--end-time",
+            "2017-10-31",
+            "--max-lead",
+            "10D",
+        ],
+        [
+            "--dataset",
+            "noaa-gefs-forecast-35-day",
+            "--start-time",
+            "2017-10-01",
+            "--end-time",
+            "2017-10-31",
+            "-v",
+            "wind_u_10m",
+        ],
+    ],
+)
+def test_gefs_hindcast_bad_args_exit_2(tmp_path, fetch, gefs_hindcast, args):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch, "--hindcast", *args, "-o", str(tmp_path / "x.zarr"))
+    assert exc.value.code == 2
+
+
+def test_gefs_hindcast_window_outside_store_exits_1(tmp_path, fetch, gefs_hindcast):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch,
+            "--dataset",
+            "noaa-gefs-forecast-35-day",
+            "--hindcast",
+            "--start-time",
+            "2020-01-01",
+            "--end-time",
+            "2020-02-01",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 1
+
+
+def test_gefs_hindcast_precip_reads_public_store_without_credentials(mod, monkeypatch):
+    seen = {}
+
+    def fake_open_zarr(path, **kwargs):
+        seen.update(path=path, **kwargs)
+        return "store"
+
+    monkeypatch.setattr(xr, "open_zarr", fake_open_zarr)
+    monkeypatch.setitem(__import__("sys").modules, "gcsfs", None)  # importing gcsfs would fail
+    assert mod._open_gefs_hindcast("precipitation_surface") == "store"
+    assert seen["path"] == "gs://sheerwater-public-datalake/hindcasts/gefs_precip.zarr"
+    assert seen["storage_options"] == {"token": "anon"}
+
+
+def test_gefs_hindcast_tmp2m_decodes_days_since_1960(mod, monkeypatch):
+    import types
+
+    raw = _gefs_hindcast_store("tmp2m", ["2017-10-11"])
+    days = np.array(
+        [(np.datetime64("2017-10-11") - np.datetime64("1960-01-01")).astype(int)], np.float32
+    )
+    raw = raw.assign_coords(init_time=days)
+
+    class FakeFS:
+        def __init__(self, token=None):
+            pass
+
+        def get_mapper(self, path):
+            return path
+
+    monkeypatch.setitem(
+        __import__("sys").modules, "gcsfs", types.SimpleNamespace(GCSFileSystem=FakeFS)
+    )
+    monkeypatch.setattr(xr, "open_zarr", lambda *a, **k: raw)
+    ds = mod._open_gefs_hindcast("temperature_2m")
+    assert ds["init_time"].values[0] == np.datetime64("2017-10-11", "ns")
+
+
+def test_gefs_hindcast_grid_mismatch_exits_1(tmp_path, fetch, gefs_hindcast):
+    # Only init_time may differ between the stores: never pad one onto the other's grid.
+    gefs_hindcast["temperature_2m"] = gefs_hindcast["temperature_2m"].assign_coords(
+        lon=gefs_hindcast["temperature_2m"]["lon"] + 1.0
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch,
+            "--dataset",
+            "noaa-gefs-forecast-35-day",
+            "--hindcast",
+            "--start-time",
+            "2017-10-01",
+            "--end-time",
+            "2017-10-31",
+            "-v",
+            "precip",
+            "-v",
+            "t2m",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 1

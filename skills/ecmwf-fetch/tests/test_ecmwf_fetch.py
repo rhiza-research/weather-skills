@@ -610,3 +610,235 @@ def test_catalog_open_failure_is_clean_error(tmp_path, mod, fetch, capsys):
             )
     assert exc.value.code == 1
     assert "dynamical.org catalog" in capsys.readouterr().err
+
+
+def _hindcast_store(members=False):
+    """WeatherBench2 layout: two 2017 issues and one 2018 issue, 20 hindcast years each."""
+    issued = np.array(["2017-10-02", "2017-10-05", "2018-10-01"], dtype="datetime64[ns]")
+    years = np.arange(-20, 0, dtype=np.int32)
+    # Same month-day as the issue, |year| years earlier.
+    inits = np.array(
+        [
+            [np.datetime64(f"{int(str(t)[:4]) + int(y)}{str(t)[4:10]}", "ns") for y in years]
+            for t in issued
+        ]
+    )
+    lats = np.array([-1.5, 0.0, 1.5], dtype=np.float32)
+    lons = np.array([0.0, 1.5, 358.5], dtype=np.float32)
+    steps = np.array([0, 1, 2], dtype="timedelta64[D]").astype("timedelta64[ns]")
+    dims = ("forecast_time", "hindcast_year", "prediction_timedelta", "latitude", "longitude")
+    shape = (len(issued), len(years), len(steps), len(lats), len(lons))
+    # Encode the hindcast year in precip so selection is checkable: 0.001 m * |year|.
+    precip = np.broadcast_to((np.abs(years) * 0.001)[None, :, None, None, None], shape)
+    data = {
+        "total_precipitation_24hr": (dims, precip.astype(np.float32)),
+        "2m_temperature": (dims, np.full(shape, 300.0, np.float32)),
+    }
+    coords = {
+        "forecast_time": issued,
+        "hindcast_year": years,
+        "prediction_timedelta": steps,
+        "latitude": lats,
+        "longitude": lons,
+        "time": (("forecast_time", "hindcast_year"), inits),
+        "valid_time": (dims[:3], inits[:, :, None] + steps),
+    }
+    ds = xr.Dataset(data, coords=coords)
+    if members:
+        ds = ds.expand_dims(number=[1, 2]).transpose("forecast_time", "number", ...)
+    return ds
+
+
+def _run_hindcast(fetch, out, *args):
+    run_skill(fetch, "--hindcast", "--bbox", "2/-2/-2/2", *args, "-o", str(out))
+
+
+def test_hindcast_picks_window_inits_from_latest_covering_issue_year(tmp_path, mod, fetch):
+    out = tmp_path / "hc.zarr"
+    with patch.object(mod, "_open_hindcast", lambda members: _hindcast_store()):
+        _run_hindcast(
+            fetch, out, "--start-time", "2014-10-01", "--end-time", "2016-10-31", "-v", "tp", "t2m"
+        )
+    with xr.open_zarr(out) as ds:
+        # Issue year 2018 covers 1998-2017 and is the latest that fits; it has one issue (Oct 1).
+        assert ds.attrs["hindcast_issue_year"] == 2018
+        times = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+        assert times == ["2014-10-01", "2015-10-01", "2016-10-01"]
+        assert set(ds["issue_time"].values.astype("datetime64[D]").astype(str)) == {"2018-10-01"}
+        assert list(ds["tp"].dims) == ["time", "step", "latitude", "longitude"]
+        # Hindcast years -4, -3, -2 -> 4, 3, 2 mm day-1.
+        np.testing.assert_allclose(
+            ds["tp"].isel(step=0, latitude=0, longitude=0).values, [4.0, 3.0, 2.0], rtol=1e-5
+        )
+        assert ds["tp"].attrs["units"] == "mm day-1"
+        assert ds["t2m"].attrs["units"] == "degree_Celsius"
+        np.testing.assert_allclose(float(ds["t2m"].max()), 26.85, rtol=1e-5)
+        assert ds["step"].values[1] == np.timedelta64(1, "D")
+        assert float(ds["longitude"].min()) < 0  # 358.5 wrapped to -1.5
+        assert ds.attrs["weather_skills_source"] == "weatherbench2:ifs-ext-reforecast-ens-mean"
+    assert load_history(out)[-1]["skill"] == "ecmwf-fetch"
+
+
+def test_hindcast_explicit_issue_year_and_members(tmp_path, mod, fetch):
+    out = tmp_path / "hc_members.zarr"
+    seen = {}
+
+    def fake_open(members):
+        seen["members"] = members
+        return _hindcast_store(members=members)
+
+    with patch.object(mod, "_open_hindcast", fake_open):
+        _run_hindcast(
+            fetch,
+            out,
+            "--start-time",
+            "2010-10-01",
+            "--end-time",
+            "2010-10-31",
+            "--issue-year",
+            "2017",
+            "--members",
+        )
+    assert seen["members"] is True
+    with xr.open_zarr(out) as ds:
+        assert ds.attrs["hindcast_issue_year"] == 2017
+        times = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+        assert times == ["2010-10-02", "2010-10-05"]
+        assert list(ds["tp"].dims) == ["time", "number", "step", "latitude", "longitude"]
+        assert ds.attrs["weather_skills_source"] == "weatherbench2:ifs-ext-reforecast"
+
+
+def test_hindcast_negative_precip_kept_and_reported(tmp_path, mod, fetch, capsys):
+    store = _hindcast_store()
+    store["total_precipitation_24hr"][:, :, 2] = -0.01  # -10 mm day-1 at lead day 2
+    with patch.object(mod, "_open_hindcast", lambda members: store):
+        _run_hindcast(
+            fetch, tmp_path / "neg.zarr", "--start-time", "2016-10-01", "--end-time", "2016-10-01"
+        )
+    assert "lead day(s) [2]" in capsys.readouterr().err
+    with xr.open_zarr(tmp_path / "neg.zarr") as ds:
+        assert float(ds["tp"].isel(step=2).min()) == pytest.approx(-10.0)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--start-time", "1990-01-01", "--end-time", "1991-01-01"],  # no issue year covers it
+        ["--start-time", "2016-10-01", "--end-time", "2016-10-01", "-v", "msl"],  # not in hindcasts
+        ["--date", "2016-10-01"],  # forecast-only argument
+        [],  # no window
+    ],
+)
+def test_hindcast_usage_errors_exit_2(tmp_path, mod, fetch, args):
+    with patch.object(mod, "_open_hindcast", lambda members: _hindcast_store()):
+        with pytest.raises(SystemExit) as exc:
+            _run_hindcast(fetch, tmp_path / "x.zarr", *args)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "args", [["--members"], ["--issue-year", "2018"], ["--start-time", "2016-10-01"]]
+)
+def test_hindcast_only_arguments_need_hindcast(tmp_path, fetch, args):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch,
+            "--date",
+            "2026-01-05",
+            "--bbox",
+            "2/-2/-2/2",
+            *args,
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 2
+
+
+def test_hindcast_probe_latest(capsys, mod, fetch):
+    with patch.object(mod, "_open_hindcast", lambda members: _hindcast_store()):
+        run_skill(fetch, "--probe-latest", "--hindcast")
+    assert capsys.readouterr().out.strip() == "2017-10-01"
+
+
+def _sheerwater_store():
+    """Sheerwater ecmwf_ifs_precip layout: (member, prediction_timedelta, lat, lon, init_time), mm."""
+    inits = np.array(["2019-10-03", "2019-10-07", "2019-10-10"], dtype="datetime64[ns]")
+    lats = np.array([-1.5, 0.0, 1.5], dtype=np.float32)
+    lons = np.array([-1.5, 0.0, 1.5], dtype=np.float32)
+    shape = (2, 3, lats.size, lons.size, inits.size)
+    precip = np.broadcast_to(np.arange(inits.size, dtype=np.float32), shape).copy()
+    return xr.Dataset(
+        {"precip": (("member", "prediction_timedelta", "lat", "lon", "init_time"), precip)},
+        coords={
+            "member": np.array([1, 2], dtype=np.int32),
+            "prediction_timedelta": np.arange(3),
+            "lat": lats,
+            "lon": lons,
+            "init_time": inits,
+            "time": ("init_time", inits),
+        },
+    )
+
+
+def test_hindcast_members_tp_reads_sheerwater_store(tmp_path, mod, fetch, monkeypatch, capsys):
+    out = tmp_path / "hc_store.zarr"
+    seen = {}
+
+    def fake_open_zarr(path, **kwargs):
+        seen.update(path=path, **kwargs)
+        return _sheerwater_store()
+
+    monkeypatch.setattr(xr, "open_zarr", fake_open_zarr)
+    with patch.object(mod, "_open_hindcast", lambda members: pytest.fail("read WeatherBench2")):
+        _run_hindcast(
+            fetch, out, "--start-time", "2019-10-04", "--end-time", "2019-10-31", "--members"
+        )
+    monkeypatch.undo()
+    assert "last init is 2019-10-10" in capsys.readouterr().err
+    assert seen["path"] == "gs://sheerwater-public-datalake/hindcasts/ecmwf_ifs_precip.zarr"
+    assert seen["storage_options"] == {"token": "anon"}
+    with xr.open_zarr(out) as ds:
+        assert list(ds["tp"].dims) == ["time", "number", "step", "latitude", "longitude"]
+        times = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+        assert times == ["2019-10-07", "2019-10-10"]
+        assert ds["number"].values.tolist() == [1, 2]
+        assert ds["step"].values[1] == np.timedelta64(1, "D")
+        assert ds["tp"].attrs["units"] == "mm day-1"
+        np.testing.assert_allclose(
+            ds["tp"].isel(number=0, step=0, latitude=0, longitude=0), [1.0, 2.0]
+        )
+        assert ds.attrs["weather_skills_source"] == "sheerwater:hindcasts/ecmwf_ifs_precip"
+        assert "hindcast_issue_year" not in ds.attrs
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [
+            "--start-time",
+            "2016-10-01",
+            "--end-time",
+            "2016-10-31",
+            "--members",
+            "--issue-year",
+            "2018",
+        ],
+        ["--start-time", "2016-10-01", "--end-time", "2016-10-31", "--members", "-v", "tp", "t2m"],
+        ["--start-time", "2015-10-01", "--end-time", "2016-10-31", "--members"],
+        ["--start-time", "2016-10-01", "--end-time", "2016-10-31"],
+    ],
+)
+def test_hindcast_other_requests_stay_on_weatherbench2(tmp_path, mod, fetch, args):
+    seen = []
+
+    def fake_wb2(bbox, start, end, names, issue_year, members):
+        seen.append(names)
+        raise SystemExit(0)
+
+    with (
+        patch.object(mod, "_fetch_hindcast", fake_wb2),
+        patch.object(mod, "_fetch_hindcast_store", lambda *a: pytest.fail("read the store")),
+        pytest.raises(SystemExit),
+    ):
+        _run_hindcast(fetch, tmp_path / "x.zarr", *args)
+    assert seen

@@ -3,6 +3,7 @@
 # dependencies = [
 #   "weather-skills-core>=0.2.0",
 #   "dynamical-catalog==1.0.1",
+#   "gcsfs",
 #   "pandas",
 # ]
 # ///
@@ -66,6 +67,65 @@ _SURFACE_ALIASES = {
     "v100": "wind_v_100m",
 }
 _PRESSURE_GROUP = "pressure_level"
+
+# GEFS hindcasts are not in the catalog: they come from Sheerwater's GEFSv12
+# reforecast stores (Wednesday inits 1998-12-30..2019-08-28, 11 members,
+# 35 daily leads, 1°), dims (init_time, member, prediction_timedelta, lat, lon).
+# precip is a public, rechunked copy with init_time decoded; tmp2m is the
+# private Zarr v3 cache with init_time in days since 1960-01-01, undecoded.
+_GEFS_FORECAST = "noaa-gefs-forecast-35-day"
+# catalog name -> (store, store variable, units); GEFS tmp2m is stamped "C", which
+# pint reads as coulomb.
+_GEFS_HINDCAST = {
+    "precipitation_surface": (
+        "gs://sheerwater-public-datalake/hindcasts/gefs_precip.zarr",
+        "precip",
+        "mm day-1",
+    ),
+    "temperature_2m": (
+        "sheerwater-datalake/caches/gefs_chc_raw/global1_0_tmp2m.zarr",
+        "tmp2m",
+        "degree_Celsius",
+    ),
+}
+_GEFS_AUTH_MSG = (
+    "GEFS temperature_2m hindcasts need gs://sheerwater-datalake/caches/gefs_chc_raw "
+    "(private GCS). Set NEURAL_GCM_SERVICE_CREDENTIALS to the full service-account key "
+    "JSON, GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON file path, or run "
+    "`gcloud auth application-default login`."
+)
+
+
+def _open_gefs_hindcast(name: str):
+    """Open one GEFS hindcast store with init_time decoded to datetime64."""
+    import json
+    import os
+
+    import numpy as np
+    import xarray as xr
+
+    path, source, _ = _GEFS_HINDCAST[name]
+    if name == "precipitation_surface":
+        try:
+            return xr.open_zarr(path, storage_options={"token": "anon"})
+        except Exception as exc:  # noqa: BLE001
+            raise DataError(f"failed to open {path} ({exc}).") from None
+
+    import gcsfs
+
+    creds_json = os.environ.get("NEURAL_GCM_SERVICE_CREDENTIALS")
+    try:
+        token = json.loads(creds_json) if creds_json else None
+    except json.JSONDecodeError as exc:
+        raise DataError(f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
+    try:
+        mapper = gcsfs.GCSFileSystem(token=token).get_mapper(path)
+        ds = xr.open_zarr(mapper, zarr_format=3, consolidated=False, decode_times=False)
+    except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
+        raise DataError(f"{_GEFS_AUTH_MSG} Opening gs://{path} failed: {exc}") from None
+    days = np.rint(ds["init_time"].values.astype("float64")).astype("int64")
+    inits = np.datetime64("1960-01-01", "ns") + days.astype("timedelta64[D]")
+    return ds.assign_coords(init_time=inits)
 
 
 def _hpa_by_prefix(data_vars) -> dict[str, list[str]]:
@@ -280,8 +340,115 @@ def _open_dataset(state, dataset) -> dict:
         "Only those leads are downloaded. Default: every lead."
     ),
 )
-def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max_lead, **kwargs):
+@weather_skill.argument(
+    "--hindcast",
+    action="store_true",
+    help=(
+        f"{_GEFS_FORECAST} only: fetch GEFS hindcasts (Wednesday inits 1998-12-30 to "
+        "2019-08-28) from Sheerwater's stores, inits in --start-time..--end-time."
+    ),
+)
+def fetch(
+    bbox, dataset, date, start_time, end_time, variable, probe_latest, max_lead, hindcast, **kwargs
+):
     """Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
+    if hindcast:
+        import numpy as np
+        import xarray as xr
+
+        dsid = (probe_latest or dataset) if probe_latest is not None else dataset
+        if dsid != _GEFS_FORECAST:
+            raise UsageError(
+                f"--hindcast is only for {_GEFS_FORECAST} (GEFS); {dsid!r} has no hindcasts here."
+            )
+        if probe_latest is not None:
+            latest = _open_gefs_hindcast("precipitation_surface")["init_time"].values.max()
+            print(np_to_date(latest).isoformat())
+            return
+        if date is not None or max_lead is not None:
+            raise UsageError(
+                "--hindcast takes an init window: use --start-time/--end-time, "
+                "not --date or --max-lead."
+            )
+        if start_time is None or end_time is None:
+            raise UsageError("--hindcast needs --start-time and --end-time (init dates).")
+        names = _resolve_variables(
+            variable or ["precipitation_surface"], list(_GEFS_HINDCAST), f"{dsid} hindcasts"
+        )
+        start = np.datetime64(start_time.isoformat())
+        end = np.datetime64(end_time.isoformat()) + np.timedelta64(1, "D")
+        parts = []
+        for name in names:
+            _, source, units = _GEFS_HINDCAST[name]
+            hc = _open_gefs_hindcast(name)
+            inits = hc["init_time"].values
+            keep = np.nonzero((inits >= start) & (inits < end))[0]
+            if keep.size == 0:
+                raise DataError(
+                    f"no GEFS {name} hindcast init in {start_time}..{end_time} (store runs "
+                    f"{np_to_date(inits.min())} to {np_to_date(inits.max())})."
+                )
+            part = hc[[source]].isel(init_time=keep).rename({source: name})
+            part[name].attrs = {"units": units}
+            parts.append(part)
+        # The precip and tmp2m stores skip different weeks; keep every init and
+        # leave a variable NaN where its store has no run. Never filled: say which.
+        # Only init_time may differ: the grids and members must match exactly.
+        inits = np.unique(np.concatenate([part["init_time"].values for part in parts]))
+        try:
+            ds = xr.merge([part.reindex(init_time=inits) for part in parts], join="exact")
+        except ValueError as exc:
+            raise DataError(
+                f"GEFS hindcast stores for {', '.join(names)} are on different grids ({exc}); "
+                "fetch them in separate calls."
+            ) from None
+        for part, name in zip(parts, names, strict=True):
+            missing = np.setdiff1d(ds["init_time"].values, part["init_time"].values)
+            if missing.size:
+                print(
+                    f"WARNING: GEFS {name} hindcast has no run for {missing.size} init(s), "
+                    "left NaN: " + ", ".join(str(np_to_date(t)) for t in missing),
+                    file=sys.stderr,
+                )
+        ds = ds.rename(
+            {
+                "init_time": "time",
+                "member": "number",
+                "prediction_timedelta": "step",
+                "lat": "latitude",
+                "lon": "longitude",
+            }
+        )
+        # Daily leads: step d covers [init + d, init + d + 1 day).
+        ds = ds.assign_coords(
+            number=ds["number"].values.astype("int64"),
+            step=ds["step"].values.astype("int64").astype("timedelta64[D]").astype("m8[ns]"),
+        )
+        if bbox is not None:
+            ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
+        else:
+            ds = ensure_normalized_longitude(ds, lon_dim="longitude")
+        ds = ds.transpose("time", "number", "step", "latitude", "longitude").load()
+        print(
+            f"Fetched {ds.sizes['time']} GEFS hindcast inits "
+            f"{np_to_date(ds['time'].values[0])}..{np_to_date(ds['time'].values[-1])}",
+            file=sys.stderr,
+        )
+        ds["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
+        if "temperature_2m" in ds:
+            ds["temperature_2m"].attrs["standard_name"] = "air_temperature"
+        ds.attrs.update(
+            weather_skills_source="sheerwater:"
+            + "+".join(
+                "hindcasts/gefs_precip" if n == "precipitation_surface" else "gefs_chc_raw/tmp2m"
+                for n in names
+            ),
+            Conventions="CF-1.13",
+        )
+        stamp_cf_attrs(ds)
+        ds = to_standard_units(ds, variables=names)
+        return stamp_data_interval(ds, period="1 day")
+
     if probe_latest is not None:
         import numpy as np
 

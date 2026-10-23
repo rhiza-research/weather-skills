@@ -10,9 +10,15 @@
 #   # eccodes drops this as a transitive dep via PyPI metadata (ecmwf/eccodes-python#150),
 #   # so it is declared directly. Windows bundles the library in eccodes itself.
 #   "eccodeslib",
+#   "gcsfs",
 # ]
 # ///
 """Fetch an ECMWF S2S (46-day) ensemble forecast for one init date as a weather-skills Zarr."""
+# --hindcast reads the WeatherBench2 copy of the IFS extended-range reforecast
+# (public). Dims (forecast_time, [number,] hindcast_year, prediction_timedelta,
+# latitude, longitude); forecast_time is the issue date (2016-2022, Mon/Thu) and
+# the 2-D ``time`` coord holds the real init date of each of its 20 hindcast
+# years. Inits in the window become one multi-init cube (time=init, ...).
 
 from __future__ import annotations
 
@@ -248,6 +254,26 @@ _CATALOG_PRESSURE = {
     "q": "specific_humidity",
 }
 _CATALOG_TO_SHORT = {v: k for k, v in {**_CATALOG_SURFACE, **_CATALOG_PRESSURE}.items()}
+
+_HINDCAST_ROOT = "gs://weatherbench2/datasets/ifs_extended_range/daily"
+_HINDCAST_MEAN = f"{_HINDCAST_ROOT}/ifs-ext-reforecast-full-single-level-avg_ens_mean.zarr"
+_HINDCAST_MEMBERS = f"{_HINDCAST_ROOT}/ifs-ext-reforecast-full-single-level-avg.zarr"
+# --hindcast token -> (WeatherBench2 field, units). The store carries no units:
+# precip is a 24 h total in metres, temperatures are 24 h mean / max / min in K.
+# mx2t24 / mn2t24 are daily extremes, not the 6-hour mx2t6 / mn2t6.
+_HINDCAST_VARIABLES = {
+    "tp": ("total_precipitation_24hr", "m day-1"),
+    "t2m": ("2m_temperature", "K"),
+    "mx2t24": ("2m_temperature_max", "K"),
+    "mn2t24": ("2m_temperature_min", "K"),
+    "d2m": ("2m_dewpoint_temperature", "K"),
+    "sst": ("sea_surface_temperature", "K"),
+}
+# Sheerwater's public copy of the members' tp: one run per real init date (the
+# newest issue that ran it, so model cycles mix), 2016-2021, 24 h totals in mm
+# clipped at 0, in 6° tiles. Used for --members tp without --issue-year.
+_HINDCAST_STORE = "gs://sheerwater-public-datalake/hindcasts/ecmwf_ifs_precip.zarr"
+_HINDCAST_STORE_START = dt.date(2016, 1, 1)
 
 # cfgrib / S2S abbreviations that are not the canonical `-v` token.
 _GRIB_EXTRAS = {
@@ -707,12 +733,190 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
     return any(sig in haystack for sig in _S2S_EMBARGO_SIGNATURES)
 
 
+def _open_hindcast(members: bool):
+    path = _HINDCAST_MEMBERS if members else _HINDCAST_MEAN
+    import xarray as xr
+
+    try:
+        return xr.open_zarr(path, storage_options={"token": "anon"}, decode_timedelta=True)
+    except Exception as exc:  # noqa: BLE001
+        raise DataError(f"failed to open {path} ({exc}).") from None
+
+
+def _fetch_hindcast_store(bbox, start: dt.date, end: dt.date):
+    """Member tp hindcasts from the Sheerwater store, inits in [start, end]."""
+    import numpy as np
+    import xarray as xr
+
+    try:
+        ds = xr.open_zarr(_HINDCAST_STORE, storage_options={"token": "anon"})
+    except Exception as exc:  # noqa: BLE001
+        raise DataError(f"failed to open {_HINDCAST_STORE} ({exc}).") from None
+    ds = ds[["precip"]].drop_vars("time", errors="ignore")
+    ds = ds.sel(init_time=slice(np.datetime64(start), np.datetime64(end)))
+    if ds.sizes["init_time"] == 0:
+        raise DataError(f"no ECMWF hindcast init between {start} and {end} in {_HINDCAST_STORE}.")
+    last = ds["init_time"].values[-1].astype("datetime64[D]").item()
+    if end > last:
+        print(
+            f"WARNING: the store's last init is {last}; it has none after that up to {end}.",
+            file=sys.stderr,
+        )
+    print(
+        f"Fetching ECMWF hindcasts from {_HINDCAST_STORE}: {ds.sizes['init_time']} inits, "
+        "each the newest issue's run (model cycles mix; --issue-year keeps one issue year)",
+        file=sys.stderr,
+    )
+    ds = ds.rename(
+        init_time="time",
+        member="number",
+        prediction_timedelta="step",
+        lat="latitude",
+        lon="longitude",
+        precip="tp",
+    )
+    ds = bbox_subset(ds, bbox)
+    ds = ds.assign_coords(
+        number=ds["number"].values.astype("int64"),
+        step=ds["step"].values.astype("timedelta64[D]").astype("timedelta64[ns]"),
+    )
+    ds = ds.transpose("time", "number", "step", "latitude", "longitude").load()
+    ds["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
+    ds["tp"].attrs = {
+        "units": "mm day-1",
+        "standard_name": "lwe_precipitation_rate",
+        "long_name": "Total precipitation",
+    }
+    stamp_cf_attrs(ds)
+    ds = to_standard_units(ds, variables=["tp"])
+    ds.attrs = {
+        "Conventions": "CF-1.13",
+        "weather_skills_source": "sheerwater:hindcasts/ecmwf_ifs_precip",
+    }
+    return stamp_data_interval(ds, period="1 day", dim="step")
+
+
+def _fetch_hindcast(bbox, start: dt.date, end: dt.date, names, issue_year, members: bool):
+    """Pick the (issue, hindcast year) pairs of one issue year whose real init
+    falls in [start, end] and lay them on a single ``time`` axis."""
+    import numpy as np
+    import xarray as xr
+
+    ds = _open_hindcast(members)
+    issued = ds["forecast_time"].values
+    years = issued.astype("datetime64[Y]").astype(int) + 1970
+    issue_years = sorted(set(years.tolist()))
+    if issue_year is None:
+        # Latest issue year whose 20 hindcast years cover the whole window.
+        fits = [y for y in issue_years if y - 20 <= start.year and y - 1 >= end.year]
+        if not fits:
+            raise UsageError(
+                f"no single ECMWF issue year covers inits {start}..{end}: issue years "
+                f"{issue_years[0]}-{issue_years[-1]} each carry the 20 years before them "
+                f"(inits {issue_years[0] - 20}-{issue_years[-1] - 1} overall). Narrow the "
+                "window or pass --issue-year."
+            )
+        issue_year = fits[-1]
+    elif issue_year not in issue_years:
+        raise UsageError(
+            f"--issue-year {issue_year} not in the store; available: "
+            f"{issue_years[0]}-{issue_years[-1]}."
+        )
+
+    inits = ds["time"].values  # (forecast_time, hindcast_year)
+    in_year = (years == issue_year)[:, None]
+    in_window = (inits >= np.datetime64(start)) & (
+        inits < np.datetime64(end) + np.timedelta64(1, "D")
+    )
+    fi, hi = np.nonzero(in_year & in_window)
+    if fi.size == 0:
+        raise DataError(
+            f"issue year {issue_year} has no hindcast init between {start} and {end} "
+            f"(its inits run {issue_year - 20}-01 to {issue_year - 1}-12)."
+        )
+    print(
+        f"Fetching ECMWF hindcasts from {_HINDCAST_MEMBERS if members else _HINDCAST_MEAN}: "
+        f"{fi.size} inits from issue year {issue_year}, variables={','.join(names)}",
+        file=sys.stderr,
+    )
+    region = ds[[_HINDCAST_VARIABLES[name][0] for name in names]].drop_vars(["time", "valid_time"])
+    region = bbox_subset(region, bbox)
+    # Load one issue at a time with plain indexing: a vectorized pick across
+    # issues and years holds a whole globe per init in memory before the bbox.
+    pieces = []
+    for f in np.unique(fi):
+        h = hi[fi == f]
+        piece = region.isel(forecast_time=f, hindcast_year=h).load().drop_vars("forecast_time")
+        piece = piece.rename({"hindcast_year": "time"}).assign_coords(
+            time=inits[f, h], issue_time=("time", np.repeat(issued[f], h.size))
+        )
+        pieces.append(piece)
+    ds = xr.concat(pieces, "time").sortby("time").rename({"prediction_timedelta": "step"})
+    for name in names:
+        source, units = _HINDCAST_VARIABLES[name]
+        ds = ds.rename({source: name})
+        ds[name].attrs = {"units": units}
+    ds = ds.transpose("time", ..., "step", "latitude", "longitude")
+    ds["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
+
+    stamp_cf_attrs(ds)
+    if "tp" in ds.data_vars:
+        ds["tp"].attrs.update(
+            standard_name="lwe_precipitation_rate", long_name="Total precipitation"
+        )
+        ds = to_standard_units(ds, variables=["tp"])
+        # WeatherBench2 derives daily precip by differencing accumulations, and the
+        # IFS extended-range split at day 15 leaves some negative day-15 values.
+        # Kept as published, never clipped: say where they are.
+        negative = (ds["tp"] < -0.1).any([d for d in ds["tp"].dims if d != "step"])
+        if negative.any():
+            days = (ds["step"].values[negative.values] // np.timedelta64(1, "D")).tolist()
+            print(
+                f"WARNING: tp has values below -0.1 mm day-1 at lead day(s) {days}; "
+                "kept as published (not clipped).",
+                file=sys.stderr,
+            )
+    for name in names:
+        if name != "tp":
+            ds[name] = _to_celsius(ds[name])
+    ds.attrs = {
+        "Conventions": "CF-1.13",
+        "weather_skills_source": "weatherbench2:ifs-ext-reforecast"
+        + ("" if members else "-ens-mean"),
+        "hindcast_issue_year": issue_year,
+    }
+    return stamp_data_interval(ds, period="1 day", dim="step")
+
+
 @weather_skill(
     name="ecmwf-fetch",
     version=_SKILL_VERSION,
 )
 @weather_skill.argument("--bbox", required=True)
-@weather_skill.argument("--date", required=True)
+@weather_skill.argument("--date")
+@weather_skill.argument(
+    "--hindcast",
+    action="store_true",
+    help=(
+        "Fetch the WeatherBench2 IFS extended-range reforecast for every init in "
+        "--start-time..--end-time instead of one forecast init."
+    ),
+)
+@weather_skill.argument("--start-time")
+@weather_skill.argument("--end-time")
+@weather_skill.argument(
+    "--issue-year",
+    type=int,
+    help=(
+        "--hindcast only: year whose model cycle issued the hindcasts (2016-2022). "
+        "Default: the latest that covers the window."
+    ),
+)
+@weather_skill.argument(
+    "--members",
+    action="store_true",
+    help="--hindcast only: the 10 perturbed members instead of the ensemble mean.",
+)
 @weather_skill.argument(
     "--variable",
     "-v",
@@ -737,8 +941,24 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(bbox, date, variable, probe_latest, **kwargs):
+def fetch(
+    bbox,
+    date,
+    hindcast,
+    start_time,
+    end_time,
+    issue_year,
+    members,
+    variable,
+    probe_latest,
+    **kwargs,
+):
     """Fetch an ECMWF S2S (46-day) ensemble forecast for one init date as a weather-skills Zarr."""
+    if probe_latest is not None and hindcast:
+        import numpy as np
+
+        print(np_to_date(np.max(_open_hindcast(members=False)["time"].values)).isoformat())
+        return
     if probe_latest is not None:
         found = _catalog_latest_init()
         if found is not None:
@@ -752,6 +972,35 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
                 day -= dt.timedelta(days=1)
         print(day.isoformat())
         return
+
+    if hindcast:
+        if date is not None:
+            raise UsageError("--hindcast takes --start-time and --end-time, not --date.")
+        if start_time is None or end_time is None:
+            raise UsageError("--hindcast needs --start-time and --end-time.")
+        tokens = _flatten_variable_tokens(variable) or list(DEFAULT_VARIABLES)
+        names = list(dict.fromkeys(_canonical_name(token) or token for token in tokens))
+        unknown = [name for name in names if name not in _HINDCAST_VARIABLES]
+        if unknown:
+            raise UsageError(
+                f"--hindcast has no variable(s) {', '.join(unknown)}.\n"
+                f"Available with --hindcast: {', '.join(_HINDCAST_VARIABLES)}"
+            )
+        if (
+            members
+            and names == ["tp"]
+            and issue_year is None
+            and start_time >= _HINDCAST_STORE_START
+        ):
+            return _fetch_hindcast_store(bbox, start_time, end_time)
+        return _fetch_hindcast(bbox, start_time, end_time, names, issue_year, members)
+    if start_time is not None or end_time is not None or issue_year is not None or members:
+        raise UsageError(
+            "--start-time, --end-time, --issue-year and --members need --hindcast; "
+            "a forecast takes --date."
+        )
+    if date is None:
+        raise UsageError("--date is required (or pass --hindcast with --start-time/--end-time).")
 
     date_iso = date.isoformat()
     area = list(bbox)
