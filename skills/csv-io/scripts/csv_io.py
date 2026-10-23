@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 #   "cftime>=1.6",
 #   "openpyxl>=3.1",
 #   "pandas>=2.2",
@@ -18,6 +18,7 @@ import cftime
 import numpy as np
 import pandas as pd
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.cf import measured_variables
 from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset
 
@@ -122,7 +123,7 @@ def _export(ds, output, variable, dropna, max_rows):
     coords = [c for c in df.columns if c not in ds.dims and c not in ds.data_vars]
     df = df[[*ds.dims, *coords, *ds.data_vars]]
     if dropna:
-        df = df.dropna(how="all", subset=list(ds.data_vars))
+        df = df.dropna(how="all", subset=measured_variables(ds))
 
     renames = {}
     for name in df.columns:

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 #   "cftime>=1.6",
 #   "netcdf4>=1.7",
 # ]
@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.cf import drop_dangling_cf_refs
 from weather_skills_core.decorator import INPUT_PATH_ATTR
 from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset
@@ -37,7 +38,12 @@ def _keep(ds, variable, where):
 
 def _export(ds, output, variable):
     """Write ``ds`` as one compressed NetCDF-4 file, attrs and history included."""
-    ds = _keep(dequantify_dataset(ds), variable, "dataset")
+    # A kept variable's coverage goes with it; references to dropped ones are cleared.
+    if variable:
+        variable = [*variable, *(f"{v}_coverage" for v in variable if f"{v}_coverage" in ds)]
+    ds = drop_dangling_cf_refs(
+        _keep(dequantify_dataset(ds), list(dict.fromkeys(variable or [])), "dataset")
+    )
     ds.attrs.pop(INPUT_PATH_ATTR, None)
     # NetCDF attributes hold text, numbers and arrays of them: booleans become
     # 0 / 1 and anything else (None, dicts, dates) its text.

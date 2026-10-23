@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 #   "pandas",
 # ]
 # ///
@@ -11,14 +11,17 @@ import datetime as _dt
 import sys
 
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.cf import measured_variables
 from weather_skills_core.standard_utils import roll_and_agg
 from weather_skills_core.units import (
     AGGREGATION_COVERAGE_COORD,
     AGGREGATION_PERIOD_ATTR,
+    COVERAGE_SUFFIX,
     DATA_INTERVAL_ATTR,
+    coverage_values,
+    coverage_variable,
     data_interval_of,
     dequantify_dataset,
-    expected_samples_in_period,
     format_cell_methods,
     format_duration,
     infer_timestep,
@@ -148,49 +151,6 @@ def _as_ns(val):
     raise UsageError(f"cannot convert {arr.dtype} to a duration for CF bounds")
 
 
-def _finite_along(ds, dim):
-    """True at each ``dim`` index that is not all-NaN across other dims.
-
-    A persistent spatial hole (land mask) does not mark the time as missing.
-    An unpublished forecast lead that is NaN everywhere does. Every data
-    variable must have some finite value at that index.
-    """
-    import numpy as np
-
-    n = ds.sizes.get(dim, 0)
-    if n == 0 or not list(ds.data_vars):
-        return np.ones(n, dtype=bool)
-    flags = []
-    for name in ds.data_vars:
-        da = ds[name]
-        if getattr(da, "pint", None) is not None and da.pint.units is not None:
-            da = da.pint.dequantify()
-        if dim not in da.dims:
-            continue
-        values = np.asarray(da.values)
-        axis = da.dims.index(dim)
-        other = tuple(i for i in range(values.ndim) if i != axis)
-        finite = np.isfinite(values)
-        present = np.any(finite, axis=other) if other else finite
-        flags.append(np.asarray(present, dtype=bool).reshape(n))
-    if not flags:
-        return np.ones(n, dtype=bool)
-    return np.all(np.stack(flags, axis=0), axis=0)
-
-
-def _present(ds, dim):
-    """Per-sample presence: finite, times the input's own coverage when re-aggregating.
-
-    A weekly bin that was 3/7 complete counts as 3/7 of a week, not a whole one.
-    """
-    import numpy as np
-
-    present = _finite_along(ds, dim).astype(float)
-    if AGGREGATION_COVERAGE_COORD in ds.coords and ds[AGGREGATION_COVERAGE_COORD].dims == (dim,):
-        present *= np.nan_to_num(np.asarray(ds[AGGREGATION_COVERAGE_COORD].values, dtype=float))
-    return present
-
-
 def _drop_bounds(ds, dim):
     name = ds[dim].attrs.get("bounds") if dim in ds.coords or dim in ds.dims else None
     names = []
@@ -208,66 +168,8 @@ def _drop_bounds(ds, dim):
     return ds
 
 
-def _weighted_mean(ds, dim, indices, weights):
-    import numpy as np
-    import xarray as xr
-
-    w = np.asarray(weights, dtype=float)
-    # dequantify_dataset keeps the standard spelling (mm day-1, not millimeter / day).
-    sub = dequantify_dataset(_drop_bounds(ds.isel({dim: indices}), dim))
-    wda = xr.DataArray(w, dims=[dim], coords={dim: sub[dim].values})
-    # Weight only finite samples. Dividing by sum(weights) treats NaN as 0, which
-    # turns unpublished GEFS long leads (all-NaN weeks 4–5) into fake dry zeros.
-    numer = (sub * wda).sum(dim=dim, skipna=True, keep_attrs=True)
-    denom = (sub.notnull() * wda).sum(dim=dim)
-    # A cell missing samples other cells have is NaN, not a mean of what it has.
-    return (numer / denom).where(denom >= denom.max())
-
-
 def _empty_bins_message(spec, dim):
     return f"no {spec['key']} bins contained samples on {dim}"
-
-
-def _aggregate_from_bounds(ds, dim, spec, method, bins):
-    """Duration-weight samples into ``bins`` of ``(left, right, label)``."""
-    import numpy as np
-    import xarray as xr
-
-    bounds = _cf_bounds(ds, dim)
-    starts = _as_ns(bounds[:, 0])
-    ends = _as_ns(bounds[:, 1])
-    work = _drop_bounds(ds, dim)
-    present = _finite_along(work, dim)
-    chunks, labels, coverages = [], [], []
-    for left, right, label in bins:
-        left_ns = int(np.asarray(_as_ns(left)).reshape(-1)[0])
-        right_ns = int(np.asarray(_as_ns(right)).reshape(-1)[0])
-        period_ns = right_ns - left_ns
-        if period_ns <= 0:
-            continue
-        overlap = np.minimum(ends, right_ns) - np.maximum(starts, left_ns)
-        overlap = np.maximum(overlap, 0)
-        idx = np.flatnonzero(overlap > 0)
-        if idx.size == 0:
-            continue
-        covered = float((overlap * present)[idx].sum())
-        coverage = min(1.0, covered / period_ns)
-        if method == "mean":
-            chunks.append(_weighted_mean(work, dim, idx, overlap[idx]))
-        else:
-            chunks.append(_reduce(work.isel({dim: idx}), method=method, dim=dim))
-        labels.append(label)
-        coverages.append(coverage)
-    if not chunks:
-        raise UsageError(_empty_bins_message(spec, dim))
-    out = xr.concat(chunks, dim=dim).assign_coords({dim: labels})
-    return _assign_coverage(out, dim, coverages)
-
-
-def _coverage_fraction(n_present: float, expected: int) -> float:
-    if expected <= 0:
-        return 1.0
-    return min(1.0, n_present / expected)
 
 
 def _assign_coverage(out, dim, coverages):
@@ -278,7 +180,7 @@ def _assign_coverage(out, dim, coverages):
     values = np.asarray(coverages, dtype=float)
     out = out.assign_coords({AGGREGATION_COVERAGE_COORD: (dim, values)})
     out[AGGREGATION_COVERAGE_COORD].attrs.update(
-        long_name="fraction of native samples with finite data in the interval",
+        long_name="largest share of the interval with data at any cell",
         units="1",
         valid_min=0.0,
         valid_max=1.0,
@@ -286,233 +188,174 @@ def _assign_coverage(out, dim, coverages):
     return out
 
 
-def _reduce(grouped, method, dim=None):
-    fn = {"mean": grouped.mean, "max": grouped.max, "min": grouped.min}[method]
-    if dim is None:
-        return fn(keep_attrs=True)
-    # A cell missing samples other cells have is NaN, not a mean of what it has:
-    # convert-to-totals would scale that mean up to the full period.
-    count = grouped.notnull().sum(dim=dim)
-    return fn(dim=dim, keep_attrs=True).where(count >= count.max())
+def _coverage_attrs(name):
+    return {
+        "long_name": f"share of the interval with {name} data",
+        "units": "1",
+        "valid_min": 0.0,
+        "valid_max": 1.0,
+    }
 
 
-def _group_indices(group, size: int):
+def _link_coverage(attrs, name):
+    """``attrs`` with ``<name>_coverage`` listed in ``ancillary_variables``."""
+    listed = str(attrs.get("ancillary_variables", "")).split()
+    cov = f"{name}{COVERAGE_SUFFIX}"
+    return {**attrs, "ancillary_variables": " ".join(dict.fromkeys([*listed, cov]))}
+
+
+def _bins(ds, dim, spec, end_time=None, start_time=None):
+    """The ``(left, right, label)`` bins of ``--period`` on ``dim``, labeled at the left edge.
+
+    ``step``: buckets from lead 0. ``end_time``: fixed-width bins walking back from it,
+    while the right edge is after the data start (or ``start_time``). Otherwise calendar
+    resample bins (months run 1st to 1st).
+    """
     import numpy as np
-
-    if isinstance(group, slice):
-        return list(range(*group.indices(size)))
-    return list(np.asarray(group).ravel())
-
-
-def _timestep_days(ds, dim) -> float:
-    try:
-        return float(infer_timestep(ds, dim).to("day").magnitude)
-    except UsageError:
-        return 1.0
-
-
-def _days_in_month(label) -> int:
-    """Month length in the label's own calendar (cftime: noleap Feb is 28, 360_day is 30)."""
-    if hasattr(label, "daysinmonth"):
-        return int(label.daysinmonth)
     import pandas as pd
 
-    return int(pd.Timestamp(label).days_in_month)
-
-
-def _expected_samples(
-    period: str, label, timestep_days: float, *, period_days: int | None = None
-) -> int:
-    """How many input samples a complete bin of ``period`` should hold."""
-    if period_days is not None:
-        days = period_days
-    elif period == "monthly":
-        days = _days_in_month(label)
-    else:
-        days = PERIOD_DAYS[period]
-    return max(1, int(round(days / timestep_days)))
-
-
-def _expected_from_interval(spec, label, native_interval, timestep_days: float) -> int:
-    if native_interval:
-        try:
-            if spec["key"] == "monthly":
-                period = f"{_days_in_month(label)} day"
-            else:
-                period = spec["agg"]
-            return expected_samples_in_period(period, native_interval)
-        except UsageError:
-            pass
-    period_days = None if spec["key"] == "monthly" else spec["anchor_days"]
-    return _expected_samples(spec["key"], label, timestep_days, period_days=period_days)
-
-
-def _aggregate_time_resample(ds, dim, spec, method):
-    """Forward calendar resample; stamp ``aggregation_coverage`` on every bin with samples."""
-    import numpy as np
-    import xarray as xr
-
-    freq = spec["freq"]
-    if _cf_bounds(ds, dim) is not None:
-        resampler = ds.resample({dim: freq})
-        bins = []
-        for label in resampler.groups:
-            if spec["key"] == "monthly":
-                # replace() works for pandas and cftime labels alike.
-                year, month = (
-                    (label.year + 1, 1) if label.month == 12 else (label.year, label.month + 1)
-                )
-                left, right = label, label.replace(year=year, month=month)
-            elif hasattr(label, "calendar"):
-                left = label
-                right = label + _dt.timedelta(days=spec["anchor_days"])
-            else:
-                left = np.datetime64(label)
-                right = left + np.timedelta64(int(round(spec["anchor_days"] * 86400)), "s")
-            bins.append((left, right, left if hasattr(label, "calendar") else np.datetime64(label)))
-        return _aggregate_from_bounds(ds, dim, spec, method, bins)
-
-    timestep_days = _timestep_days(ds, dim)
-    native_interval = _coverage_cell(ds)
-    present = _present(ds, dim)
-    resampler = ds.resample({dim: freq})
-    n = ds.sizes[dim]
-    chunks, labels, coverages = [], [], []
-    for label, group in resampler.groups.items():
-        indices = _group_indices(group, n)
-        if not indices:
-            continue
-        expected = _expected_from_interval(spec, label, native_interval, timestep_days)
-        chunks.append(_reduce(ds.isel({dim: indices}), method=method, dim=dim))
-        labels.append(np.datetime64(label) if not hasattr(label, "calendar") else label)
-        coverages.append(_coverage_fraction(float(present[indices].sum()), expected))
-    if not chunks:
+    raw = np.asarray(ds[dim].values)
+    if raw.size == 0:
         raise UsageError(_empty_bins_message(spec, dim))
-    out = xr.concat(chunks, dim=dim).assign_coords({dim: labels})
-    return _assign_coverage(out, dim, coverages)
+    if dim == "step":
+        if spec["key"] == "monthly":
+            raise UsageError("monthly aggregation is not defined for step")
+        window = pd.Timedelta(days=spec["anchor_days"]).to_timedelta64()
+        bounds = _cf_bounds(ds, "step")
+        max_step = bounds[:, 1].max() if bounds is not None else raw.max()
+        edges = np.arange(0, max_step + window, window, dtype=raw.dtype)
+        return [(left, left + window, left) for left in edges]
+    if end_time is not None:
+        if raw.dtype.kind == "O" and hasattr(raw.flat[0], "calendar"):
+            import cftime
+
+            calendar = raw.flat[0].calendar
+            bin_width = _dt.timedelta(days=spec["anchor_days"])
+            data_min = raw.min()
+            if start_time is not None:
+                try:
+                    start_cf = cftime.datetime(
+                        start_time.year, start_time.month, start_time.day, calendar=calendar
+                    )
+                except ValueError:
+                    raise UsageError(
+                        f"--start-time {start_time.isoformat()} invalid in {calendar!r}"
+                    ) from None
+                data_min = max(data_min, start_cf)
+            try:
+                right = cftime.datetime(
+                    end_time.year, end_time.month, end_time.day, calendar=calendar
+                )
+            except ValueError:
+                raise UsageError(
+                    f"--end-time {end_time.isoformat()} invalid in {calendar!r}"
+                ) from None
+            label = lambda edge: edge  # noqa: E731
+        else:
+            bin_width = pd.Timedelta(days=spec["anchor_days"])
+            data_min = pd.Timestamp(pd.to_datetime(raw).min())
+            if start_time is not None:
+                data_min = max(data_min, pd.Timestamp(start_time))
+            right = pd.Timestamp(end_time)
+            label = lambda edge: np.datetime64(edge)  # noqa: E731
+        bins = []
+        # Stop once the right edge is at/before the first sample — do not require
+        # left >= data_min, or a bin that still holds data is never created.
+        while right > data_min:
+            bins.append((right - bin_width, right, label(right - bin_width)))
+            right = right - bin_width
+        return bins[::-1]
+    bins = []
+    for label in ds.resample({dim: spec["freq"]}).groups:
+        if not hasattr(label, "calendar"):
+            label = pd.Timestamp(label)
+        if spec["key"] == "monthly":
+            # replace() works for pandas and cftime labels alike.
+            year, month = (
+                (label.year + 1, 1) if label.month == 12 else (label.year, label.month + 1)
+            )
+            left, right = label, label.replace(year=year, month=month)
+        elif hasattr(label, "calendar"):
+            left, right = label, label + _dt.timedelta(days=spec["anchor_days"])
+        else:
+            left = np.datetime64(label)
+            right = left + np.timedelta64(int(round(spec["anchor_days"] * 86400)), "s")
+        bins.append((left, right, left if hasattr(label, "calendar") else np.datetime64(label)))
+    return bins
 
 
-def _aggregate_time_anchored(ds, dim, spec, method, end_time, *, start_time=None):
-    """Backward fixed-width bins whose last right edge is ``end_time``.
+def _reduce_bins(ds, dim, spec, method, bins):
+    """Reduce every bin cell by cell, and stamp each cell's coverage.
 
-    Same geometry as forecast ``step`` buckets: half-open ``[left, right)``,
-    labeled at the left edge. Walks while the bin's right edge is still after
-    the effective data start, then keeps bins that contain samples and stamps
-    ``aggregation_coverage``. Optional ``start_time`` raises the earliest
-    coverage floor.
+    Each sample spans its CF bounds, else ``[t, t + cell)``, and is weighted by its
+    overlap with the bin. Per cell, ``<var>_coverage`` is the overlap with data (times
+    the input's own coverage when re-aggregating) over the bin length; the value is the
+    overlap-weighted mean (or max/min) of the finite samples. A cell with less data than
+    the bin's best-covered cell is NaN: convert-to-totals would scale its mean up to the
+    whole bin. The bin's ``aggregation_coverage`` is its best cell's coverage.
     """
     import numpy as np
     import xarray as xr
 
-    period_days = spec["anchor_days"]
-    raw = np.asarray(ds[dim].values)
-    if raw.size == 0:
-        raise UsageError(_empty_bins_message(spec, dim))
-    if raw.dtype.kind == "O" and hasattr(raw.flat[0], "calendar"):
-        import cftime
-
-        calendar = raw.flat[0].calendar
-        bin_width = _dt.timedelta(days=period_days)
-        data_min = raw.min()
-        if start_time is not None:
-            try:
-                start_cf = cftime.datetime(
-                    start_time.year, start_time.month, start_time.day, calendar=calendar
-                )
-            except ValueError:
-                raise UsageError(
-                    f"--start-time {start_time.isoformat()} invalid in {calendar!r}"
-                ) from None
-            if start_cf > data_min:
-                data_min = start_cf
-        try:
-            right = cftime.datetime(end_time.year, end_time.month, end_time.day, calendar=calendar)
-        except ValueError:
-            raise UsageError(f"--end-time {end_time.isoformat()} invalid in {calendar!r}") from None
-        label = lambda edge: edge  # noqa: E731
+    bounds = _cf_bounds(ds, dim)
+    if bounds is not None:
+        starts, ends = _as_ns(bounds[:, 0]), _as_ns(bounds[:, 1])
     else:
-        import pandas as pd
-
-        bin_width = pd.Timedelta(days=period_days)
-        data_min = pd.Timestamp(pd.to_datetime(raw).min())
-        if start_time is not None:
-            start_ts = pd.Timestamp(start_time)
-            if start_ts > data_min:
-                data_min = start_ts
-        right = pd.Timestamp(end_time)
-        label = lambda edge: np.datetime64(edge)  # noqa: E731
-
-    timestep_days = _timestep_days(ds, dim)
-    native_interval = _coverage_cell(ds)
-    present = _present(ds, dim)
-    bins, r = [], right
-    # Stop once the right edge is at/before the first sample — do not require
-    # left >= data_min, or a bin that still holds data is never created.
-    while r > data_min:
-        left = r - bin_width
-        bins.append((left, r))
-        r = left
-    bins.reverse()
-    if _cf_bounds(ds, dim) is not None:
-        bound_bins = [(left, right, label(left)) for left, right in bins]
-        return _aggregate_from_bounds(ds, dim, spec, method, bound_bins)
-    chunks, labels, coverages = [], [], []
-    for left, right in bins:
-        keep = np.nonzero((raw >= left) & (raw < right))[0]
-        if keep.size == 0:
+        starts = _as_ns(ds[dim].values)
+        cell = _coverage_cell(ds)
+        try:
+            width = parse_aggregation_period(cell) if cell else infer_timestep(ds, dim)
+        except UsageError:
+            width = parse_aggregation_period("1 day")
+        ends = starts + int(round(float(width.to("second").magnitude) * 1e9))
+    work = dequantify_dataset(_drop_bounds(ds, dim))
+    measured = [name for name in measured_variables(work) if dim in work[name].dims]
+    # Input coverage when re-aggregating: per cell if stamped, else per interval.
+    step_share = coverage_values(work, dim)
+    chunks, labels, bin_coverage = [], [], []
+    for left, right, label in bins:
+        left_ns = int(np.asarray(_as_ns(left)).reshape(-1)[0])
+        right_ns = int(np.asarray(_as_ns(right)).reshape(-1)[0])
+        overlap = np.maximum(np.minimum(ends, right_ns) - np.maximum(starts, left_ns), 0)
+        idx = np.flatnonzero(overlap > 0)
+        if right_ns <= left_ns or idx.size == 0:
             continue
-        expected = _expected_from_interval(spec, left, native_interval, timestep_days)
-        chunks.append(_reduce(ds.isel({dim: keep}), method=method, dim=dim))
-        labels.append(label(left))
-        coverages.append(_coverage_fraction(float(present[keep].sum()), expected))
+        sub = work.isel({dim: idx})
+        w = xr.DataArray(overlap[idx].astype(float), dims=[dim])
+        chunk = {name: sub[name] for name in work.data_vars if dim not in work[name].dims}
+        best_by_var = []
+        for name in measured:
+            da = sub[name]
+            finite = da.notnull()
+            share = coverage_variable(sub, name)
+            share = xr.DataArray(step_share[idx], dims=[dim]) if share is None else share.fillna(0)
+            coverage = ((w * finite * share).sum(dim) / (right_ns - left_ns)).clip(max=1.0)
+            if method == "mean":
+                value = (da * w).sum(dim, skipna=True) / (w * finite).sum(dim)
+            else:
+                value = getattr(da, method)(dim)
+            best = float(coverage.max()) if coverage.size else 0.0
+            value = value.where(coverage >= best - 1e-9)
+            if da.dtype.kind == "f":
+                value = value.astype(da.dtype)
+            chunk[name] = value.assign_attrs(_link_coverage(da.attrs, name))
+            chunk[f"{name}{COVERAGE_SUFFIX}"] = coverage.astype("float32").assign_attrs(
+                _coverage_attrs(name)
+            )
+            best_by_var.append(best)
+        chunks.append(xr.Dataset(chunk))
+        labels.append(label)
+        bin_coverage.append(min(best_by_var, default=1.0))
     if not chunks:
         raise UsageError(_empty_bins_message(spec, dim))
     out = xr.concat(chunks, dim=dim).assign_coords({dim: labels})
-    return _assign_coverage(out, dim, coverages)
-
-
-def _aggregate_step(ds, spec, method):
-    import numpy as np
-    import pandas as pd
-    import xarray as xr
-
-    if spec["key"] == "monthly":
-        raise UsageError("monthly aggregation is not defined for step")
-    window = pd.Timedelta(days=spec["anchor_days"]).to_timedelta64()
-    steps = ds["step"].values
-    bounds = _cf_bounds(ds, "step")
-    max_step = bounds[:, 1].max() if bounds is not None else steps.max()
-    edges = np.arange(0, max_step + window, window, dtype=steps.dtype)
-    if bounds is not None:
-        bins = []
-        for left in edges:
-            right = left + window
-            bins.append((left, right, left))
-        return _aggregate_from_bounds(ds, "step", spec, method, bins)
-    native_interval = _coverage_cell(ds)
-    timestep_days = _timestep_days(ds, "step")
-    present = _present(ds, "step")
-    chunks, labels, coverages = [], [], []
-    for left in edges:
-        right = left + window
-        mask = (steps >= left) & (steps < right)
-        if not mask.any():
-            continue
-        n_present = float(present[mask].sum())
-        expected = _expected_from_interval(spec, right, native_interval, timestep_days)
-        chunks.append(_reduce(ds.isel(step=np.where(mask)[0]), method=method, dim="step"))
-        labels.append(left)
-        coverages.append(_coverage_fraction(n_present, expected))
-    if not chunks:
-        raise UsageError(_empty_bins_message(spec, "step"))
-    out = xr.concat(chunks, dim="step").assign_coords(step=labels)
-    return _assign_coverage(out, "step", coverages)
+    return _assign_coverage(out, dim, bin_coverage)
 
 
 def _stamp_attrs(out, dim, agg_period, method, interval, *, data_interval=None):
     cf_method = _METHOD_TO_CF[method]
     cm = format_cell_methods(dim, cf_method, interval=interval)
-    for name in out.data_vars:
+    for name in measured_variables(out):
         attrs = {**out[name].attrs, AGGREGATION_PERIOD_ATTR: agg_period, "cell_methods": cm}
         native = data_interval or attrs.get(DATA_INTERVAL_ATTR)
         if native:
@@ -662,8 +505,16 @@ def aggregate(
                     f"--window counts rows and {dim!r} has missing rows (spacing other "
                     f"than {interval}); use --period, which counts them against coverage"
                 )
+        measured = [name for name in measured_variables(ds) if dim in ds[name].dims]
         try:
-            out = roll_and_agg(ds, window, dim, method, align=align, stride=stride_val)
+            out = roll_and_agg(
+                ds.drop_vars([n for n in ds.data_vars if n not in measured_variables(ds)]),
+                window,
+                dim,
+                method,
+                align=align,
+                stride=stride_val,
+            )
         except KeyError:
             # A calendar stride (month, Monday) picks dates; on a weekly or
             # monthly axis most of them are not labels, so there is nothing to pick.
@@ -677,34 +528,41 @@ def aggregate(
             import numpy as np
             import xarray as xr
 
-            present = xr.DataArray(
-                _finite_along(ds, dim).astype("float64"),
-                dims=[dim],
-                coords={dim: ds[dim]},
-            )
-            if window == 1 and stride is None:
-                cov = present
-            else:
-                cov = roll_and_agg(
-                    present.to_dataset(name="_c"),
-                    window,
-                    dim,
-                    "mean",
-                    align=align,
-                    stride=stride_val,
-                )["_c"]
-            out = _assign_coverage(out, dim, np.asarray(cov.values, dtype=float))
+            # Per cell: the share of the window's rows with data at that cell.
+            present = xr.Dataset({name: ds[name].notnull().astype("float64") for name in measured})
+            if window > 1 or stride is not None:
+                present = roll_and_agg(present, window, dim, "mean", align=align, stride=stride_val)
+            best = []
+            for name in measured:
+                cov = present[name]
+                out[f"{name}{COVERAGE_SUFFIX}"] = cov.astype("float32").assign_attrs(
+                    _coverage_attrs(name)
+                )
+                out[name].attrs = _link_coverage(out[name].attrs, name)
+                best.append(cov.max([d for d in cov.dims if d != dim]).values)
+            out = _assign_coverage(out, dim, np.min(best, axis=0) if best else np.ones(n))
         agg_period = _rolling_aggregation_period(ds, dim, window, interval)
         return _stamp_attrs(out, dim, agg_period, method, interval, data_interval=native_interval)
 
     spec = _resolve_period(period)
     if native_interval and _durations_equal(spec["agg"], native_interval):
         import numpy as np
+        import xarray as xr
 
-        out = ds
+        # Already at the period: each cell covers its own interval where it has data.
+        out = ds.copy()
         n = out.sizes.get(dim, 0)
         if n:
-            out = _assign_coverage(out, dim, np.ones(n, dtype=float))
+            step_share = xr.DataArray(coverage_values(ds, dim), dims=[dim])
+            best = []
+            for name in [v for v in measured_variables(ds) if dim in ds[v].dims]:
+                cov = coverage_variable(ds, name)
+                if cov is None:
+                    cov = (ds[name].notnull() * step_share).astype("float32")
+                    out[f"{name}{COVERAGE_SUFFIX}"] = cov.assign_attrs(_coverage_attrs(name))
+                    out[name].attrs = _link_coverage(ds[name].attrs, name)
+                best.append(cov.max([d for d in cov.dims if d != dim]).values)
+            out = _assign_coverage(out, dim, np.min(best, axis=0) if best else np.ones(n))
         return _stamp_attrs(out, dim, spec["agg"], method, interval, data_interval=native_interval)
     # Each input sample covers [t, t + cell). Bins must hold whole cells, or a
     # weekly mean lands entirely in the month of its label and still counts as
@@ -743,7 +601,7 @@ def aggregate(
                     f"(first sample {str(raw[0])[:10]}), so bins would split input samples"
                 )
     if dim == "step":
-        out = _aggregate_step(ds, spec, method)
+        out = _reduce_bins(ds, dim, spec, method, _bins(ds, dim, spec))
         if end_time is not None or start_time is not None:
             print(
                 "--start-time/--end-time have no effect on step aggregation",
@@ -767,16 +625,9 @@ def aggregate(
                 "(--end-time is exclusive: pass the day after the last day to include).",
                 file=sys.stderr,
             )
-        out = _aggregate_time_anchored(
-            ds,
-            dim,
-            spec,
-            method,
-            end_time,
-            start_time=start_time,
-        )
+        out = _reduce_bins(ds, dim, spec, method, _bins(ds, dim, spec, end_time, start_time))
     else:
-        out = _aggregate_time_resample(ds, dim, spec, method)
+        out = _reduce_bins(ds, dim, spec, method, _bins(ds, dim, spec))
 
     # Incomplete bins are kept with their coverage; convert-to-totals drops them
     # at its default --min-coverage 1.0. Say so now, not three steps later.

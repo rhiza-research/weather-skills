@@ -191,3 +191,16 @@ def test_export_needs_nc_suffix(tmp_path, netcdf_io, capsys):
         run_skill(netcdf_io, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
 
     assert "should end in .nc" in capsys.readouterr().err
+
+
+def test_variable_keeps_its_coverage(tmp_path, netcdf_io):
+    from conftest import make_gridded, with_coverage
+
+    ds = with_coverage(make_gridded(), "precip")
+    ds["t2m"] = ds["precip"].copy().assign_attrs(units="K")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    nc = tmp_path / "out.nc"
+    run_skill(netcdf_io, "-i", str(src), "-o", str(nc), "-v", "precip")
+    with xr.open_dataset(nc) as res:
+        assert sorted(res.data_vars) == ["precip", "precip_coverage"]
+        assert res["precip"].attrs["ancillary_variables"] == "precip_coverage"

@@ -188,3 +188,21 @@ def test_single_year_is_refused(tmp_path, mod, capsys):
             "2026-01-02",
         )
     assert "at least two years" in capsys.readouterr().err
+
+
+def test_coverage_is_not_a_climatology_variable(tmp_path, mod):
+    from conftest import with_coverage
+
+    path = _record(tmp_path)
+    ds = with_coverage(xr.open_zarr(path).load(), "precip")
+    ds.to_zarr(tmp_path / "cov.zarr", mode="w")
+    out = _run(
+        mod,
+        tmp_path,
+        tmp_path / "cov.zarr",
+        "--start-time",
+        "2026-03-01",
+        "--end-time",
+        "2026-03-01",
+    )
+    assert not [v for v in out.data_vars if v.startswith("precip_coverage")]

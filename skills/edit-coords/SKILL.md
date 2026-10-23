@@ -21,7 +21,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/edit_coords.py -i IN.zarr -o OUT.zarr [--rena
 
 ### Arguments
 - `--input`, `-i` — input Zarr.
-- `--rename` — `OLD=NEW`; rename a data variable, coordinate, or dimension. Renaming a dimension's index coordinate renames the dimension too. Two renames may swap names (`a=b` with `b=a`). Repeatable.
+- `--rename` — `OLD=NEW`; rename a data variable, coordinate, or dimension. Renaming a dimension's index coordinate renames the dimension too. Two renames may swap names (`a=b` with `b=a`). A variable's `<old>_coverage` is renamed with it (`<new>_coverage`). Repeatable.
 - `--swap-dims` — `OLD_DIM=NEW_DIM`; make the 1-D coordinate `NEW_DIM` (along `OLD_DIM`, unique values) the index of that dimension. `OLD_DIM` stays as an ordinary coordinate. Repeatable.
 - `--output`, `-o` — output Zarr.
 

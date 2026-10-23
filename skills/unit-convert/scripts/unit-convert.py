@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 # ]
 # ///
 """Convert data variables in a Zarr to target units or to the standard units."""
@@ -9,6 +9,7 @@
 import sys
 
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.cf import measured_variables
 from weather_skills_core.units import (
     STANDARD,
     classify_variable,
@@ -63,7 +64,7 @@ def unit_convert(ds, variable, to_units, to_standard, standard_name, **kwargs):
         raise UsageError("--standard-name must not be empty")
     if variable and variable not in ds.data_vars:
         raise UsageError(f"--variable {variable!r} not in dataset (have {list(ds.data_vars)})")
-    names = [variable] if variable else list(ds.data_vars)
+    names = [variable] if variable else measured_variables(ds)
 
     if to_standard:
         skipped = [
