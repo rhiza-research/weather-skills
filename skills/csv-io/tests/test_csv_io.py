@@ -321,3 +321,13 @@ def test_export_refuses_too_many_rows(tmp_path, csv_io):
     with pytest.raises(SystemExit) as exc:
         run_skill(csv_io, "-i", str(src), "-o", str(tmp_path / "out.csv"), "--max-rows", "5")
     assert exc.value.code == 2
+
+
+def test_export_refuses_four_dims(tmp_path, csv_io, capsys):
+    ds = make_gridded(n_time=2).expand_dims(number=[0, 1])
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(csv_io, "-i", str(src), "-o", str(tmp_path / "out.csv"))
+    assert exc.value.code == 2
+    assert "summarize-dim" in capsys.readouterr().err
+    assert not (tmp_path / "out.csv").exists()

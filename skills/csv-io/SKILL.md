@@ -47,6 +47,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/csv_io.py --csv IN.csv -o OUT.zarr [--date-fo
 - Units come from the header, `rain [mm]` or `Rainfall (mm)`; columns with none are listed on stderr and need `--units` for later skills.
 - Column names are cleaned for CF (`Station Name` → `Station_Name`); `--units` and `--index` take the cleaned names. The layout comes from them ([Details](#details)).
 - Nothing is filled: a station/time absent from the CSV, or an empty cell, is NaN. Duplicate rows for one station and time exit 2.
+- Export takes at most 3 dims, such as `(time, latitude, longitude)` or `(station_id, time)`; with a fourth (member, lead, level) it exits 2. Reduce it first with summarize-dim, select or aggregate-temporal.
 - A CSV keeps names, units and values only; other attrs and provenance are lost, so export at the end of a pipeline.
 
 ### Example

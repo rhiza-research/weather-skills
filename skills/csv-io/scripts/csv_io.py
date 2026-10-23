@@ -109,6 +109,14 @@ def _export(ds, output, variable, dropna, max_rows):
         ds = ds[variable]
     if not ds.data_vars:
         raise UsageError("dataset has no data variables to export")
+    # At most three dims, such as (time, latitude, longitude); a fourth (step, member,
+    # level) makes a table too long to read in a spreadsheet.
+    if len(ds.dims) > 3:
+        raise UsageError(
+            f"export takes at most 3 dims; this dataset has {len(ds.dims)}: "
+            f"{', '.join(ds.dims)}. Reduce it first: summarize-dim for an ensemble mean "
+            "or an area mean, select for one member, lead or level, or aggregate-temporal."
+        )
     n_rows = int(np.prod([ds.sizes[d] for d in ds.dims])) if ds.dims else 1
     if n_rows > max_rows:
         raise UsageError(
