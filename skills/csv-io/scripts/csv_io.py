@@ -92,8 +92,14 @@ def _clean_name(col):
     return name, (m["u1"] if m["u1"] is not None else m["u2"]).strip()
 
 
-def _export(ds, output, variable, dropna, max_rows):
-    """Write ``ds`` as one tidy CSV row per coordinate combination."""
+def _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet, pivot):
+    """Write ``ds`` as one tidy CSV or Excel row per coordinate combination."""
+    if na_value and len(na_value) > 1:
+        raise UsageError("export writes one missing-value code; pass --na-value once")
+    na_rep = na_value[0] if na_value else ""
+    excel = output.suffix.lower() in EXCEL_SUFFIXES
+    if sheet is not None and not excel:
+        raise UsageError(f"--sheet is for Excel output ({', '.join(EXCEL_SUFFIXES)})")
     # Short CF unit strings (mm, mm d-1) for the headers, not pint's long names.
     units = {}
     for v in ds.data_vars:
@@ -117,6 +123,19 @@ def _export(ds, output, variable, dropna, max_rows):
             f"{', '.join(ds.dims)}. Reduce it first: summarize-dim for an ensemble mean "
             "or an area mean, select for one member, lead or level, or aggregate-temporal."
         )
+    # Long table -> wide: one column per entry of a dim, cells from one variable.
+    label = value = None
+    if pivot:
+        label, sep, value = pivot.partition("=")
+        if not sep:
+            raise UsageError(f"--pivot expects NAME=VALUE, e.g. time=precip; got {pivot!r}")
+        if label not in ds.dims:
+            raise UsageError(f"--pivot: {label!r} is not a dim ({', '.join(ds.dims)})")
+        if value not in ds.data_vars:
+            raise UsageError(f"--pivot: {value!r} is not a variable ({', '.join(ds.data_vars)})")
+        ds = ds[[value]]
+        # Coords along the pivoted dim (valid_time on step) have no column left to sit in.
+        ds = ds.drop_vars([c for c in ds.coords if c != label and label in ds[c].dims])
     n_rows = int(np.prod([ds.sizes[d] for d in ds.dims])) if ds.dims else 1
     if n_rows > max_rows:
         raise UsageError(
@@ -143,19 +162,42 @@ def _export(ds, output, variable, dropna, max_rows):
             fmt = "%Y-%m-%d" if midnight else "%Y-%m-%d %H:%M:%S"
             renames[name] = f"{name} [{df[name].iloc[0].calendar}]"
             df[name] = [t.strftime(fmt) for t in df[name]]
+        elif pd.api.types.is_datetime64_any_dtype(df[name]):
+            midnight = (df[name] == df[name].dt.normalize()).all()
+            fmt = date_format or ("%Y-%m-%d" if midnight else "%Y-%m-%d %H:%M:%S")
+            df[name] = df[name].dt.strftime(fmt)
         elif pd.api.types.is_timedelta64_dtype(df[name]):
             # Leads as plain numbers so a spreadsheet can read them.
             whole_days = (df[name] % pd.Timedelta(days=1) == pd.Timedelta(0)).all()
-            unit, label = ("D", "days") if whole_days else ("h", "hours")
+            unit, unit_name = ("D", "days") if whole_days else ("h", "hours")
             df[name] = df[name] / pd.Timedelta(1, unit)
-            renames[name] = f"{name} [{label}]"
+            renames[name] = f"{name} [{unit_name}]"
     df = df.rename(columns=renames)
     # float32 at its own precision: -4.025, not -4.025000095367432.
     for name in df.columns[df.dtypes == np.float32]:
         df[name] = pd.to_numeric(df[name].to_numpy().astype(str))
 
+    if pivot:
+        label_col, value_col = renames.get(label, label), renames.get(value, value)
+        rows = [c for c in df.columns if c not in (label_col, value_col)]
+        order = df[label_col].unique()
+        df = df.pivot(index=rows, columns=label_col, values=value_col)[order]
+        df.columns = [str(c) for c in df.columns]
+        df = df.reset_index()
+        # Headers now hold the dim's values, so the units of both go nowhere.
+        print(
+            f"note: the pivoted CSV has no units for {value} or {label}; read it back with "
+            f"--unpivot {label}={value} --units {value}={units[value] or 'UNITS'}",
+            file=sys.stderr,
+        )
+
     output.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(output, index=False)
+    if excel:
+        if len(df) >= 1_048_576 or len(df.columns) > 16_384:
+            raise UsageError(f"{len(df):,} rows x {len(df.columns):,} columns is too big for Excel")
+        df.to_excel(output, sheet_name=sheet or "Sheet1", index=False, na_rep=na_rep)
+    else:
+        df.to_csv(output, index=False, na_rep=na_rep)
     print(f"Wrote: {output} ({len(df):,} rows, {len(df.columns)} columns)", file=sys.stderr)
 
 
@@ -240,6 +282,12 @@ def _read(
         renames[col] = name
         if unit is not None:
             col_units[name] = unit
+    cleaned = pd.Series(list(renames.values()))
+    if cleaned.duplicated().any():
+        raise UsageError(
+            f"two columns both clean to {cleaned[cleaned.duplicated()].iloc[0]!r}; "
+            "rename one with --names"
+        )
     df = df.rename(columns=renames)
     for name in drop_column or []:
         if name not in df.columns:
@@ -259,6 +307,10 @@ def _read(
         raw = {renames[c]: c for c in renames}
         df = df.melt(id_vars=keep, value_vars=stacked, var_name=label, value_name=value)
         df[label] = df[label].map(raw)
+        # Numeric headers (steps, levels, members) are numbers, not text.
+        labels = pd.to_numeric(df[label], errors="coerce")
+        if labels.notna().all():
+            df[label] = labels
         numbers = pd.to_numeric(df[value], errors="coerce")
         bad = df.loc[numbers.isna() & df[value].notna(), value].unique()
         if len(bad):
@@ -425,7 +477,7 @@ def _read(
 
 @weather_skill(name="csv-io", version=_SKILL_VERSION)
 @weather_skill.argument(
-    "-i", "--input", type=Dataset("any"), help="Zarr to export; -o names the .csv to write."
+    "-i", "--input", type=Dataset("any"), help="Zarr to export; -o names the .csv or .xlsx."
 )
 @weather_skill.argument(
     "--csv", type=Path, help="CSV or Excel (.xlsx) to read; -o names the .zarr to write."
@@ -441,10 +493,12 @@ def _read(
     "--units", action="append", help="Read: COLUMN=UNITS for a column without '[units]'."
 )
 @weather_skill.argument(
-    "--na-value", action="append", help="Read: extra missing-value marker, e.g. -999."
+    "--na-value",
+    action="append",
+    help="Missing-value code, e.g. -999: read treats it as missing, export writes it.",
 )
 @weather_skill.argument(
-    "--date-format", help="Read: strftime format of the time column, e.g. %%d/%%m/%%Y."
+    "--date-format", help="strftime format of the time column, e.g. %%d/%%m/%%Y."
 )
 @weather_skill.argument(
     "--point",
@@ -455,7 +509,7 @@ def _read(
     action="append",
     help="Read: column to use as a dim (repeatable; overrides detection).",
 )
-@weather_skill.argument("--sheet", help="Read: Excel sheet name. Default: the first sheet.")
+@weather_skill.argument("--sheet", help="Excel sheet name. Default: the first sheet, or Sheet1.")
 @weather_skill.argument("--names", help="Read: comma-separated names replacing the header row.")
 @weather_skill.argument(
     "--skip-rows", type=int, default=0, help="Read: lines to skip above the header row."
@@ -467,6 +521,10 @@ def _read(
 @weather_skill.argument(
     "--unpivot",
     help="Read: NAME=VALUE; stack the non-coordinate columns, headers into NAME, cells into VALUE.",
+)
+@weather_skill.argument(
+    "--pivot",
+    help="Export: NAME=VALUE; one column per entry of dim NAME, cells from variable VALUE.",
 )
 def csv_io(
     ds,
@@ -486,33 +544,26 @@ def csv_io(
     replace,
     drop_column,
     unpivot,
+    pivot,
     **kwargs,
 ):
     """Export a weather-skills Zarr to a CSV table, or read a CSV or Excel sheet into a Zarr."""
     if (ds is None) == (csv is None):
         raise UsageError("pass exactly one of -i/--input (Zarr to export) or --csv (CSV to read)")
     if ds is not None:
-        if output.suffix.lower() != ".csv":
-            raise UsageError(f"export writes CSV; -o should end in .csv (got {output})")
-        read_only = (
-            units,
-            na_value,
-            date_format,
-            point,
-            index,
-            sheet,
-            names,
-            skip_rows,
-            replace,
-            drop_column,
-            unpivot,
-        )
+        if output.suffix.lower() not in (".csv", *EXCEL_SUFFIXES):
+            raise UsageError(
+                f"export writes CSV or Excel; -o should end in .csv or .xlsx (got {output})"
+            )
+        read_only = (units, point, index, names, skip_rows, replace, drop_column, unpivot)
         if any(read_only):
-            raise UsageError("reading options (--units, --sheet, --unpivot, ...) are for --csv")
-        _export(ds, output, variable, dropna, max_rows)
+            raise UsageError("reading options (--units, --names, --unpivot, ...) are for --csv")
+        _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet, pivot)
         return None
-    if output.suffix.lower() == ".csv":
-        raise UsageError("reading a CSV writes a Zarr; -o should not end in .csv")
+    if output.suffix.lower() in (".csv", *EXCEL_SUFFIXES):
+        raise UsageError("reading a CSV writes a Zarr; -o should not end in .csv or .xlsx")
+    if pivot:
+        raise UsageError("--pivot is for export (-i); reading a wide table takes --unpivot")
     out = _read(
         csv,
         units,

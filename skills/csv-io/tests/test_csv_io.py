@@ -331,3 +331,110 @@ def test_export_refuses_four_dims(tmp_path, csv_io, capsys):
     assert exc.value.code == 2
     assert "summarize-dim" in capsys.readouterr().err
     assert not (tmp_path / "out.csv").exists()
+
+
+def test_na_value_and_date_format_round_trip(tmp_path, csv_io):
+    ds = make_point_obs(n_time=2, n_points=1)
+    ds["precip"].values[:] = [[np.nan, 3.0]]
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+    opts = ["--na-value", "-999", "--date-format", "%d/%m/%Y"]
+
+    run_skill(csv_io, "-i", str(src), "-o", str(csv), *opts)
+    df = pd.read_csv(csv)
+    assert list(df["time"]) == ["01/01/2026", "02/01/2026"]
+    assert df["precip [mm d-1]"].iloc[0] == -999
+    run_skill(csv_io, "--csv", str(csv), "-o", str(back), *opts)
+
+    res = _open(back)
+    np.testing.assert_allclose(res["precip"].values, ds["precip"].values, equal_nan=True)
+    assert res["time"].values[1] == np.datetime64("2026-01-02")
+
+
+def test_pivot_round_trips_with_unpivot(tmp_path, csv_io):
+    ds = make_gridded(n_time=3, lats=(-1.0, 2.0), lons=(10.0, 11.0))
+    ds["precip"].values[:] = np.arange(12).reshape(3, 2, 2)
+    ds["precip"].values[1, 0, 0] = np.nan
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+
+    run_skill(csv_io, "-i", str(src), "-o", str(csv), "--pivot", "time=precip")
+    df = pd.read_csv(csv)
+    assert list(df.columns) == ["latitude", "longitude", "2026-01-01", "2026-01-02", "2026-01-03"]
+    assert len(df) == 4
+    run_skill(
+        csv_io,
+        "--csv",
+        str(csv),
+        "-o",
+        str(back),
+        "--unpivot",
+        "time=precip",
+        "--units",
+        "precip=mm day-1",
+    )
+
+    res = _open(back)
+    assert res["precip"].dims == ("time", "latitude", "longitude")
+    np.testing.assert_allclose(res["precip"].values, ds["precip"].values, equal_nan=True)
+
+
+def test_pivot_steps_read_back_as_leads(tmp_path, csv_io):
+    ds = make_forecast(n_step=3)
+    ds["tp"].values[:] = np.arange(12).reshape(3, 2, 2)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+
+    run_skill(csv_io, "-i", str(src), "-o", str(csv), "--pivot", "step=tp")
+    run_skill(csv_io, "--csv", str(csv), "-o", str(back), "--unpivot", "step=tp")
+
+    res = _open(back)
+    assert res["step"].values[1] == np.timedelta64(1, "D")
+    np.testing.assert_allclose(res["tp"].values, ds["tp"].values)
+
+
+def test_pivot_needs_a_dim_and_a_variable(tmp_path, csv_io):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    for spec in ("level=precip", "time=tmax", "time"):
+        with pytest.raises(SystemExit) as exc:
+            run_skill(csv_io, "-i", str(src), "-o", str(tmp_path / "out.csv"), "--pivot", spec)
+        assert exc.value.code == 2
+
+
+def test_excel_round_trip(tmp_path, csv_io):
+    ds = make_point_obs(n_time=3, n_points=2)
+    ds["precip"].values[:] = [[1.0, 2.0, np.nan], [4.0, 5.0, 6.0]]
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    xlsx = tmp_path / "out.xlsx"
+    back = tmp_path / "back.zarr"
+
+    run_skill(csv_io, "-i", str(src), "-o", str(xlsx), "--sheet", "rain")
+    assert pd.ExcelFile(xlsx).sheet_names == ["rain"]
+    run_skill(csv_io, "--csv", str(xlsx), "-o", str(back), "--sheet", "rain")
+
+    res = _open(back)
+    np.testing.assert_allclose(res["precip"].values, ds["precip"].values, equal_nan=True)
+
+
+def test_options_go_with_their_direction(tmp_path, csv_io):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    csv = _write(tmp_path, "lat,lon,rain\n1,10,1\n")
+    for args in (
+        ["-i", str(src), "-o", str(tmp_path / "out.csv"), "--unpivot", "time=precip"],
+        ["-i", str(src), "-o", str(tmp_path / "out.csv"), "--na-value", "-9", "--na-value", "-8"],
+        ["-i", str(src), "-o", str(tmp_path / "out.csv"), "--sheet", "rain"],
+        ["--csv", str(csv), "-o", str(tmp_path / "out.zarr"), "--pivot", "time=rain"],
+    ):
+        with pytest.raises(SystemExit) as exc:
+            run_skill(csv_io, *args)
+        assert exc.value.code == 2
+
+
+def test_read_refuses_headers_that_clean_to_one_name(tmp_path, csv_io):
+    src = _write(tmp_path, "lat,lon,rain mm,rain-mm\n1,10,1,2\n")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(csv_io, "--csv", str(src), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
