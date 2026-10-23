@@ -807,6 +807,10 @@ def fetch(
     stamp_precip_amounts(ds)
     ds = to_standard_units(ds)
     ds = precip_amounts_to_rates(ds, interval=product.precip_interval, deaccumulate=False)
+    # The rate conversion upcasts to float64; the stores are float32.
+    for name in ds.data_vars:
+        if _split_statistic(name)[0] in _PRECIP_LONG_NAMES:
+            ds[name] = ds[name].astype("float32")
     # Precipitation and solar radiation are period totals labelled at their end:
     # relabel them to the period start. Every other field is instantaneous at
     # init + step and keeps its lead. With both, the merged axis runs from 0: the

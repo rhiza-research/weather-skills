@@ -644,3 +644,34 @@ def test_max_lead_and_cycle_accept_both_spellings(tmp_path, fetch_mod, monkeypat
             "-v", "t2m", "--max-lead", "soon", "-o", str(tmp_path / "o.zarr"),
         )  # fmt: skip
     assert exc.value.code == 2
+
+
+def test_precip_fields_stay_float32(tmp_path, fetch_mod, monkeypatch):
+    # v3 ensemble: tp plus the IMERG-calibrated and experimental precip fields.
+    remote = _native_v3_ensemble()
+    for native in ("imerg_tp_1hr", "experimental_tp_1hr"):
+        remote[native] = remote["total_precipitation_1hr"]
+    _mock_v3(monkeypatch, fetch_mod, remote)
+    out = tmp_path / "wn3.zarr"
+    run_skill(
+        fetch_mod.fetch, "--version", "3", "--date", "2026-10-02", "--billing-project", "p",
+        "-v", "tp", "-v", "imerg_tp", "-v", "experimental_tp", "-v", "t2m", "-o", str(out),
+    )  # fmt: skip
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert {n: str(ds[n].dtype) for n in ds.data_vars} == {
+            "tp": "float32",
+            "imerg_tp": "float32",
+            "experimental_tp": "float32",
+            "2m_temperature": "float32",
+        }
+        np.testing.assert_allclose(ds["imerg_tp"].values[0, :-1, 0, 0], 24.0, rtol=1e-5)
+
+    # v3 statistics: per-statistic precip names.
+    _mock_v3(monkeypatch, fetch_mod, _native_v3_statistics())
+    out = tmp_path / "wn3_stats.zarr"
+    run_skill(
+        fetch_mod.fetch, "--version", "3", "--product", "statistics", "--date", "2026-10-02",
+        "-v", "tp", "--statistic", "mean", "--statistic", "p90", "-o", str(out),
+    )  # fmt: skip
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds["tp_mean"].dtype == np.float32 and ds["tp_p90"].dtype == np.float32
