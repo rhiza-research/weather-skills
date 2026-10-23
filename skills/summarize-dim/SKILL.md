@@ -26,7 +26,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i IN.zarr -o OUT.zarr (--di
 - `--by` — label coord to group by, such as one from `label-group`; repeatable (`--by admin_1 --by month_group`). Its dims collapse to one value per label; `--dim` dims collapse within each group too.
 - `--method` — `mean`, `std`, `min`, `max`, `sum`, or `median`. Required.
 - `--variable`, `-v` — summarize only this variable (repeatable). Default: all.
-- `--lat-weighted` — with `--method mean` and the latitude dim in `--dim`: weight each row by cos(latitude), so a regional mean reflects true area. Not available with `--by`.
+- `--lat-weighted` — with `--method mean`, and the latitude dim in `--dim` or under a `--by` label: weight each row by cos(latitude), so a regional mean (whole, or per county) reflects true area.
 - `--min-coverage` — with a `--by` time label from `label-group` (`year`, `month`, `dayofyear`, `month_group`): leave out each station or cell whose data covers less than this share (0–1) of a group's calendar period. Default `1.0`.
 
 Pass `--dim`, `--by`, or both.
@@ -40,7 +40,7 @@ Pass `--dim`, `--by`, or both.
 
 ### Notes
 - Write to a new path: an `--output` equal to the input destroys the input.
-- `--by` gives each grid cell equal weight in a group (not area-weighted).
+- `--by` gives each grid cell equal weight in a group unless `--lat-weighted` is given.
 - Keep `--min-coverage 1.0` unless a task explicitly accepts estimates. Spatial labels have no coverage check. Other labels along time are refused.
 
 ### Example

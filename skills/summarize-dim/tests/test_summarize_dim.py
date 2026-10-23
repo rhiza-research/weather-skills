@@ -459,3 +459,30 @@ def test_min_coverage_needs_a_time_label(tmp_path, summarize_dim, capsys):
             "0.5",
         )
     assert "--min-coverage needs a --by label along time" in capsys.readouterr().err
+
+
+def test_lat_weighted_mean_per_by_group(tmp_path, summarize_dim):
+    import numpy as np
+
+    ds = _labeled().assign_coords(latitude=[0.0, 60.0])
+    ds = ds.assign_coords(region=(("latitude", "longitude"), np.full((2, 3), "r")))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "region",
+        "--method",
+        "mean",
+        "--lat-weighted",
+    )
+
+    result = xr.open_zarr(out, consolidated=True)["precip"].isel(time=0)
+    # Equator row (0, 1, 2) at weight 1, 60°N row (3, 4, 5) at weight 0.5.
+    assert result.item() == pytest.approx((1 * 1 + 0.5 * 4) / 1.5)
+    assert result.attrs["units"] == "mm day-1"
