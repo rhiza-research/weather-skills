@@ -1,4 +1,4 @@
-"""Correctness tests for hindcast-fetch (remote stores mocked)."""
+"""Correctness tests for hindcast-fetch (bucket stores mocked)."""
 
 import sys
 import types
@@ -9,12 +9,8 @@ import xarray as xr
 from conftest import load_skill, run_skill
 from weather_skills_core.provenance import load_history
 
-LATS = np.array([-1.5, 0.0, 1.5], dtype=np.float32)
-LONS = np.array([-1.5, 0.0, 1.5], dtype=np.float32)
-# WeatherBench2 issues -> hindcast years. 2018-10-05 is run by two issues; the
-# newest (2021-10-05) is the one the Sheerwater store keeps.
-ISSUES = ["2020-10-05", "2021-10-05", "2022-10-03"]
-YEARS = np.array([-3, -2, -1], dtype=np.int32)
+PUB = "gs://sheerwater-public-datalake/hindcasts"
+PRIV = "gs://sheerwater-datalake/hindcasts"
 
 
 @pytest.fixture(scope="module")
@@ -27,86 +23,58 @@ def fetch(mod):
     return mod.fetch
 
 
-def _inits():
-    issued = np.array(ISSUES, dtype="datetime64[D]")
-    years = issued.astype("datetime64[Y]").astype(int) + 1970
-    return np.array(
-        [
-            [np.datetime64(f"{y + int(k)}{str(t)[4:]}", "ns") for k in YEARS]
-            for t, y in zip(issued, years, strict=True)
-        ]
-    )
-
-
-def _value(f, h):
-    """Each run's precip in mm: 10 * issue index + |hindcast year|."""
-    return 10.0 * f + abs(int(YEARS[h]))
-
-
-def _wb2(members):
-    """WeatherBench2 layout; precip in m, temperatures in K."""
-    inits = _inits()
-    steps = np.array([0, 1, 2], dtype="timedelta64[D]").astype("timedelta64[ns]")
-    precip = (
-        np.array([[_value(f, h) for h in range(YEARS.size)] for f in range(len(ISSUES))]) / 1000
-    )
-    dims = ("forecast_time", "hindcast_year", "prediction_timedelta", "latitude", "longitude")
-    shape = (len(ISSUES), YEARS.size, steps.size, LATS.size, LONS.size)
-    data = {
-        "total_precipitation_24hr": (dims, np.broadcast_to(precip[:, :, None, None, None], shape)),
-        "2m_temperature": (dims, np.full(shape, 300.0)),
-    }
+def _store(name, inits, members, value, *, order, lons=(-1.0, 0.0, 1.0), steps=None):
+    """One-variable store; value + 0.5 * member index, so the member mean is checkable."""
+    lat = np.array([-1.0, 0.0, 1.0], dtype=np.float32)
+    lon = np.array(lons, dtype=np.float32)
     coords = {
-        "forecast_time": np.array(ISSUES, dtype="datetime64[ns]"),
-        "hindcast_year": YEARS,
-        "prediction_timedelta": steps,
-        "latitude": LATS,
-        "longitude": LONS % 360,
-        "time": (("forecast_time", "hindcast_year"), inits),
-        "valid_time": (("forecast_time", "hindcast_year"), inits),
+        "init_time": np.array(inits, dtype="datetime64[ns]"),
+        "member": np.array(members, dtype=np.int32),
+        "prediction_timedelta": np.arange(3) if steps is None else steps,
+        "lat": lat,
+        "lon": lon,
     }
-    ds = xr.Dataset({k: (d, v.astype(np.float32)) for k, (d, v) in data.items()}, coords=coords)
-    if members:
-        ds = ds.expand_dims(number=[1, 2], axis=1)
-    return ds
+    sizes = {d: len(coords[d]) for d in order}
+    offset = 0.5 * np.arange(len(members), dtype=np.float32)
+    data = np.full([sizes[d] for d in order], value, dtype=np.float32)
+    data += np.expand_dims(offset, [i for i, d in enumerate(order) if d != "member"])
+    return xr.Dataset({name: (order, data)}, coords=coords)
 
 
-def _store():
-    """Sheerwater ecmwf_ifs_precip: newest issue's run of each init, members 1-2, mm."""
-    inits = _inits()
-    runs = {}
-    for f in range(len(ISSUES)):
-        for h in range(YEARS.size):
-            runs[inits[f, h]] = _value(f, h)  # later issues overwrite: newest wins
-    times = np.array(sorted(runs), dtype="datetime64[ns]")
-    member = np.array([0.0, 2.0])  # member offsets; their mean is +1 mm
-    values = np.array([runs[t] for t in times])
-    precip = member[:, None, None, None, None] + values[None, None, None, None, :]
-    precip = np.broadcast_to(precip, (2, 3, LATS.size, LONS.size, times.size)).astype(np.float32)
-    return xr.Dataset(
-        {"precip": (("member", "prediction_timedelta", "lat", "lon", "init_time"), precip)},
-        coords={
-            "member": np.array([1, 2], dtype=np.int32),
-            "prediction_timedelta": np.arange(3),
-            "lat": LATS,
-            "lon": LONS,
-            "init_time": times,
-            "time": ("init_time", times),
-        },
-    )
+ECMWF_ORDER = ("member", "prediction_timedelta", "lat", "lon", "init_time")
+STORE_ORDER = ("init_time", "member", "prediction_timedelta", "lat", "lon")
+EC_INITS = ["2018-10-04", "2018-10-05", "2018-10-08"]
+CUM_INITS = ["2024-12-27", "2024-12-29", "2024-12-31"]
+DAYS = np.arange(3).astype("timedelta64[D]").astype("timedelta64[ns]")
 
 
 @pytest.fixture
-def ecmwf(mod, monkeypatch):
-    seen = {"store": 0}
+def stores(mod, monkeypatch):
+    ec_p = _store("precip", EC_INITS, [1, 2], 4.0, order=ECMWF_ORDER)
+    # The ECMWF store's extra `time` coord repeats init_time.
+    ec_p = ec_p.assign_coords(time=("init_time", ec_p["init_time"].values))
+    data = {
+        f"{PUB}/ecmwf_ifs_precip.zarr": ec_p,
+        f"{PUB}/ecmwf_ifs_tmp2m.zarr": _store("tmp2m", EC_INITS, [1, 2], 20.0, order=ECMWF_ORDER),
+        f"{PUB}/gefs_precip.zarr": _store(
+            "precip", ["2017-10-04", "2017-10-11", "2017-10-18"], [0, 1], 2.0, order=STORE_ORDER
+        ),
+        f"{PUB}/gefs_tmp2m.zarr": _store("tmp2m", ["2017-10-11"], [0, 1], 25.0, order=STORE_ORDER),
+        f"{PRIV}/cumulus_precip.zarr": _store(
+            "precip", CUM_INITS, [0, 1, 2], -0.6, order=STORE_ORDER, steps=DAYS
+        ),
+        f"{PRIV}/cumulus_tmp2m.zarr": _store(
+            "tmp2m", CUM_INITS, [0, 1, 2], 300.0, order=STORE_ORDER, steps=DAYS
+        ),
+    }
+    opened = []
 
-    def open_store():
-        seen["store"] += 1
-        return _store()
+    def fake_open(path):
+        opened.append(path)
+        return data[path]
 
-    monkeypatch.setattr(mod, "_open_ecmwf", _wb2)
-    monkeypatch.setattr(mod, "_open_ecmwf_store", open_store)
-    return seen
+    monkeypatch.setattr(mod, "_open_store", fake_open)
+    return types.SimpleNamespace(data=data, opened=opened)
 
 
 def _run(fetch, out, *args):
@@ -117,283 +85,89 @@ def _dates(ds):
     return ds["time"].values.astype("datetime64[D]").astype(str).tolist()
 
 
-def _issues(ds):
-    return ds["issue_time"].values.astype("datetime64[D]").astype(str).tolist()
-
-
-def test_ecmwf_precip_reads_newest_runs_from_store(tmp_path, fetch, ecmwf):
+def test_ecmwf_precip_mean_of_members(tmp_path, fetch, stores):
     out = tmp_path / "ec.zarr"
-    _run(fetch, out, "--dataset", "ecmwf", "--start-time", "2018-10-01", "--end-time", "2018-10-31")
-    assert ecmwf["store"] == 1
+    _run(fetch, out, "--dataset", "ecmwf", "--start-time", "2018-10-05", "--end-time", "2018-10-31")
+    assert stores.opened == [f"{PUB}/ecmwf_ifs_precip.zarr"]
     with xr.open_zarr(out) as ds:
-        # 2018-10-05 comes from the 2021 issue (year -3), not the 2020 one.
-        assert _dates(ds) == ["2018-10-05"]
-        assert _issues(ds) == ["2021-10-05"]
+        assert _dates(ds) == ["2018-10-05", "2018-10-08"]
         assert list(ds["precip"].dims) == ["time", "step", "latitude", "longitude"]
-        # Ensemble mean of the store's members: 13 mm + mean offset 1 mm.
-        np.testing.assert_allclose(ds["precip"].isel(step=0, latitude=0, longitude=0), [14.0])
+        # Members are 4.0 and 4.5 mm: their mean.
+        np.testing.assert_allclose(ds["precip"].isel(step=0, latitude=0, longitude=0), [4.25, 4.25])
         assert ds["precip"].attrs["units"] == "mm day-1"
-        assert ds.attrs["weather_skills_source"] == "sheerwater:hindcasts/ecmwf_ifs_precip"
-        assert "hindcast_issue_year" not in ds.attrs
+        assert ds["step"].values[1] == np.timedelta64(1, "D")
+        assert ds.attrs["weather_skills_source"] == (
+            "sheerwater:sheerwater-public-datalake/hindcasts/ecmwf_ifs_precip.zarr"
+        )
+        assert ds.attrs["hindcast_dataset"] == "ecmwf"
     assert load_history(out)[-1]["skill"] == "hindcast-fetch"
 
 
-def test_ecmwf_one_run_per_date_from_the_newest_issue(tmp_path, fetch, ecmwf):
+def test_ecmwf_members_and_temperature(tmp_path, fetch, stores):
     out = tmp_path / "ec_members.zarr"
-    _run(
-        fetch,
-        out,
-        "--dataset",
-        "ecmwf",
-        "--members",
-        "--start-time",
-        "2019-01-01",
-        "--end-time",
-        "2021-12-31",
-    )
+    _run(fetch, out, "--dataset", "ecmwf", "--members", "-v", "precip", "-v", "t2m",
+         "--start-time", "2018-10-01", "--end-time", "2018-10-31")  # fmt: skip
     with xr.open_zarr(out) as ds:
-        assert _dates(ds) == ["2019-10-03", "2019-10-05", "2020-10-03", "2020-10-05", "2021-10-03"]
-        assert _issues(ds) == ["2022-10-03", "2021-10-05", "2022-10-03", "2021-10-05", "2022-10-03"]
+        assert list(ds["precip"].dims) == ["time", "number", "step", "latitude", "longitude"]
         assert ds["number"].values.tolist() == [1, 2]
         np.testing.assert_allclose(
-            ds["precip"].sel(number=1).isel(step=0, latitude=0, longitude=0), [23, 12, 22, 11, 21]
-        )
-
-
-def test_ecmwf_precip_before_store_from_weatherbench2_same_runs(
-    tmp_path, mod, fetch, ecmwf, monkeypatch, capsys
-):
-    wb2 = _wb2(False)
-    wb2["total_precipitation_24hr"][:, :, 1] = -0.005
-    monkeypatch.setattr(mod, "_open_ecmwf", lambda members: wb2)
-    # Pretend the store starts in 2019, so 2017-2018 inits come from WeatherBench2.
-    monkeypatch.setattr(mod, "_ECMWF_STORE_START", np.datetime64("2019-01-01", "ns"))
-    out = tmp_path / "ec_split.zarr"
-    _run(fetch, out, "--dataset", "ecmwf", "--start-time", "2017-10-01", "--end-time", "2019-10-31")
-    assert "below -0.1 mm day-1 at lead day(s) [1]" in capsys.readouterr().err
-    with xr.open_zarr(out) as ds:
-        assert _dates(ds) == ["2017-10-05", "2018-10-05", "2019-10-03", "2019-10-05"]
-        # WeatherBench2 runs (3, 13 mm) then store runs (23, 12 mm + mean offset 1).
-        np.testing.assert_allclose(
-            ds["precip"].isel(step=0, latitude=0, longitude=0), [3, 13, 24, 13]
-        )
-        np.testing.assert_allclose(ds["precip"].isel(step=1, latitude=0, longitude=0)[:2], [-5, -5])
-        assert ds.attrs["weather_skills_source"] == (
-            "sheerwater:hindcasts/ecmwf_ifs_precip+weatherbench2:ifs-ext-reforecast-ens-mean"
-        )
-
-
-def test_ecmwf_precip_from_store_with_temperature_from_weatherbench2(tmp_path, fetch, ecmwf):
-    out = tmp_path / "ecmix.zarr"
-    _run(fetch, out, "--dataset", "ecmwf", "-v", "precip", "-v", "t2m", "--start-time", "2020-01-01",
-         "--end-time", "2020-12-31")  # fmt: skip
-    assert ecmwf["store"] == 1
-    with xr.open_zarr(out) as ds:
-        assert _dates(ds) == ["2020-10-03", "2020-10-05"]
-        np.testing.assert_allclose(ds["precip"].isel(step=0, latitude=0, longitude=0), [23.0, 12.0])
-        np.testing.assert_allclose(
-            ds["tmp2m"].isel(step=0, latitude=0, longitude=0), [26.85, 26.85], rtol=1e-5
+            ds["tmp2m"].isel(time=0, step=0, latitude=0, longitude=0), [20.0, 20.5]
         )
         assert ds["tmp2m"].attrs["units"] == "degree_Celsius"
-        assert ds.attrs["weather_skills_source"] == (
-            "sheerwater:hindcasts/ecmwf_ifs_precip+weatherbench2:ifs-ext-reforecast-ens-mean"
-        )
 
 
-def test_ecmwf_temperature_only_reads_weatherbench2(tmp_path, fetch, ecmwf):
-    out = tmp_path / "ect.zarr"
-    _run(
-        fetch,
-        out,
-        "--dataset",
-        "ecmwf",
-        "-v",
-        "t2m",
-        "--start-time",
-        "2018-10-01",
-        "--end-time",
-        "2018-10-31",
-    )
-    assert ecmwf["store"] == 0
-    with xr.open_zarr(out) as ds:
-        assert _dates(ds) == ["2018-10-05"]
-        assert _issues(ds) == ["2021-10-05"]
-        assert ds.attrs["weather_skills_source"] == "weatherbench2:ifs-ext-reforecast-ens-mean"
-
-
-def test_ecmwf_window_without_inits_exits_1(tmp_path, fetch, ecmwf):
-    with pytest.raises(SystemExit) as exc:
-        _run(
-            fetch,
-            tmp_path / "x.zarr",
-            "--dataset",
-            "ecmwf",
-            "--start-time",
-            "1990-01-01",
-            "--end-time",
-            "1990-12-31",
-        )
-    assert exc.value.code == 1
-
-
-def _gefs_store(source, inits, value):
-    shape = (len(inits), 2, 3, 2, 2)
-    return xr.Dataset(
-        {
-            source: (
-                ("init_time", "member", "prediction_timedelta", "lat", "lon"),
-                np.full(shape, value, np.float32),
-            )
-        },
-        coords={
-            "init_time": np.array(inits, dtype="datetime64[ns]"),
-            "member": np.array([0, 1], np.int32),
-            "prediction_timedelta": np.arange(3),
-            "lat": np.array([0.0, 1.0], np.float32),
-            "lon": np.array([10.0, 11.0], np.float32),
-        },
-    )
-
-
-@pytest.fixture
-def gefs(mod, monkeypatch):
-    stores = {
-        "precip": _gefs_store("precip", ["2017-10-04", "2017-10-11", "2017-10-18"], 2.0),
-        "tmp2m": _gefs_store("tmp2m", ["2017-10-11"], 25.0),
-    }
-    monkeypatch.setattr(mod, "_open_gefs", lambda name: stores[name])
-    return stores
-
-
-def _run_gefs(fetch, out, *args):
-    run_skill(fetch, "--dataset", "gefs", "--start-time", "2017-10-01", "--end-time", "2017-10-31",
-              *args, "-o", str(out))  # fmt: skip
-
-
-def test_gefs_keeps_inits_missing_from_one_variable(tmp_path, fetch, gefs, capsys):
+def test_gefs_keeps_inits_missing_from_one_variable(tmp_path, fetch, stores, capsys):
     out = tmp_path / "gefs.zarr"
-    _run_gefs(fetch, out, "-v", "precip", "-v", "tmp2m")
+    _run(fetch, out, "--dataset", "gefs", "-v", "precip", "-v", "tmp2m",
+         "--start-time", "2017-10-01", "--end-time", "2017-10-31")  # fmt: skip
     with xr.open_zarr(out) as ds:
         assert _dates(ds) == ["2017-10-04", "2017-10-11", "2017-10-18"]
-        assert list(ds["precip"].dims) == ["time", "number", "step", "latitude", "longitude"]
         assert ds["number"].values.tolist() == [0, 1]
-        assert ds["step"].values[1] == np.timedelta64(1, "D")
         assert int(ds["tmp2m"].isel(step=0, number=0, latitude=0, longitude=0).notnull().sum()) == 1
-        assert ds["tmp2m"].attrs["units"] == "degree_Celsius"
-        assert (
-            ds.attrs["weather_skills_source"]
-            == "sheerwater:hindcasts/gefs_precip+gefs_chc_raw/tmp2m"
-        )
-    assert "GEFS tmp2m has no run for 2 init(s)" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "gefs tmp2m has no run for 2 init(s), left NaN: 2017-10-04, 2017-10-18" in err
 
 
-def test_gefs_grid_mismatch_exits_1(tmp_path, fetch, gefs):
-    gefs["tmp2m"] = gefs["tmp2m"].assign_coords(lon=gefs["tmp2m"]["lon"] + 1.0)
+def test_grid_mismatch_exits_1(tmp_path, fetch, stores):
+    path = f"{PUB}/gefs_tmp2m.zarr"
+    stores.data[path] = stores.data[path].assign_coords(lon=stores.data[path]["lon"] + 1.0)
     with pytest.raises(SystemExit) as exc:
-        _run_gefs(fetch, tmp_path / "x.zarr", "-v", "precip", "-v", "tmp2m")
+        _run(fetch, tmp_path / "x.zarr", "--dataset", "gefs", "-v", "precip", "-v", "tmp2m",
+             "--start-time", "2017-10-01", "--end-time", "2017-10-31")  # fmt: skip
     assert exc.value.code == 1
 
 
-def test_gefs_precip_reads_public_store_without_credentials(mod, monkeypatch):
-    seen = {}
-
-    def fake_open_zarr(path, **kwargs):
-        seen.update(path=path, **kwargs)
-        return "store"
-
-    monkeypatch.setattr(mod.xr, "open_zarr", fake_open_zarr)
-    monkeypatch.setitem(sys.modules, "gcsfs", None)  # importing it would fail
-    assert mod._open_gefs("precip") == "store"
-    assert seen["path"] == "gs://sheerwater-public-datalake/hindcasts/gefs_precip.zarr"
-    assert seen["storage_options"] == {"token": "anon"}
-
-
-def _cumulus_file(ens, lead, values):
-    """NetCDF bytes in the Cumulus layout; each value gets lead hours / 1000 added."""
-    name = "total_precipitation_24h_acc_imerg_0p25"
-    mark = int(lead) / 1000
-    if ens == "cf":
-        var = (("latitude", "longitude"), np.full((2, 2), values[0] + mark, dtype="float32"))
-        coords = {}
-    else:
-        members = np.asarray(values[1:], dtype="float32") + mark
-        var = (("number", "latitude", "longitude"), np.repeat(members, 4).reshape(-1, 2, 2))
-        coords = {"number": np.arange(1, len(members) + 1)}
-    coords.update(
-        latitude=np.array([1.0, 0.0], dtype="float32"),
-        longitude=np.array([10.0, 11.0], dtype="float32"),
-    )
-    return xr.Dataset({name: var}, coords=coords).to_netcdf(engine="h5netcdf")
-
-
-def test_open_cumulus_matches_live_export(mod, monkeypatch):
-    asked = []
-
-    class FakeFS:
-        def __init__(self, **kwargs):
-            pass
-
-        def cat_file(self, path):
-            asked.append(path)
-            ens = path.split("/gratis-czajkowski/")[1].split("/")[0]
-            return _cumulus_file(ens, path[-7:-3], values=(-1.0, 2.0, 3.0))
-
-    monkeypatch.setitem(sys.modules, "adlfs", types.SimpleNamespace(AzureBlobFileSystem=FakeFS))
-    monkeypatch.setenv("AZURE_STORAGE_SAS_TOKEN", "sv=1&sig=abc")
-    da = mod._open_cumulus("total_precipitation_24h_acc_imerg_0p25", "2024-12-31-00", None, 4)
-    assert len(asked) == 2 * 46
-    assert da.dims == ("time", "step", "number", "latitude", "longitude")
-    assert da["number"].values.tolist() == [0, 1, 2]
-    hours = da["step"].values.astype("timedelta64[h]").astype(int)
-    assert list(hours) == list(range(0, 1081, 24))
-    # cf (-1 + lead mark) is clipped to 0 like the live export; step 0 is lead 24 h.
-    np.testing.assert_allclose(da.values[0, 0, :, 0, 0], [0.0, 2.024, 3.024], rtol=1e-6)
-
-
-def test_cumulus_range_stacks_inits(tmp_path, mod, fetch, monkeypatch):
-    prefixes, read = [], []
-    inits = ["2023-12-31-00", "2024-12-29-00", "2024-12-31-00"]
-
-    def fake_list(folder, prefix):
-        prefixes.append(prefix)
-        return [i for i in inits if i.startswith(prefix)]
-
-    def fake_open(folder, init, bbox, workers):
-        read.append(init)
-        data = np.full((1, 2, 3, 2, 2), 4.0, np.float32)
-        return xr.DataArray(
-            data,
-            dims=("time", "step", "number", "latitude", "longitude"),
-            coords={
-                "time": [np.datetime64(init[:10], "ns")],
-                "step": np.array([0, 24], dtype="timedelta64[h]").astype("timedelta64[ns]"),
-                "number": [0, 1, 2],
-                "latitude": [1.0, 0.0],
-                "longitude": [10.0, 11.0],
-            },
-        )
-
-    monkeypatch.setattr(mod, "_list_cumulus_inits", fake_list)
-    monkeypatch.setattr(mod, "_open_cumulus", fake_open)
+def test_cumulus_members_negative_precip_kept_and_kelvin_converted(tmp_path, fetch, stores, capsys):
     out = tmp_path / "cum.zarr"
-    run_skill(fetch, "--dataset", "cumulus", "--start-time", "2023-12-01", "--end-time", "2024-12-30",
-              "-o", str(out))  # fmt: skip
-    assert prefixes == ["2023-", "2024-"]
-    assert read == ["2023-12-31-00", "2024-12-29-00"]
+    _run(fetch, out, "--dataset", "cumulus", "-v", "precip", "-v", "tmp2m",
+         "--start-time", "2024-12-28", "--end-time", "2024-12-31")  # fmt: skip
+    assert "precip goes down to -0.60 mm day-1; kept as published" in capsys.readouterr().err
     with xr.open_zarr(out) as ds:
-        assert list(ds["precip"].dims) == ["time", "number", "step", "latitude", "longitude"]
-        assert ds["precip"].attrs["units"] == "mm day-1"
-        assert (
-            ds.attrs["weather_skills_source"]
-            == "cumulus:gratis-czajkowski/total_precipitation_24h_acc_imerg_0p25"
+        assert _dates(ds) == ["2024-12-29", "2024-12-31"]
+        assert ds["number"].values.tolist() == [0, 1, 2]
+        np.testing.assert_allclose(
+            ds["precip"].isel(time=0, step=0, latitude=0, longitude=0), [-0.6, -0.1, 0.4], atol=1e-6
         )
+        assert ds["tmp2m"].attrs["units"] == "degree_Celsius"
+        t = float(ds["tmp2m"].isel(time=0, number=0, step=0, latitude=0, longitude=0))
+        assert t == pytest.approx(26.85, rel=1e-5)
 
 
-def test_cumulus_empty_range_exits_1(tmp_path, mod, fetch, monkeypatch):
-    monkeypatch.setattr(mod, "_list_cumulus_inits", lambda folder, prefix: [])
+def test_longitudes_wrap_to_plus_minus_180(tmp_path, fetch, stores):
+    stores.data[f"{PUB}/gefs_precip.zarr"] = _store(
+        "precip", ["2017-10-04"], [0], 1.0, order=STORE_ORDER, lons=(0.0, 1.0, 359.0)
+    )
+    out = tmp_path / "wrap.zarr"
+    run_skill(fetch, "--dataset", "gefs", "--start-time", "2017-10-01", "--end-time", "2017-10-31",
+              "-o", str(out))  # fmt: skip
+    with xr.open_zarr(out) as ds:
+        assert ds["longitude"].values.tolist() == [-1.0, 0.0, 1.0]
+
+
+def test_window_without_inits_exits_1(tmp_path, fetch, stores):
     with pytest.raises(SystemExit) as exc:
-        run_skill(fetch, "--dataset", "cumulus", "--start-time", "2024-12-30", "--end-time", "2024-12-30",
-                  "-o", str(tmp_path / "x.zarr"))  # fmt: skip
+        _run(fetch, tmp_path / "x.zarr", "--dataset", "ecmwf", "--start-time", "1990-01-01",
+             "--end-time", "1990-12-31")  # fmt: skip
     assert exc.value.code == 1
 
 
@@ -402,87 +176,66 @@ def test_cumulus_empty_range_exits_1(tmp_path, mod, fetch, monkeypatch):
     [
         ["--dataset", "ecmwf", "--start-time", "2018-10-01"],
         ["--dataset", "ecmwf", "--start-time", "2018-10-31", "--end-time", "2018-10-01"],
-        [
-            "--dataset",
-            "gefs",
-            "--start-time",
-            "2017-10-01",
-            "--end-time",
-            "2017-10-31",
-            "--members",
-        ],
-        [
-            # ECMWF is one newest-run-per-date series: no issue years to pick.
-            "--dataset",
-            "ecmwf",
-            "--start-time",
-            "2018-10-01",
-            "--end-time",
-            "2018-10-31",
-            "--issue-year",
-            "2022",
-        ],
-        [
-            "--dataset",
-            "cumulus",
-            "--start-time",
-            "2024-12-01",
-            "--end-time",
-            "2024-12-31",
-            "-v",
-            "tmp2m",
-        ],
-        [
-            "--dataset",
-            "ecmwf",
-            "--start-time",
-            "2018-10-01",
-            "--end-time",
-            "2018-10-31",
-            "-v",
-            "msl",
-        ],
-        [
-            "--dataset",
-            "cumulus",
-            "--start-time",
-            "2024-12-01",
-            "--end-time",
-            "2024-12-31",
-            "--workers",
-            "0",
-        ],
+        ["--dataset", "gefs", "--start-time", "2017-10-01", "--end-time", "2017-10-31", "--members"],
+        ["--dataset", "ecmwf", "--start-time", "2018-10-01", "--end-time", "2018-10-31", "-v", "sst"],
+        ["--dataset", "cumulus_1deg", "--start-time", "2024-12-01", "--end-time", "2024-12-31"],
+        ["--dataset", "ecmwf", "--start-time", "2018-10-01", "--end-time", "2018-10-31",
+         "--issue-year", "2022"],
     ],
-)
-def test_usage_errors_exit_2(tmp_path, fetch, ecmwf, args):
+)  # fmt: skip
+def test_usage_errors_exit_2(tmp_path, fetch, stores, args):
     with pytest.raises(SystemExit) as exc:
         run_skill(fetch, *args, "-o", str(tmp_path / "x.zarr"))
     assert exc.value.code == 2
 
 
-def test_probe_latest(capsys, fetch, ecmwf, gefs):
+def test_probe_latest(capsys, fetch, stores):
     run_skill(fetch, "--probe-latest")
-    assert capsys.readouterr().out.strip() == "2021-10-03"
-    run_skill(fetch, "--probe-latest", "gefs")
-    assert capsys.readouterr().out.strip() == "2017-10-18"
+    assert capsys.readouterr().out.strip() == "2018-10-08"
+    run_skill(fetch, "--probe-latest", "cumulus")
+    assert capsys.readouterr().out.strip() == "2024-12-31"
 
 
-@pytest.mark.parametrize(
-    "raw",
-    [
-        "sv=1&sig=abc",
-        "?sv=1&sig=abc",
-        "https://italynorthdata.blob.core.windows.net/data/x?sv=1&sig=abc",
-    ],
-)
-def test_sas_token_forms(mod, monkeypatch, raw):
-    monkeypatch.setenv("AZURE_STORAGE_SAS_TOKEN", raw)
-    assert mod._azure_options()["sas_token"] == "sv=1&sig=abc"
+def test_public_store_opens_anonymously_without_gcsfs(mod, monkeypatch):
+    seen = {}
+
+    def fake_open_zarr(path, **kwargs):
+        seen.update(path=path, **kwargs)
+        return "store"
+
+    monkeypatch.setattr(mod.xr, "open_zarr", fake_open_zarr)
+    monkeypatch.setitem(sys.modules, "gcsfs", None)  # importing it would fail
+    assert mod._open_store(f"{PUB}/gefs_precip.zarr") == "store"
+    assert seen["storage_options"] == {"token": "anon"}
 
 
-def test_azure_error_redacts_sas(mod):
-    message = str(
-        mod._azure_error(RuntimeError("403 https://x/data/a?sv=1&sig=SECRET&se=2"), "failed")
-    )
-    assert "SECRET" not in message
-    assert "sig=REDACTED" in message
+def test_private_store_uses_credentials(mod, monkeypatch):
+    seen = {}
+
+    class FakeFS:
+        def __init__(self, token):
+            seen["token"] = token
+
+        def get_mapper(self, path):
+            seen["path"] = path
+            return path
+
+    monkeypatch.setitem(sys.modules, "gcsfs", types.SimpleNamespace(GCSFileSystem=FakeFS))
+    monkeypatch.setattr(mod.xr, "open_zarr", lambda mapper, **kwargs: "store")
+    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", '{"type": "service_account"}')
+    assert mod._open_store(f"{PRIV}/cumulus_precip.zarr") == "store"
+    assert seen["token"] == {"type": "service_account"}
+    assert seen["path"] == "sheerwater-datalake/hindcasts/cumulus_precip.zarr"
+
+
+def test_private_store_without_credentials_exits_1(tmp_path, mod, fetch, monkeypatch):
+    class FailingFS:
+        def __init__(self, token):
+            raise RuntimeError("no credentials")
+
+    monkeypatch.setitem(sys.modules, "gcsfs", types.SimpleNamespace(GCSFileSystem=FailingFS))
+    monkeypatch.delenv("NEURAL_GCM_SERVICE_CREDENTIALS", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch, "--dataset", "cumulus", "--start-time", "2024-12-01", "--end-time", "2024-12-31",
+                  "-o", str(tmp_path / "x.zarr"))  # fmt: skip
+    assert exc.value.code == 1
