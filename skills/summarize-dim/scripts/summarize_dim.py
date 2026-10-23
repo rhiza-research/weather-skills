@@ -37,6 +37,13 @@ _SKILL_VERSION = "0.0.3"
     choices=list(METHODS),
 )
 @weather_skill.argument(
+    "--q",
+    type=float,
+    nargs="+",
+    action="extend",
+    help="With --method quantile: quantiles to compute, each in [0, 1] (e.g. --q 0.1 0.5 0.9).",
+)
+@weather_skill.argument(
     "--lat-weighted",
     action="store_true",
     help="cos(lat) weights for --method mean over latitude, alone or per --by group.",
@@ -49,7 +56,7 @@ _SKILL_VERSION = "0.0.3"
         "(0-1) of its full calendar period. Default 1.0."
     ),
 )
-def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **kwargs):
+def summarize_dim(ds, variable, dim, by, method, q, lat_weighted, min_coverage, **kwargs):
     """Collapse named dimensions of a Zarr, or each group of a label coord, with a statistic."""
     if not dim and not by:
         raise UsageError("pass --dim, --by, or both")
@@ -59,7 +66,10 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
     weights = None
     if lat_weighted:
         if method != "mean":
-            raise UsageError("--lat-weighted requires --method mean")
+            raise UsageError(
+                "--lat-weighted requires --method mean"
+                + ("; a weighted quantile is not supported" if method == "quantile" else "")
+            )
         lat_dim, _ = detect_spatial_dims(ds)
         collapsed = [*(dim or []), *(d for b in by or [] if b in ds.coords for d in ds[b].dims)]
         if lat_dim not in collapsed:
@@ -70,6 +80,7 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
         dims=dim,
         by=by,
         method=method,
+        q=q,
         variables=variable,
         weights=weights,
         min_coverage=1.0 if min_coverage is None else min_coverage,

@@ -16,7 +16,7 @@ Reduces each data variable with one statistic, over whole dimensions or once per
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i IN.zarr -o OUT.zarr (--dim DIM ... | --by LABEL ... | both) --method METHOD [-v VAR ...] [--lat-weighted] [--min-coverage 1.0]
+uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i IN.zarr -o OUT.zarr (--dim DIM ... | --by LABEL ... | both) --method METHOD [--q Q ...] [-v VAR ...] [--lat-weighted] [--min-coverage 1.0]
 ```
 
 ### Modes
@@ -28,10 +28,11 @@ Pass `--dim`, `--by`, or both:
 - Add `--lat-weighted` (mean only) to weight by area; add `--min-coverage` to a `--by` time label to set how complete a group must be.
 
 ### Methods
-NaNs are skipped by every method.
+Every method skips NaN.
 - `mean` — the average; with `--lat-weighted`, each latitude row counts by cos(latitude).
 - `std` — sample standard deviation (`ddof=1`); NaN from fewer than 2 values. `degree_Celsius` becomes `delta_degC`.
 - `min`, `max`, `median` — as named.
+- `quantile` — the `--q` quantiles, in input units, on a new leading `quantile` dim (`median` is `--q 0.5`); no `--lat-weighted`.
 - `sum` — the total; NaN, not 0, when every value is NaN. Refused for rates over `time` or `step` (`mm day-1`: run `convert-to-totals` first) and for `degree_Celsius`.
 
 ### Arguments
@@ -39,7 +40,8 @@ NaNs are skipped by every method.
 - `--output`, `-o` — output Zarr, replaced if it exists. Use a new path, not the input.
 - `--dim` — dimension to collapse (repeatable).
 - `--by` — label coord to group by (repeatable), such as `admin_1` or `month_group` from `label-group`. Not a dim itself.
-- `--method` — `mean`, `std`, `min`, `max`, `sum`, or `median`. Required.
+- `--method` — `mean`, `std`, `min`, `max`, `sum`, `median`, or `quantile`. Required.
+- `--q` — quantiles for `--method quantile` (required there), each in [0, 1]: `--q 0.1 0.5 0.9`.
 - `--variable`, `-v` — variable to reduce (repeatable). Default: all.
 - `--lat-weighted` — area-weight a `mean` over latitude. Latitude must be in `--dim` or under a `--by` label. Default: off (every cell counts the same).
 - `--min-coverage` — only with a `--by` time label (`year`, `month`, `dayofyear`, `month_group`): the share (0–1) of a group's calendar period each station or cell needs to count. Default: `1.0` (complete groups only).
