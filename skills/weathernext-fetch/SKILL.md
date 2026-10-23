@@ -76,8 +76,9 @@ Needs Google Cloud Application Default Credentials (`GOOGLE_APPLICATION_CREDENTI
 - Air temperatures are `degree_Celsius`; other fields keep ERA5-style units.
 
 ### Notes
-- `--bbox` shrinks the output, not the download (chunks are global). Cut the read with `-v`, `--member`, `--statistic`, `--max-lead`.
+- `--bbox` cuts the output, not the download (chunks are global); `-v`, `--member`, `--statistic`, `--max-lead` cut the read.
 - WeatherNext 3 fields sit on four grids and lead axes (Details); mixing them in one run exits 2.
+- If the request doesn't say, ask the user which version and how many members, with the size and cost from Details.
 
 ### Example
 ```bash
@@ -115,5 +116,7 @@ Writes WeatherNext 3 hourly mean and 90th-percentile precip over Kenya for 3 day
 - Stamped `weather_skills_source=weathernext:<init stamp>`, `weathernext3:<init stamp>` or `weathernext3-statistics:<init stamp>`.
 
 ### Size and cost
-- Each store chunk holds the full globe for one member and lead (or 6 h lead block in WeatherNext 3). One WeatherNext 2 surface field, all members, global, is ~16 GB; one WeatherNext 3 0.1° field is ~9 GB per member over 15 days, and billed egress.
+- Every read downloads whole chunks, and each chunk is the full globe for one member and one 6 h lead (WeatherNext 2) or 6 h lead block (WeatherNext 3). Estimate the download as fields × members × 6 h blocks × chunk size.
+- Compressed chunk sizes, measured Oct 2026: WeatherNext 2 ~2–3.5 MB; WeatherNext 3 0.1° surface field ~19 MB. One field, 64 members, 72 h (12 blocks) is ~2 GB from WeatherNext 2 and ~15 GB from WeatherNext 3. A whole field for 15 days is ~9–13 GB (WeatherNext 2) or ~290 GB (WeatherNext 3).
+- WeatherNext 2 and WeatherNext 3 statistics are free to read. WeatherNext 3 ensemble reads are billed to `--billing-project` as GCS egress, about $0.12 per GB outside Google Cloud: ~$1.80 for the 15 GB example, ~$35 for a whole 15-day field. Say the estimate before fetching.
 - Only the per-init realtime stores are read; the older multi-init WeatherNext 2 stores and WeatherNext 3 backfill stores are not.
