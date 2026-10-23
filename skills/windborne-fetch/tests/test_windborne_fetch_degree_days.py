@@ -41,18 +41,22 @@ def test_states_by_day_drops_empty_days(mod, monkeypatch, tmp_path):
     payloads = {
         "initialization_times": {"available": ["2026-10-19T20:00:00Z"]},
         "hdds": {
-            "dates": ["2026-10-19", "2026-10-20", "2026-10-21"],
+            "dates": ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"],
             "hdd": {
                 "2026-10-19": {"Iowa": 11.0, "Texas": 2.0},
                 "2026-10-20": {"Iowa": 12.0, "Texas": 1.0},
+                # The live API lists a run's last day with every state null.
+                "2026-10-21": {"Iowa": None, "Texas": None},
             },
             "metadata": meta,
         },
         "cdds": {
-            "dates": ["2026-10-19", "2026-10-20", "2026-10-21"],
+            "dates": ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"],
             "cdd": {
                 "2026-10-19": {"Iowa": 0.0, "Texas": 3.0},
                 "2026-10-20": {"Iowa": 0.0, "Texas": 4.0},
+                # The live API lists a run's last day with every state null.
+                "2026-10-21": {"Iowa": None, "Texas": None},
             },
             "metadata": meta,
         },

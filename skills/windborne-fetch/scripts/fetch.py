@@ -1143,8 +1143,14 @@ def _degree_days(session, init):
     params = {"initialization_time": f"{init:%Y-%m-%dT%H:00:00Z}"}
     hdd = _get(session, f"{_HOST}/insights/v1/wm-6/hdds", params)
     cdd = _get(session, f"{_HOST}/insights/v1/wm-6/cdds", params)
-    # `dates` can list a final day the tables do not hold yet; keep days with values.
-    dates = [day for day in hdd["dates"] if day in hdd["hdd"] and day in cdd["cdd"]]
+    # `dates` can list a final day the tables leave out or hold only as nulls;
+    # keep days with values.
+    dates = [
+        day
+        for day in hdd["dates"]
+        if any(v is not None for v in hdd["hdd"].get(day, {}).values())
+        and any(v is not None for v in cdd["cdd"].get(day, {}).values())
+    ]
     if not dates:
         raise DataError(f"WindBorne returned no degree days for the {init:%Y-%m-%d %HZ} run.")
     states = sorted(hdd["hdd"][dates[0]])
