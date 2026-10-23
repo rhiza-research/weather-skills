@@ -93,8 +93,24 @@ def _doy_distance(dates, target):
     default=10,
     help="Most recent years of observations behind Climatology++.",
 )
+@weather_skill.argument(
+    "--weights",
+    choices=["equal", "skill"],
+    default="equal",
+    help="Blend components equally, or by each one's past RPSS on the training hindcasts.",
+)
 def pbc_correct(
-    forecast, hindcast, obs, variable, step, components, years, margin, clim_years, **kwargs
+    forecast,
+    hindcast,
+    obs,
+    variable,
+    step,
+    components,
+    years,
+    margin,
+    clim_years,
+    weights,
+    **kwargs,
 ):
     """Probabilistic bias correction (PBC) of an ensemble forecast's quintile probabilities."""
     parts = [c.strip() for c in components.split(",") if c.strip()]
@@ -224,14 +240,18 @@ def pbc_correct(
         below = (finite[None] & (members[None] <= edge[:, None])).sum(axis=1)
         return np.where((count > 0) & np.isfinite(edge), below / np.maximum(count, 1), np.nan)
 
-    probabilities, edge_rows, notes = [], [], []
-    for t, init in enumerate(fc_inits):
+    hc_valid = hc_inits + lead
+
+    def correct(init, members):
+        """Each chosen component's corrected CDF for one init, trained only on its past.
+
+        Returns the components, the training hindcast indices and their observed events.
+        """
         valid = init + lead
-        raw = members_below(fc_vals[t], valid)
+        raw = members_below(members, valid)
 
         # Training: hindcasts whose target window was fully observed before this init,
         # near the same calendar day, within the last --years years.
-        hc_valid = hc_inits + lead
         train = np.flatnonzero(
             (hc_valid + window <= init)
             & (hc_valid >= init - pd.DateOffset(years=years))
@@ -285,6 +305,43 @@ def pbc_correct(
             clim = np.where(enough, below / np.maximum(count, 1), np.nan)
             corrected.append(_project(clim))
 
+        return corrected, train, y_h
+
+    past = {}  # hindcast index -> its components, for --weights skill
+
+    def weights_for(train, y_h):
+        """Blend weights from each component's past RPSS on the training hindcasts.
+
+        Each training hindcast is corrected from its own past, so the score is out of
+        sample. Weight = max(RPSS, 0); equal weights when no component beats climatology.
+        """
+        rps = np.zeros(len(parts))
+        ref = 0.0
+        for n, i in enumerate(train):
+            if i not in past:
+                past[i] = correct(hc_inits[i], hc_vals[i])[0]
+            comps = np.stack(past[i])
+            ok = np.isfinite(comps).all(axis=(0, 1)) & np.isfinite(y_h[n]).all(axis=0)
+            rps += np.where(ok, ((comps - y_h[n]) ** 2).sum(axis=1), 0.0).sum(axis=(1, 2))
+            ref += float(
+                np.where(ok, ((_QUINTILES[:, None, None] - y_h[n]) ** 2).sum(axis=0), 0.0).sum()
+            )
+        if ref == 0:
+            return np.full(len(parts), 1.0 / len(parts))
+        w = np.clip(1 - rps / ref, 0, None)
+        return w / w.sum() if w.sum() > 0 else np.full(len(parts), 1.0 / len(parts))
+
+    probabilities, edge_rows, notes, used_weights = [], [], [], []
+    for t, init in enumerate(fc_inits):
+        valid = init + lead
+        corrected, train, y_h = correct(init, fc_vals[t])
+        if weights == "skill" and len(parts) > 1:
+            w = weights_for(train, y_h)
+            used_weights.append(w)
+            blend = np.tensordot(w, np.stack(corrected), axes=1)
+            # A cell where a weighted component is NaN stays NaN, as with equal weights.
+            blend = np.where(np.isfinite(np.stack(corrected)[w > 0]).all(axis=0), blend, np.nan)
+            corrected = [blend]
         cdf = corrected[0] if parts == ["raw"] else _project(np.mean(corrected, axis=0))
         if len(train) < _MIN_SAMPLES and parts != ["raw"] and parts != ["climatology"]:
             notes.append(f"{init:%Y-%m-%d}: {len(train)} training hindcasts")
@@ -292,6 +349,13 @@ def pbc_correct(
         probabilities.append(np.diff(full, axis=0, prepend=0.0))
         edge_rows.append(np.concatenate([edges(valid), np.full((1, *grid), np.inf)]))
 
+    if used_weights:
+        mean_w = np.mean(used_weights, axis=0)
+        print(
+            "pbc-correct: mean skill weights "
+            + ", ".join(f"{p} {w:.2f}" for p, w in zip(parts, mean_w, strict=True)),
+            file=sys.stderr,
+        )
     if notes:
         print(
             f"pbc-correct: fewer than {_MIN_SAMPLES} hindcasts, left NaN: " + "; ".join(notes),
@@ -317,8 +381,11 @@ def pbc_correct(
         "units": "1",
         AGGREGATION_PERIOD_ATTR: period,
         "pbc_components": ",".join(parts),
+        "pbc_weights": weights,
         "pbc_lead": f"{lead.days} day",
     }
+    if used_weights:
+        out[name].attrs["pbc_mean_weights"] = np.mean(used_weights, axis=0).round(4).tolist()
     out["quintile"].attrs.update(long_name="quintile upper bound", units="1")
     out["quintile_threshold"].attrs.update(
         long_name="upper edge of the observed quintile", units=units or ""
@@ -330,7 +397,7 @@ def pbc_correct(
     out.attrs["Conventions"] = "CF-1.13"
     print(
         f"pbc-correct  {len(fc_inits)} init(s), lead {lead.days} d, {period} window, "
-        f"components {','.join(parts)}"
+        f"components {','.join(parts)}, {weights} weights"
     )
     return out
 

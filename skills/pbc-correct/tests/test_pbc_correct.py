@@ -240,3 +240,29 @@ def test_incomplete_obs_windows_are_missing(tmp_path, pbc_fn):
     fc, hc = _ensemble([INIT], members), _ensemble(_hindcast_inits(), members)
     ds = _run(pbc_fn, tmp_path, fc, hc, obs, "--components", "debias")
     assert ds["tp"].isnull().all()
+
+
+def test_skill_weights_favour_the_informative_component(tmp_path, pbc_fn):
+    # Rain level is constant within each year: Persistence++ knows it, Climatology++ cannot.
+    rng = np.random.default_rng(11)
+    level = {y: rng.gamma(2.0, 2.0, (2, 2)) for y in range(2000, 2027)}
+    obs = _obs(lambda d: np.stack([level[t.year] for t in d]) + 1e-3 * rng.random((len(d), 2, 2)))
+    obs = obs.rename(precip="tp")
+    members = lambda v: np.full((3, 2, 2), 1000.0)  # noqa: E731
+    fc, hc = _ensemble([INIT], members), _ensemble(_hindcast_inits(), members)
+    args = ("--components", "persistence,climatology")
+
+    equal = _run(pbc_fn, tmp_path, fc, hc, obs, *args)
+    skill = _run(pbc_fn, tmp_path, fc, hc, obs, *args, "--weights", "skill")
+
+    w = skill["tp"].attrs["pbc_mean_weights"]
+    assert w[0] > 0.8 and w[1] < 0.2
+    edges = skill["quintile_threshold"].isel(time=0).values
+    target = (level[2026][None] <= edges).argmax(axis=0)
+
+    def picked(ds):
+        probs = ds["tp"].isel(time=0).values
+        return np.take_along_axis(probs, target[None], axis=0)[0]
+
+    assert (picked(skill) > picked(equal)).all()
+    assert equal["tp"].attrs["pbc_weights"] == "equal"

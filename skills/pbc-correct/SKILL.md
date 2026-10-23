@@ -17,7 +17,7 @@ Calibrates an ensemble forecast's probabilities of landing in each observed quin
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/pbc_correct.py --forecast FC.zarr --hindcast HC.zarr --obs OBS.zarr \
-  [--step DAYS] [--components debias,persistence,climatology] [--years 20] [--margin 35] [--clim-years 10] \
+  [--step DAYS] [--components debias,persistence,climatology] [--weights equal|skill] [--years 20] [--margin 35] [--clim-years 10] \
   [-v VAR] -o OUT.zarr
 ```
 
@@ -27,6 +27,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/pbc_correct.py --forecast FC.zarr --hindcast 
 - `--obs` — observed window means on the same grid, labeled every day at the window start: daily obs through `aggregate-temporal --window 7 --align left` for weekly windows. Its `aggregation_period` must match the forecast's. Needs `--years` of history before the first init plus the two windows just before each init.
 - `--step` — lead in days of the window to correct (e.g. `14` for week 3 of weekly windows from lead 0). Default: the forecast's only step.
 - `--components` — corrections to average. Default `debias,persistence,climatology`. `debias,persistence` is the published PBC. `raw` alone writes the uncorrected ensemble on the same quintiles, a single name writes that component alone.
+- `--weights` — `equal` (default, as published) averages the components; `skill` weights each by its past RPSS against climatology on the training hindcasts, max(RPSS, 0), pooled over the region. Each training hindcast is corrected from its own past, so the weights are out of sample; it costs one extra correction per training hindcast. Equal weights when no component beats climatology.
 - `--years` — years of hindcasts and observations behind the quintile edges, Debias++ and Persistence++. Default `20`.
 - `--margin` — days either side of the target calendar day pooled into training and edges. Default `35`.
 - `--clim-years` — most recent years of observations behind Climatology++. Default `10`.
@@ -45,7 +46,7 @@ Each is clipped to [0, 1] and made non-decreasing across edges (isotonic regress
 ### Output
 - The input variable on `time`, `quintile` (0.2, 0.4, 0.6, 0.8, 1.0), latitude, longitude: the probability of each quintile category, units `1`. `time` is the **start of the valid window** (init + step), so the output lines up with the obs for `verify --metric rps`. The init is the coord `forecast_reference_time`.
 - Coord `quintile_threshold` (time, quintile, latitude, longitude): the observed upper edge of each category in the obs units, `inf` for the top one.
-- Attrs `pbc_components`, `pbc_lead`, and the forecast's `aggregation_period`.
+- Attrs `pbc_components`, `pbc_weights`, `pbc_lead`, and the forecast's `aggregation_period`; with `--weights skill`, `pbc_mean_weights` (mean weight per component over the inits, also printed on stderr).
 
 ### Notes
 - Quintile edges come from observation windows that ended before the **first** forecast init, within `--years` years, so every init uses the same edges and none uses its own future.
