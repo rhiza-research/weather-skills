@@ -38,10 +38,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window 
 ### Output
 - Same variables and units; the aggregated axis holds one label per window, at the window's left edge. Without `--end-time`, `time` windows start at the first sample; `step` windows start at lead 0. Ensemble members stay separate.
 - Each variable gets `aggregation_period` (window length, e.g. `7 day`, `1 dekad`, `1 month`), `data_interval` (output spacing: the period, or the input spacing for `--window`), and CF `cell_methods` (e.g. `time: mean (interval: 1 day)`, where the interval is the input spacing).
-- Coordinate `aggregation_coverage` (0–1) on the axis: the share of expected input samples with data. Incomplete windows are kept and listed on stderr.
+- `<var>_coverage` (0–1, the variable's dims): the share of the window each cell has data for, linked by `ancillary_variables`.
+- Coordinate `aggregation_coverage` (0–1) on the axis: the best cell's coverage (below 1: no cell is complete). Incomplete windows are kept and listed on stderr.
 
 ### Notes
-- A cell missing samples that other cells have is NaN for that window; values are never averaged over a partial record.
+- A cell with less data than the window's best-covered cell is NaN for that window.
 - `--window` is refused on axes with missing rows or CF `{dim}_bounds`; use `--period`.
 
 ### Example
@@ -63,7 +64,7 @@ Writes 6-hour mean GFS precip rates; hourly and 3-hourly leads are weighted by t
 
 **Window geometry.** Windows are half-open `[left, right)` and labeled at the left edge, on `step` and with `--end-time` alike: week 1 of a forecast initialized 2026-10-12 is `step = 0` and covers the same days as the `--end-time 2026-10-19` observation week labeled 2026-10-12.
 
-**Coverage.** A sample counts only when some cell has data (a fixed land mask does not count as missing; an all-NaN unpublished lead does). Re-aggregated input counts at its own coverage, so a 3/7 week inside a 14-day window gives 10/14.
+**Coverage.** Each cell counts the time it has data: two stations each missing a different day both have 6/7, so the week is incomplete. A cell that never has data (a land mask) has coverage 0 and does not lower `aggregation_coverage`; an all-NaN unpublished lead lowers it for every cell. Re-aggregated input counts at each cell's own coverage, so a 3/7 week inside a 14-day window gives 10/14.
 
 **Irregular axes.** Inputs with CF `{dim}_bounds` are weighted by sample duration (`sum(rate × dt) / sum(dt)`).
 

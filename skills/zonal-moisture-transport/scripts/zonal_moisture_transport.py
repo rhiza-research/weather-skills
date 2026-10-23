@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 # ]
 # ///
 """Compute eastward moisture flux (q·u) and, by default, its column integral (IVT)."""
@@ -14,6 +14,7 @@ import sys
 import numpy as np
 import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.cf import measured_variables
 from weather_skills_core.standard_dataset import names_for
 from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset, ureg
@@ -91,8 +92,8 @@ def _pick_var(
                 return item[name]
     if fallback_index is not None and 0 <= fallback_index < len(datasets):
         item = datasets[fallback_index]
-        if len(item.data_vars) == 1:
-            return item[next(iter(item.data_vars))]
+        if len(measured_variables(item)) == 1:
+            return item[measured_variables(item)[0]]
     flag = "--humidity-variable" if label == "humidity" else "--wind-variable"
     raise UsageError(
         f"could not find a {label} variable (looked for {', '.join(aliases)}). "

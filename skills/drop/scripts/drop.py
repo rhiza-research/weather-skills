@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 #   "cftime>=1.6",
 # ]
 # ///
@@ -37,6 +37,11 @@ def drop(ds, name, **kwargs):
             "dim without coordinates. Use select to collapse the dim or summarize-dim to "
             "reduce over it."
         )
+    # A dropped variable's coverage (its ancillaries) goes with it.
+    for n in list(names):
+        if n in ds.data_vars:
+            names += [a for a in str(ds[n].attrs.get("ancillary_variables", "")).split() if a in ds]
+    names = list(dict.fromkeys(names))
     if set(ds.data_vars) <= set(names):
         raise UsageError("dropping these names would leave no data variables")
 

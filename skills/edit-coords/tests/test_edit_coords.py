@@ -168,3 +168,14 @@ def test_two_way_rename_exchanges_names(tmp_path, edit_coords):
         edit_coords, tmp_path, base, "--rename", "precip=other", "--rename", "other=precip"
     )
     assert float(ds["precip"].max()) == 2.0 and float(ds["other"].max()) == 1.0
+
+
+def test_rename_carries_the_coverage(tmp_path, edit_coords):
+    from conftest import make_gridded, with_coverage
+
+    src = write_zarr(with_coverage(make_gridded(), "precip"), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(edit_coords, "-i", str(src), "-o", str(out), "--rename", "precip=chirps")
+    ds = xr.open_zarr(out, consolidated=True)
+    assert sorted(ds.data_vars) == ["chirps", "chirps_coverage"]
+    assert ds["chirps"].attrs["ancillary_variables"] == "chirps_coverage"

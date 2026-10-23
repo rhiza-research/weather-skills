@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 # ]
 # ///
 """Convert a forecast variable stored as a running total since init into per-step values."""
@@ -10,6 +10,7 @@ import sys
 
 import numpy as np
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.cf import measured_variables
 from weather_skills_core.units import deaccumulate_along_step
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
@@ -25,11 +26,11 @@ _SKILL_VERSION = "0.0.4"
 def deaccumulate(ds, variable, **kwargs):
     """Convert a forecast variable stored as a running total since init into per-step values."""
     if variable is None:
-        if len(ds.data_vars) != 1:
+        if len(measured_variables(ds)) != 1:
             raise UsageError(
                 f"input has {len(ds.data_vars)} data vars {list(ds.data_vars)}; pass --variable"
             )
-        variable = next(iter(ds.data_vars))
+        variable = measured_variables(ds)[0]
     if variable not in ds.data_vars:
         raise UsageError(f"variable {variable!r} not in dataset (have {list(ds.data_vars)})")
     da = ds[variable].pint.dequantify()

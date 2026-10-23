@@ -1300,3 +1300,16 @@ def test_text_code_leaves_a_name_column_alone(tmp_path, csv_io):
     res = _open(out)
     assert list(res["name"].values) == ["M"]
     np.testing.assert_allclose(res["rain"].values, [[np.nan, 2.0]])
+
+
+def test_dropna_ignores_coverage(tmp_path, csv_io):
+    import numpy as np
+    from conftest import make_gridded, with_coverage
+
+    ds = make_gridded(n_time=1)
+    ds["precip"].values[:] = np.nan
+    ds["precip"].values[0, 0, 0] = 1.0
+    src = write_zarr(with_coverage(ds, "precip", np.zeros((1, 3, 4))), tmp_path / "in.zarr")
+    out = tmp_path / "out.csv"
+    run_skill(csv_io, "-i", str(src), "-o", str(out), "--dropna")
+    assert len(out.read_text().strip().splitlines()) == 2  # header + the one finite value

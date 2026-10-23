@@ -208,3 +208,17 @@ def test_unit_convert_refuses_rate_to_amount(tmp_path, unit_convert, capsys):
     assert _run_exit_code(unit_convert, *args) == 2
     assert "convert-to-totals" in capsys.readouterr().err
     assert not out.exists()
+
+
+def test_coverage_is_not_converted(tmp_path, unit_convert):
+    from conftest import with_coverage
+
+    ds = make_gridded(name="t2m", fill=290.0)
+    ds["t2m"].attrs = {"units": "K", "standard_name": "air_temperature"}
+    ds = with_coverage(ds, "t2m")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(unit_convert, "-i", str(src), "-o", str(out), "--to-units", "degree_Celsius")
+    res = xr.open_zarr(out, consolidated=True)
+    assert res["t2m"].attrs["units"] == "degree_Celsius"
+    assert res["t2m_coverage"].attrs["units"] == "1" and float(res["t2m_coverage"].max()) == 1.0

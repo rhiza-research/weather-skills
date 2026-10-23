@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 #   "scipy",
 # ]
 # ///
@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.cf import measured_variables
 from weather_skills_core.standard_dataset import detect_spatial_dims, names_for
 from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset
@@ -114,7 +115,8 @@ def point_value(
             rows = np.flatnonzero(np.abs(glat - plat[p]) <= max_distance)
             cols = np.flatnonzero(np.abs(glon - plon[p]) <= max_distance)
             # Cells with any finite value, checked only in this point's window.
-            valid = ds.isel({lat_dim: rows, lon_dim: cols}).to_array().notnull()
+            window = ds[measured_variables(ds)].isel({lat_dim: rows, lon_dim: cols})
+            valid = window.to_array().notnull()
             valid = valid.any([d for d in valid.dims if d not in (lat_dim, lon_dim)])
             ii, jj = np.nonzero(valid.transpose(lat_dim, lon_dim).values)
             dist = np.hypot(glat[rows[ii]] - plat[p], glon[cols[jj]] - plon[p])

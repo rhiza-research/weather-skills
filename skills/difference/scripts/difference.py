@@ -1,14 +1,20 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 # ]
 # ///
 """Subtract one Zarr from another (A − B), cell by cell."""
 
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.cf import measured_variables
 from weather_skills_core.standard_utils import ensure_normalized_longitude
-from weather_skills_core.units import AGGREGATION_PERIOD_ATTR, looks_like_precip_total, ureg
+from weather_skills_core.units import (
+    AGGREGATION_PERIOD_ATTR,
+    coverage_variable,
+    looks_like_precip_total,
+    ureg,
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.5"
@@ -33,7 +39,7 @@ def difference(ds, variable, **kwargs):
     import pint
     import xarray as xr
 
-    shared = [v for v in ds_a.data_vars if v in ds_b.data_vars]
+    shared = [v for v in measured_variables(ds_a) if v in measured_variables(ds_b)]
     vars_ = list(dict.fromkeys(variable)) if variable else shared
     if not vars_:
         raise UsageError(
@@ -115,6 +121,13 @@ def difference(ds, variable, **kwargs):
         if "difference" not in long_name.lower():
             diff.attrs["long_name"] = f"{long_name} difference"
         out[v] = diff
+        # A − B has data where both do: the smaller per-cell coverage of the two.
+        covs = [
+            c for c in (coverage_variable(ds_a, v), coverage_variable(ds_b, v)) if c is not None
+        ]
+        if covs:
+            out[covs[0].name] = np.minimum(*covs) if len(covs) == 2 else covs[0]
+            out[covs[0].name].attrs = dict(covs[0].attrs)
     return xr.Dataset(out)
 
 

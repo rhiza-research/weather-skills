@@ -149,3 +149,10 @@ def test_centre_moving_one_cell_keeps_its_id(tmp_path, local_extrema):
 def test_radius_must_be_positive_and_finite(tmp_path, local_extrema, radius):
     with pytest.raises(SystemExit):
         _run(local_extrema, tmp_path, _pressure(), "--kind", "high", "--radius", radius)
+
+
+def test_default_variable_skips_its_coverage(tmp_path, local_extrema):
+    from conftest import with_coverage
+
+    out, ds = _run(local_extrema, tmp_path, with_coverage(_pressure(), "msl"), "--kind", "high")
+    assert "msl" in ds.data_vars

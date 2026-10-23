@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@per-cell-coverage",
 #   "xarray-regrid",
 # ]
 # ///
@@ -11,6 +11,7 @@ import math
 import sys
 
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.cf import measured_variables
 from weather_skills_core.standard_dataset import detect_spatial_dims
 from weather_skills_core.standard_utils import ensure_normalized_longitude, grid_spacing
 from weather_skills_core.units import units_equal
@@ -118,14 +119,14 @@ def downscale(
             if path is None:
                 continue
             other = xr.open_zarr(path, consolidated=False)
-            missing = [v for v in ds.data_vars if v not in other.data_vars]
+            missing = [v for v in measured_variables(ds) if v not in other.data_vars]
             if missing:
                 raise UsageError(
                     f"{flag} has no variable {missing} (has {list(other.data_vars)}); "
                     "give one side the other's name with edit-coords --rename, or limit "
                     "the input with --variable"
                 )
-            for v in ds.data_vars:
+            for v in measured_variables(ds):
                 want = ds[v].attrs.get("units") or format(ds[v].pint.units or "", "~cf")
                 have = other[v].attrs.get("units")
                 if not units_equal(have, want):
@@ -141,7 +142,7 @@ def downscale(
                     )
             samples[flag] = other
         if qq_model is None:
-            for v in ds.data_vars:
+            for v in measured_variables(ds):
                 if not set(ds[v].dims) - {lat_dim, lon_dim}:
                     raise UsageError(
                         f"--input {v!r} has no sample dim besides lat/lon and no "
@@ -234,9 +235,10 @@ def downscale(
         model = out
         if qq_model is not None:
             model = samples["--qq-model"]
-            model = ensure_normalized_longitude(model, lon_dim)[list(out.data_vars)]
+            model = ensure_normalized_longitude(model, lon_dim)[measured_variables(out)]
             model = model.regrid.linear(target)
-        for v in out.data_vars:
+        # A coverage is interpolated with the grid, never quantile-mapped.
+        for v in measured_variables(out):
             # Distinct core-dim names so the three samples never broadcast together.
             core = {
                 name: [d for d in da.dims if d not in (lat_dim, lon_dim)]

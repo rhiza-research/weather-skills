@@ -28,7 +28,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/drop.py -i IN.zarr -o OUT.zarr --name NAME [-
 The input without the named variables; attributes pass through unchanged.
 
 ### Notes
-- A coordinate's CF `bounds` variable is not dropped with it; list it with `--name` too.
+- A variable's `ancillary_variables` (its `<var>_coverage`) are dropped with it. A coordinate's CF `bounds` variable is not; list it with `--name` too.
 - To remove a dimension, pick one entry with select or reduce over it with summarize-dim.
 - Exits 2 when a name does not exist (the message lists what does), names a dimension's index, or would leave no data variables.
 
