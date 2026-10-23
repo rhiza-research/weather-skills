@@ -117,16 +117,18 @@ def _dates(ds):
     return ds["time"].values.astype("datetime64[D]").astype(str).tolist()
 
 
-def test_ecmwf_precip_default_reads_newest_runs_from_store(tmp_path, fetch, ecmwf):
+def _issues(ds):
+    return ds["issue_time"].values.astype("datetime64[D]").astype(str).tolist()
+
+
+def test_ecmwf_precip_reads_newest_runs_from_store(tmp_path, fetch, ecmwf):
     out = tmp_path / "ec.zarr"
     _run(fetch, out, "--dataset", "ecmwf", "--start-time", "2018-10-01", "--end-time", "2018-10-31")
     assert ecmwf["store"] == 1
     with xr.open_zarr(out) as ds:
         # 2018-10-05 comes from the 2021 issue (year -3), not the 2020 one.
         assert _dates(ds) == ["2018-10-05"]
-        assert ds["issue_time"].values.astype("datetime64[D]").astype(str).tolist() == [
-            "2021-10-05"
-        ]
+        assert _issues(ds) == ["2021-10-05"]
         assert list(ds["precip"].dims) == ["time", "step", "latitude", "longitude"]
         # Ensemble mean of the store's members: 13 mm + mean offset 1 mm.
         np.testing.assert_allclose(ds["precip"].isel(step=0, latitude=0, longitude=0), [14.0])
@@ -136,51 +138,59 @@ def test_ecmwf_precip_default_reads_newest_runs_from_store(tmp_path, fetch, ecmw
     assert load_history(out)[-1]["skill"] == "hindcast-fetch"
 
 
-def test_ecmwf_issue_year_reads_store_when_it_has_every_run(tmp_path, fetch, ecmwf):
-    out = tmp_path / "ec22.zarr"
+def test_ecmwf_one_run_per_date_from_the_newest_issue(tmp_path, fetch, ecmwf):
+    out = tmp_path / "ec_members.zarr"
     _run(
-        fetch, out, "--dataset", "ecmwf", "--members", "--issue-year", "2022",
-        "--start-time", "2019-01-01", "--end-time", "2021-12-31",
-    )  # fmt: skip
-    assert ecmwf["store"] == 1
+        fetch,
+        out,
+        "--dataset",
+        "ecmwf",
+        "--members",
+        "--start-time",
+        "2019-01-01",
+        "--end-time",
+        "2021-12-31",
+    )
     with xr.open_zarr(out) as ds:
-        assert _dates(ds) == ["2019-10-03", "2020-10-03", "2021-10-03"]
-        assert ds.attrs["hindcast_issue_year"] == 2022
+        assert _dates(ds) == ["2019-10-03", "2019-10-05", "2020-10-03", "2020-10-05", "2021-10-03"]
+        assert _issues(ds) == ["2022-10-03", "2021-10-05", "2022-10-03", "2021-10-05", "2022-10-03"]
         assert ds["number"].values.tolist() == [1, 2]
-        # Issue index 2, years -3, -2, -1 -> 23, 22, 21 mm (member 1 adds 0).
         np.testing.assert_allclose(
-            ds["precip"].sel(number=1).isel(step=0, latitude=0, longitude=0), [23.0, 22.0, 21.0]
+            ds["precip"].sel(number=1).isel(step=0, latitude=0, longitude=0), [23, 12, 22, 11, 21]
         )
 
 
-def test_ecmwf_issue_year_with_older_runs_reads_weatherbench2(tmp_path, fetch, ecmwf, capsys):
-    out = tmp_path / "ec20.zarr"
-    # The 2020 issue's 2018-10-05 run is not the store's (2021 ran that date too).
-    _run(
-        fetch, out, "--dataset", "ecmwf", "--issue-year", "2020",
-        "--start-time", "2017-10-01", "--end-time", "2019-10-31",
-    )  # fmt: skip
-    assert ecmwf["store"] == 0
+def test_ecmwf_precip_before_store_from_weatherbench2_same_runs(
+    tmp_path, mod, fetch, ecmwf, monkeypatch, capsys
+):
+    wb2 = _wb2(False)
+    wb2["total_precipitation_24hr"][:, :, 1] = -0.005
+    monkeypatch.setattr(mod, "_open_ecmwf", lambda members: wb2)
+    # Pretend the store starts in 2019, so 2017-2018 inits come from WeatherBench2.
+    monkeypatch.setattr(mod, "_ECMWF_STORE_START", np.datetime64("2019-01-01", "ns"))
+    out = tmp_path / "ec_split.zarr"
+    _run(fetch, out, "--dataset", "ecmwf", "--start-time", "2017-10-01", "--end-time", "2019-10-31")
+    assert "below -0.1 mm day-1 at lead day(s) [1]" in capsys.readouterr().err
     with xr.open_zarr(out) as ds:
-        assert _dates(ds) == ["2017-10-05", "2018-10-05", "2019-10-05"]
-        np.testing.assert_allclose(ds["precip"].isel(step=0, latitude=0, longitude=0), [3, 2, 1])
-        assert ds.attrs["weather_skills_source"] == "weatherbench2:ifs-ext-reforecast-ens-mean"
-        assert (
-            ds["issue_time"].values.astype("datetime64[D]").astype(str).tolist()
-            == ["2020-10-05"] * 3
+        assert _dates(ds) == ["2017-10-05", "2018-10-05", "2019-10-03", "2019-10-05"]
+        # WeatherBench2 runs (3, 13 mm) then store runs (23, 12 mm + mean offset 1).
+        np.testing.assert_allclose(
+            ds["precip"].isel(step=0, latitude=0, longitude=0), [3, 13, 24, 13]
+        )
+        np.testing.assert_allclose(ds["precip"].isel(step=1, latitude=0, longitude=0)[:2], [-5, -5])
+        assert ds.attrs["weather_skills_source"] == (
+            "sheerwater:hindcasts/ecmwf_ifs_precip+weatherbench2:ifs-ext-reforecast-ens-mean"
         )
 
 
 def test_ecmwf_precip_from_store_with_temperature_from_weatherbench2(tmp_path, fetch, ecmwf):
     out = tmp_path / "ecmix.zarr"
-    _run(
-        fetch, out, "--dataset", "ecmwf", "--issue-year", "2022", "-v", "precip", "-v", "t2m",
-        "--start-time", "2020-01-01", "--end-time", "2021-12-31",
-    )  # fmt: skip
+    _run(fetch, out, "--dataset", "ecmwf", "-v", "precip", "-v", "t2m", "--start-time", "2020-01-01",
+         "--end-time", "2020-12-31")  # fmt: skip
     assert ecmwf["store"] == 1
     with xr.open_zarr(out) as ds:
-        assert _dates(ds) == ["2020-10-03", "2021-10-03"]
-        np.testing.assert_allclose(ds["precip"].isel(step=0, latitude=0, longitude=0), [23.0, 22.0])
+        assert _dates(ds) == ["2020-10-03", "2020-10-05"]
+        np.testing.assert_allclose(ds["precip"].isel(step=0, latitude=0, longitude=0), [23.0, 12.0])
         np.testing.assert_allclose(
             ds["tmp2m"].isel(step=0, latitude=0, longitude=0), [26.85, 26.85], rtol=1e-5
         )
@@ -190,28 +200,40 @@ def test_ecmwf_precip_from_store_with_temperature_from_weatherbench2(tmp_path, f
         )
 
 
-def test_ecmwf_before_store_reads_weatherbench2_and_keeps_negative_precip(
-    tmp_path, mod, fetch, monkeypatch, capsys
-):
-    wb2 = _wb2(False)
-    wb2["total_precipitation_24hr"][:, :, 1] = -0.005
-    monkeypatch.setattr(mod, "_open_ecmwf", lambda members: wb2)
-    monkeypatch.setattr(mod, "_open_ecmwf_store", lambda: pytest.fail("read the store"))
-    # Pretend the store starts in 2018, so 2017 inits are before it.
-    monkeypatch.setattr(mod, "_ECMWF_STORE_START", np.datetime64("2018-01-01", "ns"))
-    out = tmp_path / "ec_old.zarr"
-    _run(fetch, out, "--dataset", "ecmwf", "--issue-year", "2020", "--start-time", "2017-10-01",
-         "--end-time", "2017-10-31")  # fmt: skip
-    assert "below -0.1 mm day-1 at lead day(s) [1]" in capsys.readouterr().err
+def test_ecmwf_temperature_only_reads_weatherbench2(tmp_path, fetch, ecmwf):
+    out = tmp_path / "ect.zarr"
+    _run(
+        fetch,
+        out,
+        "--dataset",
+        "ecmwf",
+        "-v",
+        "t2m",
+        "--start-time",
+        "2018-10-01",
+        "--end-time",
+        "2018-10-31",
+    )
+    assert ecmwf["store"] == 0
     with xr.open_zarr(out) as ds:
-        assert float(ds["precip"].isel(step=1).min()) == pytest.approx(-5.0)
+        assert _dates(ds) == ["2018-10-05"]
+        assert _issues(ds) == ["2021-10-05"]
+        assert ds.attrs["weather_skills_source"] == "weatherbench2:ifs-ext-reforecast-ens-mean"
 
 
-def test_ecmwf_window_no_issue_year_covers_exits_2(tmp_path, fetch, ecmwf):
+def test_ecmwf_window_without_inits_exits_1(tmp_path, fetch, ecmwf):
     with pytest.raises(SystemExit) as exc:
-        _run(fetch, tmp_path / "x.zarr", "--dataset", "ecmwf", "--start-time", "1990-01-01",
-             "--end-time", "2015-12-31", "-v", "t2m")  # fmt: skip
-    assert exc.value.code == 2
+        _run(
+            fetch,
+            tmp_path / "x.zarr",
+            "--dataset",
+            "ecmwf",
+            "--start-time",
+            "1990-01-01",
+            "--end-time",
+            "1990-12-31",
+        )
+    assert exc.value.code == 1
 
 
 def _gefs_store(source, inits, value):
@@ -390,12 +412,13 @@ def test_cumulus_empty_range_exits_1(tmp_path, mod, fetch, monkeypatch):
             "--members",
         ],
         [
+            # ECMWF is one newest-run-per-date series: no issue years to pick.
             "--dataset",
-            "cumulus",
+            "ecmwf",
             "--start-time",
-            "2024-12-01",
+            "2018-10-01",
             "--end-time",
-            "2024-12-31",
+            "2018-10-31",
             "--issue-year",
             "2022",
         ],
