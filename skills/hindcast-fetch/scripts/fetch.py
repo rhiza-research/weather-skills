@@ -14,9 +14,10 @@
 #     (forecast_time, [number,] hindcast_year, prediction_timedelta, latitude,
 #     longitude); forecast_time is the issue date (2016-2022, Mon/Thu) and the
 #     2-D ``time`` coord holds the real init date of each of its 20 hindcast
-#     years. precip also comes from Sheerwater's public copy of the members,
-#     flattened to one run per init date (the newest issue that ran it) and
-#     tiled, whenever every run asked for is in it.
+#     years. Several issues re-run the same calendar date; the skill keeps the
+#     newest issue's run of each date, so every init is from the newest model
+#     that ran it. precip from 2016 on comes from Sheerwater's public, tiled
+#     copy of exactly those runs' members.
 #   gefs — Sheerwater's GEFSv12 reforecast: precip public (decoded), tmp2m the
 #     private Zarr v3 cache with init_time in days since 1960-01-01. Dims
 #     (init_time, member, prediction_timedelta, lat, lon), Wednesday inits.
@@ -242,104 +243,72 @@ def _open_cumulus(folder: str, init: str, bbox, workers: int) -> xr.DataArray:
     return da.expand_dims(time=[np.datetime64(f"{init[:10]}T{init[11:]}", "ns")])
 
 
-def _ecmwf_issue_pairs(wb2, start, end, issue_year):
-    """(issue index, hindcast-year index) pairs of one issue year with inits in [start, end]."""
-    issued = wb2["forecast_time"].values
-    years = issued.astype("datetime64[Y]").astype(int) + 1970
-    issue_years = sorted(set(years.tolist()))
-    if issue_year is None:
-        # Latest issue year whose 20 hindcast years cover the whole window.
-        fits = [y for y in issue_years if y - 20 <= start.year and y - 1 >= end.year]
-        if not fits:
-            raise UsageError(
-                f"no single ECMWF issue year covers inits {start}..{end}: issue years "
-                f"{issue_years[0]}-{issue_years[-1]} each carry the 20 years before them "
-                f"(inits {issue_years[0] - 20}-{issue_years[-1] - 1} overall). Narrow the "
-                "window or pass --issue-year."
-            )
-        issue_year = fits[-1]
-    elif issue_year not in issue_years:
-        raise UsageError(
-            f"--issue-year {issue_year} not in the store; available: "
-            f"{issue_years[0]}-{issue_years[-1]}."
-        )
-    inits = wb2["time"].values  # (forecast_time, hindcast_year)
-    in_window = (inits >= np.datetime64(start)) & (
-        inits < np.datetime64(end) + np.timedelta64(1, "D")
-    )
-    fi, hi = np.nonzero((years == issue_year)[:, None] & in_window)
-    if fi.size == 0:
-        raise DataError(
-            f"issue year {issue_year} has no hindcast init between {start} and {end} "
-            f"(its inits run {issue_year - 20}-01 to {issue_year - 1}-12)."
-        )
-    return fi, hi, issue_year
+def _read_wb2(wb2, variables, fi, hi, bbox):
+    """WeatherBench2 runs (issue fi[k], hindcast year hi[k]) as (time, ...) variables."""
+    inits = wb2["time"].values
+    region = wb2[[_ECMWF_VARIABLES[v][0] for v in variables]].drop_vars(["time", "valid_time"])
+    region = bbox_subset(region, bbox) if bbox is not None else ensure_normalized_longitude(region)
+    # Load one issue at a time with plain indexing: a vectorized pick across
+    # issues and years holds a whole globe per init in memory before the bbox.
+    pieces = []
+    for f in np.unique(fi):
+        h = hi[fi == f]
+        piece = region.isel(forecast_time=f, hindcast_year=h).load().drop_vars("forecast_time")
+        pieces.append(piece.rename(hindcast_year="time").assign_coords(time=inits[f, h]))
+    part = xr.concat(pieces, "time").sortby("time").rename(prediction_timedelta="step")
+    for v in variables:
+        source, units = _ECMWF_VARIABLES[v]
+        part = part.rename({source: v})
+        if units == "K":
+            part[v] = part[v] - 273.15
+            units = "degree_Celsius"
+        elif units == "m day-1":
+            part[v] = part[v] * 1000.0
+            units = "mm day-1"
+        part[v].attrs = {"units": units}
+    return part
 
 
-def _fetch_ecmwf(variables, start, end, issue_year, members, bbox):
+def _fetch_ecmwf(variables, start, end, members, bbox):
+    """One run per init date in [start, end]: the newest issue's, so the newest model."""
     wb2 = _open_ecmwf(members)
     issued = wb2["forecast_time"].values
     inits = wb2["time"].values  # (forecast_time, hindcast_year)
-    # The store keeps, for each init date, the run of the newest issue that ran it.
-    flat_inits = inits.ravel()
-    flat_issued = np.repeat(issued, inits.shape[1])
-    order = np.lexsort((flat_issued, flat_inits))
-    last = np.r_[flat_inits[order][1:] != flat_inits[order][:-1], True]
-    newest = dict(zip(flat_inits[order][last], flat_issued[order][last], strict=True))
-    store_inits = [t for t in newest if t >= _ECMWF_STORE_START]
-    store_end = max(store_inits)
-
-    parts = []
-    if (
-        issue_year is None
-        and variables == ["precip"]
-        and np.datetime64(start) >= _ECMWF_STORE_START
-    ):
-        # Every init date in the window once, from the newest issue that ran it.
-        times = np.array(
-            sorted(
-                t
-                for t in store_inits
-                if np.datetime64(start) <= t < np.datetime64(end) + np.timedelta64(1, "D")
-            ),
-            dtype="datetime64[ns]",
+    fi, hi = np.nonzero(
+        (inits >= np.datetime64(start)) & (inits < np.datetime64(end) + np.timedelta64(1, "D"))
+    )
+    if fi.size == 0:
+        raise DataError(
+            f"no ECMWF hindcast init between {start} and {end} (inits run "
+            f"{np_to_date(inits.min())} to {np_to_date(inits.max())})."
         )
-        if times.size == 0:
-            raise DataError(f"no ECMWF hindcast init between {start} and {end}.")
-        if np.datetime64(end) > store_end:
-            print(
-                f"WARNING: ECMWF hindcast inits end {np_to_date(store_end)}; "
-                f"none after that up to {end}.",
-                file=sys.stderr,
-            )
-        issue_times = np.array([newest[t] for t in times], dtype="datetime64[ns]")
-        store_vars, wb2_vars, fi, hi = ["precip"], [], None, None
-    else:
-        fi, hi, issue_year = _ecmwf_issue_pairs(wb2, start, end, issue_year)
-        times, issue_times = inits[fi, hi], issued[fi]
-        # precip comes from the store when it holds every one of these runs.
-        in_store = all(
-            t >= _ECMWF_STORE_START and newest[t] == i
-            for t, i in zip(times, issue_times, strict=True)
-        )
-        store_vars = ["precip"] if "precip" in variables and in_store else []
-        wb2_vars = [v for v in variables if v not in store_vars]
-
+    # Several issues re-run the same calendar date: keep the newest issue's run.
+    order = np.lexsort((issued[fi], inits[fi, hi]))
+    fi, hi = fi[order], hi[order]
+    newest = np.r_[inits[fi, hi][1:] != inits[fi, hi][:-1], True]
+    fi, hi = fi[newest], hi[newest]
+    times, issue_times = inits[fi, hi], issued[fi]
+    # Sheerwater's store holds exactly these newest runs' precip from 2016 on.
+    in_store = times >= _ECMWF_STORE_START
+    store_precip = "precip" in variables and bool(in_store.any())
     print(
-        f"hindcast-fetch: ECMWF {times.size} inits "
-        + (f"from issue year {issue_year}" if issue_year else "from the newest issue of each")
-        + (f"; precip from {_ECMWF_STORE}" if store_vars else "")
+        f"hindcast-fetch: ECMWF {times.size} inits, each the newest issue's run"
         + (
-            f"; {', '.join(wb2_vars)} from {_ECMWF_MEMBERS if members else _ECMWF_MEAN}"
-            if wb2_vars
+            f"; precip from {np_to_date(times[in_store][0])} from {_ECMWF_STORE}"
+            if store_precip
             else ""
         ),
         file=sys.stderr,
     )
-    if store_vars:
+
+    parts = []
+    if store_precip:
         # The store's own `time` coord repeats init_time.
         part = _open_ecmwf_store()[["precip"]].drop_vars("time", errors="ignore")
-        part = part.sel(init_time=np.sort(times))
+        try:
+            part = part.sel(init_time=times[in_store])
+        except KeyError as exc:
+            raise DataError(f"{_ECMWF_STORE} lacks init(s) it should hold ({exc}).") from None
         part = part.rename(
             init_time="time",
             member="number",
@@ -356,42 +325,30 @@ def _fetch_ecmwf(variables, start, end, issue_year, members, bbox):
             # WeatherBench2's ensemble mean is the mean of these 10 members.
             part = part.mean("number")
         part["precip"].attrs = {"units": "mm day-1"}
+        if not in_store.all():
+            # Earlier inits' precip from WeatherBench2, on the same newest runs.
+            early = _read_wb2(wb2, ["precip"], fi[~in_store], hi[~in_store], bbox)
+            part = xr.concat([early, part], "time", join="exact")
         parts.append(part)
-    if wb2_vars:
-        region = wb2[[_ECMWF_VARIABLES[v][0] for v in wb2_vars]].drop_vars(["time", "valid_time"])
-        region = (
-            bbox_subset(region, bbox) if bbox is not None else ensure_normalized_longitude(region)
-        )
-        # Load one issue at a time with plain indexing: a vectorized pick across
-        # issues and years holds a whole globe per init in memory before the bbox.
-        pieces = []
-        for f in np.unique(fi):
-            h = hi[fi == f]
-            piece = region.isel(forecast_time=f, hindcast_year=h).load().drop_vars("forecast_time")
-            pieces.append(piece.rename(hindcast_year="time").assign_coords(time=inits[f, h]))
-        part = xr.concat(pieces, "time").sortby("time").rename(prediction_timedelta="step")
-        for v in wb2_vars:
-            source, units = _ECMWF_VARIABLES[v]
-            part = part.rename({source: v})
-            if units == "K":
-                part[v] = part[v] - 273.15
-                units = "degree_Celsius"
-            part[v].attrs = {"units": units}
-        parts.append(part)
+    others = [v for v in variables if not (v == "precip" and store_precip)]
+    if others:
+        parts.append(_read_wb2(wb2, others, fi, hi, bbox))
     try:
         cube = xr.merge(parts, join="exact")
     except ValueError as exc:
         raise DataError(
-            f"ECMWF precip from {_ECMWF_STORE} and {', '.join(wb2_vars)} from WeatherBench2 "
-            f"are on different grids ({exc}); fetch precip in a separate call."
+            f"ECMWF precip from {_ECMWF_STORE} and WeatherBench2 fields are on different "
+            f"grids ({exc}); fetch precip in a separate call."
         ) from None
-    order = np.argsort(times)
-    cube = cube.assign_coords(issue_time=("time", issue_times[order]))
-    if "precip" in wb2_vars:
+    cube = cube.assign_coords(issue_time=("time", issue_times))
+
+    wb2_precip = "precip" in variables and not in_store.all()
+    if wb2_precip:
         # WeatherBench2 derives daily precip by differencing accumulations, and the
         # IFS extended-range split at day 15 leaves some negative day-15 values.
         # Kept as published, never clipped: say where they are.
-        negative = (cube["precip"] < -1e-4).any([d for d in cube["precip"].dims if d != "step"])
+        early = cube["precip"].isel(time=np.nonzero(~in_store)[0])
+        negative = (early < -0.1).any([d for d in early.dims if d != "step"])
         if negative.any():
             days = (cube["step"].values[negative.values] // np.timedelta64(1, "D")).tolist()
             print(
@@ -399,15 +356,12 @@ def _fetch_ecmwf(variables, start, end, issue_year, members, bbox):
                 f"day(s) {days}; kept as published (not clipped).",
                 file=sys.stderr,
             )
+    wb2_name = "weatherbench2:ifs-ext-reforecast" + ("" if members else "-ens-mean")
     source = "+".join(
-        (["sheerwater:hindcasts/ecmwf_ifs_precip"] if store_vars else [])
-        + (
-            ["weatherbench2:ifs-ext-reforecast" + ("" if members else "-ens-mean")]
-            if wb2_vars
-            else []
-        )
+        (["sheerwater:hindcasts/ecmwf_ifs_precip"] if store_precip else [])
+        + ([wb2_name] if others or wb2_precip else [])
     )
-    return cube, source, issue_year
+    return cube, source
 
 
 def _fetch_gefs(variables, start, end, bbox):
@@ -501,11 +455,6 @@ def _fetch_cumulus(dataset, start, end, bbox, workers):
 @weather_skill.argument("--variable", "-v", action="append")
 @weather_skill.argument("--bbox")
 @weather_skill.argument(
-    "--issue-year",
-    type=int,
-    help="ecmwf only: year whose issues ran the hindcasts (2016-2022).",
-)
-@weather_skill.argument(
     "--members",
     action="store_true",
     help="ecmwf only: the 10 perturbed members instead of the ensemble mean.",
@@ -530,7 +479,6 @@ def fetch(
     end_time,
     variable,
     bbox,
-    issue_year,
     members,
     workers,
     probe_latest,
@@ -560,8 +508,8 @@ def fetch(
         raise UsageError("--dataset, --start-time and --end-time are required.")
     if start_time > end_time:
         raise UsageError(f"--start-time {start_time} is after --end-time {end_time}.")
-    if dataset != "ecmwf" and (issue_year is not None or members):
-        raise UsageError("--issue-year and --members apply to --dataset ecmwf only.")
+    if dataset != "ecmwf" and members:
+        raise UsageError("--members applies to --dataset ecmwf only.")
     if workers < 1:
         raise UsageError(f"--workers must be at least 1 (got {workers}).")
     table = {"ecmwf": _ECMWF_VARIABLES, "gefs": _GEFS_VARIABLES}.get(dataset, {"precip": None})
@@ -572,11 +520,8 @@ def fetch(
             f"{dataset} hindcasts have no variable {', '.join(unknown)}; choose from {', '.join(table)}."
         )
 
-    issue_year_used = None
     if dataset == "ecmwf":
-        cube, source, issue_year_used = _fetch_ecmwf(
-            variables, start_time, end_time, issue_year, members, bbox
-        )
+        cube, source = _fetch_ecmwf(variables, start_time, end_time, members, bbox)
     elif dataset == "gefs":
         cube, source = _fetch_gefs(variables, start_time, end_time, bbox)
     else:
@@ -597,8 +542,6 @@ def fetch(
         "weather_skills_source": source,
         "hindcast_dataset": dataset,
     }
-    if issue_year_used is not None:
-        cube.attrs["hindcast_issue_year"] = issue_year_used
     cube["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
     cube["step"].attrs.update(
         standard_name="forecast_period", long_name="time since forecast_reference_time"
