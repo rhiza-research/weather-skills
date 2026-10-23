@@ -1,6 +1,6 @@
 ---
 name: mme-blend
-description: "Blend several forecasts into one multi-model ensemble (MME) value or event probability using fixed weights given on the command line or fitted weights from a Zarr, as a weighted sum, a linear regression, or a logistic regression. Weights may differ by lead, cell, or station. Use to combine models (and a climatology baseline) into one forecast once weights are chosen."
+description: "Blend several forecasts into one multi-model ensemble (MME) value or event probability using fixed weights given on the command line or weights fitted by mme-fit, as a weighted sum, a linear regression, or a logistic regression. Weights may differ by lead, cell, or station. Use after mme-fit to apply its weights to new forecasts, or with weights you choose."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/mme_blend.py *)
@@ -11,7 +11,7 @@ metadata:
 
 # mme-blend
 
-Combines several forecasts, one predictor each, into one blended value or probability with given weights.
+Combines several forecasts, one predictor each, into one blended value or probability. Usually the second step after `mme-fit`: fit weights on hindcasts with `mme-fit`, then pass its output as `--weights` here with new forecasts from the same models, under the same `--names` and `-v`.
 
 ## Usage
 
@@ -25,8 +25,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/mme_blend.py --forecast A.zarr --forecast B.z
 ### Arguments
 - `--forecast` — forecast Zarr, one per source (repeat). Each is one predictor.
 - `--names` — comma-separated predictor names, one per `--forecast` in order. Default: each file's stem (`aifs.zarr` → `aifs`).
-- `--variable`, `-v` — variable read from every forecast. Default: each forecast's first usable variable.
-- `--weights` — weights Zarr (format below); its `model` attr picks the model.
+- `--variable`, `-v` — name of the data variable to read from each `--forecast` (e.g. `precip` or `probability`); every forecast must have a variable of that name. Default: each forecast's first usable variable. Use the same value as in `mme-fit`.
+- `--weights` — weights Zarr written by `mme-fit` (or by hand, format below); its `model` attr picks the model.
 - `--model` — `weighted`, `linear`, or `logistic`; required with `--coef`, must match the weights' model with `--weights`.
 - `--coef` — `NAME=W` (repeat): a fixed weight per predictor, instead of `--weights`.
 - `--intercept` — intercept with `--coef` for `linear` / `logistic`. Default: `0`.
