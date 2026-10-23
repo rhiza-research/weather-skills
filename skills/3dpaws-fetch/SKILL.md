@@ -66,7 +66,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --station 1 --station 4 --start-time
 
 ## Details
 
-- **Complete days.** The reporting interval is the station's most common spacing (per day, so a change of interval is followed). A day is complete for a variable when no two valid readings are more than 1.5 intervals apart. Rain gauges may skip up to 3 intervals, because each reading holds the rain since the last one.
+- **Complete days.** The reporting interval is the station's most common spacing over the fetch; days at another spacing come out NaN. A day is complete for a variable when no two valid readings are more than 1.5 intervals apart. Rain gauges may skip up to 3 intervals, because each reading holds the rain since the last one.
 - **Quality control.** Out-of-range readings (including `-999.9`) are dropped, as is an exact `0` for temperature, humidity or pressure (no sensor fitted) and readings flagged as test data.
 - **Two rain gauges.** `precip` is gauge 1 where gauge 2 also has a complete day and the totals agree within 1 mm or 25 %; otherwise NaN. A station with one gauge uses it.
 - 1-minute stations often skip readings, so many of their days are NaN. A few test instruments sit in Boulder; a bbox excludes them.

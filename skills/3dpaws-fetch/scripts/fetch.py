@@ -110,7 +110,7 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     """Download one station's readings and reduce them to daily values.
 
     Days ``start`` .. ``end`` inclusive, each starting at ``day_start_hour`` UTC.
-    Returns ``(daily DataFrame, reporting intervals in minutes)``, or ``(None, None)``
+    Returns ``(daily DataFrame, reporting interval in minutes)``, or ``(None, None)``
     when the station sent nothing. Days missing any expected reading are NaN.
     """
     import pandas as pd
@@ -162,35 +162,16 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     # Shift by the day-start hour so each day bins as one calendar day labelled
     # by the date it starts on.
     clean.index = clean.index - offset
-    times = clean.index.to_series()
 
-    # Reporting interval in whole minutes: the modal spacing (ties go to the
-    # shorter). 1-minute stations drift 60-61 s apart on their own timer;
-    # 15-minute stations report just after each quarter hour.
-    spacing = (times.diff().dt.total_seconds() / 60).round()
+    # Reporting interval in whole minutes: the most common spacing between
+    # readings over the whole fetch (ties go to the shorter). 1-minute stations drift 60-61 s apart on
+    # their own timer; 15-minute stations report just after each quarter hour.
+    # Days at any other spacing (dropped readings, or a changed interval) are
+    # judged at this one and so come out NaN.
+    spacing = (clean.index.to_series().diff().dt.total_seconds() / 60).round()
     spacing = spacing[spacing >= 1]
-    station_min = int(spacing.mode().iloc[0]) if len(spacing) else 1
-
-    def on_clock(t, minutes):
-        """True when nearly every reading falls just after a ``minutes``-minute clock mark."""
-        seconds = (t - t.dt.floor("D")).dt.total_seconds()
-        return bool(((seconds % (60 * minutes)) < 6 * minutes).mean() >= 0.9)
-
-    # Each day is judged at its own modal spacing, so an interval change is
-    # followed. A whole multiple of the usual interval means dropped readings
-    # (every other one missing), unless the station moved onto the clock.
-    station_on_clock = on_clock(times, station_min)
-    day_modes = spacing.groupby(spacing.index.floor("D")).agg(lambda s: s.mode().iloc[0])
-    day_min = {}
-    for day, day_times in times.groupby(times.dt.floor("D")):
-        minutes = int(day_modes.get(day, station_min))
-        if (
-            minutes > station_min
-            and minutes % station_min == 0
-            and (station_on_clock or not on_clock(day_times, minutes))
-        ):
-            minutes = station_min
-        day_min[day] = minutes
+    interval_min = int(spacing.mode().iloc[0]) if len(spacing) else 1
+    interval = pd.Timedelta(minutes=interval_min)
 
     # A day is complete for a variable when no two valid readings (or a reading
     # and the fetch edge) are over 1.5 intervals apart. Rain gauges may skip
@@ -202,11 +183,10 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     complete = pd.DataFrame(True, index=all_days, columns=clean.columns)
     for short in clean.columns:
         t = pd.Series([edge0, *clean.index[clean[short].notna()], edge1])
-        k = pd.to_timedelta(t.dt.floor("D").map(day_min).fillna(station_min), unit="min")
-        prev, k = t.shift(), k.shift()
+        prev = t.shift()
         allowed = (RAIN_GAP_INTERVALS if short in ("rg1", "rg2") else 1) + 0.5
-        gap = (t - prev) > allowed * k
-        for a, b in zip(prev[gap] + k[gap], t[gap] - k[gap], strict=True):
+        gap = (t - prev) > allowed * interval
+        for a, b in zip(prev[gap] + interval, t[gap] - interval, strict=True):
             complete.loc[min(a, b).floor("D") : max(a, b).floor("D"), short] = False
 
     days = clean.resample("D")
@@ -226,8 +206,7 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
             tolerance = (GAUGE_TOLERANCE_FRAC * larger).clip(lower=GAUGE_TOLERANCE_MM)
             total = total.where((total - total2).abs() <= tolerance)
         daily["precip"] = total
-    intervals = sorted({day_min.get(day, station_min) for day in wanted})
-    return daily, intervals
+    return daily, interval_min
 
 
 @weather_skill(
@@ -408,7 +387,7 @@ def fetch(
             row = futures[fut]
             sid = row["station_id"]
             try:
-                daily, intervals = fut.result()
+                daily, interval_min = fut.result()
             except UsageError:
                 raise
             except Exception as exc:  # noqa: BLE001
@@ -422,7 +401,7 @@ def fetch(
                 print(f"{sid}: no complete day for any variable", file=sys.stderr)
                 continue
             print(
-                f"{sid} ({row['name']}): reports every {' / '.join(map(str, intervals))} min, "
+                f"{sid} ({row['name']}): reports every {interval_min} min, "
                 f"{complete}/{len(daily)} days with a complete record",
                 file=sys.stderr,
             )

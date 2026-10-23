@@ -269,15 +269,12 @@ def test_one_and_fifteen_minute_stations_both_complete(tmp_path, mod, fetch):
     np.testing.assert_allclose(ds["precip"].sel(station_id="2").values, [0.96, 0.96])
 
 
-def test_interval_change_mid_request(tmp_path, mod, fetch):
-    # 1 minute on its own timer for day 1, then 15 minutes on the clock for day 2.
-    points = _free_running("2026-10-01", 1, _dry) + _readings("2026-10-02", 1, 15, _dry)
-    ds = _run(tmp_path, mod, fetch, {"1": points})
-    assert not np.isnan(ds["precip"].values).any()
-    # A dropped reading after the change still blanks the day.
-    points = [p for p in points if p["time"] != "2026-10-02T09:30:00Z"]
-    ds = _run(tmp_path, mod, fetch, {"1": points})
-    np.testing.assert_array_equal(np.isnan(ds["temperature"].values[:, 0]), [False, True])
+def test_interval_change_mid_request_blanks_the_other_interval(tmp_path, mod, fetch):
+    # 1 minute for two days, then 15 minutes: every day is judged at the
+    # station's most common spacing (1 minute), so the 15-minute day is NaN.
+    points = _free_running("2026-10-01", 2, _dry) + _readings("2026-10-03", 1, 15, _dry)
+    ds = _run(tmp_path, mod, fetch, {"1": points}, "--end-time", "2026-10-03")
+    np.testing.assert_array_equal(np.isnan(ds["temperature"].values[:, 0]), [False, False, True])
 
 
 def test_duplicate_readings_count_once(tmp_path, mod, fetch):
