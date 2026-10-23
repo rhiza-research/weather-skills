@@ -658,3 +658,67 @@ def test_lat_weighted_mean_per_by_group(tmp_path, summarize_dim):
     # Equator row (0, 1, 2) at weight 1, 60°N row (3, 4, 5) at weight 0.5.
     assert result.item() == pytest.approx((1 * 1 + 0.5 * 4) / 1.5)
     assert result.attrs["units"] == "mm day-1"
+
+
+def test_quantile_by_group(tmp_path, summarize_dim):
+    import numpy as np
+
+    src = write_zarr(_labeled(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "time",
+        "--by",
+        "region",
+        "--method",
+        "quantile",
+        "--q",
+        "0.1",
+        "0.9",
+        "--q",
+        "0.5",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    precip = ds["precip"]
+    assert precip.dims == ("quantile", "region")
+    assert ds["quantile"].values.tolist() == [0.1, 0.9, 0.5]
+    values = _labeled()["precip"].values  # region a: cells (0,0), (0,1); b: row 1
+    expected = np.quantile(values[:, 0, :2], [0.1, 0.9, 0.5])
+    np.testing.assert_allclose(precip.sel(region="a").values, expected)
+    assert precip.attrs["units"] == "mm day-1"
+    assert "quantile (q: 0.1 0.9 0.5; grouped by region)" in precip.attrs["cell_methods"]
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (("--method", "quantile"), "needs q"),
+        (("--method", "mean", "--q", "0.5"), "only used with method quantile"),
+        (("--method", "quantile", "--q", "1.5"), "in [0, 1]"),
+        (
+            ("--method", "quantile", "--q", "0.5", "--lat-weighted"),
+            "weighted quantile is not supported",
+        ),
+    ],
+)
+def test_quantile_errors(tmp_path, summarize_dim, capsys, args, message):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--dim",
+            "latitude",
+            *args,
+        )
+    assert message in capsys.readouterr().err
