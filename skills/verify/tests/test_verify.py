@@ -566,3 +566,49 @@ def test_pooled_metrics_on_stations(tmp_path, verify_fn):
     np.testing.assert_allclose(ds["rmse"].values, [1.0, 1.0])
     roc = _verify(tmp_path, verify_fn, fc, obs, "--metric", "roc", "--threshold", "3")
     assert roc.attrs["roc_area"] == pytest.approx(1.0)
+
+
+def _prob(values):
+    """A 0-1 event probability (e.g. mme-blend's), units 1, on len(values) days."""
+    ds = _series(values).rename(precip="probability")
+    ds["probability"].attrs["units"] = "1"
+    return ds
+
+
+def _events(values):
+    ds = _series(values).rename(precip="indicator")
+    ds["indicator"].attrs["units"] = "1"
+    return ds
+
+
+def test_brier_of_a_probability_forecast(tmp_path, verify_fn):
+    # (0.8 - 1)^2 = 0.04 and (0.1 - 0)^2 = 0.01: scored as probabilities, not thresholded at 1.
+    ds = _verify(
+        tmp_path, verify_fn, _prob([[0.8, 0.1]]), _events([[1.0, 0.0]]),
+        "--metric", "brier", "--probability",
+    )  # fmt: skip
+    np.testing.assert_allclose(ds["brier"].isel(time=0).values, [[0.04, 0.01]], rtol=1e-5)
+    # Base rate 50% -> reference 0.25; mean Brier 0.025 -> BSS +0.900.
+    assert "BSS +0.900 vs base rate 50%" in ds.attrs["verify_score_summary"]
+
+
+def test_reliability_of_a_probability_forecast(tmp_path, verify_fn):
+    ds = _verify(
+        tmp_path, verify_fn, _prob([[0.75], [0.75], [0.75], [0.75]]),
+        _events([[1.0], [1.0], [1.0], [0.0]]), "--metric", "reliability", "--probability",
+    )  # fmt: skip
+    np.testing.assert_allclose(ds["observed_frequency"].sel(probability_bin=0.75), 0.75)
+    np.testing.assert_allclose(ds["sample_fraction"].sel(probability_bin=0.75), 1.0)
+
+
+def test_probability_rejects_members_out_of_range_and_other_metrics(tmp_path, verify_fn):
+    members = _series([[[0.2], [0.4]]], members=True).rename(precip="probability")
+    members["probability"].attrs["units"] = "1"
+    for fc, args, code in (
+        (members, ("--metric", "brier"), 2),
+        (_prob([[1.5]]), ("--metric", "brier"), 1),
+        (_prob([[0.5]]), ("--metric", "mae"), 2),
+    ):
+        with pytest.raises(SystemExit) as exc:
+            _verify(tmp_path, verify_fn, fc, _events([[1.0]]), *args, "--probability")
+        assert exc.value.code == code
