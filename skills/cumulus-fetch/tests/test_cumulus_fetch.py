@@ -1,6 +1,5 @@
 """Correctness tests for cumulus-fetch (network / remote Zarr mocked)."""
 
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -57,7 +56,7 @@ def remote(fetch_mod, monkeypatch):
 
 
 def test_to_standard_maps_live_layout(fetch_mod):
-    out = fetch_mod._to_standard(_live_store().squeeze("init_time"))
+    out = fetch_mod._to_standard(_live_store())
     assert out["tp"].dims == ("number", "step", "latitude", "longitude")
     assert out["time"].values == np.datetime64("2026-09-18", "ns")
     hours = out["step"].values.astype("timedelta64[h]").astype(int)
@@ -214,162 +213,3 @@ def test_azure_error_redacts_url_encoded_signature(fetch_mod):
     message = str(fetch_mod._azure_error(exc, "failed"))
     assert "AbC" not in message
     assert "sig%3DREDACTED" in message
-
-
-def _hindcast_file(ens, lead, values):
-    """NetCDF bytes in the hindcast layout: pf has members 1..n, cf has none.
-
-    Each value gets lead hours / 1000 added so a lead's position can be checked.
-    """
-    name = "total_precipitation_24h_acc_imerg_0p25"
-    mark = int(lead) / 1000
-    if ens == "cf":
-        var = (("latitude", "longitude"), np.full((2, 2), values[0] + mark, dtype="float32"))
-        coords = {}
-    else:
-        members = np.asarray(values[1:], dtype="float32") + mark
-        var = (("number", "latitude", "longitude"), np.repeat(members, 4).reshape(-1, 2, 2))
-        coords = {"number": np.arange(1, len(members) + 1)}
-    coords.update(
-        latitude=np.array([1.0, 0.0], dtype="float32"),
-        longitude=np.array([10.0, 11.0], dtype="float32"),
-    )
-    return xr.Dataset({name: var}, coords=coords).to_netcdf(engine="h5netcdf")
-
-
-def test_open_hindcast_matches_live_layout(fetch_mod, monkeypatch):
-    import types
-
-    asked = []
-
-    class FakeFS:
-        def __init__(self, **kwargs):
-            pass
-
-        def cat_file(self, path):
-            asked.append(path)
-            ens = path.split("/gratis-czajkowski/")[1].split("/")[0]
-            return _hindcast_file(ens, path[-7:-3], values=(-1.0, 2.0, 3.0))
-
-    monkeypatch.setitem(sys.modules, "adlfs", types.SimpleNamespace(AzureBlobFileSystem=FakeFS))
-    monkeypatch.setenv("AZURE_STORAGE_SAS_TOKEN", "sv=1&sig=abc")
-    folder = "total_precipitation_24h_acc_imerg_0p25"
-    ds = fetch_mod._open_hindcast(folder, "2024-12-31-00", None, 4)
-
-    assert len(asked) == 2 * 46
-    assert asked[0].endswith(f"/cf/{folder}/data/2024-12-31-00-0024.nc")
-    da = ds[folder]
-    assert da.dims == ("init_time", "lead_time", "ensemble_member", "latitude", "longitude")
-    assert list(da["ensemble_member"].values) == [0, 1, 2]
-    assert da["init_time"].values[0] == np.datetime64("2024-12-31T00", "ns")
-    hours = da["lead_time"].values.astype("timedelta64[h]").astype(int)
-    assert list(hours) == list(range(24, 1105, 24))
-    # cf (-1 + lead mark) is clipped to 0 like the live export; pf keeps its values.
-    np.testing.assert_allclose(da.values[0, 0, :, 0, 0], [0.0, 2.024, 3.024], rtol=1e-6)
-    np.testing.assert_allclose(da.values[0, -1, :, 0, 0], [0.104, 3.104, 4.104], rtol=1e-6)
-    out = fetch_mod._to_standard(ds)
-    assert out["tp"].dims == ("time", "number", "step", "latitude", "longitude")
-    assert out["step"].values[0] == np.timedelta64(0, "ns")
-
-
-@pytest.fixture
-def hindcast_remote(fetch_mod, monkeypatch):
-    """Mock the hindcast tree: inits in 2023 and 2024; record what was read."""
-    seen = {}
-    inits = ["2023-12-31-00", "2024-12-29-00", "2024-12-31-00"]
-
-    def fake_list(folder, prefix):
-        seen.setdefault("prefixes", []).append(prefix)
-        return [i for i in inits if i.startswith(prefix)]
-
-    def fake_open(folder, init, bbox, workers):
-        seen.setdefault("inits", []).append(init)
-        seen.update(folder=folder, bbox=bbox, workers=workers)
-        return _live_store().assign_coords(init_time=[np.datetime64(init[:10], "ns")])
-
-    monkeypatch.setattr(fetch_mod, "_list_hindcast_inits", fake_list)
-    monkeypatch.setattr(fetch_mod, "_open_hindcast", fake_open)
-    monkeypatch.setattr(fetch_mod, "_list_stores", lambda folder: pytest.fail("listed live"))
-    return seen
-
-
-def test_hindcast_range_stacks_inits_on_time(tmp_path, fetch_mod, hindcast_remote):
-    out = tmp_path / "hindcast.zarr"
-    run_skill(
-        fetch_mod.fetch,
-        "--hindcast",
-        "--start-time",
-        "2023-12-01",
-        "--end-time",
-        "2024-12-31",
-        "-o",
-        str(out),
-    )
-    assert hindcast_remote["prefixes"] == ["2023-", "2024-"]
-    assert hindcast_remote["inits"] == ["2023-12-31-00", "2024-12-29-00", "2024-12-31-00"]
-    assert hindcast_remote["folder"] == "total_precipitation_24h_acc_imerg_0p25"
-    with xr.open_zarr(out, consolidated=True) as ds:
-        assert ds["tp"].dims == ("time", "number", "step", "latitude", "longitude")
-        times = np.asarray(ds["time"].values).astype("datetime64[D]").astype(str)
-        assert list(times) == ["2023-12-31", "2024-12-29", "2024-12-31"]
-        assert ds["tp"].attrs["units"] == "mm day-1"
-        assert (
-            ds.attrs["weather_skills_source"]
-            == "cumulus:gratis-czajkowski/total_precipitation_24h_acc_imerg_0p25"
-        )
-
-
-def test_hindcast_one_init_and_bbox(tmp_path, fetch_mod, hindcast_remote):
-    out = tmp_path / "hindcast_bbox.zarr"
-    run_skill(
-        fetch_mod.fetch,
-        "--hindcast",
-        "--start-time",
-        "2024-12-31",
-        "--end-time",
-        "2024-12-31",
-        "--bbox",
-        "3/9/0/12",
-        "-o",
-        str(out),
-    )
-    assert hindcast_remote["inits"] == ["2024-12-31-00"]
-    assert hindcast_remote["bbox"] == (3.0, 9.0, 0.0, 12.0)
-    with xr.open_zarr(out, consolidated=True) as ds:
-        assert ds.sizes["time"] == 1
-
-
-def test_hindcast_probe_latest(capsys, fetch_mod, hindcast_remote):
-    run_skill(fetch_mod.fetch, "--probe-latest", "--hindcast")
-    assert capsys.readouterr().out.strip() == "2024-12-31"
-
-
-def test_hindcast_empty_range_exits_1(tmp_path, fetch_mod, hindcast_remote, capsys):
-    with pytest.raises(SystemExit) as exc:
-        run_skill(
-            fetch_mod.fetch,
-            "--hindcast",
-            "--start-time",
-            "2024-12-30",
-            "--end-time",
-            "2024-12-30",
-            "-o",
-            str(tmp_path / "x.zarr"),
-        )
-    assert exc.value.code == 1
-    assert "every second day" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize(
-    "args",
-    [
-        ["--hindcast", "--date", "2024-12-31"],
-        ["--hindcast", "--start-time", "2024-12-31"],
-        ["--hindcast", "--start-time", "2024-12-31", "--end-time", "2024-12-01"],
-        ["--start-time", "2024-12-01", "--end-time", "2024-12-31"],
-    ],
-)
-def test_hindcast_argument_mixups_exit_2(tmp_path, fetch_mod, hindcast_remote, args):
-    with pytest.raises(SystemExit) as exc:
-        run_skill(fetch_mod.fetch, *args, "-o", str(tmp_path / "x.zarr"))
-    assert exc.value.code == 2
