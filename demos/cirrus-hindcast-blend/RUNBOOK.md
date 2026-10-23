@@ -6,9 +6,11 @@ Never fill missing observations or forecasts: the skills leave a missing sample 
 
 ## Run
 ```bash
-WORK=/path/to/scratch bash demos/cirrus-hindcast-blend/scripts/run.sh
+WORK=/path/to/scratch CACHE=/path/to/cache bash demos/cirrus-hindcast-blend/scripts/run.sh
 ```
-About 10 minutes and 1 GB of working files. `WORK` (default `scripts/work/`) is emptied at the start of every run.
+About 5 minutes the first time and 3 minutes after that, with about 1 GB of working files. `WORK` (default `scripts/work/`) is emptied at the start of every run.
+
+`CACHE` (default `scripts/cache/`) keeps the three fetched hindcasts between runs, about 0.5 GB. Each store is named after its exact `hindcast-fetch` arguments (dataset, dates, bbox, members), so changing any of them fetches a new one, and a fetch is renamed into the cache only once it succeeds. The cache never notices when a source store is rewritten (as the Cumulus store was when its negatives were clipped): delete `CACHE` then.
 
 Credentials: ECMWF, GEFS and CHIRPS are public. Cumulus is in the private `gs://sheerwater-datalake/hindcasts/cumulus_precip.zarr` and needs Google Cloud access to it: Application Default Credentials, `GOOGLE_APPLICATION_CREDENTIALS` (a service-account key file) or `NEURAL_GCM_SERVICE_CREDENTIALS` (the key JSON itself). The Gates demo account `gates-demo-reader` reads only `gates-demo/` unless it is also granted `hindcasts/cumulus_`; without that the Cumulus fetch exits 1.
 

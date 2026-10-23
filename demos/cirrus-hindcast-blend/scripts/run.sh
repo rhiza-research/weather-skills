@@ -1,6 +1,8 @@
 #!/bin/bash
 # Cirrus onset blend from Sheerwater's tiled hindcast stores, weather-skills only.
-# Usage: WORK=/path/to/scratch bash run.sh   (default ./work; emptied every run)
+# Usage: WORK=/path/to/scratch CACHE=/path/to/cache bash run.sh
+#   WORK (default ./work) is emptied every run. CACHE (default ./cache) keeps the fetched hindcasts
+#   between runs, one store per set of fetch arguments; delete it to fetch fresh copies.
 #
 # Event: the season's first ICPAC onset since 15 Sep falls within 7 days of the init.
 # Predictor: each model's share of members whose first onset falls in that window.
@@ -9,13 +11,28 @@
 set -euo pipefail
 SK=$(cd "$(dirname "$0")/../../../skills" && pwd)
 W=${WORK:-$(dirname "$0")/work}; rm -rf "$W"; mkdir -p "$W"
+CACHE=${CACHE:-$(dirname "$0")/cache}; mkdir -p "$CACHE"
 sk() { local s=$1; shift; uv run -q "$SK/$s" "$@"; }
 YEARS="2016 2017 2018"
 
-# Hindcasts (ECMWF on its 1.5 deg cells; the 1 deg models over a wider box so every cell is covered).
-sk hindcast-fetch/scripts/fetch.py --dataset ecmwf --members --start-time 2016-09-15 --end-time 2018-12-31 --bbox 7.5/28.5/-6/48 -o "$W/ec.zarr"
-sk hindcast-fetch/scripts/fetch.py --dataset cumulus --start-time 2016-09-15 --end-time 2018-12-31 --bbox 9/27/-8/50 -o "$W/cu.zarr"
-sk hindcast-fetch/scripts/fetch.py --dataset gefs --start-time 2016-09-15 --end-time 2018-12-31 --bbox 9/27/-8/50 -o "$W/ge.zarr"
+# Hindcasts, from CACHE when the same fetch ran before; otherwise fetched there (to a temporary name,
+# renamed only once the fetch succeeds). ECMWF on its 1.5 deg cells; the 1 deg models over a wider
+# box so every cell is covered.
+hindcast() {  # name in WORK, then hindcast-fetch arguments
+  local name=$1; shift
+  local key; key=$(echo "$*" | sed 's/--//g; s/[ /]/_/g')
+  if [ -d "$CACHE/$key.zarr" ]; then
+    echo "$name: cached $CACHE/$key.zarr"
+  else
+    rm -rf "$CACHE/$key.partial.zarr"
+    sk hindcast-fetch/scripts/fetch.py "$@" -o "$CACHE/$key.partial.zarr"
+    mv "$CACHE/$key.partial.zarr" "$CACHE/$key.zarr"
+  fi
+  ln -s "$CACHE/$key.zarr" "$W/$name.zarr"
+}
+hindcast ec --dataset ecmwf --members --start-time 2016-09-15 --end-time 2018-12-31 --bbox 7.5/28.5/-6/48
+hindcast cu --dataset cumulus --start-time 2016-09-15 --end-time 2018-12-31 --bbox 9/27/-8/50
+hindcast ge --dataset gefs --start-time 2016-09-15 --end-time 2018-12-31 --bbox 9/27/-8/50
 
 # Observed event: CHIRPS on the same cells; --season-start restarts the count every 15 Sep.
 sk chirps-fetch/scripts/fetch.py --start-time 2016-09-15 --end-time 2019-01-31 --bbox 8.25/27.75/-6.75/48.75 -o "$W/chirps.zarr"
