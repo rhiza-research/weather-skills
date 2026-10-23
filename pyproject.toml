@@ -30,8 +30,6 @@ dev = [
     "xarray-regrid",
     "openpyxl",
     "netcdf4",
-    "h5netcdf",
-    "h5py",
     "matplotlib>=3.8,<3.10",
     "seaborn>=0.13",
     "cartopy",
