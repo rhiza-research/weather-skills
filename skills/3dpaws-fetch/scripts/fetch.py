@@ -6,15 +6,6 @@
 # ]
 # ///
 """Fetch daily 3D-PAWS weather-station observations from a CHORDS portal as a station Zarr."""
-# 3D-PAWS (3D-Printed Automatic Weather Stations, UCAR/NCAR) stream raw
-# readings to CHORDS portals. Credentials: CHORDS_EMAIL and CHORDS_API_KEY,
-# issued per portal on the portal's /users page.
-#
-# List stations in a region (no ``-o``)::
-#
-#     3dpaws-fetch --list-stations --bbox N/W/S/E
-#
-# Then fetch chosen station ids (or every station in a bbox).
 
 import csv
 import json
@@ -125,15 +116,14 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     import pandas as pd
 
     offset = pd.Timedelta(hours=day_start_hour)
-    first = start + offset
-    last = end + pd.Timedelta(days=1) + offset
-    # Fetch an hour either side, so a gap at the edge of the first or last day
-    # is measured against the readings next to it.
-    pad = pd.Timedelta(hours=1)
+    # Fetch an hour either side of the requested days, so a gap at the edge of
+    # the first or last day is measured against the readings next to it.
+    fetch_start = start + offset - pd.Timedelta(hours=1)
+    fetch_end = end + pd.Timedelta(days=1) + offset + pd.Timedelta(hours=1)
     rows = []
-    chunk_start = first - pad
-    while chunk_start < last + pad:
-        chunk_end = min(chunk_start + pd.Timedelta(days=CHUNK_DAYS), last + pad)
+    chunk_start = fetch_start
+    while chunk_start < fetch_end:
+        chunk_end = min(chunk_start + pd.Timedelta(days=CHUNK_DAYS), fetch_end)
         params = {
             "start": chunk_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end": chunk_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -153,7 +143,7 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     raw["time"] = pd.to_datetime(raw["time"], utc=True).dt.tz_convert(None)
     # A reading sent twice counts once.
     raw = raw.drop_duplicates("time").set_index("time").sort_index()
-    raw = raw[(raw.index >= first - pad) & (raw.index < last + pad)]
+    raw = raw[(raw.index >= fetch_start) & (raw.index < fetch_end)]
     raw = raw.apply(pd.to_numeric, errors="coerce")
     # Gauge 1 is "rg1" on newer stations and "rg" on older ones.
     raw = raw.rename(columns={"rg": "rg1"})
@@ -174,10 +164,9 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     clean.index = clean.index - offset
     times = clean.index.to_series()
 
-    # Reporting interval, in whole minutes: the modal spacing of the readings.
-    # 1-minute stations run on their own timer, so readings drift 60-61 s apart
-    # through the day; 15-minute stations report a few seconds after each
-    # quarter hour. Ties go to the shorter interval.
+    # Reporting interval in whole minutes: the modal spacing (ties go to the
+    # shorter). 1-minute stations drift 60-61 s apart on their own timer;
+    # 15-minute stations report just after each quarter hour.
     spacing = (times.diff().dt.total_seconds() / 60).round()
     spacing = spacing[spacing >= 1]
     station_min = int(spacing.mode().iloc[0]) if len(spacing) else 1
@@ -187,11 +176,9 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
         seconds = (t - t.dt.floor("D")).dt.total_seconds()
         return bool(((seconds % (60 * minutes)) < 6 * minutes).mean() >= 0.9)
 
-    # Each day's interval is that day's modal spacing, so a station whose
-    # interval changes is judged by the new one. A spacing that is a whole
-    # multiple of the station's usual interval is read as dropped readings
-    # (every other one missing looks like double the interval) unless the
-    # station moved from its own timer to reporting on the clock at it.
+    # Each day is judged at its own modal spacing, so an interval change is
+    # followed. A whole multiple of the usual interval means dropped readings
+    # (every other one missing), unless the station moved onto the clock.
     station_on_clock = on_clock(times, station_min)
     day_modes = spacing.groupby(spacing.index.floor("D")).agg(lambda s: s.mode().iloc[0])
     day_min = {}
@@ -205,22 +192,18 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
             minutes = station_min
         day_min[day] = minutes
 
-    # A day is complete for a variable only when it has every expected
-    # reading: no two consecutive valid readings (or a valid reading and the
-    # edge of the fetch) are more than 1.5 intervals apart, which allows for
-    # clock jitter but not one missing reading. Rain gauges are the exception:
-    # each reading holds the rain since the station's previous reading, so a
-    # gap of up to RAIN_GAP_INTERVALS intervals loses no rain (checked against
-    # the stations' running daily totals on FEWS NET, Oct 2026); longer gaps
-    # do lose it. A gap blanks each day that its missing readings fall in.
-    window = [first - pad - offset, last + pad - offset]
-    all_days = pd.date_range(window[0].floor("D"), window[1].floor("D"), freq="D")
+    # A day is complete for a variable when no two valid readings (or a reading
+    # and the fetch edge) are over 1.5 intervals apart. Rain gauges may skip
+    # RAIN_GAP_INTERVALS: each reading holds the rain since the previous one
+    # (checked against FEWS NET running totals, Oct 2026). A gap blanks every
+    # day its missing readings fall in.
+    edge0, edge1 = fetch_start - offset, fetch_end - offset
+    all_days = pd.date_range(edge0.floor("D"), edge1.floor("D"), freq="D")
     complete = pd.DataFrame(True, index=all_days, columns=clean.columns)
     for short in clean.columns:
-        t = pd.Series([window[0], *clean.index[clean[short].notna()], window[1]])
+        t = pd.Series([edge0, *clean.index[clean[short].notna()], edge1])
         k = pd.to_timedelta(t.dt.floor("D").map(day_min).fillna(station_min), unit="min")
         prev, k = t.shift(), k.shift()
-        # Half an interval on top of the allowed gap covers clock jitter.
         allowed = (RAIN_GAP_INTERVALS if short in ("rg1", "rg2") else 1) + 0.5
         gap = (t - prev) > allowed * k
         for a, b in zip(prev[gap] + k[gap], t[gap] - k[gap], strict=True):
@@ -255,10 +238,7 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
 @weather_skill.argument("--end-time", required=True)
 @weather_skill.argument(
     "--bbox",
-    help=(
-        "Select every station with site coordinates in this box. With "
-        "--list-stations, the region to list. Ignored for selection when --station is given."
-    ),
+    help="Every station whose site is in this box (also filters --list-stations).",
 )
 @weather_skill.argument(
     "--station",
@@ -268,10 +248,7 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
 @weather_skill.argument(
     "--portal",
     default=DEFAULT_PORTAL,
-    help=(
-        f"CHORDS portal base URL (default {DEFAULT_PORTAL}, the FEWS NET 3D-PAWS "
-        "network). Another 3D-PAWS portal, e.g. https://3d-kenya.chordsrt.com, needs that portal's key."
-    ),
+    help=f"CHORDS portal base URL (default {DEFAULT_PORTAL}, FEWS NET). Each portal has its own key.",
 )
 @weather_skill.argument(
     "--workers",
@@ -283,20 +260,14 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     "--day-start-hour",
     type=int,
     default=0,
-    help=(
-        "UTC hour each daily value starts at (0-23, default 0). Day D covers "
-        "D HH:00 to D+1 HH:00 UTC and is labelled D; e.g. 6 for KMD's 06 UTC rainfall day."
-    ),
+    help="UTC hour each day starts at (0-23, default 0); 6 for the KMD 06 UTC rain day.",
 )
 @weather_skill.argument(
     "--list-stations",
     action="store_true",
     default=False,
     probe=True,
-    help=(
-        "Print stations in --bbox (or all, without --bbox) as TSV on stdout "
-        "(station_id, name, site, latitude, longitude) and exit. No -o."
-    ),
+    help="Print the stations (in --bbox, if given) as TSV on stdout and exit.",
 )
 @weather_skill.argument(
     "--probe-latest",
@@ -304,11 +275,7 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     const="",
     metavar="IDENT",
     probe=True,
-    help=(
-        "Print the latest day that has ended at a reporting station (YYYY-MM-DD) "
-        "on stdout and exit, from one latest-reading request per station. Any "
-        "IDENT passed is ignored."
-    ),
+    help="Print the last day that ended before the newest reading (YYYY-MM-DD) and exit.",
 )
 def fetch(
     start_time,
@@ -494,7 +461,7 @@ def fetch(
             long_name=long_name,
             coordinates="latitude longitude",
         )
-        # Precip is a rate (mm day-1) with no cell_methods, as other station fetchers write it.
+        # Precip has no cell_methods, as other station fetchers write it.
         if cell_methods:
             ds[var].attrs["cell_methods"] = cell_methods
     ds.attrs.update(
