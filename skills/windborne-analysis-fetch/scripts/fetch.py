@@ -14,7 +14,6 @@ import datetime as dt
 import sys
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from weather_skills_core import DataError, UsageError, weather_skill
@@ -27,7 +26,6 @@ _SKILL_VERSION = "0.0.1"
 
 _API = "https://api.windbornesystems.com/forecasts/v1/ecmwf_det_anl"
 
-_WORKERS = 4
 
 # Short `-v` tokens -> (WindBorne name, pressure-level?).
 VARIABLES: dict[str, tuple[str, bool]] = {
@@ -201,40 +199,35 @@ def fetch(bbox, start_time, end_time, variable, level, probe_latest, **kwargs):
         file=sys.stderr,
     )
 
-    with (
-        tempfile.TemporaryDirectory(prefix="windborne-analysis-") as tmp,
-        ThreadPoolExecutor(_WORKERS) as pool,
-    ):
-
-        def fetch_one(job):
-            """Download one global (field, time) netCDF and return it cut to the bbox."""
-            name, when = job
-            content = _get(
-                session,
-                f"{_API}/analysis/gridded",
-                {"variable": name, "time": f"{when:%Y-%m-%dT%H:00:00Z}"},
-                binary=True,
-            )
-            path = Path(tmp) / f"{name}_{when:%Y%m%d%H}.nc"
-            path.write_bytes(content)
-            with xr.open_dataset(path) as ds:
-                # Longitudes come 0..180 then -180..0; sort before cutting the box.
-                da = ds[name].sortby("longitude")
-                if bbox is not None:
-                    da = bbox_subset(
-                        da.to_dataset(), list(bbox), lat_dim="latitude", lon_dim="longitude"
-                    )[name]
-                da = da.load()
-            path.unlink()
-            return da
-
+    # One file at a time: netCDF4/HDF5 is not thread-safe, and parallel opens
+    # corrupt its state for later reads and writes in the same process.
+    with tempfile.TemporaryDirectory(prefix="windborne-analysis-") as tmp:
         variables = {}
         for short, wb_name, levels in fields:
             per_level = []
             for lev in levels or [None]:
                 name = wb_name if lev is None else f"{wb_name}_{lev}"
                 print(f"Retrieving {name} ({len(times)} times)...", file=sys.stderr)
-                parts = list(pool.map(fetch_one, [(name, t) for t in times]))
+                parts = []
+                for when in times:
+                    path = Path(tmp) / f"{name}_{when:%Y%m%d%H}.nc"
+                    path.write_bytes(
+                        _get(
+                            session,
+                            f"{_API}/analysis/gridded",
+                            {"variable": name, "time": f"{when:%Y-%m-%dT%H:00:00Z}"},
+                            binary=True,
+                        )
+                    )
+                    with xr.open_dataset(path) as ds:
+                        # Longitudes come 0..180 then -180..0; sort before cutting the box.
+                        da = ds[name].sortby("longitude")
+                        if bbox is not None:
+                            da = bbox_subset(
+                                da.to_dataset(), list(bbox), lat_dim="latitude", lon_dim="longitude"
+                            )[name]
+                        parts.append(da.load())
+                    path.unlink()
                 da = xr.concat(parts, dim="time").assign_coords(
                     time=np.array(times, dtype="datetime64[ns]")
                 )

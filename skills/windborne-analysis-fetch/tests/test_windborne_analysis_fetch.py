@@ -34,8 +34,7 @@ def _netcdf(tmp_path, name, value, units):
 def _fake_api(monkeypatch, tmp_path):
     import requests
 
-    # Built up front: the skill fetches times in parallel threads, and netCDF4
-    # writes are not thread-safe.
+    # Built once per test, outside the request handler.
     files = {
         "temperature_2m": _netcdf(tmp_path, "temperature_2m", 300.0, "K"),
         "total_precipitation_1h": _netcdf(tmp_path, "total_precipitation_1h", 0.5, "mm"),
