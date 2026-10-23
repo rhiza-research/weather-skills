@@ -18,10 +18,12 @@ contributors never edit either by hand.
 
 ## PR workflow
 
-1. Branch off `dev`.
-2. Open a PR back into `dev`. `dev` reaches `main` through one dev→main PR.
-   While on `dev`, skills may pin `weather-skills-core` to its git `dev`
-   branch; switch every pin back to a PyPI release before that PR merges.
+1. Branch off `main` or `dev`; either is fine.
+2. Open a PR into `dev`. `dev` reaches `main` through one dev→main PR.
+   Most changes work with the released `weather-skills-core` and need no new
+   pin. Only a change that needs unreleased core may pin `weather-skills-core`
+   to its git `dev` branch; every such pin goes back to a PyPI release before
+   the dev→main PR merges.
 3. CI must pass (the `CI` workflow runs ruff format-check, ruff check, inline-dep
    validation, pytest for skill correctness tests, and a `--help` invocation per
    script).
