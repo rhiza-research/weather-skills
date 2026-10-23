@@ -67,6 +67,9 @@ ZERO_IS_MISSING = {"mt1", "sh1", "bp1"}
 # Two gauges agree when their daily totals differ by at most this much.
 GAUGE_TOLERANCE_MM = 1.0
 GAUGE_TOLERANCE_FRAC = 0.25
+# Longest gap between rain-gauge readings, in reporting intervals, that still
+# counts as a complete record (3 min at 1-minute stations).
+RAIN_GAP_INTERVALS = 3
 CF_META = {
     "precip": ("lwe_precipitation_rate", "mm day-1", None, "daily rainfall"),
     "temperature": (
@@ -205,8 +208,11 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     # A day is complete for a variable only when it has every expected
     # reading: no two consecutive valid readings (or a valid reading and the
     # edge of the fetch) are more than 1.5 intervals apart, which allows for
-    # clock jitter but not one missing reading. A gap blanks each day that
-    # its missing readings fall in.
+    # clock jitter but not one missing reading. Rain gauges are the exception:
+    # each reading holds the rain since the station's previous reading, so a
+    # gap of up to RAIN_GAP_INTERVALS intervals loses no rain (checked against
+    # the stations' running daily totals on FEWS NET, Oct 2026); longer gaps
+    # do lose it. A gap blanks each day that its missing readings fall in.
     window = [first - pad - offset, last + pad - offset]
     all_days = pd.date_range(window[0].floor("D"), window[1].floor("D"), freq="D")
     complete = pd.DataFrame(True, index=all_days, columns=clean.columns)
@@ -214,7 +220,9 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
         t = pd.Series([window[0], *clean.index[clean[short].notna()], window[1]])
         k = pd.to_timedelta(t.dt.floor("D").map(day_min).fillna(station_min), unit="min")
         prev, k = t.shift(), k.shift()
-        gap = (t - prev) > 1.5 * k
+        # Half an interval on top of the allowed gap covers clock jitter.
+        allowed = (RAIN_GAP_INTERVALS if short in ("rg1", "rg2") else 1) + 0.5
+        gap = (t - prev) > allowed * k
         for a, b in zip(prev[gap] + k[gap], t[gap] - k[gap], strict=True):
             complete.loc[min(a, b).floor("D") : max(a, b).floor("D"), short] = False
 

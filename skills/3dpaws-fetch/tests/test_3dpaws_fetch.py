@@ -225,15 +225,16 @@ def test_single_missing_reading_blanks_the_day(tmp_path, mod, fetch):
     points = _readings("2026-10-01", 2, 15, _dry)
     points = [p for p in points if p["time"] != "2026-10-02T14:15:00Z"]
     ds = _run(tmp_path, mod, fetch, {"1": points})
-    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
     np.testing.assert_array_equal(np.isnan(ds["temperature"].values[:, 0]), [False, True])
+    # The next rain reading holds the missed interval's rain: precip stays complete.
+    assert not np.isnan(ds["precip"].values).any()
 
 
 def test_missing_first_reading_of_the_day_blanks_that_day(tmp_path, mod, fetch):
     points = _readings("2026-10-01", 2, 15, _dry)
     points = [p for p in points if p["time"] != "2026-10-02T00:00:00Z"]
     ds = _run(tmp_path, mod, fetch, {"1": points})
-    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
+    np.testing.assert_array_equal(np.isnan(ds["temperature"].values[:, 0]), [False, True])
 
 
 def test_every_other_reading_dropped_is_not_double_the_interval(tmp_path, mod, fetch):
@@ -245,8 +246,8 @@ def test_every_other_reading_dropped_is_not_double_the_interval(tmp_path, mod, f
     points15 = [p for i, p in enumerate(points15) if not (p["time"] >= "2026-10-02" and i % 2)]
     ds = _run(tmp_path, mod, fetch, {"1": points, "2": points15})
     for sid in ("1", "2"):
-        precip = ds["precip"].sel(station_id=sid).values
-        np.testing.assert_array_equal(np.isnan(precip), [False, True])
+        temperature = ds["temperature"].sel(station_id=sid).values
+        np.testing.assert_array_equal(np.isnan(temperature), [False, True])
 
 
 def test_one_and_fifteen_minute_stations_both_complete(tmp_path, mod, fetch):
@@ -276,7 +277,7 @@ def test_interval_change_mid_request(tmp_path, mod, fetch):
     # A dropped reading after the change still blanks the day.
     points = [p for p in points if p["time"] != "2026-10-02T09:30:00Z"]
     ds = _run(tmp_path, mod, fetch, {"1": points})
-    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
+    np.testing.assert_array_equal(np.isnan(ds["temperature"].values[:, 0]), [False, True])
 
 
 def test_duplicate_readings_count_once(tmp_path, mod, fetch):
@@ -291,7 +292,28 @@ def test_duplicate_readings_count_once(tmp_path, mod, fetch):
     points += [wet, dict(points[-1])]
     ds = _run(tmp_path, mod, fetch, {"1": points})
     np.testing.assert_allclose(ds["precip"].values[0, 0], 1.0)
-    assert np.isnan(ds["precip"].values[1, 0])
+    assert np.isnan(ds["temperature"].values[1, 0])
+
+
+def test_rain_gap_up_to_three_intervals_keeps_precip(tmp_path, mod, fetch):
+    # A 1-minute station misses two readings in a row on day 2: a 3-minute gap.
+    points = _free_running("2026-10-01", 2, _dry, pad_hours=1)
+    day2 = [i for i, p in enumerate(points) if p["time"] >= "2026-10-02T12"]
+    points = [p for i, p in enumerate(points) if i not in day2[1:3]]
+    gap = pd.Timestamp(points[day2[0] + 1]["time"]) - pd.Timestamp(points[day2[0]]["time"])
+    assert pd.Timedelta(minutes=3) <= gap < pd.Timedelta(minutes=3.5)  # 3 min plus drift
+    ds = _run(tmp_path, mod, fetch, {"1": points})
+    assert not np.isnan(ds["precip"].values).any()
+    np.testing.assert_array_equal(np.isnan(ds["temperature"].values[:, 0]), [False, True])
+
+
+def test_rain_gap_over_three_intervals_blanks_precip(tmp_path, mod, fetch):
+    # Three readings in a row missing: a 4-minute gap loses rain.
+    points = _free_running("2026-10-01", 2, _dry, pad_hours=1)
+    day2 = [i for i, p in enumerate(points) if p["time"] >= "2026-10-02T12"]
+    points = [p for i, p in enumerate(points) if i not in day2[1:4]]
+    ds = _run(tmp_path, mod, fetch, {"1": points})
+    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
 
 
 def test_gauges_disagree_gives_nan(tmp_path, mod, fetch):
