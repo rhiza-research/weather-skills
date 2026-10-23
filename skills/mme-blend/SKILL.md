@@ -17,9 +17,9 @@ Combines several forecasts, one predictor each, into one blended value or probab
 
 ```bash
 # Fitted weights
-uv run ${CLAUDE_SKILL_DIR}/scripts/mme_blend.py --forecast A.zarr --forecast B.zarr [--names A,B] [-v NAME] --weights WEIGHTS.zarr -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/mme_blend.py --forecast aifs.zarr --forecast ngcm.zarr [--names aifs,ngcm] [-v NAME] --weights WEIGHTS.zarr -o OUT.zarr
 # Fixed weights
-uv run ${CLAUDE_SKILL_DIR}/scripts/mme_blend.py --forecast A.zarr --forecast B.zarr --model weighted|linear|logistic --coef A=W --coef B=W [--intercept B] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/mme_blend.py --forecast aifs.zarr --forecast ngcm.zarr --model weighted|linear|logistic --coef aifs=0.6 --coef ngcm=0.4 [--intercept 0.1] -o OUT.zarr
 ```
 
 ### Arguments
@@ -29,7 +29,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/mme_blend.py --forecast A.zarr --forecast B.z
 - `--weights` — weights Zarr written by `mme-fit` (or by hand, format below); its `model` attr picks the model.
 - `--model` — `weighted`, `linear`, or `logistic`; required with `--coef`, must match the weights' model with `--weights`.
 - `--coef` — `NAME=W` (repeat): a fixed weight per predictor, instead of `--weights`.
-- `--intercept` — intercept with `--coef` for `linear` / `logistic`. Default: `0`.
+- `--intercept` — one number added to the whole blend (not one per model), with `--coef` for `linear` / `logistic`: `0.6 × aifs + 0.4 × ngcm + 0.1` (for `logistic`, added before the logistic function). Default: `0`.
 - `--output`, `-o` — output Zarr.
 
 ### Output

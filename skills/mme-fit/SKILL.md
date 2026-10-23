@@ -16,7 +16,7 @@ Fits blend weights that turn several forecasts (one predictor each) into the obs
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/mme_fit.py --forecast A.zarr --forecast B.zarr [--forecast ...] --obs OBS.zarr --model weighted|linear|logistic [--names A,B] [-v NAME] [--obs-variable NAME] [--interaction A:B] [--fit-along DIM ...] [--alpha 0] [--max-iter 100] [--tol 1e-4] -o WEIGHTS.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/mme_fit.py --forecast aifs.zarr --forecast ngcm.zarr [--forecast ...] --obs OBS.zarr --model weighted|linear|logistic [--names aifs,ngcm] [-v NAME] [--obs-variable NAME] [--interaction aifs:ngcm] [--fit-along DIM ...] [--alpha 0] [--max-iter 100] [--tol 1e-4] -o WEIGHTS.zarr
 ```
 
 ### Arguments
@@ -26,7 +26,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/mme_fit.py --forecast A.zarr --forecast B.zar
 - `--names` — comma-separated predictor names, one per `--forecast` in order. Default: each file's stem (`aifs.zarr` → `aifs`).
 - `--variable`, `-v` — variable read from every forecast. Default: each forecast's first usable variable.
 - `--obs-variable` — variable read from `--obs`. Default: its first usable variable.
-- `--interaction` — `A:B` (repeat): adds the product of named predictors as one more predictor.
+- `--interaction` — `aifs:ngcm` (repeat): adds the product of named predictors as one more predictor.
 - `--fit-along` — dim that gets its own weights, one fit per entry (repeat), e.g. `step`, `latitude` + `longitude`, `station_id`. Default: none, one fit over every sample.
 - `--alpha` — L2 penalty on `coef` (never the intercept). Default: `0`.
 - `--max-iter` — logistic Newton iterations. Default: `100`.
