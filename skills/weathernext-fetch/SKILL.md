@@ -108,7 +108,7 @@ Writes WeatherNext 3 hourly mean and 90th-percentile precip over Kenya for 3 day
 ### Flags
 - WeatherNext 2 inits run daily from 2025-01-01, WeatherNext 3 from 2026. WeatherNext 3 interim cycles are `01`–`05`, `07`–`11`, `13`–`17`, `19`–`23`.
 - `--bbox` takes negative longitudes. A negative `--member` counts from the end.
-- Anonymous access fails; any authenticated Google identity can read the buckets. The WeatherNext 3 ensemble bucket bills every listing and read to the billing project, and the skill exits 2 without one before touching GCS.
+- Anonymous access fails; any authenticated Google identity can read the buckets. The WeatherNext 3 ensemble bucket bills every listing and read to the billing project, and the skill exits 2 without one before touching GCS. gcloud's default project (`gcloud config set project`) is not read: pass `--billing-project` or export `GOOGLE_CLOUD_PROJECT`.
 
 ### Units and provenance
 - SST stays `K`; others keep ERA5-style units (`m s-1`, `Pa`, `Pa s-1`, `kg kg-1`, `m2 s-2`, `J m-2`, cloud fraction `1`).
