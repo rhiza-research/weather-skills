@@ -54,7 +54,7 @@ credentialed or source-specific fetcher only when it does not.
 | `ghcn-daily-fetch` | NOAA GHCN-Daily station observations (daily precip and max/min/mean temperature, ~130,000 stations) → station Zarr. No credentials. |
 | `openaq-fetch` | OpenAQ air-quality station observations (daily mean PM2.5, PM10, NO2, O3, SO2, CO) → station Zarr. Requires credentials. |
 | `cams-fetch` | CAMS global air-quality fields (PM2.5, PM10, near-surface NO2/O3/SO2/CO, AOD, total columns) — 5-day forecast at 0.4° (2015 on) or EAC4 reanalysis at 0.75° (2003 on) → Zarr. Requires credentials. |
-| `meteosat-fetch` | A few Meteosat FCI or SEVIRI scans (0° or Indian Ocean) — visible reflectance and infrared brightness temperature on a regular lat/lon grid at native sampling → Zarr. Requires credentials. |
+| `meteosat-fetch` | Meteosat FCI or SEVIRI satellite imagery (0° or Indian Ocean) at chosen times — visible reflectance and infrared brightness temperature on a regular lat/lon grid at native sampling → Zarr. Up to 12 scans per call by default, since each is a ~200 MB whole-disk download. Requires credentials. |
 
 ### Generic middle (operate on any standard dataset)
 | Skill | What it does |
