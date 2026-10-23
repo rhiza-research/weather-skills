@@ -56,7 +56,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--station ID | --bbo
 - Each has a `<var>_coverage` (0-1): the share of the day with readings, listed in the variable's `ancillary_variables`.
 
 ### Notes
-- Temperature, humidity, pressure and wind are the daily statistic of the readings there are, NaN only with no readings; check `<var>_coverage` before trusting a partly covered day (a `tmax` from half a day can miss the peak). `precip` is NaN unless coverage is 1, because part of a day's rain is not its total. Missing data is never filled. stderr reports per variable the station-days with a value and those fully covered.
+- Every variable is the daily statistic of the readings there are, NaN only with no readings. On a partly covered day `precip` is the rain in the covered part only, never scaled up, and a `tmax` can miss the peak: gate on `<var>_coverage` (e.g. 1 for a daily total) before using such days. Missing data is never filled. stderr reports per variable the station-days with a value and those fully covered.
 - Needs `CHORDS_EMAIL` and `CHORDS_API_KEY` (from the portal's `/users` page, with download access); missing or rejected exits 2. A station that fails to download is dropped with a stderr line.
 
 ### Example
@@ -69,5 +69,5 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --station 1 --station 4 --start-time
 
 - **Coverage.** The reporting interval is the station's most common spacing over the fetch. A gap of up to 3 intervals between valid readings counts as covered (1-minute stations skip about one reading every 15 minutes, and a rain reading holds the rain since the last one). A longer gap is uncovered from one interval after the last reading to the next, split across the days it spans. Days at a longer spacing than the station's interval come out with low coverage.
 - **Quality control.** Out-of-range readings (including `-999.9`) are dropped, as is an exact `0` for temperature, humidity or pressure (no sensor fitted) and readings flagged as test data.
-- **Two rain gauges.** `precip` is gauge 1 where gauge 2 also covers the day and the totals agree within 1 mm or 25 %; otherwise NaN, and a disagreeing day has `precip_coverage` 0. A station with one gauge uses it.
+- **Two rain gauges.** Rain counts only at readings where both gauges reported. `precip` is gauge 1's total where it agrees with gauge 2's within 1 mm or 25 %; otherwise NaN with `precip_coverage` 0. A station with one gauge uses it.
 - A few test instruments sit in Boulder; a bbox excludes them.

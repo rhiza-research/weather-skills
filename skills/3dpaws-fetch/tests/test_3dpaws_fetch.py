@@ -224,9 +224,25 @@ def test_outage_lowers_coverage(tmp_path, mod, fetch):
     # 10:00 to 13:00 has no readings: 3 of 24 hours.
     np.testing.assert_allclose(ds["temperature_coverage"].values[:, 0], [1.0, 0.875])
     np.testing.assert_allclose(ds["temperature"].values[:, 0], [20.0, 20.0])
-    # Part of a day's rain is not its total: precip is NaN, its coverage still told.
-    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
+    np.testing.assert_allclose(ds["precip"].values[:, 0], [0.0, 0.0])
     np.testing.assert_allclose(ds["precip_coverage"].values[:, 0], [1.0, 0.875])
+
+
+def test_partial_day_keeps_the_rain_measured(tmp_path, mod, fetch):
+    def make(t):
+        return {"rg1": 0.1, "rg2": 0.1, "mt1": 20.0}
+
+    points = _readings("2026-10-01", 2, 15, make)
+    # Day 2 loses 00:00-06:00; gauge 2 also misses 12:00, so gauge 1's reading
+    # there does not count either.
+    points = [p for p in points if not ("2026-10-02T00" <= p["time"] < "2026-10-02T06")]
+    for p in points:
+        if p["time"] == "2026-10-02T12:00:00Z":
+            p["measurements"] = {"rg1": 0.1, "mt1": 20.0}
+    ds = _run(tmp_path, mod, fetch, {"1": points})
+    # 96 readings on day 1; 72 - 1 on day 2, nothing scaled up.
+    np.testing.assert_allclose(ds["precip"].values[:, 0], [9.6, 7.1])
+    np.testing.assert_allclose(ds["precip_coverage"].values[:, 0], [1.0, 0.75])
 
 
 def test_single_missing_reading_keeps_the_day(tmp_path, mod, fetch):
@@ -311,13 +327,14 @@ def test_rain_gap_up_to_three_intervals_keeps_precip(tmp_path, mod, fetch):
         np.testing.assert_allclose(ds[f"{name}_coverage"].values, 1.0)
 
 
-def test_rain_gap_over_three_intervals_blanks_precip(tmp_path, mod, fetch):
+def test_rain_gap_over_three_intervals_lowers_precip_coverage(tmp_path, mod, fetch):
     # Three readings in a row missing: a 4-minute gap loses rain.
     points = _free_running("2026-10-01", 2, _dry, pad_hours=1)
     day2 = [i for i, p in enumerate(points) if p["time"] >= "2026-10-02T12"]
     points = [p for i, p in enumerate(points) if i not in day2[1:4]]
     ds = _run(tmp_path, mod, fetch, {"1": points})
-    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
+    assert not np.isnan(ds["precip"].values).any()
+    assert ds["precip_coverage"].values[0, 0] == 1.0
     assert 0.997 < ds["precip_coverage"].values[1, 0] < 1.0
     assert not np.isnan(ds["temperature"].values).any()
 
