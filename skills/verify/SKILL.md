@@ -16,7 +16,7 @@ Compares a forecast with observations cell by cell (or station by station) and w
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr [--metric NAME] [-v NAME] [--threshold 1] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr [--metric NAME] [-v NAME] [--threshold 1] [--probability] -o OUT.zarr
 ```
 
 ### Arguments
@@ -25,6 +25,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr [
 - `--metric` — one of the metrics below. Default: `hits`.
 - `--variable`, `-v` — variable name in both inputs. Default: each input's first usable variable (names may differ).
 - `--threshold` — event cutoff for `hits`, `brier`, `contingency`, `reliability` and `roc`, in the forecast's units: an event is value ≥ threshold. Default: `1`. Ignored (with a stderr note) for other metrics.
+- `--probability` — `brier`, `reliability` and `roc` only: the forecast is already the event probability (0–1, no `number` dim), such as `mme-blend`'s `probability`, and is scored as is instead of thresholded. The obs event is still obs ≥ `--threshold` (the default 1 fits a 0/1 event mask such as `indicator` writes). Members, values outside 0–1, or another metric exit.
 - `--output`, `-o` — output Zarr.
 
 ### Metrics
@@ -49,7 +50,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr [
 - Per-time metrics keep the input dims (time, grid or stations), float32. Per-cell metrics collapse `time`. Curves pool every cell and time, cos-latitude weighted (equal weights on stations).
 - `event_hit` is `1` hit (both ≥ threshold), `-1` disagree (only one is), `0` both below, with CF `flag_values` / `flag_meanings`.
 - `bias`, `mae`, `crps`, `crps_fair` and `rmse` are in the forecast's units (a temperature error is `delta_degC`); the others are unitless.
-- `brier` is (p − o)², where p is the fraction of members ≥ `--threshold` (0 or 1 without members) and o is 1 when the obs are ≥ it. BSS compares with always forecasting the observed base rate.
+- `brier` is (p − o)², where p is the fraction of members ≥ `--threshold` (0 or 1 without members; the forecast value itself with `--probability`) and o is 1 when the obs are ≥ it. BSS compares with always forecasting the observed base rate.
 - `crps` is E|X − y| − ½E|X − X′| over the members; for a single forecast it equals the absolute error. Compare two forecasts' CRPS for a CRPSS.
 - `crps_fair` averages |X − X′| over the m(m−1) distinct member pairs instead of all m², an unbiased estimate of the score an infinitely large ensemble would get (Ferro 2014), so ensembles of different sizes compare fairly. It needs at least 2 members.
 - `rps` is the squared error between the forecast and observed quintile CDFs, summed over the four inner edges. RPSS compares with climatology (0.2 for each quintile).

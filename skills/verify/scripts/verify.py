@@ -14,7 +14,7 @@ import pandas as pd
 import pint
 import pint_xarray
 import xarray as xr
-from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core import DataError, Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable
 from weather_skills_core.standard_utils import latitude_weights
 from weather_skills_core.units import dequantify_dataset, ureg, variable_units
@@ -66,7 +66,7 @@ def _contingency_scores(a, b, c, d):
         }
 
 
-def _pooled(metric, fc, truth, error, valid, threshold, units):
+def _pooled(metric, fc, truth, error, valid, threshold, units, probability=False):
     """Metrics pooled over time per cell (rmse, spread, contingency, corr) or into curves."""
     lat = next((n for n in ("latitude", "lat") if n in truth.dims), None)
     weights = (
@@ -85,7 +85,7 @@ def _pooled(metric, fc, truth, error, valid, threshold, units):
 
     mean = fc.mean("number") if "number" in fc.dims else fc
     fc_event = (fc >= threshold).astype(float).where(fc.notnull())
-    prob = fc_event.mean("number") if "number" in fc.dims else fc_event
+    prob = fc if probability else (fc_event.mean("number") if "number" in fc.dims else fc_event)
     obs_event = (truth >= threshold).astype(float)
     data = {}
     if metric == "rmse":
@@ -286,7 +286,13 @@ def _rps(fc, truth, fc_name, obs_name):
     default=1.0,
     help="Event cutoff for --metric hits and brier: an event is a value >= this.",
 )
-def verify(forecast, obs, variable, metric, threshold, **kwargs):
+@weather_skill.argument(
+    "--probability",
+    action="store_true",
+    help="brier, reliability, roc: the forecast is already the event probability (0-1, no "
+    "members, e.g. mme-blend's probability), scored as is instead of thresholded.",
+)
+def verify(forecast, obs, variable, metric, threshold, probability, **kwargs):
     """Score a forecast against observations cell by cell: event hits, bias, or mean absolute error."""
     fc_name = variable or auto_variable(forecast)
     obs_name = variable or auto_variable(obs)
@@ -296,6 +302,8 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
                 f"variable {name!r} missing from --{role}. Available: {list(ds.data_vars)}"
             )
 
+    if probability and metric not in ("brier", "reliability", "roc"):
+        raise UsageError(f"--probability is for --metric brier, reliability or roc, not {metric}.")
     if metric not in _EVENT_METRICS and threshold != 1.0:
         print(
             f"Note: --threshold {threshold} is ignored for --metric {metric}.",
@@ -383,10 +391,23 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
         error = dequantify_dataset(error.to_dataset(name="error"))["error"]
     fc, truth = (da.pint.dequantify() if da.pint.units is not None else da for da in (fc, truth))
 
+    if probability:
+        if "number" in fc.dims:
+            raise UsageError(
+                "--probability takes one probability per cell, but the forecast has members "
+                "(a number dim); drop --probability to score the member fraction."
+            )
+        lo, hi = float(fc.min(skipna=True)), float(fc.max(skipna=True))
+        if lo < 0 or hi > 1:
+            raise DataError(
+                f"--probability needs forecast values in 0-1; {fc_name!r} spans {lo:g} to {hi:g}."
+            )
     # A NaN member leaves the cell NaN, as it does for the ensemble mean.
     valid = truth.notnull() & (fc.notnull().all("number") if "number" in fc.dims else fc.notnull())
     if metric in _POOLED_METRICS:
-        return _pooled(metric, fc, truth, error, valid, threshold, error.attrs.get("units") or "")
+        return _pooled(
+            metric, fc, truth, error, valid, threshold, error.attrs.get("units") or "", probability
+        )
     obs_event = None
     if metric == "hits":
         fc_event = fc >= threshold
@@ -397,6 +418,8 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
     elif metric == "brier":
         fc_event = fc >= threshold
         prob = fc_event.mean("number") if "number" in fc.dims else fc_event
+        if probability:
+            prob = fc
         obs_event = truth >= threshold
         field = (prob.astype(float) - obs_event.astype(float)) ** 2
     elif metric == "crps_fair" and fc.sizes.get("number", 0) < 2:
@@ -440,6 +463,8 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
         )
     elif metric == "brier":
         attrs.update(long_name="Brier score", units="1", event_threshold=threshold)
+        if probability:
+            attrs["comment"] = "forecast scored as the event probability (--probability)"
     elif metric == "crps":
         attrs.update(
             long_name="Continuous ranked probability score", units=error.attrs.get("units")
