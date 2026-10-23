@@ -42,7 +42,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window 
 
 ### Notes
 - A cell missing samples that other cells have is NaN for that window; values are never averaged over a partial record.
-- `--window` is refused on axes with missing rows or CF `{dim}_bounds`; use `--period`.
+- `--window` on a regular axis with missing rows (a day absent from a daily record) puts each missing row back as NaN, never filled, so a window of N rows always spans N intervals; windows that include it have `aggregation_coverage` < 1, and stderr counts the missing rows. An irregular axis, or one with CF `{dim}_bounds`, is refused; use `--period`.
 
 ### Example
 ```bash

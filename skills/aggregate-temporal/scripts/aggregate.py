@@ -652,16 +652,27 @@ def aggregate(
             import numpy as np
             import pandas as pd
 
-            spacing = pd.to_timedelta(np.diff(np.asarray(ds[dim].values)))
+            labels = np.asarray(ds[dim].values)
+            spacing = pd.to_timedelta(np.diff(labels))
             native = pd.Timedelta(
                 seconds=float(parse_aggregation_period(interval).to("s").magnitude)
             )
-            if (spacing != native).any():
-                # A window of N rows across a gap spans more than N intervals.
+            if (spacing <= pd.Timedelta(0)).any() or (spacing % native != pd.Timedelta(0)).any():
                 raise UsageError(
-                    f"--window counts rows and {dim!r} has missing rows (spacing other "
-                    f"than {interval}); use --period, which counts them against coverage"
+                    f"--window counts rows and {dim!r} is not a regular {interval} axis "
+                    "with gaps (spacing is irregular or not increasing); use --period"
                 )
+            if (spacing != native).any():
+                # Missing rows come back as NaN, never filled, so a window of N rows
+                # spans N intervals; aggregation_coverage records what was missing.
+                n_rows = int((labels[-1] - labels[0]) / native.to_timedelta64()) + 1
+                full = labels[0] + native.to_timedelta64() * np.arange(n_rows)
+                print(
+                    f"aggregate-temporal: {n_rows - len(labels)} missing {dim} row(s) "
+                    "left NaN; windows that span them have aggregation_coverage < 1",
+                    file=sys.stderr,
+                )
+                ds = ds.reindex({dim: full})
         try:
             out = roll_and_agg(ds, window, dim, method, align=align, stride=stride_val)
         except KeyError:

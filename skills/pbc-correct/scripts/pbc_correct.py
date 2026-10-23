@@ -17,6 +17,7 @@ import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable
 from weather_skills_core.units import (
+    AGGREGATION_COVERAGE_COORD,
     AGGREGATION_PERIOD_ATTR,
     dequantify_dataset,
     parse_aggregation_period,
@@ -154,6 +155,9 @@ def pbc_correct(
     fc = fc if "time" in fc.dims else fc.expand_dims("time")
     hc = hc if "time" in hc.dims else hc.expand_dims("time")
     truth = obs[obs_name]
+    if AGGREGATION_COVERAGE_COORD in truth.coords:
+        # A window missing any day is not an observation: never scored or trained on.
+        truth = truth.where(truth[AGGREGATION_COVERAGE_COORD] >= 1 - 1e-9)
     # Thresholds and members are compared in the obs units.
     units = variable_units(truth)
     if bool(units) != bool(variable_units(fc)):

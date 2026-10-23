@@ -229,3 +229,14 @@ def test_cells_without_observed_history_stay_nan(tmp_path, pbc_fn):
         probs = ds["tp"].isel(time=0)
         assert probs.isel(latitude=0, longitude=0).isnull().all()
         assert probs.isel(latitude=1, longitude=1).notnull().all()
+
+
+def test_incomplete_obs_windows_are_missing(tmp_path, pbc_fn):
+    obs = _random_obs(10).rename(precip="tp")
+    # Every window before 2026 is incomplete: nothing to train on.
+    coverage = np.where(obs["time"].dt.year < 2026, 6 / 7, 1.0)
+    obs = obs.assign_coords(aggregation_coverage=("time", coverage))
+    members = lambda v: np.full((3, 2, 2), 1.0)  # noqa: E731
+    fc, hc = _ensemble([INIT], members), _ensemble(_hindcast_inits(), members)
+    ds = _run(pbc_fn, tmp_path, fc, hc, obs, "--components", "debias")
+    assert ds["tp"].isnull().all()

@@ -49,6 +49,7 @@ Each is clipped to [0, 1] and made non-decreasing across edges (isotonic regress
 
 ### Notes
 - Quintile edges come from observation windows that ended before the **first** forecast init, within `--years` years, so every init uses the same edges and none uses its own future.
+- Observed windows with `aggregation_coverage` below 1 (a missing day) count as missing: never trained on, never used as a lag or for edges.
 - A cell with fewer than 10 usable training samples (or 10 Climatology++ windows) stays NaN; stderr lists inits with too few hindcasts. Missing obs are never filled.
 - Members and obs are compared in the obs units; give rates on both (mm day-1), not a total against a rate.
 - Everything is held in memory: clip and coarsen to the region before fetching 20 years of hindcasts.
