@@ -20,10 +20,6 @@ contributors never edit either by hand.
 
 1. Branch off `dev`, which holds the most recent work.
 2. Open a PR into `dev`. `dev` reaches `main` through one dev→main PR.
-   Most changes work with the released `weather-skills-core` and need no new
-   pin. Only a change that needs unreleased core may pin `weather-skills-core`
-   to its git `dev` branch; every such pin goes back to a PyPI release before
-   the dev→main PR merges.
 3. CI must pass (the `CI` workflow runs ruff format-check, ruff check, inline-dep
    validation, pytest for skill correctness tests, and a `--help` invocation per
    script).
@@ -43,8 +39,7 @@ under `skills/<name>/`).
 
 Each skill has exactly one `scripts/*.py`. That file is the entry point: CI
 runs `--help` on every `scripts/*.py`, and the skill runner does the same.
-Shared helpers belong in `weather-skills-core`, not a second script in the
-skill directory.
+Do not add a second script to the skill directory.
 
 ## Version bumps
 
