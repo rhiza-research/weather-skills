@@ -7,9 +7,9 @@
 """Collapse named dimensions of a Zarr, or each group of a label coord, with a statistic."""
 
 from weather_skills_core import Dataset, UsageError, weather_skill
-from weather_skills_core.reduce import METHODS, TIME_LABELS, summarize
+from weather_skills_core.reduce import METHODS, summarize
 from weather_skills_core.standard_dataset import detect_spatial_dims
-from weather_skills_core.standard_utils import latitude_weights
+from weather_skills_core.standard_utils import TIME_LABELS, latitude_weights
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.4"
