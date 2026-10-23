@@ -38,12 +38,16 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/mme_blend.py --forecast aifs.zarr --forecast 
 - The forecasts' dims and coords (init `time`, `step`, grid or stations) are kept; ensemble `number` is averaged first.
 
 ### Notes
-- Models: `weighted` = `Σ coef × forecast`; `linear` adds `intercept`; `logistic` = `1 / (1 + e^−(Σ coef × forecast + intercept))`.
+- Models, with AIFS and NeuralGCM (`ngcm`) as the forecasts:
+  - `weighted`: `blend = 0.6 × aifs + 0.4 × ngcm`
+  - `linear`: `blend = 0.6 × aifs + 0.4 × ngcm + 0.1`
+  - `logistic`: `probability = 1 / (1 + e^−(2.0 × aifs + 1.5 × ngcm − 1.2))`
+  - With `--interaction aifs:ngcm` in the fit, one more term: `... + 0.3 × aifs × ngcm`.
 - Weights on a dim (`step`, `latitude`/`longitude`, `station_id`) pair with the same labels of the forecasts; weights without it apply everywhere (station-fitted pooled weights blend a grid). No shared labels exits 2.
-- The forecast names must match the weights' predictors exactly (interaction `a:b` uses `a` and `b`); a mismatch exits 2 with both lists.
+- The forecast names must match the weights' predictors exactly (interaction `aifs:ngcm` uses `aifs` and `ngcm`); a mismatch exits 2 with both lists.
 - `weighted` / `linear` convert every forecast to one unit; incompatible units exit 2.
 - A NaN forecast (or a NaN weight from a failed fit) gives NaN; nothing is filled.
-- Weights format, for writing weights from elsewhere: `coef` on dim `predictor` (string labels: forecast names, `a:b` for products) plus any lead / space dims; `intercept` on those dims (absent for `weighted`); dataset attr `model` = `weighted` | `linear` | `logistic`; optional attr `predictor_units`.
+- Weights format, for writing weights from elsewhere: `coef` on dim `predictor` (string labels: forecast names, `aifs:ngcm` for products) plus any lead / space dims; `intercept` on those dims (absent for `weighted`); dataset attr `model` = `weighted` | `linear` | `logistic`; optional attr `predictor_units`.
 
 ### Example
 ```bash

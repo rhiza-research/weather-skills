@@ -22,11 +22,14 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/mme_fit.py --forecast aifs.zarr --forecast ng
 ### Arguments
 - `--forecast` — forecast Zarr, one per source (repeat): hindcasts with `time` (inits) and `step`, or a single init, or a forecast already on valid dates (no `step`). Each is one predictor.
 - `--obs` — ground truth with a `time` axis of valid dates, gridded or `station_id`.
-- `--model` — `weighted` (`X·coef`), `linear` (`X·coef + intercept`), or `logistic` (`1 / (1 + e^−(X·coef + intercept))`, a probability).
+- `--model` — the form whose weights are fitted, with AIFS and NeuralGCM (`ngcm`) as the forecasts:
+  - `weighted`: `obs ≈ 0.6 × aifs + 0.4 × ngcm`
+  - `linear`: `obs ≈ 0.6 × aifs + 0.4 × ngcm + 0.1` (one intercept for the whole blend)
+  - `logistic`: `P(event) = 1 / (1 + e^−(2.0 × aifs + 1.5 × ngcm − 1.2))`
 - `--names` — comma-separated predictor names, one per `--forecast` in order. Default: each file's stem (`aifs.zarr` → `aifs`).
 - `--variable`, `-v` — variable read from every forecast. Default: each forecast's first usable variable.
 - `--obs-variable` — variable read from `--obs`. Default: its first usable variable.
-- `--interaction` — `aifs:ngcm` (repeat): adds the product of named predictors as one more predictor.
+- `--interaction` — `aifs:ngcm` (repeat): adds the product as one more predictor with its own weight, e.g. `... + 0.3 × aifs × ngcm`.
 - `--fit-along` — dim that gets its own weights, one fit per entry (repeat), e.g. `step`, `latitude` + `longitude`, `station_id`. Default: none, one fit over every sample.
 - `--alpha` — L2 penalty on `coef` (never the intercept). Default: `0`.
 - `--max-iter` — logistic Newton iterations. Default: `100`.
@@ -34,7 +37,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/mme_fit.py --forecast aifs.zarr --forecast ng
 - `--output`, `-o` — output weights Zarr.
 
 ### Output
-- `coef` on `predictor` (forecast names, then interactions `a:b`) plus the `--fit-along` dims.
+- `coef` on `predictor` (forecast names, then interactions such as `aifs:ngcm`) plus the `--fit-along` dims.
 - `intercept` on the `--fit-along` dims (`linear`, `logistic`; in the obs units for `linear`, the logit for `logistic`).
 - `n_samples` (samples with the obs and every predictor present) and, for `logistic`, `n_iter` (`max_iter` = not converged).
 - Attrs `model`, `alpha`, `fit_along`, `pooled_dims`, and `predictor_units` (the obs units the forecasts were converted to, `weighted`/`linear`). Coords on the fit dims (station `latitude`, `longitude`, `name`) are kept.
