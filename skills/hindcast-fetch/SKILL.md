@@ -1,8 +1,8 @@
 ---
 name: hindcast-fetch
-description: "Fetch ECMWF or GEFS subseasonal hindcasts (reforecasts) for a range of init dates over a region, as a multi-init weather-skills forecast Zarr: daily precipitation and 2 m temperature out to 46 (ECMWF) or 35 (GEFS) days, from the stores Sheerwater uses. Use when a task needs past forecasts for calibration, bias correction, skill scores or training against observations."
+description: "Fetch ECMWF, GEFS or Cumulus subseasonal hindcasts (reforecasts) for a range of init dates over a region, as a multi-init weather-skills forecast Zarr: daily precipitation and 2 m temperature out to 46 (ECMWF, Cumulus) or 35 (GEFS) days, from Sheerwater's tiled hindcast stores. Use when a task needs past forecasts for calibration, bias correction, skill scores or training against observations."
 license: MIT
-compatibility: "Requires Python 3.12 and uv. ECMWF reads the public WeatherBench2 reforecast in gs://weatherbench2 anonymously. GEFS reads the private gs://sheerwater-datalake/caches/gefs_chc_raw via gcsfs and needs Google Cloud credentials: NEURAL_GCM_SERVICE_CREDENTIALS (the raw service-account key JSON), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
+compatibility: "Requires Python 3.12 and uv. Reads Sheerwater's hindcast Zarr stores via gcsfs. ECMWF and GEFS are public (gs://sheerwater-public-datalake/hindcasts) and need no credentials. Cumulus is private (gs://sheerwater-datalake/hindcasts) and needs Google Cloud credentials: NEURAL_GCM_SERVICE_CREDENTIALS (the raw service-account key JSON), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
@@ -10,65 +10,76 @@ metadata:
   variables:
     - precip
     - tmp2m
-    - tmax2m
-    - tmin2m
   openclaw:
     envVars:
       - name: NEURAL_GCM_SERVICE_CREDENTIALS
-        description: Full contents of a GCP service-account key JSON with read access to gs://sheerwater-datalake/caches/gefs_chc_raw. Needed for --dataset gefs only.
+        description: Full contents of a GCP service-account key JSON that can read gs://sheerwater-datalake/hindcasts. Needed for Cumulus only.
       - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON file that can read gs://sheerwater-datalake/caches/gefs_chc_raw. Used only if NEURAL_GCM_SERVICE_CREDENTIALS is unset.
+        description: Path to a GCP service-account JSON file that can read gs://sheerwater-datalake/hindcasts. Used only if NEURAL_GCM_SERVICE_CREDENTIALS is unset.
 ---
 
 # hindcast-fetch
 
-Fetches every hindcast init in a date window and stacks them on one `time` axis.
+Fetches every hindcast init in a date window from Sheerwater's tiled stores and stacks them on one `time` axis.
 
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf|gefs --start-time YYYY-MM-DD --end-time YYYY-MM-DD -o OUT.zarr \
-  [-v VAR ...] [--bbox N/W/S/E] [--issue-year YYYY] [--members]
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf|gefs|cumulus --start-time YYYY-MM-DD --end-time YYYY-MM-DD -o OUT.zarr \
+  [-v precip] [-v tmp2m] [--bbox N/W/S/E] [--members]
 # Latest hindcast init date (no download)
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [ecmwf|gefs]
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET]
 ```
 
-| `--dataset` | Inits | Members | Leads (days) | Grid | `-v` | Credentials |
-| --- | --- | --- | --- | --- | --- | --- |
-| `ecmwf` | 1996–2021, the calendar dates of the Mon/Thu issues of one year | ensemble mean, or 10 perturbed with `--members` | 0–45 | 1.5° | `precip`, `tmp2m`, `tmax2m`, `tmin2m` | none |
-| `gefs` | Wednesdays 1998-12-30 to 2019-08-28 | 11 (`number` 0–10) | 0–34 | 1° | `precip`, `tmp2m` | Google Cloud |
+| `--dataset` | Inits | Members | Leads (days) | Grid | Credentials |
+| --- | --- | --- | --- | --- | --- |
+| `ecmwf` | 1996-01-04 to 2021-12-29, one run per date, from the newest model that ran it | mean of 10, or the 10 perturbed with `--members` (`number` 1–10) | 0–45 | 1.5° | none |
+| `gefs` | Wednesdays 1998-12-30 to 2019-08-28 | 11 (`number` 0–10) | 0–34 | 1° | none |
+| `cumulus` | every second day, 2016-01-03 to 2024-12-31 | 30 (`number` 0–29) | 0–45 | 1° | Google Cloud |
+
+Every dataset has `precip` and `tmp2m`.
 
 ### Arguments
-- `--dataset` — `ecmwf` or `gefs`.
-- `--start-time`, `--end-time` — inclusive window of hindcast init dates (the dates the runs start from, not when they were issued).
-- `--variable`, `-v` — repeatable. Default: `precip`.
+- `--dataset` — `ecmwf`, `gefs` or `cumulus` (the IMERG-trained `gratis-czajkowski` Cumulus run).
+- `--start-time`, `--end-time` — inclusive window of hindcast init dates (the dates the runs start from, not when they were issued). Pass the same date twice for one init.
+- `--variable`, `-v` — `precip` and/or `tmp2m`, repeatable. Default: `precip`. `tp` and `t2m` are accepted too.
 - `--bbox` — `N/W/S/E` decimal degrees. Omit for the full global grid.
-- `--issue-year` — `ecmwf` only: the year (2016–2022) whose model cycle ran the hindcasts. Each issue year carries the 20 years before it. Default: the latest issue year that covers the whole window.
-- `--members` — `ecmwf` only: fetch the 10 perturbed members instead of the ensemble mean. Reads about 10 times more.
-- `--probe-latest` — print the latest hindcast init date (`YYYY-MM-DD`) and exit. Optional value `ecmwf` (default) or `gefs`.
+- `--members` — `ecmwf` only: the 10 perturbed members instead of their mean. `gefs` and `cumulus` always return every member.
+- `--probe-latest` — print the latest hindcast init date (`YYYY-MM-DD`) and exit. Optional value: a `--dataset` id (default `ecmwf`).
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
 - Dims `(time, [number,] step, latitude, longitude)`: `time` is each hindcast's init date, `step` is daily and labels the start of each 24 h window, so `step=0` is `[init, init+1d)`. `ecmwf` without `--members` has no `number` dim.
-- `precip` in `mm day-1`; `tmp2m`, `tmax2m`, `tmin2m` in `degree_Celsius`. Longitude is `[-180, 180)`.
-- `ecmwf` adds an `issue_time` coordinate on `time`: the real-time forecast date the hindcast was run alongside.
-- `data_interval` `1 day`. Global attrs `weather_skills_source`, `hindcast_dataset`, and for `ecmwf` `hindcast_issue_year`.
+- `precip` in `mm day-1`, `tmp2m` in `degree_Celsius`. Longitude is `[-180, 180)`.
+- `data_interval` `1 day`. Global attrs `weather_skills_source` (the stores read) and `hindcast_dataset`.
 
 ### Notes
-- One `ecmwf` call uses one issue year, so a window may span at most 20 years; a window no issue year covers exits 2 with the coverage.
+- `ecmwf` is one time series. ECMWF re-ran each issue's calendar date in each of the 20 years before it, so most dates were run by several issues; the store keeps the newest issue's run of each date. The model cycle still varies from date to date, so a trend across inits can be a model change.
+- `precip` is clipped at 0 in every store: ECMWF's daily values come from differenced accumulations, and Cumulus's model output can dip slightly below 0. A store with negative `precip` is reported on stderr and kept as published.
+- `cumulus` `tmp2m` is the model's 2 m temperature as published, one value per lead day; the source does not say whether it is a daily mean or the value at the end of the day.
+- `gefs` `tmp2m` is one value per day as the source publishes it; the source does not say whether it is a daily mean.
+- Stores of one model can skip different inits (GEFS `precip` and `tmp2m` do). A variable is NaN on inits its store lacks, never filled; stderr lists them. The stores' grids must match exactly, or the call exits 1.
 - `ecmwf` hindcast inits fall on the same calendar dates in every year, but on any weekday. Pair them with `gefs` Wednesday inits by valid date, not by init.
-- `ecmwf` `precip` at lead day 15 can be negative (down to about −50 mm day-1) where the source's accumulations are split. Values are kept as published; stderr names the lead days. Average over a week or more, or drop that step, before using daily values.
-- The `gefs` `precip` and `tmp2m` stores skip different weeks. A variable is NaN on inits its store lacks; stderr lists them.
-- `ecmwf` is stored as whole globes: each init costs about 5 MB per variable (50 MB with `--members`) whatever the `--bbox`, so a 7-year window takes several minutes. `gefs` is stored in 24° tiles, so a small `--bbox` reads little.
-- Without GEFS access the skill exits 1 and says which credential to set.
+- Every store is in 6° lat/lon tiles with all inits in each chunk: a small `--bbox` reads only its tiles, and a whole record takes about as long as one init (over Kenya, about a minute). Without `--bbox` the whole globe is read.
+- Without the needed credentials the call exits 1 and says which to set.
 
 ### Example
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf --start-time 2011-10-01 --end-time 2020-12-31 \
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf --members -v precip -v tmp2m --start-time 1996-01-01 --end-time 2021-12-31 \
   --bbox 5.5/33.5/-5/42.5 -o ecmwf_hindcast_kenya.zarr
 ```
-Writes ECMWF ensemble-mean daily precipitation hindcasts over Kenya for every 2022-cycle init from October 2011 to December 2020.
+Writes 10-member daily precipitation and 2 m temperature hindcasts over Kenya for every ECMWF init date from 1996 to 2021.
 
 ## Details
 
-**Sources.** `ecmwf` reads `gs://weatherbench2/datasets/ifs_extended_range/daily/ifs-ext-reforecast-full-single-level-avg_ens_mean.zarr` (or `…-avg.zarr` for members), the WeatherBench2 copy of the ECMWF IFS extended-range reforecast that Sheerwater ingests. It is indexed by issue date (2016-01-04 to 2022-12-29) and hindcast year (−20 to −1); the skill picks the pairs whose real init falls in the window. Precipitation there is a 24 h total in metres. `gefs` reads `gs://sheerwater-datalake/caches/gefs_chc_raw/global1_0_<variable>.zarr`, Sheerwater's GEFS reforecast cache (Zarr v3, init times in days since 1960-01-01).
+| `--dataset` | `precip` | `tmp2m` |
+| --- | --- | --- |
+| `ecmwf` | `gs://sheerwater-public-datalake/hindcasts/ecmwf_ifs_precip.zarr` | `gs://sheerwater-public-datalake/hindcasts/ecmwf_ifs_tmp2m.zarr` |
+| `gefs` | `gs://sheerwater-public-datalake/hindcasts/gefs_precip.zarr` | `gs://sheerwater-public-datalake/hindcasts/gefs_tmp2m.zarr` |
+| `cumulus` | `gs://sheerwater-datalake/hindcasts/cumulus_precip.zarr` | `gs://sheerwater-datalake/hindcasts/cumulus_tmp2m.zarr` |
+
+**ECMWF.** Both stores are WeatherBench2's copy of the ECMWF IFS extended-range reforecast members, flattened from (issue date, hindcast year) to one run per real init date, keeping the newest issue where several ran the same date. Dims `(member, prediction_timedelta, lat, lon, init_time)`. The ensemble mean is the mean of the 10 members, as in WeatherBench2's own ensemble-mean store.
+
+**GEFS.** Both stores are Sheerwater's public copies of its CHC GEFSv12 reforecast caches. Dims `(init_time, member, prediction_timedelta, lat, lon)`.
+
+**Cumulus.** Both stores are the `gratis-czajkowski` Cumulus (Aurora S2S) hindcast run at 1°: member 0 is the run from the `cf` files, 1–29 those from the `pf` files. `prediction_timedelta` d holds the model's lead of (d + 1) × 24 h; for `precip` that is the 24 h total ending then, labelled by its start, with negative model output set to 0 as in the live forecast export.
