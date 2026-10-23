@@ -35,7 +35,7 @@ Pass `--dim`, `--by`, or both.
 - Each selected variable is summarized over the requested dims it has; other variables pass through unchanged. A summarized dim is removed once no variable carries it.
 - `--by L`: the dims of `L` become a dim `L` holding each label once; several `--by` give one dim each. The `""` label is left out. Other label coords on those dims are dropped; only variables carrying all of the label's dims are summarized.
 - NaNs are skipped. `sum` of an all-NaN slice is NaN, not 0. `std` is the sample standard deviation (`ddof=1`), so `std` over a dim of size 1 is NaN.
-- `units` and other attrs are kept as they are, including after `sum` (no unit change). So `sum` over `time` or `step` of a rate (e.g. `mm day-1`) is refused: convert rates to period totals first (`convert-to-totals`).
+- `units` and other attrs are kept as they are, including after `sum` (no unit change). So `sum` over `time` or `step` of a rate (e.g. `mm day-1`) is refused: convert rates to period totals first (`convert-to-totals`). `std` of `degree_Celsius` is in `delta_degC`; `sum` of `degree_Celsius` is refused.
 - `sum` over grid cells or stations (`latitude`, `longitude`, `station_id`, by `--dim` or a spatial `--by` label such as `admin_1`) exits 2 unless the variable is dimensionless (units `1`, such as 0/1 flags, which sum to a count). For a regional value use `mean`; a regional total is a sum over time, then a `mean` by region in a second call.
 - `sum` with `--min-coverage` below 1: kept sums of incomplete groups are partial-data estimates; stderr warns, and `<var>_coverage` (0–1, the least-covered cell used) is written, linked by `ancillary_variables`.
 
