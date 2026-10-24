@@ -36,12 +36,13 @@ Pass `--dim`, `--by`, or both.
 - `--by L`: the dims of `L` become a dim `L` holding each label once; several `--by` give one dim each. The `""` label is left out. Other label coords on those dims are dropped; only variables carrying all of the label's dims are summarized.
 - NaNs are skipped. `sum` of an all-NaN slice is NaN, not 0. `std` is the sample standard deviation (`ddof=1`), so `std` over a dim of size 1 is NaN.
 - `units` and other attrs are kept as they are, including after `sum` (no unit change). So `sum` over `time` or `step` of a rate (e.g. `mm day-1`) is refused: convert rates to period totals first (`convert-to-totals`).
+- `sum` over grid cells or stations (`latitude`, `longitude`, `station_id`, by `--dim` or a spatial `--by` label such as `admin_1`) exits 2 unless the variable is dimensionless (units `1`, such as 0/1 flags, which sum to a count). For a regional value use `mean`; a regional total is a sum over time, then a `mean` by region in a second call.
 - `sum` with `--min-coverage` below 1: kept sums of incomplete groups are partial-data estimates; stderr warns, and `<var>_coverage` (0–1, the least-covered cell used) is written, linked by `ancillary_variables`.
 
 ### Notes
 - Write to a new path: an `--output` equal to the input destroys the input.
 - `--by` gives each grid cell equal weight in a group (not area-weighted).
-- `--method sum` with a spatial label (`--by admin_1`) adds up every cell in the unit too. For a regional rainfall total, sum over time first, then take `--method mean` by the spatial label (see [Grouped examples](#grouped-examples)).
+- A regional rainfall total takes two calls: `sum` by the time labels, then `mean` by the spatial label (see [Grouped examples](#grouped-examples)). One call with both labels and `sum` is refused.
 - Keep `--min-coverage 1.0` unless a task explicitly accepts estimates. Spatial labels have no coverage check. Other labels along time are refused.
 
 ### Example

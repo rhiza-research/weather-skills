@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
-from weather_skills_core.standard_dataset import detect_spatial_dims
+from weather_skills_core.standard_dataset import detect_spatial_dims, names_for
 from weather_skills_core.standard_utils import latitude_weights
 from weather_skills_core.units import (
     AGGREGATION_COVERAGE_COORD,
@@ -31,6 +31,8 @@ _SKILL_VERSION = "0.0.3"
 
 _TIME_LABELS = ("month", "year", "dayofyear", "month_group")
 _INITIALS = "JFMAMJJASOND"
+# Grid and station dims a sum must not add up (latitude, lon, station_id, ...).
+_SPATIAL_DIMS = frozenset((*names_for("lat"), *names_for("lon"), *names_for("point_id")))
 
 
 @weather_skill(
@@ -279,6 +281,18 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
                     f"({da.attrs.get('units', units)}) into a rate, not a total; convert the "
                     "rates to period totals first (convert-to-totals)"
                 )
+        # Adding up cells or stations of a physical quantity (mm, degC) grows with the
+        # area and means nothing; dimensionless counts and flags add up to how many.
+        over_space = [d for d in rdims if d in _SPATIAL_DIMS]
+        if method == "sum" and over_space and (units is None or units.dimensionality):
+            spatial_by = [b for b in by if set(ds[b].dims) & set(over_space)]
+            via = f" (via --by {', '.join(spatial_by)})" if spatial_by else ""
+            raise UsageError(
+                f"--method sum over {', '.join(over_space)}{via} would add up {var!r} "
+                f"({'no units' if units is None else format(units, '~')}) across cells or stations; use "
+                "--method mean for a regional value, after summing over time in a "
+                "separate call. Only dimensionless variables (units 1) sum over space"
+            )
         if by:
             # min_count=1 / ddof=1 as below. Combinations with no cells stay NaN.
             kw = {"min_count": 1} if method == "sum" else {"ddof": 1} if method == "std" else {}
