@@ -95,11 +95,9 @@ def _data_var(name, da, max_values):
     n = int(arr.size)
     kind = arr.dtype.kind
     stats = {"n": n, "n_finite": None, "n_nan": None, "min": None, "max": None, "mean": None}
-    sample = []
     if kind in "biufmM" and n:
         # One pass over blocks along the first axis: no full-size copies of a
-        # large array, and the sample is the first *finite* values (a clipped
-        # grid's leading cells are often all NaN).
+        # large array.
         n_finite, total, lo, hi = 0, 0.0, None, None
         blocks = arr.reshape(arr.shape[0], -1) if arr.ndim else arr.reshape(1, 1)
         step = max(1, 10_000_000 // max(1, blocks.shape[1]))
@@ -116,22 +114,14 @@ def _data_var(name, da, max_values):
             hi = block.max() if hi is None else max(hi, block.max())
             if kind not in "mM":
                 total += float(block.sum(dtype="float64"))
-            if len(sample) < want:
-                sample.extend(_fmt(v) for v in block[: want - len(sample)])
         stats["n_finite"], stats["n_nan"] = n_finite, n - n_finite
         if n_finite:
             stats["min"], stats["max"] = _jsonable(_fmt(lo)), _jsonable(_fmt(hi))
             if kind not in "mM":
                 stats["mean"] = _jsonable(total / n_finite)
-    else:
-        sample = [_fmt(v) for v in arr.reshape(-1)[:want]]
-    if n <= want and stats["n_finite"] != 0:
-        # The whole variable fits: show every value in place, NaN included, so
-        # the sample lines up with the coordinate values (e.g. which county is empty).
-        # An all-NaN variable keeps the empty sample: "(no finite values)".
-        sample = [_fmt(v) for v in arr.reshape(-1)]
-    truncated = stats["n_finite"] is not None and stats["n_finite"] > len(sample)
-    truncated = truncated or (stats["n_finite"] is None and n > len(sample))
+    # The first values in order, NaN included, so they line up with the coordinates.
+    sample = [_fmt(v) for v in arr.reshape(-1)[:want]]
+    truncated = n > len(sample)
     if truncated:
         sample.append("…")
     return {
@@ -214,11 +204,8 @@ def inspect_zarr(ds, format, max_values, **kwargs):
                 f"    finite {v['n_finite']}/{v['n']}  "
                 f"min {_show(v['min'])}  max {_show(v['max'])}{mean}"
             )
-            of = f"{v['n_finite']} finite cells"
-        else:
-            of = f"{v['n']} cells"
-        shown = ", ".join(_show(x) for x in v["sample"]) or "(no finite values)"
-        extra = f"  ({len(v['sample']) - 1} of {of})" if v["sample_truncated"] else ""
+        shown = ", ".join(_show(x) for x in v["sample"])
+        extra = f"  ({len(v['sample']) - 1} of {v['n']} cells)" if v["sample_truncated"] else ""
         print(f"    sample: {shown}{extra}")
 
 
