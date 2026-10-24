@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/convert_calendar.py *)
 metadata:
-  version: "0.0.3"
+  version: "0.0.4"
   catalog-group: transforms
 ---
 

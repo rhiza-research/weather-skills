@@ -1,4 +1,4 @@
-"""Correctness tests for windborne-sounding-fetch (mocked WindBorne API)."""
+"""Correctness tests for windborne-fetch --product sounding (mocked WindBorne API)."""
 
 import numpy as np
 import pytest
@@ -7,7 +7,7 @@ from conftest import load_skill, run_skill
 
 @pytest.fixture(scope="module")
 def mod():
-    return load_skill("windborne-sounding-fetch", "fetch")
+    return load_skill("windborne-fetch", "fetch")
 
 
 def _fake_api(monkeypatch, respond):
@@ -67,6 +67,8 @@ def test_profiles_per_point_and_lead(mod, monkeypatch, tmp_path):
     out = tmp_path / "snd.zarr"
     run_skill(
         mod.fetch,
+        "--product",
+        "sounding",
         "--point",
         "-1.29,36.82,nbo",
         "--point",
@@ -94,12 +96,22 @@ def test_profiles_per_point_and_lead(mod, monkeypatch, tmp_path):
 def test_lead_must_be_multiple_of_three(mod, monkeypatch, tmp_path):
     _fake_api(monkeypatch, _respond)
     with pytest.raises(SystemExit):
-        run_skill(mod.fetch, "--point", "-1,36", "--lead", "4", "-o", str(tmp_path / "x.zarr"))
+        run_skill(
+            mod.fetch,
+            "--product",
+            "sounding",
+            "--point",
+            "-1,36",
+            "--lead",
+            "4",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
 
 
 def test_probe_latest(mod, monkeypatch, tmp_path, capsys):
     calls = _fake_api(monkeypatch, _respond)
-    run_skill(mod.fetch, "--probe-latest")
+    run_skill(mod.fetch, "--product", "sounding", "--probe-latest")
     captured = capsys.readouterr()
     assert captured.out.strip() == "2026-10-19"
     assert "--date 2026-10-19 --run 20" in captured.err

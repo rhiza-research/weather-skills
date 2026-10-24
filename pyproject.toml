@@ -13,6 +13,9 @@ cli = "weather-skills"
 
 [tool.hatch.build.hooks.skills-runner]
 
+# Runs after skills-runner: drops skills/*/tests from the wheel (hatch_build.py).
+[tool.hatch.build.hooks.custom]
+
 [dependency-groups]
 dev = [
     "pytest>=9",

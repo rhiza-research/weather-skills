@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/netcdf_io.py *)
 metadata:
-  version: "0.0.1"
+  version: "0.0.2"
   catalog-group: transforms
 ---
 
@@ -29,7 +29,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/netcdf_io.py --netcdf IN.nc [--netcdf IN2.nc 
 
 ### Output
 - Export: one NetCDF-4 file, data variables zlib-compressed. Variable and global attributes are kept, including `aggregation_period` and the Zarr's `weather_skills_history`; boolean attributes are written as 0 / 1 and other values NetCDF cannot hold as text.
-- Read: the file's variables, coords and attributes as they are, with longitudes 0..360 wrapped to -180..180. Records `weather_skills_source=netcdf:<file names>`.
+- Read: the file's variables, coords and attributes as they are, with longitudes 0..360 wrapped to -180..180, a coordinate given out of order sorted, and fixed-width text (char arrays such as station names) stored as text. A coordinate value given twice exits 2. Records `weather_skills_source=netcdf:<file names>`.
 
 ### Notes
 - Several `--netcdf` files are joined on their coordinate values: consecutive `time`s are stacked, and files with the same coordinates but different variables are merged. Files that overlap (a `time` in two files), share a variable at the same coordinates, or have no coordinate to order them by exit 2; read them one at a time and join with `concat` or `merge`.

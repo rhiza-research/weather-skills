@@ -1,4 +1,4 @@
-"""Correctness tests for windborne-point-fetch (mocked WindBorne API)."""
+"""Correctness tests for windborne-fetch --product point (mocked WindBorne API)."""
 
 import numpy as np
 import pytest
@@ -7,7 +7,7 @@ from conftest import load_skill, run_skill
 
 @pytest.fixture(scope="module")
 def mod():
-    return load_skill("windborne-point-fetch", "fetch")
+    return load_skill("windborne-fetch", "fetch")
 
 
 def _fake_api(monkeypatch, respond):
@@ -29,6 +29,8 @@ def _fake_api(monkeypatch, respond):
 
         def get(self, url, params=None, timeout=None):
             calls.append((url.rsplit("/", 1)[-1], dict(params or {})))
+            if url.endswith("/initialization_times"):
+                return _Resp({"available": ["2026-10-19T00:00:00Z", "2026-10-19T20:00:00Z"]})
             return _Resp(respond(url, params or {}))
 
     monkeypatch.setattr(requests, "Session", _Session)
@@ -67,7 +69,17 @@ def test_default_bundle_two_points(mod, monkeypatch, tmp_path):
 
     _fake_api(monkeypatch, respond)
     out = tmp_path / "pt.zarr"
-    run_skill(mod.fetch, "--point", "-1.29,36.82,nairobi", "--point", "0.5,35.3", "-o", str(out))
+    run_skill(
+        mod.fetch,
+        "--product",
+        "point",
+        "--point",
+        "-1.29,36.82,nairobi",
+        "--point",
+        "0.5,35.3",
+        "-o",
+        str(out),
+    )
     ds = xr.open_zarr(out)
     assert list(ds["station_id"].values) == ["nairobi", "P1"]
     assert ds["time"].values == np.datetime64("2026-10-19T18:00")
@@ -89,6 +101,7 @@ def test_level_and_distribution(mod, monkeypatch, tmp_path):
         assert params == {
             "coordinates": "-1.29,36.82",
             "max_forecast_hour": 360,
+            "initialization_time": "2026-10-19T20:00:00Z",
             "variable": "temperature",
             "level": 850,
             "include_distribution": "true",
@@ -106,6 +119,8 @@ def test_level_and_distribution(mod, monkeypatch, tmp_path):
     out = tmp_path / "pt.zarr"
     run_skill(
         mod.fetch,
+        "--product",
+        "point",
         "--point",
         "-1.29,36.82",
         "-v",
@@ -142,6 +157,8 @@ def test_tp_distribution_shifts_with_tp(mod, monkeypatch, tmp_path):
     out = tmp_path / "pt.zarr"
     run_skill(
         mod.fetch,
+        "--product",
+        "point",
         "--point",
         "-1.29,36.82",
         "-v",
@@ -160,16 +177,26 @@ def test_tp_distribution_shifts_with_tp(mod, monkeypatch, tmp_path):
     assert ds["tp_gt_0p25mm"].attrs["units"] == "1"
 
 
-def test_units_for_unknown_field_left_unset(mod):
-    assert mod._units_for("total_column_water_vapour") == "kg m-2"
-    assert mod._units_for("boundary_layer_height") == "m"
-    assert mod._units_for("mystery_index") is None
+def test_point_units_for_unknown_field_left_unset(mod):
+    assert mod._point_units("total_column_water_vapour") == "kg m-2"
+    assert mod._point_units("boundary_layer_height") == "m"
+    assert mod._point_units("mystery_index") is None
 
 
 def test_max_lead_zero_with_default_bundle_errors(mod, monkeypatch, tmp_path, capsys):
     _fake_api(monkeypatch, lambda url, params: {})
     with pytest.raises(SystemExit) as exc:
-        run_skill(mod.fetch, "--point", "-1,36", "--max-lead", "0", "-o", str(tmp_path / "x.zarr"))
+        run_skill(
+            mod.fetch,
+            "--product",
+            "point",
+            "--point",
+            "-1,36",
+            "--max-lead",
+            "0",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
     assert exc.value.code == 2
     assert "no value at lead 0" in capsys.readouterr().err
 
@@ -178,17 +205,24 @@ def test_level_without_pressure_level_field_errors(mod, monkeypatch, tmp_path):
     _fake_api(monkeypatch, lambda url, params: {})
     with pytest.raises(SystemExit) as exc:
         run_skill(
-            mod.fetch, "--point", "-1,36", "-v", "t2m", "--level", "500", "-o", str(tmp_path / "x")
+            mod.fetch,
+            "--product",
+            "point",
+            "--point",
+            "-1,36",
+            "-v",
+            "t2m",
+            "--level",
+            "500",
+            "-o",
+            str(tmp_path / "x"),
         )
     assert exc.value.code == 2
 
 
 def test_probe_latest(mod, monkeypatch, tmp_path, capsys):
-    calls = _fake_api(
-        monkeypatch,
-        lambda url, params: {"available": ["2026-10-19T00:00:00Z", "2026-10-19T20:00:00Z"]},
-    )
-    run_skill(mod.fetch, "--probe-latest")
+    calls = _fake_api(monkeypatch, lambda url, params: {})
+    run_skill(mod.fetch, "--product", "point", "--probe-latest")
     captured = capsys.readouterr()
     assert captured.out.strip() == "2026-10-19"
     assert "--date 2026-10-19 --run 20" in captured.err
@@ -198,12 +232,24 @@ def test_probe_latest(mod, monkeypatch, tmp_path, capsys):
 def test_pressure_level_needs_level(mod, monkeypatch, tmp_path):
     _fake_api(monkeypatch, lambda url, params: {})
     with pytest.raises(SystemExit):
-        run_skill(mod.fetch, "--point", "-1,36", "-v", "t", "-o", str(tmp_path / "x.zarr"))
+        run_skill(
+            mod.fetch,
+            "--product",
+            "point",
+            "--point",
+            "-1,36",
+            "-v",
+            "t",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
 
 
 def test_missing_credentials_exit(mod, monkeypatch, tmp_path):
     monkeypatch.delenv("WB_CLIENT_ID", raising=False)
     monkeypatch.delenv("WB_API_KEY", raising=False)
     with pytest.raises(SystemExit) as exc:
-        run_skill(mod.fetch, "--point", "-1,36", "-o", str(tmp_path / "x.zarr"))
+        run_skill(
+            mod.fetch, "--product", "point", "--point", "-1,36", "-o", str(tmp_path / "x.zarr")
+        )
     assert exc.value.code == 2

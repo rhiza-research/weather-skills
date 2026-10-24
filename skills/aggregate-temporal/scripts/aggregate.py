@@ -27,7 +27,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.5"
 
 # Named --period → the aggregation_period string stamped for that window.
 PERIOD_TO_AGGREGATION = {

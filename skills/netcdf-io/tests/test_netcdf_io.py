@@ -191,3 +191,53 @@ def test_export_needs_nc_suffix(tmp_path, netcdf_io, capsys):
         run_skill(netcdf_io, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
 
     assert "should end in .nc" in capsys.readouterr().err
+
+
+def test_read_decodes_char_array_station_names(tmp_path, netcdf_io):
+    import netCDF4
+
+    with netCDF4.Dataset(tmp_path / "in.nc", "w") as nc:
+        nc.createDimension("station", 2)
+        nc.createDimension("strlen", 8)
+        name = nc.createVariable("station_name", "S1", ("station", "strlen"))
+        name[:] = netCDF4.stringtochar(np.array(["Nairobi", "Mombasa"], dtype="S8"))
+        rain = nc.createVariable("precip", "f4", ("station",))
+        rain.units = "mm"
+        rain.coordinates = "station_name"
+        rain[:] = [1, 2]
+    run_skill(netcdf_io, "--netcdf", str(tmp_path / "in.nc"), "-o", str(tmp_path / "out.zarr"))
+    assert list(_open(tmp_path / "out.zarr")["station_name"].values) == ["Nairobi", "Mombasa"]
+
+
+def test_read_sorts_time_given_out_of_order(tmp_path, netcdf_io):
+    ds = make_gridded(n_time=3)
+    ds["precip"].values[:] = np.arange(3)[:, None, None]
+    ds.isel(time=[2, 0, 1]).to_netcdf(tmp_path / "in.nc")
+    run_skill(netcdf_io, "--netcdf", str(tmp_path / "in.nc"), "-o", str(tmp_path / "out.zarr"))
+    res = _open(tmp_path / "out.zarr")
+    np.testing.assert_array_equal(res["time"].values, ds["time"].values)
+    np.testing.assert_allclose(res["precip"].values[:, 0, 0], [0, 1, 2])
+
+
+def test_read_refuses_a_time_given_twice_in_one_file(tmp_path, netcdf_io, capsys):
+    make_gridded(n_time=3).isel(time=[0, 1, 1]).to_netcdf(tmp_path / "in.nc")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(netcdf_io, "--netcdf", str(tmp_path / "in.nc"), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
+    assert "appear more than once" in capsys.readouterr().err
+
+
+def test_read_refuses_a_file_that_is_not_netcdf(tmp_path, netcdf_io, capsys):
+    (tmp_path / "in.nc").write_text("not netcdf\n")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(netcdf_io, "--netcdf", str(tmp_path / "in.nc"), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
+    assert "cannot read" in capsys.readouterr().err
+
+
+def test_export_refuses_a_dataset_with_no_data_variables(tmp_path, netcdf_io, capsys):
+    src = write_zarr(make_gridded().drop_vars("precip"), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(netcdf_io, "-i", str(src), "-o", str(tmp_path / "out.nc"))
+    assert exc.value.code == 2
+    assert not (tmp_path / "out.nc").exists()

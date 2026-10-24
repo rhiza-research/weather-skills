@@ -1,4 +1,4 @@
-"""Correctness tests for cams-fetch (no network: helpers, mocked ADS + GRIB decode)."""
+"""Correctness tests for cams-fetch (no network: mocked ADS + GRIB decode)."""
 
 import json
 import os
@@ -12,7 +12,6 @@ import pandas as pd
 import pytest
 import xarray as xr
 from conftest import load_skill, run_skill
-from weather_skills_core import UsageError
 
 KENYA = "5.1/33.9/-4.8/41.9"
 
@@ -22,102 +21,8 @@ def mod():
     return load_skill("cams-fetch", "fetch")
 
 
-def test_resolve_variables(mod):
-    assert mod._resolve_variables(None) == ["pm25"]
-    assert mod._resolve_variables([["pm25", "no2"], ["pm25,o3"]]) == ["pm25", "no2", "o3"]
-    assert mod._resolve_variables(["particulate_matter_10um"]) == ["pm10"]
-    with pytest.raises(UsageError, match="Available"):
-        mod._resolve_variables(["pm2.5"])
-
-
 def test_variables_most_used_first(mod):
     assert list(mod.VARIABLES)[:4] == ["pm25", "pm10", "no2", "o3"]
-
-
-def test_groups_split_gases_from_single_level(mod):
-    assert mod._groups(["pm25", "aod550"]) == [(False, ["pm25", "aod550"])]
-    assert mod._groups(["no2"]) == [(True, ["no2"])]
-    assert mod._groups(["pm25", "no2", "o3"]) == [(False, ["pm25"]), (True, ["no2", "o3"])]
-
-
-def test_build_request_forecast(mod):
-    req = mod._build_request(
-        "forecast",
-        ["no2"],
-        [5.1, 33.9, -4.8, 41.9],
-        date_range=(date(2026, 10, 5), date(2026, 10, 5)),
-        model_level=True,
-        cycle="12",
-        leads=["0", "3"],
-    )
-    assert req == {
-        "variable": ["nitrogen_dioxide"],
-        "date": ["2026-10-05/2026-10-05"],
-        "area": [5.1, 33.9, -4.8, 41.9],
-        "data_format": "grib",
-        "type": ["forecast"],
-        "time": ["12:00"],
-        "leadtime_hour": ["0", "3"],
-        "model_level": ["137"],
-    }
-
-
-def test_build_request_eac4(mod):
-    req = mod._build_request(
-        "eac4",
-        ["pm25"],
-        [5.1, 33.9, -4.8, 41.9],
-        date_range=(date(2024, 1, 1), date(2024, 1, 31)),
-        model_level=False,
-    )
-    assert req["time"] == [f"{h:02d}:00" for h in range(0, 24, 3)]
-    assert "leadtime_hour" not in req and "model_level" not in req
-    gas = mod._build_request(
-        "eac4", ["o3"], [1, 2, 0, 3], date_range=(date(2024, 1, 1),) * 2, model_level=True
-    )
-    assert gas["model_level"] == ["60"]
-
-
-def test_month_chunks(mod):
-    assert mod._month_chunks(date(2024, 1, 20), date(2024, 3, 2)) == [
-        (date(2024, 1, 20), date(2024, 1, 31)),
-        (date(2024, 2, 1), date(2024, 2, 29)),
-        (date(2024, 3, 1), date(2024, 3, 2)),
-    ]
-    assert mod._month_chunks(date(2024, 5, 3), date(2024, 5, 3)) == [(date(2024, 5, 3),) * 2]
-
-
-def test_lead_hours(mod):
-    assert mod._lead_hours("12", 3) == ["0", "3", "6", "9", "12"]
-    assert mod._lead_hours("12h", 3) == ["0", "3", "6", "9", "12"]
-    assert mod._lead_hours("2D", 24) == ["0", "24", "48"]
-    assert mod._lead_hours("0h", 3) == ["0"]
-    for bad in ("200", "6D", "-3h", "90min", "soon"):
-        with pytest.raises(UsageError):
-            mod._lead_hours(bad, 3)
-    with pytest.raises(UsageError):
-        mod._lead_hours("12", 0)
-
-
-def test_split_wrapped_area(mod):
-    assert mod._split_wrapped_area([10, 170, 0, -170]) == [
-        [10, 170, 0, 180.0],
-        [10, -180.0, 0, -170],
-    ]
-    assert mod._split_wrapped_area([10, 30, 0, 40]) == [[10, 30, 0, 40]]
-
-
-def test_api_key_env_then_cdsapirc(mod, monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("ADS_API_KEY", "envkey")
-    assert mod._api_key() == "envkey"
-    monkeypatch.delenv("ADS_API_KEY")
-    rc = tmp_path / ".cdsapirc"
-    rc.write_text("url: https://cds.climate.copernicus.eu/api\nkey: cdskey\n")
-    with pytest.raises(UsageError, match="no ADS credentials"):
-        mod._api_key()
-    rc.write_text("url: https://ads.atmosphere.copernicus.eu/api\nkey: adskey\n")
-    assert mod._api_key() == "adskey"
 
 
 def test_missing_key_exits_2(mod, tmp_path, monkeypatch):
@@ -172,6 +77,10 @@ def _cfgrib_eac4(names, start, days):
     return xr.Dataset(data, coords=coords)
 
 
+class _Submitted(list):
+    key = None
+
+
 class _Remote:
     def __init__(self, req):
         self.req = req
@@ -183,11 +92,12 @@ class _Remote:
 
 
 def _fake_ads(monkeypatch, mod, decode):
-    submitted = []
+    submitted = _Submitted()
 
     class Client:
         def __init__(self, url, key):
-            assert url == mod._ADS_URL and key == "k"
+            assert url == mod._ADS_URL
+            submitted.key = key
 
         def submit(self, dataset_id, request):
             submitted.append((dataset_id, request))
@@ -195,8 +105,10 @@ def _fake_ads(monkeypatch, mod, decode):
 
     pkg = types.ModuleType("ecmwf.datastores")
     pkg.Client = Client
+    processing = types.ModuleType("ecmwf.datastores.processing")
+    processing.ProcessingFailedError = type("ProcessingFailedError", (Exception,), {})
     monkeypatch.setitem(sys.modules, "ecmwf.datastores", pkg)
-    monkeypatch.setattr(mod, "_wait", lambda remotes, label: None)
+    monkeypatch.setitem(sys.modules, "ecmwf.datastores.processing", processing)
     cfgrib = types.ModuleType("cfgrib")
     cfgrib.open_datasets = lambda path: [decode(json.loads(open(path).read()))]
     monkeypatch.setitem(sys.modules, "cfgrib", cfgrib)
@@ -213,7 +125,7 @@ def test_forecast_end_to_end_units_and_shape(mod, monkeypatch, tmp_path):
     submitted = _fake_ads(monkeypatch, mod, decode)
     out = tmp_path / "f.zarr"
     run_skill(
-        mod.fetch, "--bbox", KENYA, "--date", "2026-10-05", "-v", "pm25", "no2", "o3",
+        mod.fetch, "--bbox", KENYA, "--date", "2026-10-05", "-v", "pm25", "-v", "no2", "-v", "o3",
         "--max-lead", "6h", "--cycle", "0", "-o", str(out),
     )  # fmt: skip
     assert [s[0] for s in submitted] == ["cams-global-atmospheric-composition-forecasts"] * 2
@@ -275,3 +187,120 @@ def test_antimeridian_box_has_one_seam_meridian(mod, monkeypatch, tmp_path):
     assert lons == [-180.0, -175.0, -170.0, 170.0, 175.0]
     # Each leg's values stay on its own longitudes.
     np.testing.assert_allclose(ds["pm25"].isel(step=0, latitude=0).values, [10, 20, 20, 10, 10])
+
+
+def _pm25_forecast(req):
+    return _cfgrib_forecast({"pm2p5": 1e-8})
+
+
+def _run_forecast(mod, monkeypatch, tmp_path, *argv, decode=_pm25_forecast):
+    submitted = _fake_ads(monkeypatch, mod, decode)
+    run_skill(mod.fetch, "--bbox", KENYA, "--date", "2026-10-05", *argv, "-o", str(tmp_path / "o"))
+    return submitted
+
+
+def test_repeated_variable_flags(mod, monkeypatch, tmp_path):
+    def decode(req):
+        return _cfgrib_forecast({"pm2p5": 1e-8, "pm10": 1e-8, "aod550": 0.2})
+
+    submitted = _run_forecast(
+        mod, monkeypatch, tmp_path, "-v", "pm25", "-v", "pm10", "-v", "pm25", "-v", "aod550",
+        "--max-lead", "6", decode=decode,
+    )  # fmt: skip
+    assert submitted[0][1]["variable"] == [
+        "particulate_matter_2.5um",
+        "particulate_matter_10um",
+        "total_aerosol_optical_depth_550nm",
+    ]
+    assert "model_level" not in submitted[0][1]
+
+
+def test_unknown_variable_exits_2(mod, monkeypatch, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        _run_forecast(mod, monkeypatch, tmp_path, "-v", "pm2.5")
+    assert exc.value.code == 2
+
+
+def test_forecast_request(mod, monkeypatch, tmp_path):
+    def decode(req):
+        return _cfgrib_forecast({"no2": 1e-9})
+
+    submitted = _run_forecast(
+        mod, monkeypatch, tmp_path, "-v", "no2", "--cycle", "12", "--max-lead", "3h", decode=decode
+    )
+    assert submitted == [
+        (
+            "cams-global-atmospheric-composition-forecasts",
+            {
+                "data_format": "grib",
+                "type": ["forecast"],
+                "time": ["12:00"],
+                "leadtime_hour": ["0", "3"],
+                "variable": ["nitrogen_dioxide"],
+                "date": ["2026-10-05/2026-10-05"],
+                "area": [5.1, 33.9, -4.8, 41.9],
+                "model_level": ["137"],
+            },
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("max_lead", "leads"),
+    [("6", ["0", "3", "6"]), ("6h", ["0", "3", "6"]), ("8h", ["0", "3", "6"]), ("0h", ["0"])],
+)
+def test_max_lead_forms(mod, monkeypatch, tmp_path, max_lead, leads):
+    submitted = _run_forecast(mod, monkeypatch, tmp_path, "--max-lead", max_lead)
+    assert submitted[0][1]["leadtime_hour"] == leads
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["--max-lead", bad] for bad in ("200", "6D", "-3h", "soon")] + [["--cycle", "6"]],
+)
+def test_bad_leads_exit_2(mod, monkeypatch, tmp_path, argv):
+    with pytest.raises(SystemExit) as exc:
+        _run_forecast(mod, monkeypatch, tmp_path, *argv)
+    assert exc.value.code == 2
+
+
+def test_eac4_requests_per_month(mod, monkeypatch, tmp_path):
+    def decode(req):
+        start, end = req["date"][0].split("/")
+        days = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
+        return _cfgrib_eac4(
+            {"go3": 1e-8} if req.get("model_level") else {"pm2p5": 1e-8}, start, days
+        )
+
+    submitted = _fake_ads(monkeypatch, mod, decode)
+    run_skill(
+        mod.fetch, "--bbox", KENYA, "--dataset", "eac4", "--start-time", "2024-01-20",
+        "--end-time", "2024-03-02", "-v", "pm25", "-v", "o3", "-o", str(tmp_path / "o"),
+    )  # fmt: skip
+    dates = [req["date"][0] for _, req in submitted]
+    assert dates == [
+        "2024-01-20/2024-01-31", "2024-01-20/2024-01-31",
+        "2024-02-01/2024-02-29", "2024-02-01/2024-02-29",
+        "2024-03-01/2024-03-02", "2024-03-01/2024-03-02",
+    ]  # fmt: skip
+    assert submitted[0][1]["time"] == [f"{h:02d}:00" for h in range(0, 24, 3)]
+    assert "leadtime_hour" not in submitted[0][1]
+    assert "model_level" not in submitted[0][1]
+    assert submitted[1][1]["model_level"] == ["60"]
+    ds = xr.open_zarr(tmp_path / "o")
+    assert ds.sizes["time"] == 8 * (12 + 29 + 2)
+
+
+def test_api_key_from_cdsapirc_only_for_ads(mod, monkeypatch, tmp_path):
+    submitted = _fake_ads(monkeypatch, mod, _pm25_forecast)
+    monkeypatch.delenv("ADS_API_KEY")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    rc = tmp_path / ".cdsapirc"
+    argv = ("--bbox", KENYA, "--date", "2026-10-05", "--max-lead", "6", "-o", str(tmp_path / "o"))
+    rc.write_text("url: https://cds.climate.copernicus.eu/api\nkey: cdskey\n")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(mod.fetch, *argv)
+    assert exc.value.code == 2
+    rc.write_text("url: https://ads.atmosphere.copernicus.eu/api\nkey: adskey\n")
+    run_skill(mod.fetch, *argv)
+    assert submitted.key == "adskey"

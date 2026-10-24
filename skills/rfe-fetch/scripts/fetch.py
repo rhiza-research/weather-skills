@@ -23,7 +23,7 @@ from weather_skills_core.standard_utils import bbox_subset
 from weather_skills_core.units import stamp_data_interval, to_standard_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.2"
+_SKILL_VERSION = "0.0.3"
 
 _BASE_URL = "https://ftp.cpc.ncep.noaa.gov/fews/fewsdata/africa/rfe2/geotiff/"
 _START = date(2001, 1, 1)

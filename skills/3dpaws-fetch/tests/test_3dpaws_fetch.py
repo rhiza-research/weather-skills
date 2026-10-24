@@ -192,9 +192,14 @@ def test_daily_values_and_qc(tmp_path, mod, fetch):
     np.testing.assert_allclose(precip, [9.6, 0.0])
     assert ds["tmin"].sel(station_id="1").values[0] == pytest.approx(20.0)
     assert ds["tmax"].sel(station_id="1").values[0] == pytest.approx(31.5)
-    assert np.isnan(ds["tmin"].sel(station_id="1").values[1])
+    # One failed read is a 30-minute gap, inside the 3-interval tolerance.
+    assert ds["tmin"].sel(station_id="1").values[1] == pytest.approx(20.0)
+    np.testing.assert_allclose(ds["tmin_coverage"].values[:, 0], [1.0, 1.0])
+    assert ds["tmin"].attrs["ancillary_variables"] == "tmin_coverage"
+    assert ds["tmin_coverage"].attrs["units"] == "1"
     assert ds["wind_gust"].sel(station_id="1").values[0] == pytest.approx(5.0)
     assert "pressure" not in ds  # all readings were the 0 sentinel
+    assert "pressure_coverage" not in ds
     assert ds["precip"].attrs["units"] == "mm day-1"
     assert "cell_methods" not in ds["precip"].attrs
     assert ds["humidity"].attrs["units"] == "1"
@@ -204,7 +209,7 @@ def test_daily_values_and_qc(tmp_path, mod, fetch):
     assert ds.attrs["featureType"] == "timeSeries"
 
 
-def test_outage_blanks_the_day(tmp_path, mod, fetch):
+def test_outage_lowers_coverage(tmp_path, mod, fetch):
     def make(t):
         return {"rg1": 0.0, "rg2": 0.0, "mt1": 20.0}
 
@@ -216,37 +221,71 @@ def test_outage_blanks_the_day(tmp_path, mod, fetch):
         if not p["time"].startswith(("2026-10-02T10", "2026-10-02T11", "2026-10-02T12"))
     ]
     ds = _run(tmp_path, mod, fetch, {"1": points})
-    assert not np.isnan(ds["precip"].values[0, 0])
-    assert np.isnan(ds["precip"].values[1, 0])
+    # 10:00 to 13:00 has no readings: 3 of 24 hours.
+    np.testing.assert_allclose(ds["temperature_coverage"].values[:, 0], [1.0, 0.875])
+    np.testing.assert_allclose(ds["temperature"].values[:, 0], [20.0, 20.0])
+    np.testing.assert_allclose(ds["precip"].values[:, 0], [0.0, 0.0])
+    np.testing.assert_allclose(ds["precip_coverage"].values[:, 0], [1.0, 0.875])
+
+
+def test_partial_day_keeps_the_rain_measured(tmp_path, mod, fetch):
+    def make(t):
+        return {"rg1": 0.1, "rg2": 0.1, "mt1": 20.0}
+
+    points = _readings("2026-10-01", 2, 15, make)
+    # Day 2 loses 00:00-06:00; gauge 2 also misses 12:00, so gauge 1's reading
+    # there does not count either.
+    points = [p for p in points if not ("2026-10-02T00" <= p["time"] < "2026-10-02T06")]
+    for p in points:
+        if p["time"] == "2026-10-02T12:00:00Z":
+            p["measurements"] = {"rg1": 0.1, "mt1": 20.0}
+    # Day 2 covers 75 %, under the default --min-coverage 0.8: NaN, coverage still told.
+    ds = _run(tmp_path, mod, fetch, {"1": points})
+    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
+    np.testing.assert_allclose(ds["precip_coverage"].values[:, 0], [1.0, 0.75])
     assert np.isnan(ds["temperature"].values[1, 0])
+    # A looser threshold keeps it: 96 readings on day 1; 72 - 1 on day 2, nothing scaled up.
+    ds = _run(tmp_path, mod, fetch, {"1": points}, "--min-coverage", "0.5")
+    np.testing.assert_allclose(ds["precip"].values[:, 0], [9.6, 7.1])
+    np.testing.assert_allclose(ds["temperature"].values[:, 0], [20.0, 20.0])
 
 
-def test_single_missing_reading_blanks_the_day(tmp_path, mod, fetch):
+def test_min_coverage_must_be_a_share(tmp_path, mod, fetch):
+    with pytest.raises(SystemExit) as exc:
+        _run(
+            tmp_path,
+            mod,
+            fetch,
+            {"1": _readings("2026-10-01", 2, 15, _dry)},
+            "--min-coverage",
+            "80",
+        )
+    assert exc.value.code == 2
+
+
+def test_single_missing_reading_keeps_the_day(tmp_path, mod, fetch):
     points = _readings("2026-10-01", 2, 15, _dry)
-    points = [p for p in points if p["time"] != "2026-10-02T14:15:00Z"]
+    missing = ("2026-10-02T14:15:00Z", "2026-10-02T00:00:00Z")  # incl. a day's first
+    points = [p for p in points if p["time"] not in missing]
     ds = _run(tmp_path, mod, fetch, {"1": points})
-    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
-    np.testing.assert_array_equal(np.isnan(ds["temperature"].values[:, 0]), [False, True])
+    # The next rain reading holds the missed interval's rain: precip stays complete.
+    for name in ("temperature", "precip"):
+        assert not np.isnan(ds[name].values).any()
+        np.testing.assert_allclose(ds[f"{name}_coverage"].values, 1.0)
 
 
-def test_missing_first_reading_of_the_day_blanks_that_day(tmp_path, mod, fetch):
-    points = _readings("2026-10-01", 2, 15, _dry)
-    points = [p for p in points if p["time"] != "2026-10-02T00:00:00Z"]
-    ds = _run(tmp_path, mod, fetch, {"1": points})
-    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
-
-
-def test_every_other_reading_dropped_is_not_double_the_interval(tmp_path, mod, fetch):
-    # A 1-minute station loses every other reading on day 2.
+def test_sparse_day_is_not_a_longer_interval(tmp_path, mod, fetch):
+    # A 1-minute station keeps one reading in four on day 2.
     points = _free_running("2026-10-01", 2, _dry, pad_hours=1)
-    points = [p for i, p in enumerate(points) if not (p["time"] >= "2026-10-02" and i % 2)]
+    points = [p for i, p in enumerate(points) if not (p["time"] >= "2026-10-02" and i % 4)]
     # A 15-minute station reporting on the quarter hour does the same.
     points15 = _readings("2026-10-01", 2, 15, _dry)
-    points15 = [p for i, p in enumerate(points15) if not (p["time"] >= "2026-10-02" and i % 2)]
+    points15 = [p for i, p in enumerate(points15) if not (p["time"] >= "2026-10-02" and i % 4)]
     ds = _run(tmp_path, mod, fetch, {"1": points, "2": points15})
     for sid in ("1", "2"):
-        precip = ds["precip"].sel(station_id=sid).values
-        np.testing.assert_array_equal(np.isnan(precip), [False, True])
+        coverage = ds["temperature_coverage"].sel(station_id=sid).values
+        assert coverage[0] == pytest.approx(1.0)
+        assert coverage[1] < 0.3
 
 
 def test_one_and_fifteen_minute_stations_both_complete(tmp_path, mod, fetch):
@@ -268,15 +307,14 @@ def test_one_and_fifteen_minute_stations_both_complete(tmp_path, mod, fetch):
     np.testing.assert_allclose(ds["precip"].sel(station_id="2").values, [0.96, 0.96])
 
 
-def test_interval_change_mid_request(tmp_path, mod, fetch):
-    # 1 minute on its own timer for day 1, then 15 minutes on the clock for day 2.
-    points = _free_running("2026-10-01", 1, _dry) + _readings("2026-10-02", 1, 15, _dry)
-    ds = _run(tmp_path, mod, fetch, {"1": points})
-    assert not np.isnan(ds["precip"].values).any()
-    # A dropped reading after the change still blanks the day.
-    points = [p for p in points if p["time"] != "2026-10-02T09:30:00Z"]
-    ds = _run(tmp_path, mod, fetch, {"1": points})
-    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
+def test_interval_change_mid_request_blanks_the_other_interval(tmp_path, mod, fetch):
+    # 1 minute for two days, then 15 minutes: every day is judged at the
+    # station's most common spacing (1 minute), so the 15-minute day is NaN.
+    points = _free_running("2026-10-01", 2, _dry) + _readings("2026-10-03", 1, 15, _dry)
+    ds = _run(tmp_path, mod, fetch, {"1": points}, "--end-time", "2026-10-03")
+    coverage = ds["temperature_coverage"].values[:, 0]
+    np.testing.assert_allclose(coverage[:2], [1.0, 1.0])
+    assert coverage[2] < 0.1
 
 
 def test_duplicate_readings_count_once(tmp_path, mod, fetch):
@@ -286,12 +324,37 @@ def test_duplicate_readings_count_once(tmp_path, mod, fetch):
 
     points = _readings("2026-10-01", 2, 15, make)
     wet = next(p for p in points if p["time"] == "2026-10-01T06:00:00Z")
-    # Day 2 loses a reading; a resent copy of another does not make up for it.
-    points = [p for p in points if p["time"] != "2026-10-02T08:00:00Z"]
+    # Day 2 loses 08:00-09:00; a resent copy of another reading does not make up for it.
+    points = [p for p in points if not p["time"].startswith("2026-10-02T08")]
     points += [wet, dict(points[-1])]
     ds = _run(tmp_path, mod, fetch, {"1": points})
     np.testing.assert_allclose(ds["precip"].values[0, 0], 1.0)
-    assert np.isnan(ds["precip"].values[1, 0])
+    assert ds["temperature_coverage"].values[1, 0] == pytest.approx(23 / 24)
+
+
+def test_rain_gap_up_to_three_intervals_keeps_precip(tmp_path, mod, fetch):
+    # A 1-minute station misses two readings in a row on day 2: a 3-minute gap.
+    points = _free_running("2026-10-01", 2, _dry, pad_hours=1)
+    day2 = [i for i, p in enumerate(points) if p["time"] >= "2026-10-02T12"]
+    points = [p for i, p in enumerate(points) if i not in day2[1:3]]
+    gap = pd.Timestamp(points[day2[0] + 1]["time"]) - pd.Timestamp(points[day2[0]]["time"])
+    assert pd.Timedelta(minutes=3) <= gap < pd.Timedelta(minutes=3.5)  # 3 min plus drift
+    ds = _run(tmp_path, mod, fetch, {"1": points})
+    for name in ("temperature", "precip"):
+        assert not np.isnan(ds[name].values).any()
+        np.testing.assert_allclose(ds[f"{name}_coverage"].values, 1.0)
+
+
+def test_rain_gap_over_three_intervals_lowers_precip_coverage(tmp_path, mod, fetch):
+    # Three readings in a row missing: a 4-minute gap loses rain.
+    points = _free_running("2026-10-01", 2, _dry, pad_hours=1)
+    day2 = [i for i, p in enumerate(points) if p["time"] >= "2026-10-02T12"]
+    points = [p for i, p in enumerate(points) if i not in day2[1:4]]
+    ds = _run(tmp_path, mod, fetch, {"1": points})
+    assert not np.isnan(ds["precip"].values).any()
+    assert ds["precip_coverage"].values[0, 0] == 1.0
+    assert 0.997 < ds["precip_coverage"].values[1, 0] < 1.0
+    assert not np.isnan(ds["temperature"].values).any()
 
 
 def test_gauges_disagree_gives_nan(tmp_path, mod, fetch):
@@ -301,6 +364,7 @@ def test_gauges_disagree_gives_nan(tmp_path, mod, fetch):
 
     ds = _run(tmp_path, mod, fetch, {"1": _readings("2026-10-01", 2, 15, make)})
     np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
+    np.testing.assert_allclose(ds["precip_coverage"].values[:, 0], [1.0, 0.0])
 
 
 def test_day_start_hour_shifts_the_rain_day(tmp_path, mod, fetch):
@@ -342,3 +406,48 @@ def test_probe_latest_prints_last_ended_day(capsys, mod, fetch):
         run_skill(fetch, "--probe-latest", "--station", "1", "--station", "2")
     out = capsys.readouterr().out.strip()
     assert out == (today - pd.Timedelta(days=4)).strftime("%Y-%m-%d")
+
+
+def test_broken_gauge_is_left_out_for_that_day(tmp_path, mod, fetch, capsys):
+    def make(t):
+        # Gauge 1 reads 40 mm a minute on day 2 (Voi, Embu in Oct 2026); gauge 2 is fine.
+        return {"rg1": 40.0 if t.day == 2 else 0.1, "rg2": 0.1, "mt1": 20.0}
+
+    ds = _run(tmp_path, mod, fetch, {"1": _free_running("2026-10-01", 2, make, pad_hours=1)})
+    # Day 1 both gauges agree; day 2 is gauge 2 alone.
+    np.testing.assert_allclose(ds["precip"].values[:, 0], [143.1, 143.1], rtol=0.01)
+    np.testing.assert_allclose(ds["precip_coverage"].values[:, 0], [1.0, 1.0])
+    assert "rg1 over 5 mm/min on 1 day(s)" in capsys.readouterr().err
+
+
+def test_heavy_rain_at_a_15_minute_station_is_not_broken(tmp_path, mod, fetch):
+    def make(t):
+        # 30 mm in a quarter hour is 2 mm a minute: heavy, but real.
+        wet = t == pd.Timestamp("2026-10-01T06:00")
+        return {"rg1": 30.0 if wet else 0.0, "rg2": 30.0 if wet else 0.0, "mt1": 20.0}
+
+    ds = _run(tmp_path, mod, fetch, {"1": _readings("2026-10-01", 2, 15, make)})
+    np.testing.assert_allclose(ds["precip"].values[:, 0], [30.0, 0.0])
+
+
+def test_station_with_only_gauge_2(tmp_path, mod, fetch):
+    def make(t):
+        return {"rg2": 0.1 if t.day == 1 else 0.0, "mt1": 20.0}
+
+    ds = _run(tmp_path, mod, fetch, {"1": _readings("2026-10-01", 2, 15, make)})
+    np.testing.assert_allclose(ds["precip"].values[:, 0], [9.6, 0.0])
+    np.testing.assert_allclose(ds["precip_coverage"].values[:, 0], [1.0, 1.0])
+
+
+def test_gauges_within_2_mm_or_half_agree_and_give_the_larger(tmp_path, mod, fetch):
+    def make(t):
+        # Day 1: 0 against 1.8 mm (within 2 mm). Day 2: 9.6 against 4.8 (within half).
+        first = t == pd.Timestamp("2026-10-01T06:00")
+        return {
+            "rg1": 0.1 if t.day == 2 else 0.0,
+            "rg2": 1.8 if first else (0.05 if t.day == 2 else 0.0),
+            "mt1": 20.0,
+        }
+
+    ds = _run(tmp_path, mod, fetch, {"1": _readings("2026-10-01", 2, 15, make)})
+    np.testing.assert_allclose(ds["precip"].values[:, 0], [1.8, 9.6])

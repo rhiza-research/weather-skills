@@ -2,10 +2,10 @@
 name: imerg-fetch
 description: "Fetch NASA IMERG daily precipitation (global 0.1° grid) for a date range from NASA GES DISC via Earthdata login, as a weather-skills Zarr. Serves the daily Late (GPM_3IMERGDL, about 2 days behind) and Final (GPM_3IMERGDF, gauge-adjusted research quality) files. Use when a task specifically needs these daily GES DISC products, for example IMERG Final."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Authenticates to NASA Earthdata via the `earthaccess` library — set EARTHDATA_USERNAME and EARTHDATA_PASSWORD in the environment, or use a `.netrc` entry for `urs.earthdata.nasa.gov`.
+compatibility: Requires Python 3.12 and uv. Authenticates to NASA Earthdata via the `earthaccess` library — set EARTHDATA_USERNAME and EARTHDATA_PASSWORD in the environment, or use a `.netrc` entry for `urs.earthdata.nasa.gov`. Earthdata accounts are free with sign-up at https://urs.earthdata.nasa.gov/users/new.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.3"
+  version: "0.0.4"
   catalog-group: fetchers
   variables:
     - precip

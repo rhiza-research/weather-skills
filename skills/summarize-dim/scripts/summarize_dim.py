@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from weather_skills_core import DataError, Dataset, UsageError, weather_skill
-from weather_skills_core.standard_dataset import detect_spatial_dims
+from weather_skills_core.standard_dataset import detect_spatial_dims, names_for
 from weather_skills_core.standard_utils import latitude_weights
 from weather_skills_core.units import (
     AGGREGATION_COVERAGE_COORD,
@@ -27,10 +27,12 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.4"
 
 _TIME_LABELS = ("month", "year", "dayofyear", "month_group")
 _INITIALS = "JFMAMJJASOND"
+# Grid and station dims a sum must not add up (latitude, lon, station_id, ...).
+_SPATIAL_DIMS = frozenset((*names_for("lat"), *names_for("lon"), *names_for("point_id")))
 
 
 @weather_skill(
@@ -145,6 +147,11 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
                     None,  # expected time steps, filled in below for the time group
                 )
             )
+        if not entries:
+            raise DataError(
+                f"--by {', '.join(names)}: no cell or step has a non-empty value of every one "
+                "of these labels at once; nothing to group"
+            )
         groups.append(entries)
 
     # Coverage: for each time group, the steps a complete record would hold. The labels are
@@ -153,6 +160,12 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
     # season cut by the start or end of the record is incomplete.
     if time_by:
         times = ds.indexes["time"]
+        if not times.is_unique:
+            repeated = times[times.duplicated()][0]
+            raise UsageError(
+                f"time {repeated} appears more than once, so its values would count twice "
+                "toward a --by group; drop the repeated steps first"
+            )
         first = times[0]
         period = next(
             (
@@ -181,12 +194,14 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
                 if k % every == 0
                 for day in ((1,) if calendar else (1, 11, 21))
             ]
+            longer_than_a_day = True
         else:
             step = parse_aggregation_period(period) if period else infer_timestep(ds, "time")
             step = datetime.timedelta(seconds=float(step.to("second").magnitude))
             margin = int(np.ceil(datetime.timedelta(days=366) / step))
             n = round((times[-1] - first) / step)
             full = [first + i * step for i in range(-margin, n + margin + 1)]
+            longer_than_a_day = step > datetime.timedelta(days=1)
         full = (
             pd.DatetimeIndex(full) if isinstance(times, pd.DatetimeIndex) else xr.CFTimeIndex(full)
         )
@@ -196,27 +211,34 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
                 f"time values do not fall on a regular {period or 'time'} axis, so the steps "
                 "each --by group should hold cannot be counted"
             )
-        month = np.asarray(full.month)
-        season = np.full(full.size, "", dtype=object)
-        begins_last_year = np.zeros(full.size, dtype=bool)
-        for token in np.unique(seasons[seasons != ""]) if seasons is not None else []:
-            starts = [
-                start
-                for start in range(12)
-                if len(token) <= 12
-                and all(_INITIALS[(start + i) % 12] == c for i, c in enumerate(token))
-            ]
-            if len(starts) == 1:  # anything else fails the check below
-                months = [(starts[0] + i) % 12 + 1 for i in range(len(token))]
-                season[np.isin(month, months)] = token
-                begins_last_year |= np.isin(month, months) & (month < months[0])
-        rebuilt = {
-            "month": month,
-            "dayofyear": np.asarray(full.dayofyear),
-            # As label-group: a group crossing December takes the year it begins.
-            "year": np.asarray(full.year) - begins_last_year,
-            "month_group": season.astype(str),
-        }
+        # Labels at each step's start, and at its last second to catch a step (a week
+        # from 27 May) that runs into the next group.
+        labelled = []
+        for index in (full, full[1:] - datetime.timedelta(seconds=1)):
+            month = np.asarray(index.month)
+            season = np.full(index.size, "", dtype=object)
+            begins_last_year = np.zeros(index.size, dtype=bool)
+            for token in np.unique(seasons[seasons != ""]) if seasons is not None else []:
+                starts = [
+                    start
+                    for start in range(12)
+                    if len(token) <= 12
+                    and all(_INITIALS[(start + i) % 12] == c for i, c in enumerate(token))
+                ]
+                if len(starts) == 1:  # anything else fails the check below
+                    months = [(starts[0] + i) % 12 + 1 for i in range(len(token))]
+                    season[np.isin(month, months)] = token
+                    begins_last_year |= np.isin(month, months) & (month < months[0])
+            labelled.append(
+                {
+                    "month": month,
+                    "dayofyear": np.asarray(index.dayofyear),
+                    # As label-group: a group crossing December takes the year it begins.
+                    "year": np.asarray(index.year) - begins_last_year,
+                    "month_group": season.astype(str),
+                }
+            )
+        rebuilt, rebuilt_end = labelled
         change = np.zeros(full.size, dtype=bool)
         grouped = np.ones(full.size, dtype=bool)
         for b in time_by:
@@ -224,6 +246,15 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
                 raise UsageError(
                     f"--by {b!r} does not hold the calendar {b} of each time step, as "
                     "label-group writes it, so its full calendar period is unknown"
+                )
+            # A step of a day or less belongs to the day it is stamped on.
+            crossing = rebuilt[b][at] != rebuilt_end[b][at]
+            if longer_than_a_day and crossing.any():
+                raise UsageError(
+                    f"the {period or 'time'} step starting {times[np.argmax(crossing)]} runs "
+                    f"into the next --by {b} group, so the group would take in time outside "
+                    "it; aggregate to steps that fit inside the groups (daily, or monthly for "
+                    "months and month groups)"
                 )
             change[1:] |= rebuilt[b][1:] != rebuilt[b][:-1]
             if b == "month_group":
@@ -279,6 +310,18 @@ def summarize_dim(ds, variable, dim, by, method, lat_weighted, min_coverage, **k
                     f"({da.attrs.get('units', units)}) into a rate, not a total; convert the "
                     "rates to period totals first (convert-to-totals)"
                 )
+        # Adding up cells or stations of a physical quantity (mm, degC) grows with the
+        # area and means nothing; dimensionless counts and flags add up to how many.
+        over_space = [d for d in rdims if d in _SPATIAL_DIMS]
+        if method == "sum" and over_space and (units is None or units.dimensionality):
+            spatial_by = [b for b in by if set(ds[b].dims) & set(over_space)]
+            via = f" (via --by {', '.join(spatial_by)})" if spatial_by else ""
+            raise UsageError(
+                f"--method sum over {', '.join(over_space)}{via} would add up {var!r} "
+                f"({'no units' if units is None else format(units, '~')}) across cells or stations; use "
+                "--method mean for a regional value, after summing over time in a "
+                "separate call. Only dimensionless variables (units 1) sum over space"
+            )
         if by:
             # min_count=1 / ddof=1 as below. Combinations with no cells stay NaN.
             kw = {"min_count": 1} if method == "sum" else {"ddof": 1} if method == "std" else {}
