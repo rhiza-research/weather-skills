@@ -180,7 +180,7 @@ def test_unknown_variable(tmp_path, fetch_mod, monkeypatch, capsys):
 def test_gcs_uses_credentials_json_when_set(fetch_mod, monkeypatch):
     monkeypatch.setattr(fetch_mod, "_FS", None)
     info = {"type": "service_account", "project_id": "sheerwater", "client_email": "x@y"}
-    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", json.dumps(info))
+    monkeypatch.setenv("GCLOUD_SERVICE_CREDENTIALS", json.dumps(info))
     seen = {}
 
     def fake_gcs_filesystem(**kwargs):
@@ -194,14 +194,14 @@ def test_gcs_uses_credentials_json_when_set(fetch_mod, monkeypatch):
 
 def test_gcs_rejects_invalid_credentials_json(fetch_mod, monkeypatch):
     monkeypatch.setattr(fetch_mod, "_FS", None)
-    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", "{not valid json")
+    monkeypatch.setenv("GCLOUD_SERVICE_CREDENTIALS", "{not valid json")
     with pytest.raises(fetch_mod.DataError, match="not valid JSON"):
         fetch_mod._gcs()
 
 
 def test_gcs_falls_back_without_credentials_json(fetch_mod, monkeypatch):
     monkeypatch.setattr(fetch_mod, "_FS", None)
-    monkeypatch.delenv("NEURAL_GCM_SERVICE_CREDENTIALS", raising=False)
+    monkeypatch.delenv("GCLOUD_SERVICE_CREDENTIALS", raising=False)
     seen = {}
 
     def fake_gcs_filesystem(**kwargs):

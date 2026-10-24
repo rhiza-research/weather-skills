@@ -217,7 +217,7 @@ def test_missing_date_exits_1(tmp_path, fetch_mod, monkeypatch):
 
 def test_filesystem_uses_credentials_json_when_set(fetch_mod, monkeypatch):
     info = {"type": "service_account", "project_id": "sheerwater", "client_email": "x@y"}
-    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", json.dumps(info))
+    monkeypatch.setenv("GCLOUD_SERVICE_CREDENTIALS", json.dumps(info))
     seen = {}
 
     def fake_gcs_filesystem(**kwargs):
@@ -230,13 +230,13 @@ def test_filesystem_uses_credentials_json_when_set(fetch_mod, monkeypatch):
 
 
 def test_filesystem_rejects_invalid_credentials_json(fetch_mod, monkeypatch):
-    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", "{not valid json")
+    monkeypatch.setenv("GCLOUD_SERVICE_CREDENTIALS", "{not valid json")
     with pytest.raises(fetch_mod.DataError, match="not valid JSON"):
         fetch_mod._filesystem()
 
 
 def test_filesystem_falls_back_without_credentials_json(fetch_mod, monkeypatch):
-    monkeypatch.delenv("NEURAL_GCM_SERVICE_CREDENTIALS", raising=False)
+    monkeypatch.delenv("GCLOUD_SERVICE_CREDENTIALS", raising=False)
     seen = {}
 
     def fake_gcs_filesystem(**kwargs):
@@ -276,7 +276,7 @@ def test_read_failure_is_data_error(tmp_path, fetch_mod, monkeypatch, capsys):
 
 
 def test_filesystem_rejects_non_object_credentials_json(fetch_mod, monkeypatch):
-    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", '"not-a-key"')
+    monkeypatch.setenv("GCLOUD_SERVICE_CREDENTIALS", '"not-a-key"')
     monkeypatch.setattr(gcsfs, "GCSFileSystem", lambda **kwargs: pytest.fail("token passed on"))
     with pytest.raises(fetch_mod.DataError, match="JSON object"):
         fetch_mod._filesystem()

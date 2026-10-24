@@ -252,7 +252,7 @@ _AUTH_TOKENS = (
 def _auth_msg(product: _Product) -> str:
     msg = (
         f"cannot read gs://{product.bucket} (requires an authenticated Google Cloud "
-        "identity, not anonymous access). Set NEURAL_GCM_SERVICE_CREDENTIALS to the "
+        "identity, not anonymous access). Set GCLOUD_SERVICE_CREDENTIALS to the "
         "full service-account key JSON (no file needed), GOOGLE_APPLICATION_CREDENTIALS "
         "to a service-account JSON file path, or run `gcloud auth application-default login`."
     )
@@ -280,16 +280,14 @@ def _filesystem(product: _Product, billing_project: str | None = None):
     import gcsfs
 
     kwargs = {"requester_pays": billing_project} if product.requester_pays else {}
-    creds_json = os.environ.get("NEURAL_GCM_SERVICE_CREDENTIALS")
+    creds_json = os.environ.get("GCLOUD_SERVICE_CREDENTIALS")
     if creds_json:
         try:
             info = json.loads(creds_json)
         except json.JSONDecodeError as exc:
-            raise DataError(f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
+            raise DataError(f"GCLOUD_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
         if not isinstance(info, dict):
-            raise DataError(
-                "NEURAL_GCM_SERVICE_CREDENTIALS must be a service-account key JSON object."
-            )
+            raise DataError("GCLOUD_SERVICE_CREDENTIALS must be a service-account key JSON object.")
         kwargs["token"] = info
     try:
         return gcsfs.GCSFileSystem(**kwargs)
