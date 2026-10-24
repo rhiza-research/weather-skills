@@ -274,12 +274,7 @@ def _open_dataset(state, dataset) -> dict:
 )
 @weather_skill.argument(
     "--max-lead",
-    help=(
-        "Forecasts only: download leads up to this one (pandas timedelta: 240h, 10D). "
-        "Counts catalog leads, which mark precip at the end of each interval: the "
-        "first precip interval (output step 0) needs 24h on the 46-day product, "
-        "3h or 6h on GFS / IFS. 0h gives only instant fields. Default: every lead."
-    ),
+    help=("Forecasts only: keep output steps up to this one (240h, 10D). Default: every step."),
 )
 def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max_lead, **kwargs):
     """Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
@@ -364,10 +359,12 @@ def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max
                 raise UsageError(
                     f"--max-lead {max_lead!r} is not a timedelta (240h, 10D)"
                 ) from None
-            # 0h keeps only lead 0 (the initial state of instant fields).
             if limit < np.timedelta64(0, "ns"):
                 raise UsageError("--max-lead must not be negative")
-            ds = ds.sel(lead_time=slice(None, limit))
+            # One catalog lead past the limit: end-labelled fields move back one
+            # step below, and the extra lead is trimmed after that.
+            n = int((ds["lead_time"].values <= limit).sum())
+            ds = ds.isel(lead_time=slice(0, n + 1))
         if init_target not in inits:
             raise _no_init()
         try:
@@ -417,25 +414,6 @@ def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max
     if is_forecast and len(ds.data_vars) > 0:
         # Read the subset once: the NaN checks below would otherwise re-read it.
         ds = ds.load()
-        # Only lead 0 kept (--max-lead below the first interval's end): interval
-        # fields have no value there. Drop them and keep the instant fields.
-        if ds.sizes["step"] == 1 and ds["step"].values[0] == np.timedelta64(0, "ns"):
-            no_lead0 = [name for name in ds.data_vars if bool(ds[name].isnull().all())]
-            if len(no_lead0) == len(ds.data_vars):
-                raise UsageError(
-                    f"{', '.join(no_lead0)} has no value at lead 0: {dataset} labels "
-                    "averaged and accumulated fields at the end of their interval, and "
-                    "--max-lead kept only lead 0. Pass a --max-lead that reaches past the "
-                    "first lead (e.g. 3h or 6h)."
-                )
-            if no_lead0:
-                print(
-                    f"WARNING: dropped {', '.join(no_lead0)}: no value at lead 0 ({dataset} "
-                    "labels averaged and accumulated fields at the end of their interval). "
-                    "Pass a --max-lead that reaches past the first lead to keep them.",
-                    file=sys.stderr,
-                )
-                ds = ds.drop_vars(no_lead0)
         empty = np.ones(ds.sizes["step"], dtype=bool)
         for name in ds.data_vars:
             other = [d for d in ds[name].dims if d != "step"]
@@ -478,6 +456,17 @@ def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max
                 "Dropped all-NaN lead 0 and relabelled steps to interval start.",
                 file=sys.stderr,
             )
+    if is_forecast and max_lead is not None:
+        ds = ds.sel(step=slice(None, limit))
+        # Mixed with instant fields, an end-labelled field has no value at step 0.
+        empty = [name for name in ds.data_vars if bool(ds[name].isnull().all())]
+        if empty:
+            print(
+                f"WARNING: dropped {', '.join(empty)}: no value up to --max-lead {max_lead} "
+                "(averaged fields are labelled at the end of their interval).",
+                file=sys.stderr,
+            )
+            ds = ds.drop_vars(empty)
     ds = _stack_pressure_levels(ds)
 
     print(f"Fetching dynamical:{dataset} (shape={shape})", file=sys.stderr)
