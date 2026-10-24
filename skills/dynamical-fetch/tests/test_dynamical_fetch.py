@@ -569,6 +569,51 @@ def test_max_lead_keeps_leads_up_to_limit(tmp_path, mod, fetch):
     assert hours == [0, 3, 6]
 
 
+def test_max_lead_zero_keeps_only_initial_state(tmp_path, mod, fetch):
+    ds = _end_labelled_forecast_ds()
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "temperature_2m", "--max-lead", "0h")
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0]
+    np.testing.assert_array_equal(
+        written["temperature_2m"].values, ds["temperature_2m"].values[0, :1]
+    )
+
+
+def test_max_lead_counts_output_steps_of_end_labelled_field(tmp_path, mod, fetch):
+    ds = _end_labelled_forecast_ds()
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "--max-lead", "3h")
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0, 3]
+    np.testing.assert_array_equal(
+        written["precipitation_surface"].values, ds["precipitation_surface"].values[0, 1:3]
+    )
+
+
+def test_max_lead_zero_on_end_labelled_field_keeps_first_interval(tmp_path, mod, fetch):
+    ds = _end_labelled_forecast_ds()
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "--max-lead", "0h")
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0]
+    np.testing.assert_array_equal(
+        written["precipitation_surface"].values, ds["precipitation_surface"].values[0, 1:2]
+    )
+
+
+def test_max_lead_zero_with_mixed_fields_drops_interval_fields(tmp_path, mod, fetch, capsys):
+    ds = _end_labelled_forecast_ds()
+    written = _fetch_forecast(
+        tmp_path, mod, fetch, ds, "-v", "precip", "-v", "temperature_2m", "--max-lead", "0h"
+    )
+    assert list(written.data_vars) == ["temperature_2m"]
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0]
+    assert "dropped precipitation_surface" in capsys.readouterr().err
+
+
+def test_max_lead_negative_exits_2(tmp_path, mod, fetch, capsys):
+    ds = _end_labelled_forecast_ds()
+    with pytest.raises(SystemExit) as exc:
+        _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "temperature_2m", "--max-lead", "-3h")
+    assert exc.value.code == 2
+    assert "must not be negative" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("publishing", [False, True])
 def test_probe_latest_warns_only_when_last_lead_missing(mod, fetch, capsys, publishing):
     ds = _end_labelled_forecast_ds()

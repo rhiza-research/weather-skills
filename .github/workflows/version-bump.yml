@@ -432,14 +432,15 @@ jobs:
           # Stage exactly the plugin payload from main: manifest, agent, skills,
           # and the LICENSE whose terms the manifest declares. Nothing else in
           # the repo is copied, so the published plugin never carries demo/,
-          # tools/, CI, or tests.
+          # tools/, CI, or tests. Per-skill tests (skills/*/tests) are left out
+          # too: they import the root tests/conftest.py, which isn't shipped.
           stage="${RUNNER_TEMP}/plugin-payload"
           rm -rf "$stage"
           mkdir -p "$stage/.claude-plugin" "$stage/agents"
           cp .claude-plugin/plugin.json "$stage/.claude-plugin/plugin.json"
           cp agents/forecaster.md "$stage/agents/forecaster.md"
           cp LICENSE "$stage/LICENSE"
-          cp -R skills "$stage/skills"
+          rsync -a --exclude='/*/tests/' skills/ "$stage/skills/"
 
           # Check out plugin-dist in a separate worktree so the main checkout is
           # untouched. Base on the branch's current tip for a fast-forward

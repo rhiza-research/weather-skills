@@ -3,7 +3,7 @@
 ## Publish model
 
 `main` is the consumer-facing branch. Anything merged to `main` is considered
-published — there is no separate release, dev, or deploy branch. Downstream
+published. Work collects on `dev` and is merged to `main` in bulk. Downstream
 consumers (rhiza-agents, skillkit, the demo's `uv tool install ../`, standalone
 single-file copies) read from `main`, so every merge to `main` is a release.
 
@@ -18,12 +18,12 @@ contributors never edit either by hand.
 
 ## PR workflow
 
-1. Branch off `main`.
-2. Open a PR back into `main`.
+1. Branch off `dev`, which holds the most recent work.
+2. Open a PR into `dev`. `dev` reaches `main` through one dev→main PR.
 3. CI must pass (the `CI` workflow runs ruff format-check, ruff check, inline-dep
    validation, pytest for skill correctness tests, and a `--help` invocation per
    script).
-4. Rebase onto `main` before merging — linear history is required.
+4. Rebase onto the target branch before merging — linear history is required.
 5. Use the GitHub merge button (squash-merge or rebase-merge, per-PR choice).
 
 Authors **must not** edit any `metadata.version` field by hand. The version
@@ -39,8 +39,7 @@ under `skills/<name>/`).
 
 Each skill has exactly one `scripts/*.py`. That file is the entry point: CI
 runs `--help` on every `scripts/*.py`, and the skill runner does the same.
-Shared helpers belong in `weather-skills-core`, not a second script in the
-skill directory.
+Do not add a second script to the skill directory.
 
 ## Version bumps
 

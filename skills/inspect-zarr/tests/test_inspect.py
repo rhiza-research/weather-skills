@@ -105,7 +105,32 @@ def test_nan_counts_and_json_nulls(tmp_path, inspect_zarr, capsys):
     assert precip["n_nan"] == 1
     assert precip["n_finite"] == 23
     assert precip["min"] == 1.0
-    assert None not in precip["sample"]  # the sample shows finite values only
+    assert len(precip["sample"]) == 24
+    assert precip["sample"][0] is None
+
+
+def test_small_sample_keeps_nan_in_place_along_coord(tmp_path, inspect_zarr, capsys):
+    counties = ["kenya-baringo", "kenya-bomet", "kenya-kirinyaga", "kenya-kisii", "kenya-lamu"]
+    ds = xr.Dataset(
+        {"precip": ("admin_1", [12.8, 43.4, np.nan, 40.1, np.nan])},
+        coords={"admin_1": counties},
+    )
+    ds["precip"].attrs["units"] = "mm"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+
+    run_skill(inspect_zarr, "-i", str(src), "--format", "json", "--max-values", "0")
+
+    out = json.loads(capsys.readouterr().out)
+    labels = next(c for c in out["coords"] if c["name"] == "admin_1")["values"]
+    sample = out["data_vars"][0]["sample"]
+    assert [c for c, v in zip(labels, sample, strict=True) if v is None] == [
+        "kenya-kirinyaga",
+        "kenya-lamu",
+    ]
+
+    run_skill(inspect_zarr, "-i", str(src), "--max-values", "0")
+
+    assert "sample: 12.8, 43.4, nan, 40.1, nan" in capsys.readouterr().out
 
 
 def test_data_sample_truncates(tmp_path, inspect_zarr, capsys):
@@ -118,7 +143,7 @@ def test_data_sample_truncates(tmp_path, inspect_zarr, capsys):
     out = capsys.readouterr().out
     assert "finite 320/320" in out
     assert "…" in out
-    assert "(4 of 320 finite cells)" in out
+    assert "(4 of 320 cells)" in out
 
 
 def test_max_values_zero_still_caps_data_sample(tmp_path, inspect_zarr, capsys):
@@ -156,17 +181,48 @@ def test_timedelta_coords_and_key_attrs_are_readable(tmp_path, inspect_zarr, cap
     assert "cell_methods: step: mean" in out
 
 
-def test_sample_skips_leading_nan_and_datetime_stats(tmp_path, inspect_zarr, capsys):
+def test_sample_keeps_leading_nan_and_datetime_stats(tmp_path, inspect_zarr, capsys):
     ds = make_gridded()
     ds["precip"].values[:, 0, :] = np.nan  # a clipped grid's empty first rows
     onset = np.full((3, 4), np.datetime64("NaT"), dtype="datetime64[ns]")
     onset[2, 3] = np.datetime64("2026-03-05")
     ds["onset"] = (("latitude", "longitude"), onset)
     src = write_zarr(ds, tmp_path / "in.zarr")
-    run_skill(inspect_zarr, "-i", str(src), "--format", "json")
+    run_skill(inspect_zarr, "-i", str(src), "--format", "json", "--max-values", "4")
     by_name = {v["name"]: v for v in json.loads(capsys.readouterr().out)["data_vars"]}
-    assert by_name["precip"]["sample"][:3] == [1.0, 1.0, 1.0]
+    assert by_name["precip"]["sample"] == [None, None, None, None, "…"]
     assert by_name["precip"]["n_nan"] == 8
     assert by_name["onset"]["n_finite"] == 1
     assert by_name["onset"]["min"] == "2026-03-05"
     assert by_name["onset"]["mean"] is None
+
+
+def test_all_nan_variable_shows_nan(tmp_path, inspect_zarr, capsys):
+    ds = make_gridded(n_time=1, lats=(1.0,), lons=(10.0, 11.0, 12.0), fill=np.nan)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+
+    run_skill(inspect_zarr, "-i", str(src))
+
+    out = capsys.readouterr().out
+    assert "finite 0/3" in out
+    assert "sample: nan, nan, nan" in out
+
+
+def test_skip_nan_samples_finite_values(tmp_path, inspect_zarr, capsys):
+    ds = make_gridded()
+    ds["precip"].values[:, 0, :] = np.nan  # a clipped grid's empty first rows
+    src = write_zarr(ds, tmp_path / "in.zarr")
+
+    run_skill(inspect_zarr, "-i", str(src), "--max-values", "4", "--skip-nan")
+
+    out = capsys.readouterr().out
+    assert "sample: 1, 1, 1, 1, …  (4 of 16 finite cells)" in out
+
+
+def test_skip_nan_on_all_nan_variable(tmp_path, inspect_zarr, capsys):
+    ds = make_gridded(n_time=1, lats=(1.0,), lons=(10.0, 11.0, 12.0), fill=np.nan)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+
+    run_skill(inspect_zarr, "-i", str(src), "--skip-nan")
+
+    assert "sample: (no finite values)" in capsys.readouterr().out
