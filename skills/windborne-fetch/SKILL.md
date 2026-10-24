@@ -122,4 +122,4 @@ The first writes the latest run's 15-day ensemble-mean precipitation rate and 2 
 - Other fields sit on the analysis times and stamp `data_interval = 6 hour` when there is more than one. With `tp` and other fields together, `time` holds both sets of times and each field is NaN at the other's.
 
 ### degree-days
-- Always the US, whatever the key's forecast region. Days the run lists but has no values for are left out. Stamps `data_interval = 1 day`.
+- US only: one value per state (plus DC and Puerto Rico) per day, whatever region your key covers. Forecast days WindBorne lists without values are dropped, not filled. Each value covers one day (`data_interval = 1 day`).
