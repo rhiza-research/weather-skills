@@ -41,7 +41,7 @@ Pass `--dim`, `--by`, or both.
 ### Notes
 - Write to a new path: an `--output` equal to the input destroys the input.
 - `--by` gives each grid cell equal weight in a group (not area-weighted).
-- `--method sum` with a spatial label (`--by admin_1`) adds up every cell in the unit too. For a regional rainfall total, sum over time first, then take `--method mean` by the spatial label (see the examples).
+- `--method sum` with a spatial label (`--by admin_1`) adds up every cell in the unit too. For a regional rainfall total, sum over time first, then take `--method mean` by the spatial label (see [Grouped examples](#grouped-examples)).
 - Keep `--min-coverage 1.0` unless a task explicitly accepts estimates. Spatial labels have no coverage check. Other labels along time are refused.
 
 ### Example
@@ -50,6 +50,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i ecmwf_s2s_kenya.zarr -o e
 ```
 Writes the ensemble spread (standard deviation across the 101 members) of the ECMWF forecast, in the input units.
 
+Grouped examples (`--by`) are under [Details](#grouped-examples).
+
+## Details
+- Coverage (with a `--by` time label) is per input station or grid cell: its time steps with data over the steps the group's full calendar period holds at the data's step (MAM of daily data: 92). Input `aggregation_coverage` counts as that fraction. A season cut by the record's start or end is incomplete. Cells below `--min-coverage` are left out before any spatial reduction (a regional value uses complete cells only, NaN if none), counted on stderr; missing steps are never filled.
+- The statistic is appended to CF `cell_methods` (e.g. `number: standard_deviation`, `latitude: longitude: mean`, `latitude: longitude: mean (grouped by admin_1)`). `std` and `sum` also set `long_name` (`Standard deviation of Total precipitation across number`) and drop `GRIB_name`, `short_name`, and `comment`; `standard_name` stays.
+
+### Grouped examples
 Grouped with `--by`, on labels added by `label-group` (`--level admin_1 --time year --time month --time MAM,OND`):
 
 ```bash
@@ -69,7 +76,3 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i chirps_monthly_mm_labeled
 uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i chirps_season_totals.zarr -o chirps_county_season_totals.zarr --by admin_1 --method mean
 ```
 The first writes each cell's MAM and OND total in mm for every year, `(year, month_group, latitude, longitude)`; a season the record does not fully cover is NaN. The second averages those cell totals over each county, `(year, month_group, admin_1)`.
-
-## Details
-- Coverage (with a `--by` time label) is per input station or grid cell: its time steps with data over the steps the group's full calendar period holds at the data's step (MAM of daily data: 92). Input `aggregation_coverage` counts as that fraction. A season cut by the record's start or end is incomplete. Cells below `--min-coverage` are left out before any spatial reduction (a regional value uses complete cells only, NaN if none), counted on stderr; missing steps are never filled.
-- The statistic is appended to CF `cell_methods` (e.g. `number: standard_deviation`, `latitude: longitude: mean`, `latitude: longitude: mean (grouped by admin_1)`). `std` and `sum` also set `long_name` (`Standard deviation of Total precipitation across number`) and drop `GRIB_name`, `short_name`, and `comment`; `standard_name` stays.
