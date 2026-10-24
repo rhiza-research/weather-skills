@@ -174,7 +174,6 @@ VARIABLES: dict[str, _Var] = {
     ),
 }
 _UNITS = {"pm": "ug m-3", "gas": "nmol mol-1", "aod": "1", "column": "kg m-2"}
-_BY_ADS_NAME = {v.ads: k for k, v in VARIABLES.items()}
 
 
 @weather_skill(name="cams-fetch", version=_SKILL_VERSION)
@@ -196,33 +195,21 @@ _BY_ADS_NAME = {v.ads: k for k, v in VARIABLES.items()}
     "--variable",
     "-v",
     action="append",
-    nargs="+",
-    help=(
-        "Fields to fetch (several per flag, repeat, or comma-separate). Most used "
-        "first: " + ", ".join(VARIABLES) + ". Default pm25."
-    ),
+    choices=tuple(VARIABLES),
+    help="Field to fetch; repeat for more. Default pm25.",
 )
 @weather_skill.argument(
     "--cycle",
-    type=lambda hour: hour.zfill(2),
-    choices=("00", "12"),
-    default="00",
-    help="Forecast init hour (UTC): 00 or 12 (0 also works). Default 00.",
+    type=int,
+    choices=(0, 12),
+    default=0,
+    help="Forecast init hour UTC: 0 or 12. Default 0.",
 )
 @weather_skill.argument(
     "--max-lead",
     default=f"{_MAX_LEAD_HOURS}h",
-    help=f"Forecast: last lead to fetch, in hours (48) or as a timedelta (48h, 2D); "
-    f"0..{_MAX_LEAD_HOURS}h. Default {_MAX_LEAD_HOURS}h.",
-)
-@weather_skill.argument(
-    "--lead-step",
-    type=int,
-    default=3,
-    help=(
-        "Forecast: lead spacing in hours. Default 3. 1 works for single-level "
-        "fields (pm*, aod*, tc*) only; gases (no2, o3, so2, co) are 3-hourly."
-    ),
+    help=f"Forecast: last lead, as hours (48) or a timedelta (48h, 2D), up to "
+    f"{_MAX_LEAD_HOURS}h. Default {_MAX_LEAD_HOURS}h. Leads are 3-hourly.",
 )
 @weather_skill.argument(
     "--probe-latest",
@@ -245,7 +232,6 @@ def fetch(
     variable,
     cycle,
     max_lead,
-    lead_step,
     **kwargs,
 ):
     """Fetch CAMS global air-quality fields (forecast or EAC4 reanalysis) over a bbox from the Copernicus ADS."""
@@ -269,18 +255,7 @@ def fetch(
         print(last[:10] if last else "none")
         return None
 
-    # -v accepts `-v a b`, `-v a -v b`, `-v a,b`, and ADS form names.
-    names = []
-    for group in variable or [["pm25"]]:
-        for token in filter(None, (t.strip() for t in ",".join(group).split(","))):
-            name = _BY_ADS_NAME.get(token.lower(), token.lower())
-            if name not in VARIABLES:
-                raise UsageError(
-                    f"unknown variable {token!r}. Available (most used first): "
-                    + ", ".join(VARIABLES)
-                )
-            if name not in names:
-                names.append(name)
+    names = list(dict.fromkeys(variable or ["pm25"]))
 
     dataset_id = _DATASETS[dataset]
     base = {"data_format": "grib"}
@@ -289,23 +264,21 @@ def fetch(
             raise UsageError("--dataset forecast takes --date (the init day), not a range.")
         if date < _FIRST_DAY["forecast"]:
             raise UsageError("the CAMS global forecast on the ADS starts 2015-01-01.")
-        text = str(max_lead).strip()
         try:
-            lead = pd.Timedelta(int(text), "h") if text.isdigit() else pd.Timedelta(text)
+            hours = pd.Timedelta(f"{max_lead}h" if max_lead.isdigit() else max_lead) / pd.Timedelta(
+                1, "h"
+            )
         except ValueError:
             raise UsageError(f"--max-lead {max_lead!r} is not a lead (48, 48h, 2D).") from None
-        hours = lead / pd.Timedelta(1, "h")
-        if hours != int(hours) or not 0 <= hours <= _MAX_LEAD_HOURS:
-            raise UsageError(f"--max-lead must be whole hours in 0..{_MAX_LEAD_HOURS}h.")
-        if lead_step < 1:
-            raise UsageError("--lead-step must be a positive number of hours.")
+        if not 0 <= hours <= _MAX_LEAD_HOURS:
+            raise UsageError(f"--max-lead must be within 0..{_MAX_LEAD_HOURS}h.")
         base.update(
             type=["forecast"],
-            time=[f"{cycle}:00"],
-            leadtime_hour=[str(h) for h in range(0, int(hours) + 1, lead_step)],
+            time=[f"{cycle:02d}:00"],
+            leadtime_hour=[str(h) for h in range(0, int(hours) + 1, 3)],
         )
         chunks = [(date, date)]
-        label = f"{date.isoformat()} {cycle}Z"
+        label = f"{date.isoformat()} {cycle:02d}Z"
     else:
         if date is not None or start_time is None or end_time is None:
             raise UsageError("--dataset eac4 takes --start-time and --end-time, not --date.")

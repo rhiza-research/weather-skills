@@ -125,7 +125,7 @@ def test_forecast_end_to_end_units_and_shape(mod, monkeypatch, tmp_path):
     submitted = _fake_ads(monkeypatch, mod, decode)
     out = tmp_path / "f.zarr"
     run_skill(
-        mod.fetch, "--bbox", KENYA, "--date", "2026-10-05", "-v", "pm25", "no2", "o3",
+        mod.fetch, "--bbox", KENYA, "--date", "2026-10-05", "-v", "pm25", "-v", "no2", "-v", "o3",
         "--max-lead", "6h", "--cycle", "0", "-o", str(out),
     )  # fmt: skip
     assert [s[0] for s in submitted] == ["cams-global-atmospheric-composition-forecasts"] * 2
@@ -199,12 +199,12 @@ def _run_forecast(mod, monkeypatch, tmp_path, *argv, decode=_pm25_forecast):
     return submitted
 
 
-def test_variable_flags_and_ads_names(mod, monkeypatch, tmp_path):
+def test_repeated_variable_flags(mod, monkeypatch, tmp_path):
     def decode(req):
         return _cfgrib_forecast({"pm2p5": 1e-8, "pm10": 1e-8, "aod550": 0.2})
 
     submitted = _run_forecast(
-        mod, monkeypatch, tmp_path, "-v", "pm25", "particulate_matter_10um", "-v", "pm25,aod550,",
+        mod, monkeypatch, tmp_path, "-v", "pm25", "-v", "pm10", "-v", "pm25", "-v", "aod550",
         "--max-lead", "6", decode=decode,
     )  # fmt: skip
     assert submitted[0][1]["variable"] == [
@@ -246,20 +246,17 @@ def test_forecast_request(mod, monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("max_lead", "step", "leads"),
-    [("6", "3", ["0", "3", "6"]), ("6h", "3", ["0", "3", "6"]), ("2D", "24", ["0", "24", "48"]),
-     ("0h", "3", ["0"])],
-)  # fmt: skip
-def test_max_lead_forms(mod, monkeypatch, tmp_path, max_lead, step, leads):
-    submitted = _run_forecast(
-        mod, monkeypatch, tmp_path, "--max-lead", max_lead, "--lead-step", step
-    )
+    ("max_lead", "leads"),
+    [("6", ["0", "3", "6"]), ("6h", ["0", "3", "6"]), ("8h", ["0", "3", "6"]), ("0h", ["0"])],
+)
+def test_max_lead_forms(mod, monkeypatch, tmp_path, max_lead, leads):
+    submitted = _run_forecast(mod, monkeypatch, tmp_path, "--max-lead", max_lead)
     assert submitted[0][1]["leadtime_hour"] == leads
 
 
 @pytest.mark.parametrize(
     "argv",
-    [["--max-lead", bad] for bad in ("200", "6D", "-3h", "90min", "soon")] + [["--lead-step", "0"]],
+    [["--max-lead", bad] for bad in ("200", "6D", "-3h", "soon")] + [["--cycle", "6"]],
 )
 def test_bad_leads_exit_2(mod, monkeypatch, tmp_path, argv):
     with pytest.raises(SystemExit) as exc:
@@ -278,7 +275,7 @@ def test_eac4_requests_per_month(mod, monkeypatch, tmp_path):
     submitted = _fake_ads(monkeypatch, mod, decode)
     run_skill(
         mod.fetch, "--bbox", KENYA, "--dataset", "eac4", "--start-time", "2024-01-20",
-        "--end-time", "2024-03-02", "-v", "pm25", "o3", "-o", str(tmp_path / "o"),
+        "--end-time", "2024-03-02", "-v", "pm25", "-v", "o3", "-o", str(tmp_path / "o"),
     )  # fmt: skip
     dates = [req["date"][0] for _, req in submitted]
     assert dates == [
