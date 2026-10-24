@@ -81,6 +81,8 @@ credentialed or source-specific fetcher only when it does not.
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
 | `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). |
 | `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
+| `mme-fit` | Fit multi-model blend weights from several hindcast `--forecast`s and an `--obs` (grid or stations): `--model weighted|linear|logistic`, one fit overall or `--fit-along` lead / cell / station; scikit-learn semantics (`--alpha` L2) |
+| `mme-blend` | Blend several forecasts with fitted `--weights` or fixed `--coef NAME=W` into one `blend` value or logistic event `probability` |
 
 ### Agent capabilities
 Capabilities the agent uses alongside pipelines; none of them produces a

@@ -259,8 +259,17 @@ def apply_reductions(
     cumulative: bool,
     detect: str | None,
     probability: bool,
+    first_within: int | None = None,
 ) -> xr.Dataset:
-    """Apply ``--cumulative``, ``--detect``, ``--probability`` in that order."""
+    """Apply ``--first-within`` or ``--cumulative``, ``--detect``, ``--probability`` in that order.
+
+    ``first_within`` is the window length in steps of ``dim``.
+    """
+    if first_within is not None and (cumulative or detect or probability):
+        raise UsageError(
+            "--first-within cannot be combined with --cumulative, --detect or --probability; "
+            "for a forecast's chance of the event by each lead use --cumulative --probability"
+        )
     if detect is not None and cumulative:
         raise UsageError("--detect cannot be combined with --cumulative")
     if detect == "first" and probability:
@@ -270,6 +279,8 @@ def apply_reductions(
         )
 
     field = mask
+    if first_within is not None:
+        field = _first_within(field, dim, first_within)
     if cumulative:
         field = _cumulative(field, dim)
 
@@ -392,6 +403,21 @@ def _cumulative(mask: xr.DataArray, dim: str) -> xr.DataArray:
     return xr.where(seen, 1.0, mask).astype("float32")
 
 
+def _first_within(mask: xr.DataArray, dim: str, steps: int) -> xr.DataArray:
+    """1 on the first True along ``dim`` and the ``steps - 1`` labels before it.
+
+    0 on earlier labels; NaN after the first True (the sample is over), or from a
+    gap on when the gap leaves the first True unknown.
+    """
+    seen = mask.fillna(0).cumsum(dim) > 0
+    # A gap before the first True could hide it: unknown from there on, until a True.
+    gap = (mask.isnull() & ~seen).cumsum(dim) > 0
+    by = xr.where(seen, 1.0, xr.where(gap, np.nan, 0.0))
+    before = by.shift({dim: 1}, fill_value=0.0)
+    end = by.shift({dim: -(steps - 1)}) if steps > 1 else by
+    return xr.where(before == 0, end, np.nan)
+
+
 def _detect_any(mask: xr.DataArray, dim: str) -> xr.DataArray:
     hit = (mask == 1).any(dim)
     # A gap followed by decided days could hide the event: unknown, not 0. The
@@ -487,15 +513,31 @@ def _step_days(ds, dim: str) -> int:
     help="Once True, stay True (has the event happened yet?).",
 )
 @weather_skill.argument(
+    "--first-within",
+    metavar="WINDOW",
+    help=(
+        "Window such as 7d or 1w: 1 on the first event and the WINDOW-1 dates "
+        "before it, 0 on earlier dates, NaN after it."
+    ),
+)
+@weather_skill.argument(
     "--probability",
     action="store_true",
     help="Ensemble fraction True (mean over number). No-op if there is no number dim.",
 )
-def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **kwargs):
+def indicator(
+    ds, rule, variable, time_dim, detect, cumulative, first_within, probability, **kwargs
+):
     """Apply a yes/no weather rule to each day or week of a Zarr, optionally reduced to an onset date or a probability."""
     spec = parse_rule(rule)
     dim = _axis(ds, time_dim)
     step_days = _step_days(ds, dim)
+    first_days = None
+    if first_within is not None:
+        match = _WINDOW_RE.fullmatch(first_within.strip())
+        if not match or int(match.group(1)) < 1:
+            raise UsageError(f"--first-within {first_within!r} must look like '7d' or '1w'")
+        first_days = int(match.group(1)) * (7 if match.group(2).lower() == "w" else 1)
     # Thresholds are in standard units: air temperature in degree_Celsius, precip
     # in mm per step (a rate in any units times the step; daily mm day-1 is unchanged).
     names = sorted({variable or c.variable for c in spec.clauses} & set(ds.data_vars))
@@ -505,7 +547,12 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **k
             ds[name] = rate_to_total(ds[name], f"{step_days} day").pint.dequantify()
     mask = evaluate_spec(ds, spec, dim, variable, step_days)
     out = apply_reductions(
-        mask, dim, cumulative=bool(cumulative), detect=detect, probability=bool(probability)
+        mask,
+        dim,
+        cumulative=bool(cumulative),
+        detect=detect,
+        probability=bool(probability),
+        first_within=None if first_days is None else _steps(first_days, step_days),
     )
     payload = json.dumps(spec.to_json(), default=str)
     for name in out.data_vars:
@@ -514,6 +561,10 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **k
         if name in ("indicator", "probability"):
             attrs["units"] = "1"
         attrs["indicator_spec"] = payload
+        if first_days is not None:
+            # The window each label covers, so it pairs with same-length forecast windows.
+            attrs["aggregation_period"] = f"{first_days} day"
+            attrs["long_name"] = f"First {spec.source} in the next {first_days} days"
         out[name].attrs = attrs
     out.attrs["indicator_rule"] = spec.source
     out.attrs["indicator_expanded"] = spec.expanded
