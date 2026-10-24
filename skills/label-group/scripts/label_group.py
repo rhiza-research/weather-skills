@@ -91,16 +91,17 @@ def label_group(ds, level, geojson, property, time, **kwargs):
                 west, east = float(np.nanmin(lon360)), float(np.nanmax(lon360)) - 360.0
             else:
                 west, east = float(np.nanmin(lon2d)), float(np.nanmax(lon2d))
-            if stations:
-                # Also fetch the units a station can snap to.
-                south, north = south - _SNAP_DEG, north + _SNAP_DEG
-                west, east = west - _SNAP_DEG, east + _SNAP_DEG
-                if west < -180.0 and east > 180.0:
-                    west, east = -180.0, 180.0
-                elif west < -180.0:
-                    west += 360.0
-                elif east > 180.0:
-                    east -= 360.0
+            # Pad the box: admin layers are picked by the bundled country outlines, which
+            # can stop a few km short of geoBoundaries' (Madagascar's north tip), and
+            # stations snap to units this close.
+            south, north = south - _SNAP_DEG, north + _SNAP_DEG
+            west, east = west - _SNAP_DEG, east + _SNAP_DEG
+            if west < -180.0 and east > 180.0:
+                west, east = -180.0, 180.0
+            elif west < -180.0:
+                west += 360.0
+            elif east > 180.0:
+                east -= 360.0
             features = level_features(level, (north, west, south, east))
             coord = level
             labels = [f["properties"]["region_name"] for f in features]

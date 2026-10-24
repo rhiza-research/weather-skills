@@ -277,7 +277,8 @@ def test_antimeridian_grid_queries_two_spans(tmp_path, monkeypatch):
     run_skill(module.label_group, "-i", str(src), "-o", str(out), "--level", "country")
 
     north, west, south, east = seen[0]
-    assert (west, east) == (175.0, -179.0)  # west > east: 175E to 179W, not the whole band
+    # west > east: 175E to 179W (padded 0.1°), not the whole band.
+    assert (west, east) == pytest.approx((174.9, -178.9))
     assert (
         xr.open_zarr(out, consolidated=True)["country"].sel(latitude=-17.8, longitude=178.0).item()
         == "fiji"
@@ -438,3 +439,24 @@ def test_grid_labels_match_brute_force(tmp_path, label_group, level, lats, lons)
     got = xr.open_zarr(out, consolidated=True)[level].values
     assert (got != "").any()
     np.testing.assert_array_equal(got, expected.astype(str))
+
+
+def test_admin_unit_past_the_bundled_coastline_is_fetched(tmp_path, label_group, monkeypatch):
+    # Natural Earth's Madagascar stops at -12.08°; geoBoundaries' Diana reaches -11.95°.
+    diana = _box("Diana", 48.5, -14.5, 50.5, -11.95)
+    diana["properties"] = {"shapeName": "Diana"}
+
+    def fake(iso3, level):
+        if iso3 != "MDG":
+            raise region_mod._AdminMissing("not in this test")
+        return {"type": "FeatureCollection", "features": [diana]}
+
+    region_mod._admin_collection.cache_clear()
+    monkeypatch.setattr("weather_skills_core.region._load_admin_geojson", fake)
+    src = write_zarr(make_gridded(lats=(-12.0, -11.0), lons=(49.25,)), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(label_group, "-i", str(src), "-o", str(out), "--level", "admin_1")
+
+    labels = xr.open_zarr(out, consolidated=True)["admin_1"].values.ravel().tolist()
+    assert labels == ["madagascar-diana", ""]
