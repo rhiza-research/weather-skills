@@ -2,7 +2,7 @@
 name: cams-fetch
 description: "Fetch CAMS global air-quality fields (PM2.5, PM10, near-surface NO2, O3, SO2, CO, aerosol optical depth, total columns) for a lat/lon box from the Copernicus Atmosphere Data Store, as a gridded weather-skills Zarr: the 5-day forecast (0.4°, 2015 on) or the EAC4 reanalysis (0.75°, 3-hourly, 2003 on). Needs a free ADS_API_KEY. Use when a task needs gridded air-quality or atmospheric-composition data anywhere in the world."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Requires ADS_API_KEY (or a ~/.cdsapirc whose url is the ADS), free with sign-up: register at https://ads.atmosphere.copernicus.eu and copy the key from https://ads.atmosphere.copernicus.eu/profile and the eccodes library that cfgrib loads (installed with the skill on macOS and Linux). Each dataset's licence must be accepted once on the ADS website.
+compatibility: Requires Python 3.12 and uv. Requires ADS_API_KEY (or a ~/.cdsapirc whose url is the ADS), free with sign-up — register at https://ads.atmosphere.copernicus.eu and copy the key from https://ads.atmosphere.copernicus.eu/profile and the eccodes library that cfgrib loads (installed with the skill on macOS and Linux). Each dataset's licence must be accepted once on the ADS website.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
