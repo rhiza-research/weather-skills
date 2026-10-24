@@ -249,13 +249,15 @@ def _station_daily(portal, station_id, start, end, day_start_hour, min_coverage,
         precip_coverage = coverage["rain"]
         if "rain2" in clean.columns:
             # On days with both gauges they must agree; a disagreement means one
-            # is faulty and there is no way to tell which.
+            # is faulty and there is no way to tell which. When they agree, the
+            # larger total is used: a gauge fails low (a clogged funnel), and an
+            # impossible high reading already left the gauge out above.
             checked = days["rain2"].count().reindex(wanted, fill_value=0) > 0
             total2 = days["rain2"].sum().reindex(wanted)
             larger = pd.concat([total, total2], axis=1).max(axis=1)
             tolerance = (GAUGE_TOLERANCE_FRAC * larger).clip(lower=GAUGE_TOLERANCE_MM)
             rejected = checked & ((total - total2).abs() > tolerance)
-            total = total.where(~rejected)
+            total = total.where(~checked, larger.where(total.notna())).where(~rejected)
             # A rejected day has no usable rain, whatever its readings spanned.
             precip_coverage = precip_coverage.where(~rejected, 0.0)
         daily["precip"] = total
