@@ -27,8 +27,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/csv_io.py --csv IN.csv -o OUT.zarr [--date-fo
 - `--variable`, `-v` — keep only these data variables; repeatable. Default: all.
 - `--dropna` — export: skip rows where every variable is missing.
 - `--max-rows` — export: refuse to write more rows. Default: 2000000.
-- `--date-format` — strftime format of the time column. Default: `YYYY-MM-DD` (export adds ` HH:MM:SS` when there is a time of day); day-first dates need `--date-format %d/%m/%Y`. Non-standard calendars always use the default.
-- `--na-value` — missing-value code (`-99`, `T`). Read: an extra code, repeatable; empty cells are always missing. Export: written instead of an empty cell; once only.
+- `--date-format` — strftime format of the time column. Default: `YYYY-MM-DD` (export adds ` HH:MM:SS` when there is a time of day); day-first dates need `--date-format %d/%m/%Y`. Times with an offset (`Z`, `+03:00`) are read as UTC. Export exits 2 when the format writes two times as one (`%d/%m/%Y` on hourly data). Non-standard calendars always use the default.
+- `--na-value` — missing-value code (`-99`, `T`). Read: an extra code, repeatable; empty cells are always missing, and so are `NA`, `NaN`, `NULL`, `-` in a column of numbers (in a text column, such as a station id or country, `NA` stays text). Export: written instead of an empty cell; once only.
 - `--units` — read: `COLUMN=UNITS` for a column whose header has none; repeatable.
 - `--point` — read: `LAT,LON[,ID]` for a single-site file with no station or lat/lon columns, such as `date,rain`. ID defaults to `P0`.
 - `--index` — read: column to use as a dim instead of detecting the layout; repeatable.
@@ -36,19 +36,20 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/csv_io.py --csv IN.csv -o OUT.zarr [--date-fo
 - `--skip-rows` — read: lines to skip above the header row. Default: 0.
 - `--names` — read: comma-separated names replacing the header row.
 - `--drop-column` — read: column to leave out; repeatable.
-- `--replace` — read: `TEXT=NUMBER` for a cell code, such as `tr=0` for trace rain; repeatable.
-- `--unpivot` — read: `NAME=VALUE` for a wide table: coordinate columns stay, the others stack, headers into `NAME`, cells into `VALUE` (non-numeric ones exit 2). Numeric headers (steps, levels) read as numbers.
+- `--replace` — read: `TEXT=NUMBER` for a cell code, such as `tr=0` for trace rain; repeatable. A column whose cells are then all numbers is read as numbers.
+- `--unpivot` — read: `NAME=VALUE` for a wide table: coordinate columns, `--index` columns and text columns under a header that is no date or number (a station name) stay; the others stack, headers into `NAME`, cells into `VALUE` (non-numeric ones exit 2). Numeric headers (steps, levels) read as numbers, Excel date headers as dates.
 - `--pivot` — export: `NAME=VALUE` for a wide table: one column per entry of dim `NAME`, headed by its value, cells from variable `VALUE`; the other dims stay as rows. Coords along `NAME` are dropped, and the headers carry no units, so read it back with `--unpivot NAME=VALUE --units VALUE=UNITS`.
 
 ### Output
 - Export: the dims, then other coords, then variables with units in the header (`precip [mm]`). Dates are `YYYY-MM-DD`, with a time of day only when there is one; a non-standard calendar is named in the header (`time [360_day]`) and read back as that calendar. Leads are `step [days]` or `step [hours]`. Missing values are empty cells.
-- Read: station data has dims `(station_id, time)` with `latitude`/`longitude` on `station_id`, `featureType=timeSeries`; gridded data has sorted `latitude`/`longitude` dims, longitudes in -180..180. `weather_skills_source=csv:<file name>`, sha256 in `source_csv_sha256`.
+- Read: station data has dims `(station_id, time)` with `latitude`/`longitude` on `station_id`, `featureType=timeSeries`; gridded data has sorted `latitude`/`longitude` dims, longitudes in -180..180; a table with only a time column (an index, an area mean) is one series along `time`. A single member or level is a scalar coord. `weather_skills_source=csv:<file name>`, sha256 in `source_csv_sha256`.
 
 ### Notes
 - Units come from the header, `rain [mm]` or `Rainfall (mm)`; columns with none are listed on stderr and need `--units` for later skills.
 - Column names are cleaned for CF (`Station Name` → `Station_Name`); `--units` and `--index` take the cleaned names; two headers that clean to one name exit 2. The layout comes from them ([Details](#details)).
-- Nothing is filled: a station/time absent from the CSV, or an empty cell, is NaN. Duplicate rows for one station and time exit 2.
-- Export takes at most 3 dims, such as `(time, latitude, longitude)` or `(station_id, time)`; with a fourth (member, lead, level) it exits 2. Reduce it first with summarize-dim, select or aggregate-temporal.
+- CSVs may be UTF-8 or Windows-1252, separated by `,`, tab, or `;` (then with decimal commas, `2,5`).
+- Nothing is filled: a station/time absent from the CSV, or an empty cell, is NaN. Duplicate rows for one station and time exit 2. Lat/lon pairs filling under 5 % of a grid of over 10,000 cells exit 2: scattered points need a station column.
+- Export takes at most 3 dims longer than 1, such as `(time, latitude, longitude)` or `(station_id, time)`; with a fourth (member, lead, level) it exits 2. Reduce it first with summarize-dim, select or aggregate-temporal. Dims no variable uses (a bounds dim such as `nv`) are left out.
 - A CSV keeps names, units and values only; other attrs and provenance are lost, so export at the end of a pipeline.
 
 ### Example

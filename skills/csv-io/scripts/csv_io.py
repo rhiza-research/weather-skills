@@ -9,6 +9,7 @@
 # ///
 """Export a weather-skills Zarr to a CSV table, or read a CSV or Excel sheet into a Zarr."""
 
+import datetime as dt
 import hashlib
 import re
 import sys
@@ -79,6 +80,11 @@ CALENDARS = {
     "360_day",
 }
 CFTIME_TEXT = re.compile(r"(\d+)-(\d+)-(\d+)(?:[ T](\d+):(\d+)(?::(\d+))?)?")
+# Missing-value words, read as missing only in a column of numbers: as a station id or
+# country, "NA" is Namibia.
+NA_TEXT = {"NA", "N/A", "n/a", "#N/A", "NaN", "nan", "-nan", "NULL", "null", "None", "-"}
+# A lat/lon table filling less of its grid than this, over more cells, is scattered points.
+SPARSE_GRID_FILL, SPARSE_GRID_CELLS = 0.05, 10_000
 
 
 def _clean_name(col):
@@ -115,12 +121,18 @@ def _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet
         ds = ds[variable]
     if not ds.data_vars:
         raise UsageError("dataset has no data variables to export")
-    # At most three dims, such as (time, latitude, longitude); a fourth (step, member,
-    # level) makes a table too long to read in a spreadsheet.
-    if len(ds.dims) > 3:
+    # A dim no variable uses (nv under time_bounds) would repeat every row.
+    unused = [d for d in ds.dims if not any(d in ds[v].dims for v in ds.data_vars)]
+    if unused:
+        ds = ds.drop_dims(unused)
+        print(f"note: left out dims no variable uses: {', '.join(unused)}", file=sys.stderr)
+    # At most three dims longer than 1, such as (time, latitude, longitude); a fourth
+    # (step, member, level) makes a table too long to read in a spreadsheet.
+    long_dims = [d for d in ds.dims if ds.sizes[d] > 1]
+    if len(long_dims) > 3:
         raise UsageError(
-            f"export takes at most 3 dims; this dataset has {len(ds.dims)}: "
-            f"{', '.join(ds.dims)}. Reduce it first: summarize-dim for an ensemble mean "
+            f"export takes at most 3 dims; this dataset has {len(long_dims)}: "
+            f"{', '.join(long_dims)}. Reduce it first: summarize-dim for an ensemble mean "
             "or an area mean, select for one member, lead or level, or aggregate-temporal."
         )
     # Long table -> wide: one column per entry of a dim, cells from one variable.
@@ -144,12 +156,18 @@ def _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet
             "or raise --max-rows."
         )
 
-    df = ds.to_dataframe().reset_index()
+    if ds.dims:
+        df = ds.to_dataframe().reset_index()
+    else:
+        # A single value (an area mean for one day) is one row.
+        df = pd.DataFrame({name: [ds[name].values[()]] for name in ds.variables})
     # Dims, then other coords, then variables.
     coords = [c for c in df.columns if c not in ds.dims and c not in ds.data_vars]
     df = df[[*ds.dims, *coords, *ds.data_vars]]
     if dropna:
         df = df.dropna(how="all", subset=list(ds.data_vars))
+        if df.empty:
+            raise UsageError("every value is missing, so --dropna leaves no rows to write")
 
     renames = {}
     for name in df.columns:
@@ -165,7 +183,13 @@ def _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet
         elif pd.api.types.is_datetime64_any_dtype(df[name]):
             midnight = (df[name] == df[name].dt.normalize()).all()
             fmt = date_format or ("%Y-%m-%d" if midnight else "%Y-%m-%d %H:%M:%S")
-            df[name] = df[name].dt.strftime(fmt)
+            text = df[name].dt.strftime(fmt)
+            if text.nunique() < df[name].nunique():
+                raise UsageError(
+                    f"--date-format {date_format} writes different {name} values as the "
+                    f"same text; add the time of day, e.g. --date-format '{date_format} %H:%M'"
+                )
+            df[name] = text
         elif pd.api.types.is_timedelta64_dtype(df[name]):
             # Leads as plain numbers so a spreadsheet can read them.
             whole_days = (df[name] % pd.Timedelta(days=1) == pd.Timedelta(0)).all()
@@ -241,10 +265,35 @@ def _read(
     elif sheet is not None:
         raise UsageError(f"--sheet is for Excel files ({', '.join(EXCEL_SUFFIXES)})")
     else:
+        data = path.read_bytes()
+        try:
+            text, encoding = data.decode("utf-8-sig"), "utf-8-sig"
+        except UnicodeDecodeError:
+            # Excel on Windows saves "CSV" as Windows-1252, not UTF-8.
+            text, encoding = data.decode("cp1252", errors="replace"), "cp1252"
+            print(f"note: {path.name} is not UTF-8; reading it as Windows-1252", file=sys.stderr)
+        lines = text.splitlines()
+        if len(lines) <= skip_rows or not lines[skip_rows].strip():
+            raise UsageError(f"{path} has no header row (after --skip-rows {skip_rows})")
+        # The separator is whichever of , ; or tab the header row has most of.
+        sep = max([",", ";", "\t"], key=lines[skip_rows].count)
         read = pd.read_csv
-        opts = {"filepath_or_buffer": path, "encoding": "utf-8-sig", "skipinitialspace": True}
+        opts = {
+            "filepath_or_buffer": path,
+            "encoding": encoding,
+            "encoding_errors": "replace",
+            "skipinitialspace": True,
+            "sep": sep,
+        }
+        if sep == ";":
+            # European spreadsheets write ; between cells and a decimal comma (2,5).
+            opts["decimal"] = ","
+            print("note: reading ;-separated cells with decimal commas", file=sys.stderr)
     opts["skiprows"] = skip_rows
-    header = read(**opts, nrows=0).columns
+    try:
+        header = read(**opts, nrows=0).columns
+    except pd.errors.EmptyDataError:
+        raise UsageError(f"{path} has no header row (after --skip-rows {skip_rows})") from None
     if names:
         names = names.split(",")
         if len(names) != len(header):
@@ -261,19 +310,36 @@ def _read(
         if COLUMN_ROLES.get(name) == "station_id"
         and not (has_station_id and name in STATION_ALIASES)
     }
-    df = read(**opts, na_values=na_value or None, dtype=id_cols or None)
+    # Only empty cells and --na-value codes are missing here; NA_TEXT words are dropped
+    # below, in number columns only.
+    na_values = ["", *(na_value or [])]
+    df = read(**opts, keep_default_na=False, na_values=na_values, dtype=id_cols or None)
     # Spacer rows in a sheet are blank, not records.
     df = df.dropna(how="all")
     if df.empty:
         raise UsageError(f"{path} has no rows")
     for spec in replace or []:
-        text, sep, value = spec.partition("=")
+        code, sep, value = spec.partition("=")
         try:
             value = float(value)
         except ValueError:
             raise UsageError(f"--replace expects TEXT=NUMBER, e.g. tr=0; got {spec!r}") from None
-        df = df.replace(text, value)
+        df = df.replace(code, value)
     df = df.infer_objects()
+    # One text cell ("tr" before --replace, an Excel number stored as text, "NA") makes a
+    # whole column text; read it as numbers when every other cell is one.
+    for col in df.columns:
+        if col in id_cols or not (
+            pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col])
+        ):
+            continue
+        cells = df[col].mask(df[col].isin(NA_TEXT))
+        numbers = pd.to_numeric(cells, errors="coerce")
+        if numbers.notna().any() and (numbers.notna() == cells.notna()).all():
+            df[col] = numbers
+    # A trailing comma or a blank header cell over an empty column is not a variable.
+    blank = [c for c in df.columns if str(c).startswith("Unnamed:") and df[c].isna().all()]
+    df = df.drop(columns=blank)
 
     # "precip [mm]" -> column precip with units mm; --units fills or overrides.
     col_units, renames = {}, {}
@@ -299,20 +365,34 @@ def _read(
         label, sep, value = unpivot.partition("=")
         if not sep or not re.fullmatch(r"\w+", label) or not re.fullmatch(r"\w+", value):
             raise UsageError(f"--unpivot expects NAME=VALUE, e.g. time=precip; got {unpivot!r}")
-        keep = [c for c in df.columns if c.lower() in COLUMN_ROLES or SITE_COLUMN.search(c)]
+        # Stacked headers as written in the file (2026-10-15, not 2026_10_15).
+        raw = {renames[c]: c for c in renames}
+        keep = []
+        for c in df.columns:
+            header = raw[c]
+            if c.lower() in COLUMN_ROLES or SITE_COLUMN.search(c) or c in (index or []):
+                keep.append(c)
+            elif pd.api.types.is_numeric_dtype(df[c]) or isinstance(header, dt.date):
+                continue
+            # A text column under a header that is no date or number (a station name,
+            # a country) labels the rows; it is not one of the stacked entries.
+            elif pd.isna(pd.to_numeric(str(header), errors="coerce")) and pd.isna(
+                pd.to_datetime(str(header), format="ISO8601", errors="coerce")
+            ):
+                keep.append(c)
         stacked = [c for c in df.columns if c not in keep]
         if not stacked:
             raise UsageError("--unpivot found no columns to stack beside the coordinates")
-        # Stacked headers as written in the file (2026-10-15, not 2026_10_15).
-        raw = {renames[c]: c for c in renames}
         df = df.melt(id_vars=keep, value_vars=stacked, var_name=label, value_name=value)
         df[label] = df[label].map(raw)
-        # Numeric headers (steps, levels, members) are numbers, not text.
-        labels = pd.to_numeric(df[label], errors="coerce")
+        # Numeric headers (steps, levels, members) are numbers, not text; Excel date
+        # headers stay dates.
+        labels = pd.to_numeric(df[label].astype(str), errors="coerce")
         if labels.notna().all():
             df[label] = labels
-        numbers = pd.to_numeric(df[value], errors="coerce")
-        bad = df.loc[numbers.isna() & df[value].notna(), value].unique()
+        cells = df[value].mask(df[value].isin(NA_TEXT))
+        numbers = pd.to_numeric(cells, errors="coerce")
+        bad = df.loc[numbers.isna() & cells.notna(), value].unique()
         if len(bad):
             raise UsageError(
                 f"--unpivot: non-numeric values {', '.join(map(repr, bad[:10]))}; map them "
@@ -355,13 +435,18 @@ def _read(
         df["time"] = df["time"].astype(str).map(dates)
     elif "time" in df.columns:
         # Without --date-format only ISO dates: 01/10/2026 is ambiguous (1 Oct or 10 Jan).
-        try:
-            df["time"] = pd.to_datetime(df["time"], format=date_format or "ISO8601")
-        except (ValueError, TypeError):
+        # Times with an offset ("Z", "+03:00") become UTC; those without stay as written.
+        times = pd.to_datetime(
+            df["time"], format=date_format or "ISO8601", errors="coerce", utc=True
+        )
+        bad = df.loc[times.isna() & df["time"].notna(), "time"]
+        if len(bad):
+            expected = f"in --date-format {date_format}" if date_format else "YYYY-MM-DD"
             raise UsageError(
-                f"time values like {df['time'].iloc[0]!r} are not YYYY-MM-DD; pass "
-                "--date-format, e.g. --date-format %d/%m/%Y for day-first dates"
-            ) from None
+                f"time values like {bad.iloc[0]!r} are not {expected}; pass --date-format, "
+                "e.g. --date-format %d/%m/%Y for day-first dates"
+            )
+        df["time"] = times.dt.tz_localize(None)
     if "step" in df.columns:
         unit = STEP_UNITS.get(col_units.pop("step", "days").lower())
         if unit is None:
@@ -382,18 +467,37 @@ def _read(
             raise UsageError(f"--index columns not in CSV: {', '.join(unknown)}")
     else:
         extra = [d for d in ("time", "step", "number", "level") if d in df.columns]
-        # A constant init time beside a step column is the forecast's scalar init.
+        # A constant init time beside a step column is the forecast's scalar init; one
+        # member or level is a scalar, as select leaves it.
         if "step" in extra and "time" in extra and df["time"].nunique() == 1:
             extra.remove("time")
+        extra = [d for d in extra if not (d in ("number", "level") and df[d].nunique() == 1)]
         if "station_id" in df.columns:
             dims = ["station_id", *extra]
         elif {"latitude", "longitude"} <= set(df.columns):
             dims = [*extra, "latitude", "longitude"]
+            n_lat, n_lon = df["latitude"].nunique(), df["longitude"].nunique()
+            n_points = len(df[["latitude", "longitude"]].drop_duplicates())
+            if n_lat * n_lon > SPARSE_GRID_CELLS and n_points < SPARSE_GRID_FILL * n_lat * n_lon:
+                raise UsageError(
+                    f"the {n_points:,} latitude/longitude pairs fill only "
+                    f"{n_points / (n_lat * n_lon):.1%} of a {n_lat:,} x {n_lon:,} grid: they "
+                    "look like scattered points; add a station id column (station_id, "
+                    "station or site) to read them as stations"
+                )
+        elif extra:
+            # An index or area-mean series: time (and leads, members) only.
+            print(
+                f"note: no station or latitude/longitude columns; reading one series along "
+                f"{', '.join(extra)}. Pass --point LAT,LON[,ID] if it is one site.",
+                file=sys.stderr,
+            )
+            dims = extra
         else:
             raise UsageError(
                 "cannot tell the layout: the CSV needs a station column "
-                "(station_id/station/site), latitude+longitude columns, or "
-                "--point LAT,LON[,ID] for a single site"
+                "(station_id/station/site), latitude+longitude columns, a time column, "
+                "or --index COLUMN"
             )
     station_dim = "station_id" if "station_id" in dims else None
     if station_dim:
@@ -419,7 +523,7 @@ def _read(
             if not (per_station and numeric):
                 raise UsageError(f"{col} must be a number that is constant for each station")
             station_coords.append(col)
-        elif col in ("time", "step") and df[col].nunique(dropna=False) == 1:
+        elif col in ("time", "step", "number", "level") and df[col].nunique(dropna=False) == 1:
             scalar_coords[col] = df[col].iloc[0]
         elif station_dim and per_station and numeric and SITE_COLUMN.search(col):
             station_coords.append(col)
@@ -434,10 +538,22 @@ def _read(
             "station CSVs need latitude and longitude columns "
             "(or --point LAT,LON[,ID] for a single site)"
         )
-    if not data_vars:
-        raise UsageError("no numeric data columns left after the coordinate columns")
     if dropped:
         print(f"note: dropped non-numeric columns: {', '.join(dropped)}", file=sys.stderr)
+    if not data_vars:
+        message = "no numeric data columns left after the coordinate columns"
+        # Text columns, dropped or kept as station labels, with a sample cell.
+        text = [
+            f"{c} ({df[c].dropna().iloc[0]!r})"
+            for c in [*dropped, *station_coords]
+            if not pd.api.types.is_numeric_dtype(df[c]) and df[c].notna().any()
+        ]
+        if text:
+            message += (
+                f"; text in {', '.join(text)}: map codes with --replace TEXT=NUMBER "
+                "or --na-value TEXT"
+            )
+        raise UsageError(message)
 
     ds = df.set_index(dims)[data_vars].to_xarray()
     if station_dim:

@@ -438,3 +438,236 @@ def test_read_refuses_headers_that_clean_to_one_name(tmp_path, csv_io):
     with pytest.raises(SystemExit) as exc:
         run_skill(csv_io, "--csv", str(src), "-o", str(tmp_path / "out.zarr"))
     assert exc.value.code == 2
+
+
+def test_replace_makes_a_text_column_numeric(tmp_path, csv_io):
+    # "T" (trace) makes the whole column text; --replace must leave numbers behind.
+    src = _write(
+        tmp_path,
+        "Station,Lat,Lon,Date,Rainfall (mm)\n"
+        "A,1,10,2026-10-01,12.4\nA,1,10,2026-10-02,T\nA,1,10,2026-10-03,-99\n",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out), "--replace", "T=0", "--na-value", "-99")
+    np.testing.assert_allclose(_open(out)["Rainfall"].values, [[12.4, 0.0, np.nan]])
+
+
+def test_replace_in_excel_with_numbers_stored_as_text(tmp_path, csv_io):
+    src = tmp_path / "in.xlsx"
+    pd.DataFrame(
+        {"station": ["A"] * 3, "lat": [1] * 3, "lon": [10] * 3,
+         "date": pd.to_datetime(["2026-10-01", "2026-10-02", "2026-10-03"]),
+         "rain [mm]": [1.5, "tr", "2.5"]}
+    ).to_excel(src, index=False)  # fmt: skip
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out), "--replace", "tr=0")
+    np.testing.assert_allclose(_open(out)["rain"].values, [[1.5, 0.0, 2.5]])
+
+
+def test_na_words_are_missing_only_in_number_columns(tmp_path, csv_io):
+    # "NA" is Namibia as a station id or country, but missing in a rain column.
+    src = _write(
+        tmp_path,
+        "station_id,country,lat,lon,date,rain [mm]\n"
+        "NA,NA,-22.5,17,2026-10-01,1\nNA,NA,-22.5,17,2026-10-02,NA\nZA1,ZA,-26,28,2026-10-01,2\n",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    res = _open(out)
+    assert list(res["station_id"].values) == ["NA", "ZA1"]
+    assert list(res["country"].values) == ["NA", "ZA"]
+    np.testing.assert_allclose(res["rain"].sel(station_id="NA").values, [1.0, np.nan])
+
+
+def test_read_converts_time_offsets_to_utc(tmp_path, csv_io):
+    src = _write(
+        tmp_path,
+        "station,lat,lon,time,t [degC]\n"
+        "A,0,36,2026-10-01T00:00Z,15\nA,0,36,2026-10-01T04:00+03:00,16\n",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    times = _open(out)["time"].values
+    assert list(times) == [np.datetime64("2026-10-01T00:00"), np.datetime64("2026-10-01T01:00")]
+
+
+def test_read_names_the_bad_date(tmp_path, csv_io, capsys):
+    src = _write(tmp_path, "station,lat,lon,date,rain\nA,1,10,2026-10-01,1\nA,1,10,02/10/2026,2\n")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(csv_io, "--csv", str(src), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
+    assert "'02/10/2026'" in capsys.readouterr().err
+
+
+def test_station_pivot_round_trips_with_text_coords(tmp_path, csv_io):
+    ds = make_point_obs(n_time=3, n_points=2).rename(point_id="station_id")
+    ds = ds.assign_coords(name=("station_id", ["KMD HQ", "Kitui"]))
+    ds["precip"].values[:] = [[1.0, np.nan, 3.0], [4.0, 5.0, 6.0]]
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+
+    run_skill(csv_io, "-i", str(src), "-o", str(csv), "--pivot", "time=precip")
+    run_skill(
+        csv_io, "--csv", str(csv), "-o", str(back),
+        "--unpivot", "time=precip", "--units", "precip=mm day-1",
+    )  # fmt: skip
+
+    res = _open(back)
+    assert list(res["name"].values) == ["KMD HQ", "Kitui"]
+    np.testing.assert_allclose(res["precip"].values, ds["precip"].values, equal_nan=True)
+
+
+def test_unpivot_keeps_excel_date_headers_as_dates(tmp_path, csv_io):
+    src = tmp_path / "in.xlsx"
+    df = pd.DataFrame([[36.8, -1.3, "Dagoretti", 1.0, 2.0]])
+    df.columns = ["lon", "lat", "station", pd.Timestamp("2026-10-15"), pd.Timestamp("2026-10-16")]
+    df.to_excel(src, index=False)
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out), "--unpivot", "time=precip")
+    res = _open(out)
+    assert list(res["time"].values) == [np.datetime64("2026-10-15"), np.datetime64("2026-10-16")]
+    np.testing.assert_allclose(res["precip"].values, [[1.0, 2.0]])
+
+
+def test_unpivot_keeps_index_columns(tmp_path, csv_io):
+    # A county table: names in a column no layout rule knows, one column per dekad.
+    src = _write(tmp_path, "Feature,ire198101,ire198102\nAinabkoi,9.7,0.6\nAldai,17.8,5.0\n")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        csv_io, "--csv", str(src), "-o", str(out),
+        "--unpivot", "dekad=precip", "--index", "Feature", "--index", "dekad",
+    )  # fmt: skip
+    res = _open(out)
+    assert res["precip"].dims == ("Feature", "dekad")
+    np.testing.assert_allclose(res["precip"].sel(Feature="Aldai").values, [17.8, 5.0])
+
+
+def test_export_refuses_date_format_that_drops_hours(tmp_path, csv_io):
+    ds = make_gridded(n_time=2, lats=(1.0,), lons=(10.0,))
+    ds = ds.assign_coords(time=pd.date_range("2026-10-01 06:00", periods=2, freq="6h"))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(csv_io, "-i", str(src), "-o", str(tmp_path / "out.csv"),
+                  "--date-format", "%d/%m/%Y")  # fmt: skip
+    assert exc.value.code == 2
+    assert not (tmp_path / "out.csv").exists()
+
+
+def test_scalar_level_reads_back_as_scalar_and_re_exports(tmp_path, csv_io):
+    ds = make_gridded(n_time=2, lats=(1.0, 2.0), lons=(10.0, 11.0)).assign_coords(level=850)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+
+    run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    run_skill(csv_io, "--csv", str(csv), "-o", str(back))
+
+    res = _open(back)
+    assert res["precip"].dims == ("time", "latitude", "longitude")
+    assert int(res["level"]) == 850
+
+
+def test_export_counts_only_dims_longer_than_one(tmp_path, csv_io):
+    # (time: 1, level, latitude, longitude): a one-day pressure-level grid.
+    ds = make_gridded(n_time=1, lats=(1.0, 2.0), lons=(10.0, 11.0)).expand_dims(level=[500, 850])
+    src = write_zarr(ds.transpose("time", "level", ...), tmp_path / "in.zarr")
+    out = tmp_path / "out.csv"
+    run_skill(csv_io, "-i", str(src), "-o", str(out))
+    assert len(pd.read_csv(out)) == 8
+
+
+def test_export_leaves_out_bounds_dims(tmp_path, csv_io):
+    ds = make_gridded(n_time=2, lats=(1.0,), lons=(10.0,))
+    bounds = np.stack([ds["time"].values, ds["time"].values + np.timedelta64(1, "D")], axis=1)
+    ds = ds.assign_coords(time_bounds=(("time", "nv"), bounds))
+    ds["time"].attrs["bounds"] = "time_bounds"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.csv"
+    run_skill(csv_io, "-i", str(src), "-o", str(out))
+    df = pd.read_csv(out)
+    assert len(df) == 2
+    assert "nv" not in df.columns and "time_bounds" not in df.columns
+
+
+def test_time_series_round_trip(tmp_path, csv_io):
+    ds = make_gridded(n_time=3, lats=(1.0,), lons=(10.0,)).isel(latitude=0, longitude=0)
+    ds = ds.drop_vars(["latitude", "longitude"])
+    ds["precip"].values[:] = [0.2, -0.1, 0.3]
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+
+    run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    run_skill(csv_io, "--csv", str(csv), "-o", str(back))
+
+    res = _open(back)
+    assert res["precip"].dims == ("time",)
+    np.testing.assert_allclose(res["precip"].values, [0.2, -0.1, 0.3])
+
+
+def test_export_single_value(tmp_path, csv_io):
+    ds = make_gridded(n_time=1, lats=(1.0,), lons=(10.0,)).isel(time=0, latitude=0, longitude=0)
+    src = write_zarr(ds.drop_vars(["latitude", "longitude"]), tmp_path / "in.zarr")
+    out = tmp_path / "out.csv"
+    run_skill(csv_io, "-i", str(src), "-o", str(out))
+    df = pd.read_csv(out)
+    assert list(df.columns) == ["time", "precip [mm d-1]"]
+    assert df["precip [mm d-1]"].iloc[0] == 1.0
+
+
+def test_export_dropna_with_nothing_left_exits_2(tmp_path, csv_io):
+    ds = make_gridded(n_time=1, lats=(1.0,), lons=(10.0,), fill=np.nan)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(csv_io, "-i", str(src), "-o", str(tmp_path / "out.csv"), "--dropna")
+    assert exc.value.code == 2
+
+
+def test_read_windows_1252_csv(tmp_path, csv_io):
+    src = tmp_path / "in.csv"
+    src.write_bytes("station,name,lat,lon,date,rain [mm]\nS1,Garoua Boulaï,7,13,2026-10-01,3.2\n"
+                    .encode("cp1252"))  # fmt: skip
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    assert list(_open(out)["name"].values) == ["Garoua Boulaï"]
+
+
+def test_read_semicolons_with_decimal_commas(tmp_path, csv_io):
+    src = _write(tmp_path, "station;lat;lon;date;rain [mm]\nS1;-1,3;36,8;2026-10-01;2,5\n")
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    res = _open(out)
+    np.testing.assert_allclose(res["rain"].values, [[2.5]])
+    np.testing.assert_allclose(res["latitude"].values, [-1.3], rtol=1e-6)
+
+
+def test_read_empty_file_exits_2(tmp_path, csv_io):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(csv_io, "--csv", str(_write(tmp_path, "")), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
+
+
+def test_read_names_text_columns_when_no_numbers_remain(tmp_path, csv_io, capsys):
+    src = _write(tmp_path, "station,lat,lon,date,rain [mm]\nA,1,10,2026-10-01,T\n")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(csv_io, "--csv", str(src), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
+    assert "rain ('T')" in capsys.readouterr().err
+
+
+def test_read_refuses_scattered_points(tmp_path, csv_io):
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame({"lat": rng.uniform(-5, 5, 400), "lon": rng.uniform(33, 42, 400), "rain": 1})
+    src = tmp_path / "in.csv"
+    df.to_csv(src, index=False)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(csv_io, "--csv", str(src), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
+
+
+def test_read_drops_empty_column_under_a_trailing_comma(tmp_path, csv_io):
+    src = _write(tmp_path, "station,lat,lon,date,rain [mm],\nA,1,10,2026-10-01,1,\n")
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    assert list(_open(out).data_vars) == ["rain"]
