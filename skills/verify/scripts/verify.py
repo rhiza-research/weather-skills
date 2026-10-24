@@ -5,7 +5,7 @@
 #   "pandas",
 # ]
 # ///
-"""Score a forecast against observations cell by cell: event hits, bias, or mean absolute error."""
+"""Score a forecast against observations: hits, bias, MAE, RMSE, ensemble CRPS or Brier score."""
 
 import sys
 
@@ -16,14 +16,58 @@ import pint_xarray
 import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable
+from weather_skills_core.standard_dataset import ALIASES
 from weather_skills_core.standard_utils import latitude_weights
 from weather_skills_core.units import dequantify_dataset, ureg, variable_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.5"
 
-_METRICS = ("hits", "bias", "mae")
-_VAR = {"hits": "event_hit", "bias": "bias", "mae": "mae"}
+_METRICS = ("hits", "bias", "mae", "rmse", "crps", "brier")
+_VAR = {
+    "hits": "event_hit",
+    "bias": "bias",
+    "mae": "mae",
+    "rmse": "rmse",
+    "crps": "crps",
+    "brier": "brier_score",
+}
+_ENSEMBLE_METRICS = ("crps", "brier")
+
+
+def _member_dim(da):
+    return next((d for d in da.dims if ALIASES.get(str(d)) == "member"), None)
+
+
+def crps_ensemble(fc, truth, member, estimator="standard"):
+    """Ensemble CRPS = E|X - y| - 0.5 E|X - X'| (Gneiting & Raftery 2007).
+
+    The spread term uses the sorted-member identity
+    sum_{i,j} |x_i - x_j| = 2 sum_i (2i - M - 1) x_(i), so memory stays linear in M
+    (the pairwise form materialises M^2 copies of the grid).
+
+    estimator="standard" (default) divides by M^2 -- properscoring crps_ensemble, which
+    Sheerwater's benchmark and xskillscore use.
+    estimator="fair" divides the pair sum by M(M-1) -- unbiased for a finite ensemble
+    (Ferro 2014; Zamo & Naveau 2018), and what WeatherBench 2 reports.
+    """
+    m = fc.sizes[member]
+    skill = np.abs(fc - truth).mean(member, skipna=False)
+    if fc.chunks is not None:  # lazily opened Zarr: the sort needs all members in one chunk
+        fc = fc.chunk({member: -1})
+    ranked = xr.apply_ufunc(
+        np.sort,
+        fc,
+        input_core_dims=[[member]],
+        output_core_dims=[[member]],
+        kwargs={"axis": -1},
+        dask="parallelized",
+        output_dtypes=[fc.dtype],
+    )
+    coef = xr.DataArray(2.0 * np.arange(1, m + 1) - m - 1, dims=[member])
+    pair_sum_half = (ranked * coef).sum(member, skipna=False)  # = 0.5 * sum_{i,j} |x_i - x_j|
+    denom = m * (m - 1) if estimator == "fair" else m * m
+    return skill - pair_sum_half / denom
 
 
 @weather_skill(
@@ -37,16 +81,27 @@ _VAR = {"hits": "event_hit", "bias": "bias", "mae": "mae"}
     "--metric",
     choices=list(_METRICS),
     default="hits",
-    help="Verification metric: hits (event classification), bias (forecast − obs), or mae.",
+    help="Verification metric: hits, bias, mae, rmse (needs --reduce), crps, or brier (needs --threshold).",
 )
 @weather_skill.argument(
     "--threshold",
     type=float,
-    default=1.0,
-    help="Event cutoff for --metric hits: a cell is an event when the variable is >= this.",
+    default=None,
+    help="Event cutoff: hits uses >= (default 1); brier requires an explicit threshold and uses >.",
 )
-def verify(forecast, obs, variable, metric, threshold, **kwargs):
-    """Score a forecast against observations cell by cell: event hits, bias, or mean absolute error."""
+@weather_skill.argument(
+    "--reduce",
+    action="append",
+    help="Dimension to average the score over (repeatable); required for rmse.",
+)
+@weather_skill.argument(
+    "--crps-estimator",
+    choices=["standard", "fair"],
+    default="standard",
+    help="CRPS spread denominator: M squared (standard) or M times M-1 (fair).",
+)
+def verify(forecast, obs, variable, metric, threshold, reduce, crps_estimator, **kwargs):
+    """Score a forecast against observations: hits, bias, MAE, RMSE, ensemble CRPS or Brier score."""
     fc_name = variable or auto_variable(forecast)
     obs_name = variable or auto_variable(obs)
     for name, ds, role in ((fc_name, forecast, "forecast"), (obs_name, obs, "obs")):
@@ -62,6 +117,25 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
             "so valid times can align with --obs."
         )
 
+    member = _member_dim(fc)
+    if metric in _ENSEMBLE_METRICS and member is None:
+        raise UsageError(f"--metric {metric} needs an ensemble forecast (a member/number dim)")
+    if metric == "brier" and threshold is None:
+        raise UsageError("--metric brier needs an explicit --threshold")
+    if metric == "rmse" and not reduce:
+        raise UsageError("--metric rmse needs --reduce DIM (e.g. time)")
+    if metric == "hits" and reduce:
+        raise UsageError("--reduce is not defined for --metric hits")
+    if metric == "crps" and crps_estimator == "fair" and fc.sizes[member] < 2:
+        raise UsageError("--crps-estimator fair needs at least 2 members")
+    reduce = list(dict.fromkeys(reduce or []))
+    for dim in reduce:
+        if dim not in fc.dims:
+            raise UsageError(f"--reduce {dim!r} is not a forecast dimension")
+        if dim == member:
+            raise UsageError(f"--reduce {dim!r} is the ensemble dim; handling is set by --metric")
+    if metric == "hits" and threshold is None:
+        threshold = 1.0
     mismatched = []
     for axis, names in (("latitude", ("latitude", "lat")), ("longitude", ("longitude", "lon"))):
         a = next((n for n in names if n in forecast.dims), None)
@@ -88,10 +162,14 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
         )
 
     pair = []
-    for da in (fc, truth):
-        if "number" in da.dims:
-            # A NaN member leaves the mean NaN (no mean over the members left).
-            da = da.mean("number", skipna=False, keep_attrs=True)
+    ensemble_reduction = None
+    for role, da in (("forecast", fc), ("obs", truth)):
+        m = _member_dim(da)
+        if m is not None and not (role == "forecast" and metric in _ENSEMBLE_METRICS):
+            # Preserve upstream's complete-member rule.
+            da = da.mean(m, skipna=False, keep_attrs=True)
+            if role == "forecast":
+                ensemble_reduction = f"mean over {m} before scoring"
         # A scalar time (after select) becomes a length-1 dim so the inner join
         # below checks it against the other input instead of dropping it.
         if "time" in da.coords and da["time"].ndim == 0:
@@ -132,13 +210,15 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
     if u_fc and u_obs:
         error = dequantify_dataset(error.to_dataset(name="error"))["error"]
     fc, truth = (da.pint.dequantify() if da.pint.units is not None else da for da in (fc, truth))
-    if metric != "hits" and threshold != 1.0:
+    if metric not in ("hits", "brier") and threshold is not None:
         print(
             f"Note: --threshold {threshold} is ignored for --metric {metric}.",
             file=sys.stderr,
         )
 
-    valid = fc.notnull() & truth.notnull()
+    valid = (
+        fc.notnull().all(member) if metric in _ENSEMBLE_METRICS else fc.notnull()
+    ) & truth.notnull()
     obs_event = None
     if metric == "hits":
         fc_event = fc >= threshold
@@ -146,9 +226,21 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
         field = xr.where(fc_event & obs_event, 1, xr.where(fc_event != obs_event, -1, 0))
     elif metric == "bias":
         field = error
-    else:
+    elif metric in ("mae", "rmse"):
         field = np.abs(error)
-    field = field.astype("float32").where(valid)
+    elif metric == "crps":
+        field = crps_ensemble(fc, truth, member, estimator=crps_estimator)
+    else:
+        probability = (fc > threshold).mean(member)
+        field = (probability - (truth > threshold).astype(float)) ** 2
+    field = field.astype("float64").where(valid)
+    if reduce:
+        field = (
+            np.sqrt((field**2).mean(reduce, skipna=True))
+            if metric == "rmse"
+            else field.mean(reduce, skipna=True)
+        )
+    field = field.astype("float32")
     field.name = _VAR[metric]
 
     attrs = {
@@ -170,8 +262,25 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
         attrs.update(
             long_name="Forecast bias (forecast − observation)", units=error.attrs.get("units")
         )
+    elif metric == "brier":
+        attrs.update(
+            long_name="Brier score", units="1", event_threshold=threshold, event_comparison=">"
+        )
     else:
-        attrs.update(long_name="Mean absolute error", units=error.attrs.get("units"))
+        labels = {
+            "mae": "Mean absolute error",
+            "rmse": "Root mean square error",
+            "crps": "Continuous ranked probability score (ensemble)",
+        }
+        attrs.update(long_name=labels[metric], units=error.attrs.get("units"))
+    if metric == "crps":
+        attrs["verify_crps_estimator"] = crps_estimator
+    if reduce:
+        attrs["verify_reduce_dims"] = ",".join(reduce)
+    if ensemble_reduction:
+        attrs["verify_ensemble_reduction"] = ensemble_reduction
+    if metric in _ENSEMBLE_METRICS:
+        attrs["verify_ensemble_size"] = int(forecast.sizes[member])
     field.attrs = attrs
 
     finite = field.notnull()
@@ -185,7 +294,8 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
         )
     else:
         lat = next((n for n in ("latitude", "lat") if n in field.dims), None)
-        u = f"{ureg.Unit(u_fc or u_obs):~}" if (u_fc or u_obs) else ""
+        score_units = field.attrs.get("units")
+        u = f"{ureg.Unit(score_units):~}" if score_units and score_units != "1" else ""
         u_suffix = f" {u}" if u else ""
         value = None
         # Gridded: cos-lat weighted mean. Stations (point-value output): plain
@@ -207,7 +317,7 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
             sign = "+" if value >= 0 else ""
             summary = f"bias {sign}{value:.2g}{u_suffix}  ({how})"
         else:
-            summary = f"MAE {value:.2g}{u_suffix}  ({how})"
+            summary = f"{metric.upper()} {value:.2g}{u_suffix}  ({how})"
     print(f"verify  {summary}")
 
     out = field.to_dataset()

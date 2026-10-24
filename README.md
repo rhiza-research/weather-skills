@@ -95,7 +95,7 @@ dataset output.
 
 ## Install
 
-These skills live at <https://github.com/rhiza-research/forecasting-skills>.
+These skills live at <https://github.com/rhiza-research/weather-skills>.
 There are three ways to use them.
 
 ### As a Claude Code plugin
@@ -103,7 +103,7 @@ There are three ways to use them.
 Install the plugin once — add the marketplace, then install the plugin:
 
 ```bash
-claude plugin marketplace add rhiza-research/forecasting-skills
+claude plugin marketplace add rhiza-research/weather-skills
 claude plugin install rhiza-forecasting@weather-skills
 ```
 
@@ -141,22 +141,22 @@ including reaching the network and writing output files — so add an `ask` or
 ### As a CLI tool
 
 For ad-hoc command-line use (no agent involved), install the skills as a
-single `forecasting-skills` binary:
+single `weather-skills` binary:
 
 ```bash
 # One-shot, no install — list available skills
-uvx --from git+https://github.com/rhiza-research/forecasting-skills forecasting-skills
+uvx --from git+https://github.com/rhiza-research/weather-skills weather-skills
 
 # Run one
-uvx --from git+https://github.com/rhiza-research/forecasting-skills forecasting-skills <skill> [args]
+uvx --from git+https://github.com/rhiza-research/weather-skills weather-skills <skill> [args]
 ```
 
 Or install once and invoke directly:
 
 ```bash
-uv tool install git+https://github.com/rhiza-research/forecasting-skills
-forecasting-skills                          # list
-forecasting-skills <skill> [args]           # run one
+uv tool install git+https://github.com/rhiza-research/weather-skills
+weather-skills                          # list
+weather-skills <skill> [args]           # run one
 ```
 
 Each skill's PEP 723 inline dependency block is resolved by `uv run`
@@ -172,30 +172,30 @@ to always pull the newest):
 
 ```bash
 # List what skillkit discovers in the repo
-npx skillkit install rhiza-research/forecasting-skills --list
+npx skillkit install rhiza-research/weather-skills --list
 
 # Install all skills to the current project
-npx skillkit install rhiza-research/forecasting-skills --all --yes
+npx skillkit install rhiza-research/weather-skills --all --yes
 
 # Install globally so any project can use them
-npx skillkit install rhiza-research/forecasting-skills --all --yes --global
+npx skillkit install rhiza-research/weather-skills --all --yes --global
 
 # Target a specific agent (otherwise skillkit installs for every agent it detects)
-npx skillkit install rhiza-research/forecasting-skills --all --yes --agent claude-code
+npx skillkit install rhiza-research/weather-skills --all --yes --agent claude-code
 
 # Install just a subset
-npx skillkit install rhiza-research/forecasting-skills --skill=ecmwf-fetch
-npx skillkit install rhiza-research/forecasting-skills --skills=clip-region,difference
+npx skillkit install rhiza-research/weather-skills --skill=ecmwf-fetch
+npx skillkit install rhiza-research/weather-skills --skills=clip-region,difference
 
 # Overwrite an existing install
-npx skillkit install rhiza-research/forecasting-skills --all --yes --force
+npx skillkit install rhiza-research/weather-skills --all --yes --force
 ```
 
 Pin in a manifest for team / reproducible use:
 
 ```bash
 npx skillkit manifest init
-npx skillkit manifest add rhiza-research/forecasting-skills
+npx skillkit manifest add rhiza-research/weather-skills
 npx skillkit manifest install
 ```
 
@@ -204,30 +204,30 @@ See `npx skillkit install --help` for more flags.
 ## Composition pattern
 
 Middle-pipeline skills are designed to chain. Example — a weekly forecast and
-the matching observations for one country, using the `forecasting-skills` CLI from
+the matching observations for one country, using the `weather-skills` CLI from
 the Install section above:
 
 ```bash
 # Kenya bbox (N/W/S/E) from resolve-region
-forecasting-skills resolve-region KEN
+weather-skills resolve-region KEN
 
 # ECMWF 46-day ensemble forecast, weekly totals
-forecasting-skills dynamical-fetch \
+weather-skills dynamical-fetch \
     --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree \
     --date 2026-09-14 --bbox 5.5/33.9/-4.7/41.9 -v tp \
     --output /tmp/ecmwf.zarr
-forecasting-skills aggregate-temporal \
+weather-skills aggregate-temporal \
     --input /tmp/ecmwf.zarr --period weekly --output /tmp/ecmwf_weekly.zarr
-forecasting-skills convert-to-totals \
+weather-skills convert-to-totals \
     --input /tmp/ecmwf_weekly.zarr --output /tmp/ecmwf_weekly_totals.zarr
 
 # CHIRPS observations for the same weeks
-forecasting-skills chirps-fetch \
+weather-skills chirps-fetch \
     --start-time 2026-09-14 --end-time 2026-09-20 --bbox 5.5/33.9/-4.7/41.9 \
     --output /tmp/chirps.zarr
-forecasting-skills aggregate-temporal \
+weather-skills aggregate-temporal \
     --input /tmp/chirps.zarr --period weekly --output /tmp/chirps_weekly.zarr
-forecasting-skills convert-to-totals \
+weather-skills convert-to-totals \
     --input /tmp/chirps_weekly.zarr --output /tmp/chirps_weekly_totals.zarr
 ```
 

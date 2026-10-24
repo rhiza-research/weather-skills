@@ -6,6 +6,8 @@
 # ///
 """Subtract one Zarr from another (A − B), cell by cell."""
 
+import sys
+
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import AGGREGATION_PERIOD_ATTR, looks_like_precip_total, ureg
@@ -47,9 +49,29 @@ def difference(ds, variable, **kwargs):
                 f"--variable {v!r} must be in both inputs (A: {list(ds_a.data_vars)}, "
                 f"B: {list(ds_b.data_vars)})"
             )
+    dropped = sorted((set(ds_a.data_vars) | set(ds_b.data_vars)) - set(vars_))
+    if dropped:
+        print(
+            f"Note: dropping data variable(s) {dropped} not differenced (absent from an input or unselected).",
+            file=sys.stderr,
+        )
+    warned_dims = set()
     out = {}
     for v in vars_:
         a, b = ds_a[v], ds_b[v]
+        for dim in sorted(set(a.dims) & set(b.dims)):
+            if dim in a.indexes and dim in b.indexes:
+                continue
+            if a.sizes[dim] != b.sizes[dim]:
+                raise UsageError(
+                    f"shared dim {dim!r} is paired positionally but sizes differ: {a.sizes[dim]} vs {b.sizes[dim]}"
+                )
+            if dim not in warned_dims:
+                print(
+                    f"Warning: shared dim {dim!r} lacks an index on one or both inputs; pairing it positionally. Verify the rows correspond.",
+                    file=sys.stderr,
+                )
+                warned_dims.add(dim)
         only_a = [d for d in a.dims if d not in b.dims]
         only_b = [d for d in b.dims if d not in a.dims]
         if only_a and only_b:
