@@ -26,7 +26,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.4"
 
 _BUCKET = "neuralgcm-s2s"
 _PREFIX = "staging/realtime/tomorrow_now_2026/v1"
@@ -67,7 +67,7 @@ _VAR_ALIASES = {
 
 _AUTH_MSG = (
     "cannot read gs://neuralgcm-s2s (private GCS). Set "
-    "NEURAL_GCM_SERVICE_CREDENTIALS to the full service-account key JSON "
+    "GCLOUD_SERVICE_CREDENTIALS to the full service-account key JSON "
     "(no file needed), GOOGLE_APPLICATION_CREDENTIALS to a service-account "
     "JSON file path, or run `gcloud auth application-default login`."
 )
@@ -86,16 +86,14 @@ def _canonical_dataset(dataset: str) -> str:
 def _filesystem():
     import gcsfs
 
-    creds_json = os.environ.get("NEURAL_GCM_SERVICE_CREDENTIALS")
+    creds_json = os.environ.get("GCLOUD_SERVICE_CREDENTIALS")
     if creds_json:
         try:
             info = json.loads(creds_json)
         except json.JSONDecodeError as exc:
-            raise DataError(f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
+            raise DataError(f"GCLOUD_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
         if not isinstance(info, dict):
-            raise DataError(
-                "NEURAL_GCM_SERVICE_CREDENTIALS must be a service-account key JSON object."
-            )
+            raise DataError("GCLOUD_SERVICE_CREDENTIALS must be a service-account key JSON object.")
         try:
             return gcsfs.GCSFileSystem(token=info)
         except Exception as exc:  # noqa: BLE001 — surface ADC failures as DataError
@@ -113,7 +111,7 @@ def _gcs_error(exc: Exception, what: str) -> DataError:
     lowered = text.lower()
     if any(token in lowered for token in ("401", "403", "forbidden", "credential", "anonymous")):
         hint = (
-            " Check GCS credentials: set NEURAL_GCM_SERVICE_CREDENTIALS "
+            " Check GCS credentials: set GCLOUD_SERVICE_CREDENTIALS "
             "(service-account key JSON), GOOGLE_APPLICATION_CREDENTIALS (a key "
             "file path), or run `gcloud auth application-default login`."
         )

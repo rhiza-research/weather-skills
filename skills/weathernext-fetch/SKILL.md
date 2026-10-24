@@ -2,10 +2,10 @@
 name: weathernext-fetch
 description: "Fetch a Google WeatherNext AI forecast for one init over an optional lat/lon box, as a weather-skills Zarr: WeatherNext 2 (64-member ensemble, 6-hourly leads to 15 days, 0.25° global, from 2025) or WeatherNext 3 (64-member ensemble or its precomputed mean and percentiles, hourly leads to 15 days, 0.1° global, from 2026). Precipitation, 2 m temperature and dewpoint, winds, sea-level pressure, SST, cloud, radiation and pressure-level fields. Reads the gs://weathernext buckets with a Google Cloud login. Use when a task needs a WeatherNext forecast."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads consolidated Zarr from the WeatherNext 2 and 3 realtime archives via gcsfs. Requires Google Cloud Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS or `gcloud auth application-default login`) — any authenticated Google account works, the buckets have no special allowlist; a Google account is free with sign-up at https://accounts.google.com/signup. WeatherNext 3 ensemble reads are requester pays and need a billing project (--billing-project or GOOGLE_CLOUD_PROJECT).
+compatibility: "Requires Python 3.12 and uv. Reads consolidated Zarr from the WeatherNext 2 and 3 realtime archives via gcsfs. Requires Google Cloud credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login` — any authenticated Google account works, the buckets have no special allowlist; a Google account is free with sign-up at https://accounts.google.com/signup. WeatherNext 3 ensemble reads are requester pays and need a billing project (--billing-project or GOOGLE_CLOUD_PROJECT)."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.3"
+  version: "0.0.4"
   catalog-group: fetchers
   variables:
     - tp
@@ -28,11 +28,13 @@ metadata:
   openclaw:
     requires:
       env:
-        - GOOGLE_APPLICATION_CREDENTIALS
-    primaryEnv: GOOGLE_APPLICATION_CREDENTIALS
+        - GCLOUD_SERVICE_CREDENTIALS
+    primaryEnv: GCLOUD_SERVICE_CREDENTIALS
     envVars:
+      - name: GCLOUD_SERVICE_CREDENTIALS
+        description: Full contents of a GCP service-account key JSON (any Google Cloud identity can read the WeatherNext buckets). Use this when the runtime can only inject secret values, not files.
       - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON (any Google Cloud identity can read the WeatherNext buckets)
+        description: Path to a GCP service-account JSON file. Used only if GCLOUD_SERVICE_CREDENTIALS is unset.
       - name: GOOGLE_CLOUD_PROJECT
         description: Billing project for requester-pays WeatherNext 3 ensemble reads (alternative to --billing-project)
 ---
@@ -54,7 +56,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--version 2|3] [--product ensemble|
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--version 3 ...] --probe-latest [--cycle HH]
 ```
 
-Needs Google Cloud Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS` or `gcloud auth application-default login`). WeatherNext 3 ensemble reads are requester pays and exit 2 without a billing project.
+Needs Google Cloud credentials: `GCLOUD_SERVICE_CREDENTIALS` (key JSON), `GOOGLE_APPLICATION_CREDENTIALS` (key file path), or `gcloud auth application-default login`. WeatherNext 3 ensemble reads are requester pays and exit 2 without a billing project.
 
 ### Arguments
 - `--version` — `2` (default) or `3`.
@@ -109,7 +111,7 @@ Writes WeatherNext 3 hourly mean and 90th-percentile precip over Kenya for 3 day
 ### Flags
 - WeatherNext 2 inits run daily from 2025-01-01, WeatherNext 3 from 2026. WeatherNext 3 interim cycles are `01`–`05`, `07`–`11`, `13`–`17`, `19`–`23`.
 - `--bbox` takes negative longitudes. A negative `--member` counts from the end.
-- Anonymous access fails; any authenticated Google identity can read the buckets. The WeatherNext 3 ensemble bucket bills every listing and read to the billing project, and the skill exits 2 without one before touching GCS. gcloud's default project (`gcloud config set project`) is not read: pass `--billing-project` or export `GOOGLE_CLOUD_PROJECT`.
+- Anonymous access fails; any authenticated Google identity can read the buckets. `GCLOUD_SERVICE_CREDENTIALS` (the service-account key JSON itself, no file needed) takes precedence over `GOOGLE_APPLICATION_CREDENTIALS` and gcloud login. The WeatherNext 3 ensemble bucket bills every listing and read to the billing project, and the skill exits 2 without one before touching GCS. gcloud's default project (`gcloud config set project`) is not read: pass `--billing-project` or export `GOOGLE_CLOUD_PROJECT`.
 
 ### Units and provenance
 - SST stays `K`; others keep ERA5-style units (`m s-1`, `Pa`, `Pa s-1`, `kg kg-1`, `m2 s-2`, `J m-2`, cloud fraction `1`).

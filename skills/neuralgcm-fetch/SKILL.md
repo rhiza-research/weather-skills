@@ -2,10 +2,10 @@
 name: neuralgcm-fetch
 description: "Fetch a NeuralGCM subseasonal ensemble forecast (up to 50 members, 6-hourly leads to 60 days, ~2.8° global) for one init over an optional lat/lon box, as a weather-skills Zarr: IMERG-trained precipitation, or 2 m temperature and dewpoint. Reads the private Tomorrow Now 2026 realtime archive in gs://neuralgcm-s2s with Google Cloud service-account credentials. Use when a task needs the NeuralGCM forecast."
 license: MIT
-compatibility: "Requires Python 3.12 and uv. Reads private consolidated Zarr from gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1 via gcsfs. Requires Google Cloud credentials: NEURAL_GCM_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
+compatibility: "Requires Python 3.12 and uv. Reads private consolidated Zarr from gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1 via gcsfs. Requires Google Cloud credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.3"
+  version: "0.0.4"
   catalog-group: fetchers
   variables:
     - tp
@@ -14,13 +14,13 @@ metadata:
   openclaw:
     requires:
       env:
-        - NEURAL_GCM_SERVICE_CREDENTIALS
-    primaryEnv: NEURAL_GCM_SERVICE_CREDENTIALS
+        - GCLOUD_SERVICE_CREDENTIALS
+    primaryEnv: GCLOUD_SERVICE_CREDENTIALS
     envVars:
-      - name: NEURAL_GCM_SERVICE_CREDENTIALS
+      - name: GCLOUD_SERVICE_CREDENTIALS
         description: Full contents of a GCP service-account key JSON with read access to gs://neuralgcm-s2s. Use this when the runtime can only inject secret values, not files.
       - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON file with read access to gs://neuralgcm-s2s. Used only if NEURAL_GCM_SERVICE_CREDENTIALS is unset.
+        description: Path to a GCP service-account JSON file with read access to gs://neuralgcm-s2s. Used only if GCLOUD_SERVICE_CREDENTIALS is unset.
 ---
 
 # neuralgcm-fetch
@@ -34,7 +34,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--dataset imerg:precip|era5:surface
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET] [--cycle HH]
 ```
 
-The bucket is private. Set one of, in order of precedence: `NEURAL_GCM_SERVICE_CREDENTIALS` (the service-account key JSON itself), `GOOGLE_APPLICATION_CREDENTIALS` (path to that JSON file), or Application Default Credentials from `gcloud auth application-default login`.
+The bucket is private. Set one of, in order of precedence: `GCLOUD_SERVICE_CREDENTIALS` (the service-account key JSON itself), `GOOGLE_APPLICATION_CREDENTIALS` (path to that JSON file), or Application Default Credentials from `gcloud auth application-default login`.
 
 ### Arguments
 - `--dataset` — product under each init. Default: `imerg:precip` (alias `precip`) → `tp`. `era5:surface` (alias `surface`) → `t2m`, `d2m`.
