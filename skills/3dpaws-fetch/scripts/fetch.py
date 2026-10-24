@@ -192,7 +192,8 @@ def _station_daily(portal, station_id, start, end, day_start_hour, min_coverage,
         reported = clean[g].notna().groupby(day_of).transform("any")
         usable[g] = reported & ~broken
         if broken.any():
-            n = broken.groupby(day_of).first().sum()
+            # Count only the requested days, not the hour fetched either side.
+            n = broken.groupby(day_of).first().loc[start:end].sum()
             print(
                 f"{station_id}: {g} over {RAIN_MAX_MM_PER_MIN} mm/min on {n} day(s), left out",
                 file=sys.stderr,
