@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.1.1",
+#   "weather-skills-core>=0.2.0",
 # ]
 # ///
 """Subtract one Zarr from another (A − B), cell by cell."""
@@ -11,7 +11,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import AGGREGATION_PERIOD_ATTR, looks_like_precip_total, ureg
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.5"
 
 _WIDEN = {1: "int16", 2: "int32", 4: "int64"}
 

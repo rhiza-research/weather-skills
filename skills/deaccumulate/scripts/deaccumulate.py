@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.1.1",
+#   "weather-skills-core>=0.2.0",
 # ]
 # ///
 """Convert a forecast variable stored as a running total since init into per-step values."""
@@ -13,7 +13,7 @@ from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.units import deaccumulate_along_step
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.4"
 
 
 @weather_skill(

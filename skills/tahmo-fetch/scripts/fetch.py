@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.1.1",
+#   "weather-skills-core>=0.2.0",
 #   "pandas",
 #   "tahmo",
 # ]
@@ -29,7 +29,7 @@ from weather_skills_core.standard_utils import is_transient, require_env
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.5"
+_SKILL_VERSION = "0.0.6"
 
 DEFAULT_WORKERS = 8
 _TAHMO_PREFIX = "TA"
@@ -347,17 +347,33 @@ def fetch(
     if probe_latest is not None:
         from datetime import UTC, datetime, timedelta
 
-        end = datetime.now(UTC).date()
+        now = datetime.now(UTC)
+        end = now.date()
         start = end - timedelta(days=14)
+        # Day D ends at D+1 HH:00 UTC, so the newest day that can be complete
+        # is the one that ended last; before HH:00 that is two days back.
+        newest = (now - timedelta(hours=day_start_hour)).date() - timedelta(days=1)
         if station or bbox is not None:
             selected = _select_stations(stations, station, bbox)
         else:
             selected = _ta_stations(stations).head(3)
+        # Stop at the first station with that day complete instead of
+        # downloading every station in the box.
         latest = None
-        for _, row in selected.iterrows():
-            daily = _station_frame(
-                api, row["code"], start.isoformat(), end.isoformat(), day_start_hour
+        pool = ThreadPoolExecutor(max_workers=workers)
+        futures = [
+            pool.submit(
+                _station_frame,
+                api,
+                row["code"],
+                start.isoformat(),
+                end.isoformat(),
+                day_start_hour,
             )
+            for _, row in selected.iterrows()
+        ]
+        for fut in as_completed(futures):
+            daily = fut.result()
             if daily is None:
                 continue
             observed = daily.drop(columns="station_id").dropna(how="all")
@@ -365,6 +381,9 @@ def fetch(
                 continue
             day = observed.index.max().date()
             latest = day if latest is None else max(latest, day)
+            if latest >= newest:
+                break
+        pool.shutdown(wait=False, cancel_futures=True)
         if latest is None:
             raise DataError("TAHMO probe found no recent complete days")
         print(latest.isoformat())

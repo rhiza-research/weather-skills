@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.1.1",
+#   "weather-skills-core>=0.2.0",
 #   "dynamical-catalog==1.0.1",
 #   "pandas",
 # ]
@@ -21,7 +21,7 @@ from weather_skills_core.standard_utils import (
 from weather_skills_core.units import stamp_data_interval, to_standard_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.5"
 
 # Forecast bookkeeping / CRS scalar coords dropped from the standard output.
 _DROP_COORDS = (
@@ -274,10 +274,7 @@ def _open_dataset(state, dataset) -> dict:
 )
 @weather_skill.argument(
     "--max-lead",
-    help=(
-        "Forecasts only: keep leads up to this one (pandas timedelta: 240h, 10D). "
-        "Only those leads are downloaded. Default: every lead."
-    ),
+    help=("Forecasts only: keep output steps up to this one (240h, 10D). Default: every step."),
 )
 def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max_lead, **kwargs):
     """Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
@@ -362,9 +359,12 @@ def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max
                 raise UsageError(
                     f"--max-lead {max_lead!r} is not a timedelta (240h, 10D)"
                 ) from None
-            if limit <= np.timedelta64(0):
-                raise UsageError("--max-lead must be positive")
-            ds = ds.sel(lead_time=slice(None, limit))
+            if limit < np.timedelta64(0, "ns"):
+                raise UsageError("--max-lead must not be negative")
+            # One catalog lead past the limit: end-labelled fields move back one
+            # step below, and the extra lead is trimmed after that.
+            n = int((ds["lead_time"].values <= limit).sum())
+            ds = ds.isel(lead_time=slice(0, n + 1))
         if init_target not in inits:
             raise _no_init()
         try:
@@ -456,6 +456,17 @@ def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max
                 "Dropped all-NaN lead 0 and relabelled steps to interval start.",
                 file=sys.stderr,
             )
+    if is_forecast and max_lead is not None:
+        ds = ds.sel(step=slice(None, limit))
+        # Mixed with instant fields, an end-labelled field has no value at step 0.
+        empty = [name for name in ds.data_vars if bool(ds[name].isnull().all())]
+        if empty:
+            print(
+                f"WARNING: dropped {', '.join(empty)}: no value up to --max-lead {max_lead} "
+                "(averaged fields are labelled at the end of their interval).",
+                file=sys.stderr,
+            )
+            ds = ds.drop_vars(empty)
     ds = _stack_pressure_levels(ds)
 
     print(f"Fetching dynamical:{dataset} (shape={shape})", file=sys.stderr)

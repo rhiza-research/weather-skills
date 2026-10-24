@@ -1,11 +1,11 @@
 ---
 name: select
-description: "Pick entries along one dimension of a weather-skills Zarr, by integer position or by coordinate value: an ensemble member, a forecast step, a date, a station. Picking one entry removes that dimension but keeps the picked label as a scalar coordinate, so outputs from different sources line up for stacking. Works on gridded and station datasets."
+description: "Pick entries along one dimension of a weather-skills Zarr, by integer position or by coordinate value: an ensemble member, a forecast step, a date, a station. Picking one entry removes that dimension but keeps the picked label as a scalar coordinate, so outputs from different sources line up for stacking. Works on gridded and station datasets. Use to take one member, lead, date or station out of a dataset."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/select_dim.py *)
 metadata:
-  version: "0.0.4"
+  version: "0.0.5"
   catalog-group: transforms
 ---
 
