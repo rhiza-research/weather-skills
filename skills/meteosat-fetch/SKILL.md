@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Requires EUMETSAT_CONSUMER_KEY and EUMETSAT_CONSUMER_SECRET in the environment, or an eumdac credentials file at ~/.eumdac/credentials (free with sign-up — register at https://user.eumetsat.int, then create the key at https://api.eumetsat.int/api-key/).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.1"
+  version: "0.0.2"
   catalog-group: fetchers
   variables:
     - ir

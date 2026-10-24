@@ -27,7 +27,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.4"
 
 _TIME_LABELS = ("month", "year", "dayofyear", "month_group")
 _INITIALS = "JFMAMJJASOND"

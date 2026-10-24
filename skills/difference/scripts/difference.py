@@ -11,7 +11,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import AGGREGATION_PERIOD_ATTR, looks_like_precip_total, ureg
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.5"
 
 _WIDEN = {1: "int16", 2: "int32", 4: "int64"}
 
