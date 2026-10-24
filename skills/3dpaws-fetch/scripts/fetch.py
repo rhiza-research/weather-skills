@@ -25,6 +25,8 @@ _SKILL_VERSION = "0.0.1"
 
 DEFAULT_PORTAL = "https://3d-fewsnet.icdp.ucar.edu"
 DEFAULT_WORKERS = 8
+# Days whose readings span less than this share are NaN (coverage still written).
+DEFAULT_MIN_COVERAGE = 0.8
 # CHORDS refuses a request over its max_download_points (200,000 on the FEWS
 # NET portal). A 1-minute station with ~23 variables sends ~33,000 points a
 # day, so 3-day requests stay well under the cap.
@@ -108,7 +110,7 @@ def _get_json(url: str, params: dict | None = None):
             raise DataError(f"could not reach CHORDS ({exc})") from None
 
 
-def _station_daily(portal, station_id, start, end, day_start_hour, auth):
+def _station_daily(portal, station_id, start, end, day_start_hour, min_coverage, auth):
     """Download one station's readings and reduce them to daily values.
 
     Days ``start`` .. ``end`` inclusive, each starting at ``day_start_hour`` UTC.
@@ -203,17 +205,19 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     days = clean.resample("D")
     wanted = pd.date_range(start, end, freq="D", name="time")
     daily = pd.DataFrame(index=wanted)
+    # A day keeps its value when its readings span at least min_coverage of it.
+    kept = (coverage > 0) & (coverage >= min_coverage)
     # Temperature, humidity, pressure and wind: the statistic of the readings
     # there are; <var>_coverage says how much of the day they span.
     for name, (short, stat) in SENSORS.items():
         if short in clean.columns:
-            daily[name] = days[short].agg(stat).reindex(wanted).where(coverage[short] > 0)
+            daily[name] = days[short].agg(stat).reindex(wanted).where(kept[short])
             daily[f"{name}_coverage"] = coverage[short].to_numpy()
     # Rain: the total of the readings there are. On a partly covered day that is
     # only the rain in the covered part, never scaled up; precip_coverage says how
-    # much of the day it is, for later steps to gate.
+    # much of the day it is.
     if "rg1" in clean.columns:
-        has_rain = coverage["rg1"] > 0
+        has_rain = kept["rg1"]
         total = days["rg1"].sum().reindex(wanted).where(has_rain)
         precip_coverage = coverage["rg1"]
         if "rg2" in clean.columns:
@@ -264,6 +268,12 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     help="UTC hour each day starts at (0-23, default 0); 6 for the KMD 06 UTC rain day.",
 )
 @weather_skill.argument(
+    "--min-coverage",
+    type=float,
+    default=DEFAULT_MIN_COVERAGE,
+    help=f"Share of a day (0-1) readings must span to keep its value (default {DEFAULT_MIN_COVERAGE}).",
+)
+@weather_skill.argument(
     "--list-stations",
     action="store_true",
     default=False,
@@ -286,6 +296,7 @@ def fetch(
     portal,
     workers,
     day_start_hour,
+    min_coverage,
     list_stations,
     probe_latest,
     **kwargs,
@@ -296,6 +307,8 @@ def fetch(
 
     if not 0 <= day_start_hour <= 23:
         raise UsageError(f"--day-start-hour must be 0-23, got {day_start_hour}.")
+    if not 0 <= min_coverage <= 1:
+        raise UsageError(f"--min-coverage must be 0-1, got {min_coverage}.")
     if not list_stations and probe_latest is None and not station and bbox is None:
         raise UsageError("pass --station ID (repeatable) or --bbox N/W/S/E.")
 
@@ -401,7 +414,14 @@ def fetch(
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
             pool.submit(
-                _station_daily, portal, row["station_id"], start, end, day_start_hour, auth
+                _station_daily,
+                portal,
+                row["station_id"],
+                start,
+                end,
+                day_start_hour,
+                min_coverage,
+                auth,
             ): row
             for _, row in selected.iterrows()
         }

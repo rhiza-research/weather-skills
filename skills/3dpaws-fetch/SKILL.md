@@ -34,7 +34,7 @@ Lists the 3D-PAWS stations on a CHORDS portal, or downloads their raw readings a
 # List stations (TSV on stdout, no -o); --bbox optional
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --list-stations [--bbox N/W/S/E] [--portal URL]
 # Fetch chosen stations, or every station in a box
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py (--station ID [--station ID ...] | --bbox N/W/S/E) --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--day-start-hour H] [--portal URL] [--workers N] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py (--station ID [--station ID ...] | --bbox N/W/S/E) --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--day-start-hour H] [--min-coverage F] [--portal URL] [--workers N] -o OUT.zarr
 # Print the latest ended day, and exit
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--station ID | --bbox N/W/S/E]
 ```
@@ -45,6 +45,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--station ID | --bbo
 - `--bbox` — `N/W/S/E`; every station whose site is inside.
 - `--start-time`, `--end-time` — inclusive days, `YYYY-MM-DD`.
 - `--day-start-hour` — UTC hour each day starts, 0-23. Default 0. Use 6 for the KMD 06 UTC rain day.
+- `--min-coverage` — share of a day (0-1) the readings must span for that day to keep its value; below it the value is NaN. Default 0.8.
 - `--portal` — CHORDS portal URL. Default `https://3d-fewsnet.icdp.ucar.edu` (FEWS NET). Each portal needs its own key.
 - `--workers` — parallel station downloads. Default 8.
 - `--probe-latest` — print the last day that ended before the newest reading, and exit. Does not check the day is complete.
@@ -56,7 +57,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--station ID | --bbo
 - Each has a `<var>_coverage` (0-1): the share of the day with readings, listed in the variable's `ancillary_variables`.
 
 ### Notes
-- Every variable is the daily statistic of the readings there are, NaN only with no readings. On a partly covered day `precip` is the rain in the covered part only, never scaled up, and a `tmax` can miss the peak: gate on `<var>_coverage` (e.g. 1 for a daily total) before using such days. Missing data is never filled. stderr reports per variable the station-days with a value and those fully covered.
+- Every variable is the daily statistic of the readings there are, NaN when they span less than `--min-coverage` of the day. On a partly covered day `precip` is the rain in the covered part only, never scaled up, and a `tmax` can miss the peak; `--min-coverage 1` keeps only fully covered days. `<var>_coverage` is written for every day, kept or not. Missing data is never filled. stderr reports per variable the station-days with a value and those fully covered.
 - Needs `CHORDS_EMAIL` and `CHORDS_API_KEY` (from the portal's `/users` page, with download access); missing or rejected exits 2. A station that fails to download is dropped with a stderr line.
 
 ### Example

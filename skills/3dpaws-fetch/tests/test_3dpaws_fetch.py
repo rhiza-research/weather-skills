@@ -239,10 +239,28 @@ def test_partial_day_keeps_the_rain_measured(tmp_path, mod, fetch):
     for p in points:
         if p["time"] == "2026-10-02T12:00:00Z":
             p["measurements"] = {"rg1": 0.1, "mt1": 20.0}
+    # Day 2 covers 75 %, under the default --min-coverage 0.8: NaN, coverage still told.
     ds = _run(tmp_path, mod, fetch, {"1": points})
-    # 96 readings on day 1; 72 - 1 on day 2, nothing scaled up.
-    np.testing.assert_allclose(ds["precip"].values[:, 0], [9.6, 7.1])
+    np.testing.assert_array_equal(np.isnan(ds["precip"].values[:, 0]), [False, True])
     np.testing.assert_allclose(ds["precip_coverage"].values[:, 0], [1.0, 0.75])
+    assert np.isnan(ds["temperature"].values[1, 0])
+    # A looser threshold keeps it: 96 readings on day 1; 72 - 1 on day 2, nothing scaled up.
+    ds = _run(tmp_path, mod, fetch, {"1": points}, "--min-coverage", "0.5")
+    np.testing.assert_allclose(ds["precip"].values[:, 0], [9.6, 7.1])
+    np.testing.assert_allclose(ds["temperature"].values[:, 0], [20.0, 20.0])
+
+
+def test_min_coverage_must_be_a_share(tmp_path, mod, fetch):
+    with pytest.raises(SystemExit) as exc:
+        _run(
+            tmp_path,
+            mod,
+            fetch,
+            {"1": _readings("2026-10-01", 2, 15, _dry)},
+            "--min-coverage",
+            "80",
+        )
+    assert exc.value.code == 2
 
 
 def test_single_missing_reading_keeps_the_day(tmp_path, mod, fetch):
