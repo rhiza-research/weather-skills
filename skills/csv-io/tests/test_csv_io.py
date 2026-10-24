@@ -653,7 +653,7 @@ def test_read_names_text_columns_when_no_numbers_remain(tmp_path, csv_io, capsys
     with pytest.raises(SystemExit) as exc:
         run_skill(csv_io, "--csv", str(src), "-o", str(tmp_path / "out.zarr"))
     assert exc.value.code == 2
-    assert "rain ('T')" in capsys.readouterr().err
+    assert "rain [mm] has text cells such as 'T'" in capsys.readouterr().err
 
 
 def test_read_refuses_scattered_points(tmp_path, csv_io):
@@ -671,3 +671,632 @@ def test_read_drops_empty_column_under_a_trailing_comma(tmp_path, csv_io):
     out = tmp_path / "out.zarr"
     run_skill(csv_io, "--csv", str(src), "-o", str(out))
     assert list(_open(out).data_vars) == ["rain"]
+
+
+def test_daily_dates_with_an_offset_keep_their_local_date(tmp_path, csv_io):
+    # Local midnight +03:00 is 21:00 UTC the day before; a daily total keeps its own date.
+    src = _write(
+        tmp_path,
+        "station,lat,lon,date,rain [mm]\n"
+        "A,0,36,2026-10-01T00:00+03:00,1\nA,0,36,2026-10-02T00:00+03:00,2\n",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    assert list(_open(out)["time"].values) == [
+        np.datetime64("2026-10-01"),
+        np.datetime64("2026-10-02"),
+    ]
+
+
+def test_read_refuses_times_mixing_offsets_and_none(tmp_path, csv_io):
+    src = _write(
+        tmp_path,
+        "station,lat,lon,time,t [degC]\nA,0,36,2026-10-01T03:00+03:00,1\nA,0,36,2026-10-01 01:00,2\n",
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_skill(csv_io, "--csv", str(src), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("zone", ["Africa/Nairobi", "+03:00", "UTC+3"])
+def test_timezone_turns_local_times_into_utc(tmp_path, csv_io, zone):
+    src = _write(
+        tmp_path,
+        "station,lat,lon,time,t [degC]\nA,0,36,2026-10-01 03:00,1\nA,0,36,2026-10-01 04:00,2\n",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out), "--timezone", zone)
+    assert list(_open(out)["time"].values) == [
+        np.datetime64("2026-10-01T00:00"),
+        np.datetime64("2026-10-01T01:00"),
+    ]
+
+
+def test_timezone_leaves_dates_alone(tmp_path, csv_io):
+    src = _write(tmp_path, "station,lat,lon,date,rain [mm]\nA,0,36,2026-10-01,1\n")
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out), "--timezone", "Africa/Nairobi")
+    assert _open(out)["time"].values[0] == np.datetime64("2026-10-01")
+
+
+def test_timezone_round_trip_names_the_zone_in_the_header(tmp_path, csv_io):
+    ds = make_point_obs(n_time=2, n_points=1)
+    ds = ds.assign_coords(time=pd.date_range("2026-10-01 00:00", periods=2, freq="h"))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    for zone, first in (("Africa/Nairobi", "2026-10-01 03:00:00"), (None, "2026-10-01 00:00:00")):
+        csv = tmp_path / f"out{zone is None}.csv"
+        back = tmp_path / f"back{zone is None}.zarr"
+        run_skill(csv_io, "-i", str(src), "-o", str(csv), *(["--timezone", zone] if zone else []))
+        df = pd.read_csv(csv)
+        assert df[f"time [{zone or 'UTC'}]"].iloc[0] == first
+        run_skill(csv_io, "--csv", str(csv), "-o", str(back))
+        np.testing.assert_array_equal(_open(back)["time"].values, ds["time"].values)
+
+
+def test_timezone_refuses_unknown_zones_and_dst_gaps(tmp_path, csv_io):
+    local = _write(tmp_path, "station,lat,lon,time,t\nA,40,-74,2026-03-08 02:30,1\n")
+    for zone in ("EAT", "America/New_York"):
+        with pytest.raises(SystemExit) as exc:
+            run_skill(
+                csv_io, "--csv", str(local), "-o", str(tmp_path / "o.zarr"), "--timezone", zone
+            )
+        assert exc.value.code == 2
+
+
+def _exits_2(csv_io, *args):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(csv_io, *args)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        "A,1,36,2026-10-01,1\nA,1,36,,2\n",  # no date
+        "A,1,36,2026-10-01,1\n,1,37,2026-10-01,2\n",  # no station
+    ],
+)
+def test_rows_without_a_key_exit_2(tmp_path, csv_io, rows):
+    # pandas would put such a row on another row's label, overwriting its value.
+    src = _write(tmp_path, "station,lat,lon,date,rain [mm]\n" + rows)
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "out.zarr"))
+
+
+def test_drop_incomplete_leaves_out_footer_rows(tmp_path, csv_io):
+    src = _write(
+        tmp_path,
+        "station,lat,lon,date,rain [mm]\nA,1,36,2026-10-01,1\nA,1,36,2026-10-02,2\nTotal,,,,3\n",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out), "--drop-incomplete")
+    res = _open(out)
+    assert list(res["station_id"].values) == ["A"]
+    np.testing.assert_allclose(res["rain"].values, [[1.0, 2.0]])
+
+
+def test_codes_and_ids_ignore_stray_spaces(tmp_path, csv_io):
+    src = _write(
+        tmp_path,
+        "station,lat,lon,date,rain [mm]\n"
+        "A ,1,36,2026-10-01,T \nA,1,36,2026-10-02,-99 \nA,1,36,2026-10-03, 4\n",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out), "--replace", "T=0", "--na-value", "-99")
+    res = _open(out)
+    assert list(res["station_id"].values) == ["A"]
+    np.testing.assert_allclose(res["rain"].values, [[0.0, np.nan, 4.0]])
+
+
+def test_codes_leave_station_ids_alone(tmp_path, csv_io):
+    src = _write(
+        tmp_path,
+        "station,lat,lon,date,rain [mm]\nT,1,36,2026-10-01,T\n-99,2,37,2026-10-01,-99\n",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out), "--replace", "T=0", "--na-value", "-99")
+    res = _open(out)
+    assert sorted(res["station_id"].values) == ["-99", "T"]
+    np.testing.assert_allclose(res["rain"].sel(station_id="T").values, [0.0])
+
+
+@pytest.mark.parametrize("lat_lon", ["95,36", "1,400", "1S,36", "36,-200"])
+def test_read_refuses_bad_coordinates(tmp_path, csv_io, lat_lon):
+    src = _write(tmp_path, f"station,lat,lon,date,rain [mm]\nA,{lat_lon},2026-10-01,1\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "out.zarr"))
+
+
+def test_station_longitudes_read_in_minus_180_to_180(tmp_path, csv_io):
+    src = _write(tmp_path, "station,lat,lon,date,rain [mm]\nA,1,200,2026-10-01,1\n")
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    np.testing.assert_allclose(_open(out)["longitude"].values, [-160.0])
+
+
+def test_read_refuses_stations_without_a_location(tmp_path, csv_io):
+    src = _write(
+        tmp_path, "station,lat,lon,date,rain [mm]\nA,1,36,2026-10-01,1\nB,,,2026-10-01,2\n"
+    )
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "out.zarr"))
+
+
+@pytest.mark.parametrize("point", ["95,36", "1,400,x", "1,36,", "nan,36"])
+def test_point_refuses_bad_values(tmp_path, csv_io, point):
+    src = _write(tmp_path, "date,rain [mm]\n2026-10-01,1\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "out.zarr"), "--point", point)
+
+
+@pytest.mark.parametrize(
+    "header,extra",
+    [
+        ("station,lat,lon,date,rain,rain", []),
+        ("station,lat,lon,date,rain,snow", ["--names", "station,lat,lon,date,rain,rain"]),
+    ],
+)
+def test_read_refuses_repeated_headers(tmp_path, csv_io, header, extra):
+    src = _write(tmp_path, f"{header}\nA,1,36,2026-10-01,1,2\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "out.zarr"), *extra)
+
+
+def test_unpivot_refuses_repeated_level_headers(tmp_path, csv_io):
+    src = _write(tmp_path, "lat,lon,850,850,500\n1,36,1,2,3\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"), "--unpivot", "level=t")
+
+
+def test_repeated_index_exits_2(tmp_path, csv_io):
+    src = _write(tmp_path, "station,lat,lon,date,rain [mm]\nA,1,36,2026-10-01,1\n")
+    _exits_2(
+        csv_io,
+        "--csv",
+        str(src),
+        "-o",
+        str(tmp_path / "o.zarr"),
+        "--index",
+        "station",
+        "--index",
+        "station_id",
+        "--index",
+        "date",
+    )
+
+
+def test_read_utf16_with_blank_lines_above_the_header(tmp_path, csv_io):
+    src = tmp_path / "in.txt"
+    src.write_bytes(
+        "\n\nstation\tlat\tlon\tdate\train [mm]\nA\t1\t36\t2026-10-01\t1.5\n".encode("utf-16")
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    np.testing.assert_allclose(_open(out)["rain"].values, [[1.5]])
+
+
+def test_time_header_notes_are_not_time_zones(tmp_path, csv_io):
+    src = _write(tmp_path, "station,lat,lon,Date (dd/mm/yyyy),rain [mm]\nA,1,36,01/10/2026,1\n")
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out), "--date-format", "%d/%m/%Y")
+    assert _open(out)["time"].values[0] == np.datetime64("2026-10-01")
+
+
+def test_date_format_without_a_year_exits_2(tmp_path, csv_io):
+    src = _write(tmp_path, "station,lat,lon,date,rain [mm]\nA,1,36,Oct-15,1\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"), "--date-format", "%b-%d")
+
+
+def test_unreadable_units_exit_2(tmp_path, csv_io):
+    src = _write(tmp_path, "station,lat,lon,date,rain [mm/dayy]\nA,1,36,2026-10-01,1\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"))
+
+
+def test_text_steps_exit_2(tmp_path, csv_io):
+    src = _write(tmp_path, "time,step [days],lat,lon,tp [mm]\n2026-10-01,1 days,1,36,1\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"))
+
+
+def test_empty_cell_in_a_calendar_time_column_exits_2(tmp_path, csv_io):
+    src = _write(tmp_path, "time [noleap],lat,lon,rain [mm]\n2026-02-01,1,36,1\n,1,36,2\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"))
+
+
+@pytest.mark.parametrize("spec", ["time=time", "time=lat", "time=station", "precip=precip"])
+def test_unpivot_names_must_not_clash(tmp_path, csv_io, spec):
+    src = _write(tmp_path, "station,lat,lon,2026-10-15,2026-10-16\nA,1,36,1,2\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"), "--unpivot", spec)
+
+
+def test_unpivot_stacks_a_text_column_that_holds_numbers(tmp_path, csv_io):
+    # "tr" beside a number is an unmapped code, not a label column.
+    src = _write(tmp_path, "station,lat,lon,d15,d16\nA,0,36,tr,1\nB,1,37,2,4\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"), "--unpivot", "day=precip")
+
+
+def test_unpivot_refuses_headers_mixing_numbers_and_text(tmp_path, csv_io):
+    src = _write(tmp_path, "lat,lon,850,500,Total\n1,36,1,2,3\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"), "--unpivot", "level=t")
+
+
+def test_drop_column_takes_the_header_as_written(tmp_path, csv_io):
+    src = _write(tmp_path, "station,lat,lon,Total Rain (mm),2026-10-15\nA,1,36,9,1\n")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        csv_io,
+        "--csv",
+        str(src),
+        "-o",
+        str(out),
+        "--drop-column",
+        "Total Rain (mm)",
+        "--unpivot",
+        "time=precip",
+    )
+    np.testing.assert_allclose(_open(out)["precip"].values, [[1.0]])
+
+
+def test_excel_skips_hidden_sheets(tmp_path, csv_io):
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    stale = wb.active
+    stale.title = "old"
+    stale.append(["station", "lat", "lon", "date", "rain [mm]"])
+    stale.append(["A", 1, 36, "2026-10-01", 100])
+    stale.sheet_state = "hidden"
+    live = wb.create_sheet("rain")
+    live.append(["station", "lat", "lon", "date", "rain [mm]"])
+    live.append(["A", 1, 36, "2026-10-01", 1])
+    src = tmp_path / "in.xlsx"
+    wb.save(src)
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    np.testing.assert_allclose(_open(out)["rain"].values, [[1.0]])
+
+
+def test_excel_refuses_formulas_with_no_saved_value(tmp_path, csv_io):
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["station", "lat", "lon", "date", "rain [mm]"])
+    ws.append(["A", 1, 36, "2026-10-01", "=1+1"])
+    src = tmp_path / "in.xlsx"
+    wb.save(src)
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"))
+
+
+@pytest.mark.parametrize(
+    "name,body", [("in.xlsx", b"station,lat\n"), ("in.xlsx", b""), ("in.ods", b"PK")]
+)
+def test_refuses_files_that_are_not_workbooks(tmp_path, csv_io, name, body):
+    src = tmp_path / name
+    src.write_bytes(body)
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"))
+
+
+@pytest.mark.parametrize("header", ["Time (EAT)", "Time (local)"])
+def test_time_header_abbreviations_exit_2(tmp_path, csv_io, header):
+    src = _write(tmp_path, f"station,lat,lon,{header},t [degC]\nA,1,36,2026-10-01 03:00,1\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"))
+
+
+def test_codes_leave_coordinates_alone(tmp_path, csv_io):
+    src = _write(
+        tmp_path,
+        "station,lat,lon,date,level,t [degC]\nA,0,36,2026-10-01,1000,0\nA,0,36,2026-10-01,850,5\n",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out), "--na-value", "0", "--na-value", "1000")
+    res = _open(out)
+    assert float(res["latitude"].values[0]) == 0.0
+    assert sorted(res["level"].values) == [850, 1000]
+    np.testing.assert_allclose(res["t"].sel(level=1000).values, [[np.nan]])
+
+
+def test_names_differing_only_by_case_exit_2(tmp_path, csv_io):
+    src = _write(tmp_path, "station,lat,lon,date,Rain,rain\nA,1,36,2026-10-01,1,2\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"))
+
+
+def test_blank_names_exit_2(tmp_path, csv_io):
+    src = _write(tmp_path, "a,b,c,d,e,f\nA,1,36,2026-10-01,1,2\n")
+    _exits_2(
+        csv_io,
+        "--csv",
+        str(src),
+        "-o",
+        str(tmp_path / "o.zarr"),
+        "--names",
+        "station,lat,lon,date,,",
+    )
+
+
+def test_drop_incomplete_with_nothing_left_exits_2(tmp_path, csv_io):
+    src = _write(tmp_path, "station,lat,lon,date,rain [mm]\nA,1,36,,1\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"), "--drop-incomplete")
+
+
+def test_thousands_separator_in_a_units_column_exits_2(tmp_path, csv_io):
+    src = _write(
+        tmp_path, 'station,lat,lon,date,q [m3 s-1],t [degC]\nA,1,36,2026-10-01,"1,234",2\n'
+    )
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"))
+
+
+def test_temperature_letters_are_degrees(tmp_path, csv_io):
+    src = _write(tmp_path, "station,lat,lon,date,Tmax (C),Tmin (F)\nA,1,36,2026-10-01,25,60\n")
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    res = _open(out)
+    assert units_equal(res["Tmax"].attrs["units"], "degC")
+    assert units_equal(res["Tmin"].attrs["units"], "degF")
+
+
+def test_excel_skips_blank_rows_above_the_header(tmp_path, csv_io):
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append([])
+    ws.append([])
+    ws.append(["station", "lat", "lon", "date", "rain [mm]"])
+    ws.append(["A", 1, 36, "2026-10-01", 1])
+    src = tmp_path / "in.xlsx"
+    wb.save(src)
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    np.testing.assert_allclose(_open(out)["rain"].values, [[1.0]])
+
+
+def test_matching_timezone_and_header_agree(tmp_path, csv_io):
+    src = _write(tmp_path, "station,lat,lon,time [UTC],t [degC]\nA,1,36,2026-10-01 03:00,1\n")
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out), "--timezone", "+00:00")
+    assert _open(out)["time"].values[0] == np.datetime64("2026-10-01T03:00")
+
+
+def test_excel_formulas_outside_the_table_are_ignored(tmp_path, csv_io):
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["=TODAY()"])
+    ws.append(["station", "lat", "lon", "date", "rain [mm]", "check"])
+    ws.append(["A", 1, 36, "2026-10-01", 1, "=E3*2"])
+    src = tmp_path / "in.xlsx"
+    wb.save(src)
+    out = tmp_path / "out.zarr"
+    run_skill(
+        csv_io, "--csv", str(src), "-o", str(out), "--skip-rows", "1", "--drop-column", "check"
+    )
+    np.testing.assert_allclose(_open(out)["rain"].values, [[1.0]])
+
+
+def test_measured_heights_stay_variables(tmp_path, csv_io):
+    src = _write(
+        tmp_path,
+        "station,lat,lon,date,snow_height [cm],rain [mm]\nA,1,36,2026-10-01,5,1\nA,1,36,2026-10-02,5,2\n",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    assert _open(out)["snow_height"].dims == ("station_id", "time")
+
+
+def test_unpivot_value_must_not_name_a_stacked_column(tmp_path, csv_io):
+    src = _write(tmp_path, "station,lat,lon,rain,2026-10-15\nA,1,36,9,1\n")
+    _exits_2(csv_io, "--csv", str(src), "-o", str(tmp_path / "o.zarr"), "--unpivot", "time=rain")
+
+
+def test_drop_column_takes_an_excel_date_header(tmp_path, csv_io):
+    src = tmp_path / "in.xlsx"
+    df = pd.DataFrame([[36.8, -1.3, "A", 1.0, 2.0]])
+    df.columns = ["lon", "lat", "station", pd.Timestamp("2026-10-15"), pd.Timestamp("2026-10-16")]
+    df.to_excel(src, index=False)
+    out = tmp_path / "out.zarr"
+    run_skill(
+        csv_io,
+        "--csv",
+        str(src),
+        "-o",
+        str(out),
+        "--drop-column",
+        "2026-10-16",
+        "--unpivot",
+        "time=precip",
+    )
+    assert len(_open(out)["time"]) == 1
+
+
+def test_float32_with_nan_exports_and_round_trips(tmp_path, csv_io):
+    ds = make_gridded(n_time=1, lats=(1.0,), lons=(10.0, 11.0))
+    ds["precip"] = ds["precip"].astype(np.float32)
+    ds["precip"].values[0, 0, 0] = np.nan
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+    run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    run_skill(csv_io, "--csv", str(csv), "-o", str(back))
+    np.testing.assert_allclose(_open(back)["precip"].values, [[[np.nan, 1.0]]])
+
+
+def test_pivot_of_hourly_steps_reads_back_in_hours(tmp_path, csv_io, capsys):
+    ds = make_forecast(n_step=3)
+    ds = ds.assign_coords(step=pd.to_timedelta([6, 12, 18], unit="h"))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+    run_skill(csv_io, "-i", str(src), "-o", str(csv), "--pivot", "step=tp")
+    assert "--units step=hours" in capsys.readouterr().err
+    run_skill(
+        csv_io,
+        "--csv",
+        str(csv),
+        "-o",
+        str(back),
+        "--unpivot",
+        "step=tp",
+        "--units",
+        "step=hours",
+        "--units",
+        "tp=mm",
+    )
+    assert _open(back)["step"].values[0] == np.timedelta64(6, "h")
+
+
+def test_na_value_equal_to_a_real_value_exits_2(tmp_path, csv_io):
+    ds = make_gridded(n_time=1, lats=(1.0,), lons=(10.0,), fill=0.0)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    _exits_2(csv_io, "-i", str(src), "-o", str(tmp_path / "out.csv"), "--na-value", "0")
+
+
+@pytest.mark.parametrize("name", ["level", "lat", "a [b]", "x (y)"])
+def test_export_refuses_names_that_read_back_differently(tmp_path, csv_io, name):
+    ds = make_gridded(n_time=1, lats=(1.0,), lons=(10.0,)).rename(precip=name)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    _exits_2(csv_io, "-i", str(src), "-o", str(tmp_path / "out.csv"))
+
+
+def test_sub_second_times_round_trip(tmp_path, csv_io):
+    ds = make_point_obs(n_time=2, n_points=1)
+    ds = ds.assign_coords(time=pd.to_datetime(["2026-10-01 00:00:00.25", "2026-10-01 00:00:01.5"]))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+    run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    run_skill(csv_io, "--csv", str(csv), "-o", str(back))
+    np.testing.assert_array_equal(_open(back)["time"].values, ds["time"].values)
+
+
+def test_forecast_valid_time_is_left_out_and_reads_back(tmp_path, csv_io):
+    ds = make_forecast(n_step=2)
+    ds = ds.assign_coords(valid_time=("step", ds["time"].values + ds["step"].values))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+    run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    assert "valid_time" not in pd.read_csv(csv).columns
+    run_skill(csv_io, "--csv", str(csv), "-o", str(back))
+    assert _open(back)["tp"].dims == ("step", "latitude", "longitude")
+
+
+def test_date_variables_round_trip(tmp_path, csv_io):
+    ds = make_point_obs(n_time=1, n_points=2).isel(time=0, drop=True)
+    ds["onset"] = ("point_id", pd.to_datetime(["2026-10-05", None]).values)
+    ds = ds.drop_vars("precip").rename(point_id="station_id")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+    run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    assert "onset" in pd.read_csv(csv).columns
+    run_skill(csv_io, "--csv", str(csv), "-o", str(back))
+    res = _open(back)
+    assert res["onset"].values[0] == np.datetime64("2026-10-05")
+    assert np.isnat(res["onset"].values[1])
+
+
+def test_pivot_needs_the_variable_along_the_dim(tmp_path, csv_io):
+    ds = make_gridded(n_time=2, lats=(1.0,), lons=(10.0,))
+    ds["elev"] = (("latitude", "longitude"), [[100.0]])
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    _exits_2(csv_io, "-i", str(src), "-o", str(tmp_path / "o.csv"), "--pivot", "time=elev")
+
+
+def test_text_that_looks_like_a_formula_stays_text(tmp_path, csv_io):
+    ds = make_point_obs(n_time=1, n_points=1).rename(point_id="station_id")
+    ds = ds.assign_coords(name=("station_id", ["=1+1"]))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    for ext in ("csv", "xlsx"):
+        out = tmp_path / f"out.{ext}"
+        back = tmp_path / f"back_{ext}.zarr"
+        run_skill(csv_io, "-i", str(src), "-o", str(out))
+        run_skill(csv_io, "--csv", str(out), "-o", str(back))
+        assert list(_open(back)["name"].values) == ["=1+1"]
+
+
+@pytest.mark.parametrize("output", ["out.xlsm", "folder.csv"])
+def test_export_refuses_bad_outputs(tmp_path, csv_io, output):
+    (tmp_path / "folder.csv").mkdir()
+    src = write_zarr(make_gridded(n_time=1), tmp_path / "in.zarr")
+    _exits_2(csv_io, "-i", str(src), "-o", str(tmp_path / output))
+
+
+def test_excel_drops_control_characters(tmp_path, csv_io):
+    ds = make_point_obs(n_time=1, n_points=1).rename(point_id="station_id")
+    ds = ds.assign_coords(name=("station_id", ["Kitui\x01"]))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.xlsx"
+    run_skill(csv_io, "-i", str(src), "-o", str(out))
+    assert pd.read_excel(out)["name"].iloc[0] == "Kitui"
+
+
+@pytest.mark.parametrize("header", ["Station Name (official)", "QC (flag)", "remarks [-]"])
+def test_label_columns_with_bracketed_notes_still_read(tmp_path, csv_io, header):
+    src = _write(
+        tmp_path, f"station,lat,lon,date,{header},rain [mm]\nA,1,36,2026-10-01,Dagoretti,1\n"
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    np.testing.assert_allclose(_open(out)["rain"].values, [[1.0]])
+
+
+def test_date_columns_mixing_offsets_and_zone_headers(tmp_path, csv_io):
+    src = _write(
+        tmp_path,
+        "station,lat,lon,date,onset [Africa/Nairobi],seen,rain [mm]\n"
+        "A,1,36,2026-10-01,2026-10-15,2026-10-01T00:00Z,1\n"
+        "B,2,37,2026-10-01,2026-10-16,2026-10-01T03:00+03:00,2\n",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out))
+    res = _open(out)
+    assert list(res["onset"].values) == [np.datetime64("2026-10-15"), np.datetime64("2026-10-16")]
+    assert res["onset"].dims == ("station_id",)
+
+
+def test_valid_time_without_time_becomes_the_init(tmp_path, csv_io):
+    ds = make_forecast(n_step=2)
+    init = ds["time"].values
+    ds = ds.drop_vars("time").assign_coords(valid_time=("step", init + ds["step"].values))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+    run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    run_skill(csv_io, "--csv", str(csv), "-o", str(back))
+    assert _open(back)["time"].values == init
+
+
+def test_date_format_that_drops_the_hour_exits_2(tmp_path, csv_io):
+    # Daily values stamped 06:00: distinct dates, but %d/%m/%Y would lose the hour.
+    ds = make_gridded(n_time=2, lats=(1.0,), lons=(10.0,))
+    ds = ds.assign_coords(time=pd.date_range("2026-10-01 06:00", periods=2, freq="D"))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    _exits_2(csv_io, "-i", str(src), "-o", str(tmp_path / "o.csv"), "--date-format", "%d/%m/%Y")
+
+
+def test_nanosecond_times_exit_2(tmp_path, csv_io):
+    ds = make_gridded(n_time=2, lats=(1.0,), lons=(10.0,))
+    ds = ds.assign_coords(time=ds["time"].values + np.timedelta64(5, "ns"))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    _exits_2(csv_io, "-i", str(src), "-o", str(tmp_path / "o.csv"))
+
+
+def test_export_refuses_a_coord_that_reads_back_as_another(tmp_path, csv_io):
+    ds = make_point_obs(n_time=1, n_points=1).rename(point_id="station_id")
+    ds = ds.assign_coords(lat=("station_id", [1.0]))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    _exits_2(csv_io, "-i", str(src), "-o", str(tmp_path / "o.csv"))
+
+
+def test_export_refuses_missing_time_labels(tmp_path, csv_io):
+    ds = make_gridded(n_time=2, lats=(1.0,), lons=(10.0,))
+    ds = ds.assign_coords(time=[np.datetime64("2026-10-01", "ns"), np.datetime64("NaT", "ns")])
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    _exits_2(csv_io, "-i", str(src), "-o", str(tmp_path / "o.csv"))
+
+
+def test_text_code_leaves_a_name_column_alone(tmp_path, csv_io):
+    src = _write(
+        tmp_path,
+        "station,name,lat,lon,date,rain [mm]\nA,M,1,36,2026-10-01,M\nA,M,1,36,2026-10-02,2\n",
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(csv_io, "--csv", str(src), "-o", str(out), "--na-value", "M")
+    res = _open(out)
+    assert list(res["name"].values) == ["M"]
+    np.testing.assert_allclose(res["rain"].values, [[np.nan, 2.0]])
