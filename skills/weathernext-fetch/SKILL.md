@@ -2,7 +2,7 @@
 name: weathernext-fetch
 description: "Fetch a Google WeatherNext AI forecast for one init over an optional lat/lon box, as a weather-skills Zarr: WeatherNext 2 (64-member ensemble, 6-hourly leads to 15 days, 0.25° global, from 2025) or WeatherNext 3 (64-member ensemble or its precomputed mean and percentiles, hourly leads to 15 days, 0.1° global, from 2026). Precipitation, 2 m temperature and dewpoint, winds, sea-level pressure, SST, cloud, radiation and pressure-level fields. Reads the gs://weathernext buckets with a Google Cloud login."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads consolidated Zarr from the WeatherNext 2 and 3 realtime archives via gcsfs. Requires Google Cloud Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS or `gcloud auth application-default login`) — any authenticated Google account works, the buckets have no special allowlist. WeatherNext 3 ensemble reads are requester pays and need a billing project (--billing-project or GOOGLE_CLOUD_PROJECT).
+compatibility: Requires Python 3.12 and uv. Reads consolidated Zarr from the WeatherNext 2 and 3 realtime archives via gcsfs. Requires Google Cloud Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS or `gcloud auth application-default login`) — any authenticated Google account works, the buckets have no special allowlist; a Google account is free with sign-up at https://accounts.google.com/signup. WeatherNext 3 ensemble reads are requester pays and need a billing project (--billing-project or GOOGLE_CLOUD_PROJECT).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.2"
