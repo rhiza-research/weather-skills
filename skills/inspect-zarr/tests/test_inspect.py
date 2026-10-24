@@ -206,3 +206,23 @@ def test_all_nan_variable_shows_nan(tmp_path, inspect_zarr, capsys):
     out = capsys.readouterr().out
     assert "finite 0/3" in out
     assert "sample: nan, nan, nan" in out
+
+
+def test_skip_nan_samples_finite_values(tmp_path, inspect_zarr, capsys):
+    ds = make_gridded()
+    ds["precip"].values[:, 0, :] = np.nan  # a clipped grid's empty first rows
+    src = write_zarr(ds, tmp_path / "in.zarr")
+
+    run_skill(inspect_zarr, "-i", str(src), "--max-values", "4", "--skip-nan")
+
+    out = capsys.readouterr().out
+    assert "sample: 1, 1, 1, 1, …  (4 of 16 finite cells)" in out
+
+
+def test_skip_nan_on_all_nan_variable(tmp_path, inspect_zarr, capsys):
+    ds = make_gridded(n_time=1, lats=(1.0,), lons=(10.0, 11.0, 12.0), fill=np.nan)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+
+    run_skill(inspect_zarr, "-i", str(src), "--skip-nan")
+
+    assert "sample: (no finite values)" in capsys.readouterr().out

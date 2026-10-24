@@ -89,12 +89,13 @@ def _preview(vals, n):
     return [*vals[:h], "…", *vals[-t:]], True
 
 
-def _data_var(name, da, max_values):
+def _data_var(name, da, max_values, skip_nan):
     arr = _numpy(da)
     want = _DATA_SAMPLE_CAP if max_values == 0 else min(max_values, _DATA_SAMPLE_CAP)
     n = int(arr.size)
     kind = arr.dtype.kind
     stats = {"n": n, "n_finite": None, "n_nan": None, "min": None, "max": None, "mean": None}
+    sample = []
     if kind in "biufmM" and n:
         # One pass over blocks along the first axis: no full-size copies of a
         # large array.
@@ -114,14 +115,19 @@ def _data_var(name, da, max_values):
             hi = block.max() if hi is None else max(hi, block.max())
             if kind not in "mM":
                 total += float(block.sum(dtype="float64"))
+            if skip_nan and len(sample) < want:
+                sample.extend(_fmt(v) for v in block[: want - len(sample)])
         stats["n_finite"], stats["n_nan"] = n_finite, n - n_finite
         if n_finite:
             stats["min"], stats["max"] = _jsonable(_fmt(lo)), _jsonable(_fmt(hi))
             if kind not in "mM":
                 stats["mean"] = _jsonable(total / n_finite)
-    # The first values in order, NaN included, so they line up with the coordinates.
-    sample = [_fmt(v) for v in arr.reshape(-1)[:want]]
-    truncated = n > len(sample)
+    if skip_nan and stats["n_finite"] is not None:
+        truncated = stats["n_finite"] > len(sample)
+    else:
+        # The first values in order, NaN included, so they line up with the coordinates.
+        sample = [_fmt(v) for v in arr.reshape(-1)[:want]]
+        truncated = n > len(sample)
     if truncated:
         sample.append("…")
     return {
@@ -151,7 +157,12 @@ def _data_var(name, da, max_values):
     help="Max values printed per coordinate and per data-variable sample (default 24). "
     "0 prints every coordinate value; data samples still cap at 256.",
 )
-def inspect_zarr(ds, format, max_values, **kwargs):
+@weather_skill.argument(
+    "--skip-nan",
+    action="store_true",
+    help="Sample only finite values (first ones found) instead of the first cells with NaN.",
+)
+def inspect_zarr(ds, format, max_values, skip_nan, **kwargs):
     """Print a short summary of a Zarr: dimensions, coordinates, and each variable's units and value range."""
     if max_values < 0:
         raise UsageError(
@@ -174,7 +185,7 @@ def inspect_zarr(ds, format, max_values, **kwargs):
                 "truncated": truncated,
             }
         )
-    data_vars = [_data_var(name, da, max_values) for name, da in ds.data_vars.items()]
+    data_vars = [_data_var(name, da, max_values, skip_nan) for name, da in ds.data_vars.items()]
 
     if format == "json":
         print(json.dumps({"dims": dims, "coords": coords, "data_vars": data_vars}, indent=2))
@@ -204,8 +215,13 @@ def inspect_zarr(ds, format, max_values, **kwargs):
                 f"    finite {v['n_finite']}/{v['n']}  "
                 f"min {_show(v['min'])}  max {_show(v['max'])}{mean}"
             )
-        shown = ", ".join(_show(x) for x in v["sample"])
-        extra = f"  ({len(v['sample']) - 1} of {v['n']} cells)" if v["sample_truncated"] else ""
+        shown = ", ".join(_show(x) for x in v["sample"]) or "(no finite values)"
+        of = (
+            f"{v['n_finite']} finite cells"
+            if skip_nan and v["n_finite"] is not None
+            else f"{v['n']} cells"
+        )
+        extra = f"  ({len(v['sample']) - 1} of {of})" if v["sample_truncated"] else ""
         print(f"    sample: {shown}{extra}")
 
 
