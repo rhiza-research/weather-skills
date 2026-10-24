@@ -406,3 +406,35 @@ def test_null_geometry_is_skipped_and_null_property_refused(tmp_path, label_grou
             label_group, "-i", str(src), "-o", str(out), "--geojson", zones, "--property", "basin"
         )
     assert "missing or null on 1 feature" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("level", "lats", "lons"),
+    [
+        ("country", np.arange(-35, 38, 1.0), np.arange(-18, 52, 1.0)),
+        ("continent", np.arange(-89, 90, 4.0), np.arange(-179, 180, 4.0)),
+        # Crosses 180°: label-group queries a west > east box.
+        ("country", np.arange(-25, -10, 0.5), np.r_[np.arange(170, 180, 0.5), np.arange(-180, -170, 0.5)]),
+    ],
+)  # fmt: skip
+def test_grid_labels_match_brute_force(tmp_path, label_group, level, lats, lons):
+    """Every cell centre against every world outline, first one wins: the obvious answer."""
+    import shapely
+    from shapely.geometry import shape
+
+    ds = xr.Dataset(
+        {"x": (("latitude", "longitude"), np.ones((lats.size, lons.size), "float32"))},
+        coords={"latitude": lats, "longitude": lons},
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(label_group, "-i", str(src), "-o", str(out), "--level", level)
+
+    lon2d, lat2d = np.meshgrid(lons, lats)
+    expected = np.full(lon2d.shape, "", dtype=object)
+    for feature in region_mod.level_features(level, None):
+        hit = shapely.intersects_xy(shape(feature["geometry"]), lon2d, lat2d) & (expected == "")
+        expected[hit] = feature["properties"]["region_name"]
+    got = xr.open_zarr(out, consolidated=True)[level].values
+    assert (got != "").any()
+    np.testing.assert_array_equal(got, expected.astype(str))
