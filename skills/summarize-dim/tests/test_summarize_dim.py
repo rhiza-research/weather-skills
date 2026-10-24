@@ -526,3 +526,108 @@ def test_sum_over_stations_is_refused(tmp_path, summarize_dim, capsys):
         )
     assert exc.value.code == 2
     assert "--method sum over point_id would add up" in capsys.readouterr().err
+
+
+def test_by_labels_that_never_meet_is_an_error(tmp_path, summarize_dim, capsys):
+    import numpy as np
+
+    zone = np.array([["", "", "w"], ["", "", ""]])  # only on the cell outside every region
+    ds = _labeled().assign_coords(zone=(("latitude", "longitude"), zone))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "region",
+            "--by",
+            "zone",
+            "--method",
+            "mean",
+        )
+    assert "nothing to group" in capsys.readouterr().err
+
+
+def test_repeated_time_step_is_refused(tmp_path, summarize_dim, capsys):
+    """A repeated day would count twice and pass as a complete season."""
+    ds = _seasons()
+    src = write_zarr(xr.concat([ds, ds.isel(time=[200])], "time"), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "year",
+            "--by",
+            "month_group",
+            "--method",
+            "sum",
+        )
+    assert "appears more than once" in capsys.readouterr().err
+
+
+def _weekly(start):
+    """Weekly mm totals for 2020 labelled like label-group --time year --time MAM,OND."""
+    import numpy as np
+
+    ds = make_point_obs(n_time=1, n_points=1)
+    times = xr.date_range(start, "2020-12-31", freq="7D")
+    month = times.month
+    group = np.where(month.isin([3, 4, 5]), "MAM", np.where(month >= 10, "OND", ""))
+    return xr.Dataset(
+        {"precip": (("point_id", "time"), np.ones((1, times.size)))},
+        coords={"point_id": ds["point_id"].values, "time": times},
+    ).assign_coords(year=("time", times.year), month_group=("time", group))
+
+
+def test_weekly_steps_crossing_a_season_are_refused(tmp_path, summarize_dim, capsys):
+    """A week from 27 May takes in June days, so its MAM total would not be MAM's."""
+    ds = _weekly("2020-01-01")
+    ds["precip"].attrs.update(units="mm", aggregation_period="7 day")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "year",
+            "--by",
+            "month_group",
+            "--method",
+            "sum",
+        )
+    assert "runs into the next --by" in capsys.readouterr().err
+
+
+def test_daily_steps_stamped_at_noon_are_kept(tmp_path, summarize_dim):
+    """A daily step belongs to the day it is stamped on, whatever the hour."""
+    import pandas as pd
+
+    ds = _seasons()
+    ds = ds.assign_coords(time=ds.indexes["time"] + pd.Timedelta("12h"))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month_group",
+        "--method",
+        "sum",
+    )
+    precip = xr.open_zarr(out, consolidated=True)["precip"]
+    assert precip.sel(point_id="S0", year=2020, month_group="OND").item() == 92.0
