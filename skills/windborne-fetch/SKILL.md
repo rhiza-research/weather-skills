@@ -2,7 +2,7 @@
 name: windborne-fetch
 description: "Fetch WindBorne data as a weather-skills Zarr: the WeatherMesh-6 AI forecast (128-member ensemble, 3-hourly to 15 days, 0.25°) as a grid (live or archived runs back to mid-2026), at lat/lon points with spread and percentiles, or as vertical soundings; plain-language site summaries; ERA5 1991–2020 hourly normals at points; the recent ECMWF IFS analysis; or US population-weighted heating and cooling degree days. Pick one with --product. Needs WindBorne API credentials."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads the WindBorne Forecasts and Insights APIs (api.windbornesystems.com). Requires WB_CLIENT_ID and WB_API_KEY in the environment.
+compatibility: Requires Python 3.12 and uv. Reads the WindBorne Forecasts and Insights APIs (api.windbornesystems.com). Requires WB_CLIENT_ID and WB_API_KEY in the environment. A free 2-week trial key (Forecasts and Insights endpoints only) is available with sign-up at https://api.windbornesystems.com/getting-started/.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
