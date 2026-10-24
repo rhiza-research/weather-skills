@@ -61,8 +61,8 @@ ZERO_IS_MISSING = {"mt1", "sh1", "bp1"}
 # real rain: that gauge is broken for the day.
 RAIN_MAX_MM_PER_MIN = 5
 # Two gauges agree when their daily totals differ by at most this much.
-GAUGE_TOLERANCE_MM = 1.0
-GAUGE_TOLERANCE_FRAC = 0.25
+GAUGE_TOLERANCE_MM = 2.0
+GAUGE_TOLERANCE_FRAC = 0.5
 # Longest gap between readings, in reporting intervals, that still counts as
 # covered (3 min at 1-minute stations). A rain reading holds the rain since the
 # previous one (checked against FEWS NET running totals, Oct 2026), so a skip

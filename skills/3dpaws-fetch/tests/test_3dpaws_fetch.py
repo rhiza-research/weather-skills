@@ -437,3 +437,17 @@ def test_station_with_only_gauge_2(tmp_path, mod, fetch):
     ds = _run(tmp_path, mod, fetch, {"1": _readings("2026-10-01", 2, 15, make)})
     np.testing.assert_allclose(ds["precip"].values[:, 0], [9.6, 0.0])
     np.testing.assert_allclose(ds["precip_coverage"].values[:, 0], [1.0, 1.0])
+
+
+def test_gauges_within_2_mm_or_half_agree(tmp_path, mod, fetch):
+    def make(t):
+        # Day 1: 1.8 mm against 0 (within 2 mm). Day 2: 9.6 against 4.8 (within half).
+        first = t == pd.Timestamp("2026-10-01T06:00")
+        return {
+            "rg1": 1.8 if first else (0.1 if t.day == 2 else 0.0),
+            "rg2": 0.05 if t.day == 2 else 0.0,
+            "mt1": 20.0,
+        }
+
+    ds = _run(tmp_path, mod, fetch, {"1": _readings("2026-10-01", 2, 15, make)})
+    np.testing.assert_allclose(ds["precip"].values[:, 0], [1.8, 9.6])
