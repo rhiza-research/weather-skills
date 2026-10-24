@@ -30,7 +30,8 @@ import shutil
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
+from datetime import time as dt_time
 from pathlib import Path
 
 from weather_skills_core import DataError, UsageError, weather_skill
@@ -80,82 +81,14 @@ _FCI_N_CHUNKS = 40
 _FCI_Y_HALF = 5568000.0
 
 
-def _credentials():
-    key = os.environ.get("EUMETSAT_CONSUMER_KEY")
-    secret = os.environ.get("EUMETSAT_CONSUMER_SECRET")
-    if key and secret:
-        return key, secret
-    path = Path("~/.eumdac/credentials").expanduser()
-    if path.is_file():
-        parts = path.read_text().strip().split(",")
-        if len(parts) == 2 and all(parts):
-            return parts[0], parts[1]
-    raise UsageError(
-        "no EUMETSAT credentials: set EUMETSAT_CONSUMER_KEY and EUMETSAT_CONSUMER_SECRET, "
-        "or run `eumdac set-credentials KEY SECRET` to write ~/.eumdac/credentials."
-    )
-
-
-def _resolve_instrument(instrument, service, day):
-    if instrument is None:
-        instrument = "seviri" if service == "iodc" or day < _FCI_FIRST_DAY else "fci"
-    if (instrument, service) not in _SOURCES:
-        raise UsageError(
-            f"--instrument {instrument} has no --service {service}: IODC is SEVIRI-only."
-        )
-    if instrument == "fci" and day < _FCI_FIRST_DAY:
-        raise UsageError(
-            f"FCI L1c starts {_FCI_FIRST_DAY.isoformat()}; use --instrument seviri for {day}."
-        )
-    return instrument
-
-
-def _resolve_bands(requested, instrument):
-    """Expand `vis`/`ir` shortcuts and match explicit names case-insensitively."""
-    groups = _BANDS[instrument]
-    valid = groups["vis"] + groups["ir"]
-    by_lower = {b.lower(): b for b in valid}
-    out = []
-    for item in requested:
-        for token in (t.strip() for t in item.split(",")):
-            if not token:
-                continue
-            names = groups.get(token.lower()) or (
-                (by_lower[token.lower()],) if token.lower() in by_lower else None
-            )
-            if names is None:
-                raise UsageError(
-                    f"unknown {instrument} band {token!r}. Use vis, ir, or one of: "
-                    + ", ".join(valid)
-                )
-            out.extend(n for n in names if n not in out)
-    if not out:
-        raise UsageError("pass -v vis, -v ir, or explicit band names.")
-    return out
-
-
-def _parse_times(day, values):
-    out = []
-    for value in values:
-        for token in (t.strip() for t in value.split(",")):
-            if not token:
-                continue
-            try:
-                t = time.fromisoformat(token)
-            except ValueError:
-                raise UsageError(f"--time {token!r} is not HH:MM (UTC).") from None
-            dt = datetime.combine(day, t)
-            if dt not in out:
-                out.append(dt)
-    if not out:
-        raise UsageError("pass at least one --time HH:MM (UTC).")
-    return sorted(out)
-
-
-def _slot(dt, instrument):
-    """Floor to the instrument's repeat-cycle start (the scan's nominal time)."""
-    cadence = _CADENCE_MIN[instrument]
-    return dt.replace(minute=dt.minute - dt.minute % cadence, second=0, microsecond=0)
+def _with_retry(fn, attempts=3):
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as exc:
+            if i == attempts - 1 or not is_transient(exc):
+                raise
+            print(f"meteosat-fetch: transient error ({exc}); retrying", file=sys.stderr)
 
 
 def _geos_y(lat, lon, sub_lon):
@@ -174,80 +107,6 @@ def _geos_y(lat, lon, sub_lon):
     return _H * math.atan(vz / math.hypot(vy, tmp))
 
 
-def _visible_y_range(bbox, sub_lon, n=21):
-    north, west, south, east = bbox
-    ys = []
-    for i in range(n):
-        lat = south + (north - south) * i / (n - 1)
-        for j in range(n):
-            y = _geos_y(lat, west + (east - west) * j / (n - 1), sub_lon)
-            if y is not None:
-                ys.append(y)
-    if not ys:
-        return None
-    return min(ys), max(ys)
-
-
-def _fci_chunks(bbox, sub_lon):
-    """BODY chunk numbers (1 = southernmost) covering bbox, with one chunk margin."""
-    yr = _visible_y_range(bbox, sub_lon)
-    if yr is None:
-        return []
-    height = 2 * _FCI_Y_HALF / _FCI_N_CHUNKS
-
-    def idx(y):
-        return int((y + _FCI_Y_HALF) // height) + 1
-
-    lo = max(1, idx(yr[0]) - 1)
-    hi = min(_FCI_N_CHUNKS, idx(yr[1]) + 1)
-    return list(range(lo, hi + 1))
-
-
-def _chunk_number(entry):
-    return int(Path(entry).stem.rsplit("_", 1)[-1])
-
-
-def _entries_to_download(product_entries, instrument, chunks):
-    if instrument == "seviri":
-        return [e for e in product_entries if e.endswith(".nat")]
-    wanted = set(chunks)
-    return [
-        e
-        for e in product_entries
-        if "-CHK-BODY-" in e and e.endswith(".nc") and _chunk_number(e) in wanted
-    ]
-
-
-def _grid(bbox, res):
-    """Snap bbox outward to a res-aligned grid; cell centres at (k + 0.5) * res."""
-    north, west, south, east = bbox
-    w = math.floor(round(west / res, 6)) * res
-    e = math.ceil(round(east / res, 6)) * res
-    s = math.floor(round(south / res, 6)) * res
-    n = math.ceil(round(north / res, 6)) * res
-    return w, s, e, n
-
-
-def _cell_centres(area):
-    """1-D (lat, lon) cell centres of a lat/lon AreaDefinition, rows north to south."""
-    import numpy as np
-
-    west, _, _, north = area.area_extent
-    lon = west + (np.arange(area.width) + 0.5) * area.pixel_size_x
-    lat = north - (np.arange(area.height) + 0.5) * area.pixel_size_y
-    return lat.astype("float64"), lon.astype("float64")
-
-
-def _with_retry(fn, attempts=3):
-    for i in range(attempts):
-        try:
-            return fn()
-        except Exception as exc:
-            if i == attempts - 1 or not is_transient(exc):
-                raise
-            print(f"meteosat-fetch: transient error ({exc}); retrying", file=sys.stderr)
-
-
 def _download(product, entries, workdir, workers):
     def one(entry):
         dst = workdir / Path(entry).name
@@ -263,29 +122,8 @@ def _download(product, entries, workdir, workers):
         return list(pool.map(one, entries))
 
 
-def _find_products(collection, slots, instrument):
-    """One product per nominal slot (the scan that starts in that repeat cycle)."""
-    cadence = timedelta(minutes=_CADENCE_MIN[instrument])
-    found = {}
-    for slot in slots:
-        hits = [
-            p
-            for p in _with_retry(
-                lambda s=slot: list(collection.search(dtstart=s, dtend=s + cadence))
-            )
-            if slot <= p.sensing_start < slot + cadence
-        ]
-        if not hits:
-            raise DataError(
-                f"no {instrument} scan for {slot:%Y-%m-%d %H:%M} UTC in {collection}; "
-                "check --probe-latest or try a neighbouring time."
-            )
-        found[slot] = min(hits, key=lambda p: p.sensing_start)
-    return found
-
-
 def _process_scan(files, instrument, bands, bbox):
-    """Calibrate, crop, and resample one scan onto a lat/lon grid. Returns (lat, lon, {band: 2-D})."""
+    """Calibrate, crop, and resample one scan onto a lat/lon grid. Returns (lat, lon, {band: 2-D}, attrs)."""
     import dask
     import numpy as np
     from pyresample import create_area_def
@@ -303,35 +141,28 @@ def _process_scan(files, instrument, bands, bbox):
         raise DataError(f"bbox is not on the {instrument} disk: {exc}") from exc
 
     # Native sampling (metres at the sub-satellite point) of the finest requested
-    # band -> degrees, e.g. FCI 1 km -> 0.01, SEVIRI 3 km -> 0.03.
+    # band -> degrees, e.g. FCI 1 km -> 0.01, SEVIRI 3 km -> 0.03. The bbox snaps
+    # outward to that grid, so cell centres sit at (k + 0.5) * res.
     pixel_m = float(min(abs(scn[b].attrs["area"].pixel_size_x) for b in bands))
     res = round(pixel_m / 1000.0) / 100.0
-    w, s, e, n = _grid(bbox, res)
-    area = create_area_def(
-        "bbox",
-        "EPSG:4326",
-        area_extent=(w, s, e, n),
-        resolution=res,
-        units="degrees",
+    extent = (
+        math.floor(round(west / res, 6)) * res,
+        math.floor(round(south / res, 6)) * res,
+        math.ceil(round(east / res, 6)) * res,
+        math.ceil(round(north / res, 6)) * res,
     )
+    area = create_area_def("bbox", "EPSG:4326", area_extent=extent, resolution=res, units="degrees")
     out = scn.resample(area, resampler="nearest", radius_of_influence=4 * pixel_m)
-    lat, lon = _cell_centres(area)
+    # 1-D cell centres from the area extent, rows north to south.
+    lon = extent[0] + (np.arange(area.width) + 0.5) * area.pixel_size_x
+    lat = extent[3] - (np.arange(area.height) + 0.5) * area.pixel_size_y
     computed = dask.compute(*(out[b].data for b in bands))
     values = {b: np.asarray(v, dtype="float32") for b, v in zip(bands, computed, strict=True)}
     attrs = {
         b: {k: scn[b].attrs.get(k) for k in ("units", "standard_name", "wavelength")} for b in bands
     }
     del out, scn, full
-    return lat, lon, values, attrs
-
-
-def _latest(collection, instrument):
-    now = datetime.now(UTC).replace(tzinfo=None)
-    for hours in (3, 24, 24 * 7):
-        prods = list(collection.search(dtstart=now - timedelta(hours=hours), dtend=now))
-        if prods:
-            return _slot(max(p.sensing_start for p in prods), instrument)
-    return None
+    return lat.astype("float64"), lon.astype("float64"), values, attrs
 
 
 @weather_skill(name="meteosat-fetch", version=_SKILL_VERSION)
@@ -402,27 +233,83 @@ def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, *
     """Fetch Meteosat SEVIRI or FCI visible and infrared scans over a bbox from the EUMETSAT Data Store."""
     import eumdac
 
-    if kwargs.get("probe_latest") is not None:
-        instrument = instrument or ("seviri" if service == "iodc" else "fci")
-        if (instrument, service) not in _SOURCES:
-            raise UsageError("IODC is SEVIRI-only.")
-        token = eumdac.AccessToken(_credentials())
-        coll = eumdac.DataStore(token).get_collection(_SOURCES[(instrument, service)][0])
-        latest = _latest(coll, instrument)
-        if latest is None:
-            raise DataError(f"no {instrument} {service} scans in the last week.")
-        print(f"{latest:%Y-%m-%d}")
-        print(f"meteosat-fetch: latest scan {latest:%Y-%m-%d %H:%M} UTC", file=sys.stderr)
-        return None
+    probe = kwargs.get("probe_latest") is not None
+    # FCI by default, but SEVIRI for IODC and for days before FCI L1c starts.
+    if instrument is None:
+        instrument = (
+            "seviri" if service == "iodc" or (not probe and date < _FCI_FIRST_DAY) else "fci"
+        )
+    if (instrument, service) not in _SOURCES:
+        raise UsageError(
+            f"--instrument {instrument} has no --service {service}: IODC is SEVIRI-only."
+        )
+    collection_id, sub_lon = _SOURCES[(instrument, service)]
+    cadence = timedelta(minutes=_CADENCE_MIN[instrument])
+
+    key = os.environ.get("EUMETSAT_CONSUMER_KEY")
+    secret = os.environ.get("EUMETSAT_CONSUMER_SECRET")
+    path = Path("~/.eumdac/credentials").expanduser()
+    if not (key and secret) and path.is_file():
+        key, _, secret = path.read_text().strip().partition(",")
+    if not (key and secret):
+        raise UsageError(
+            "no EUMETSAT credentials: set EUMETSAT_CONSUMER_KEY and EUMETSAT_CONSUMER_SECRET, "
+            "or run `eumdac set-credentials KEY SECRET` to write ~/.eumdac/credentials."
+        )
+    token = eumdac.AccessToken((key, secret))
+
+    if probe:
+        # The newest scan in the last 3 hours, day, or week, floored to its repeat cycle.
+        collection = eumdac.DataStore(token).get_collection(collection_id)
+        now = datetime.now(UTC).replace(tzinfo=None)
+        for hours in (3, 24, 24 * 7):
+            prods = list(collection.search(dtstart=now - timedelta(hours=hours), dtend=now))
+            if prods:
+                latest = max(p.sensing_start for p in prods)
+                latest -= (latest - datetime.min) % cadence
+                print(f"{latest:%Y-%m-%d}")
+                print(f"meteosat-fetch: latest scan {latest:%Y-%m-%d %H:%M} UTC", file=sys.stderr)
+                return None
+        raise DataError(f"no {instrument} {service} scans in the last week.")
 
     import numpy as np
     import pandas as pd
     import xarray as xr
 
-    instrument = _resolve_instrument(instrument, service, date)
-    bands = _resolve_bands(variable, instrument)
-    requested = _parse_times(date, time)
-    slots = sorted({_slot(t, instrument) for t in requested})
+    if instrument == "fci" and date < _FCI_FIRST_DAY:
+        raise UsageError(
+            f"FCI L1c starts {_FCI_FIRST_DAY.isoformat()}; use --instrument seviri for {date}."
+        )
+
+    # Bands: `vis`/`ir` shortcuts or explicit names, matched case-insensitively.
+    groups = _BANDS[instrument]
+    valid = {b.lower(): b for b in groups["vis"] + groups["ir"]}
+    bands = []
+    for token in (t.strip() for item in variable for t in item.split(",")):
+        if not token:
+            continue
+        names = groups.get(token.lower()) or [valid.get(token.lower())]
+        if None in names:
+            raise UsageError(
+                f"unknown {instrument} band {token!r}. Use vis, ir, or one of: "
+                + ", ".join(valid.values())
+            )
+        bands.extend(n for n in names if n not in bands)
+    if not bands:
+        raise UsageError("pass -v vis, -v ir, or explicit band names.")
+
+    # Times, each floored to its repeat cycle start (the scan's nominal time).
+    requested = set()
+    for token in (t.strip() for item in time for t in item.split(",")):
+        if not token:
+            continue
+        try:
+            requested.add(datetime.combine(date, dt_time.fromisoformat(token)))
+        except ValueError:
+            raise UsageError(f"--time {token!r} is not HH:MM (UTC).") from None
+    if not requested:
+        raise UsageError("pass at least one --time HH:MM (UTC).")
+    slots = sorted({t - (t - datetime.min) % cadence for t in requested})
     if len(slots) < len(requested):
         print(
             f"meteosat-fetch: {len(requested)} --time values fall in {len(slots)} "
@@ -442,16 +329,41 @@ def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, *
             file=sys.stderr,
         )
 
-    collection_id, sub_lon = _SOURCES[(instrument, service)]
+    # The bbox's geostationary y range, from a 21 x 21 grid of its points.
+    north, west, south, east = bbox
+    ys = [
+        _geos_y(south + (north - south) * i / 20, west + (east - west) * j / 20, sub_lon)
+        for i in range(21)
+        for j in range(21)
+    ]
+    ys = [y for y in ys if y is not None]
+    if not ys:
+        raise UsageError(f"--bbox is not visible from the {service} satellite.")
+    # FCI: the BODY chunks (1 = southernmost) covering that range, one chunk margin.
     chunks = []
     if instrument == "fci":
-        chunks = _fci_chunks(bbox, sub_lon)
-    if _visible_y_range(bbox, sub_lon) is None:
-        raise UsageError(f"--bbox is not visible from the {service} satellite.")
+        height = 2 * _FCI_Y_HALF / _FCI_N_CHUNKS
+        lo = max(1, int((min(ys) + _FCI_Y_HALF) // height))
+        hi = min(_FCI_N_CHUNKS, int((max(ys) + _FCI_Y_HALF) // height) + 2)
+        chunks = list(range(lo, hi + 1))
 
-    token = eumdac.AccessToken(_credentials())
+    # One product per slot: the scan that starts in that repeat cycle.
     collection = eumdac.DataStore(token).get_collection(collection_id)
-    products = _find_products(collection, slots, instrument)
+    products = {}
+    for slot in slots:
+        hits = [
+            p
+            for p in _with_retry(
+                lambda s=slot: list(collection.search(dtstart=s, dtend=s + cadence))
+            )
+            if slot <= p.sensing_start < slot + cadence
+        ]
+        if not hits:
+            raise DataError(
+                f"no {instrument} scan for {slot:%Y-%m-%d %H:%M} UTC in {collection}; "
+                "check --probe-latest or try a neighbouring time."
+            )
+        products[slot] = min(hits, key=lambda p: p.sensing_start)
 
     # Product.size is in KB for the whole disk; FCI fetches only some chunks.
     frac = len(chunks) / _FCI_N_CHUNKS if instrument == "fci" else 1.0
@@ -475,7 +387,17 @@ def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, *
     lat = lon = attrs = None
     for slot, product in products.items():
         print(f"meteosat-fetch: {slot:%Y-%m-%d %H:%M} <- {product}", file=sys.stderr)
-        entries = _entries_to_download(list(product.entries), instrument, chunks)
+        # SEVIRI: the one .nat file. FCI: the BODY chunks, named ..._NNNN.nc.
+        if instrument == "seviri":
+            entries = [e for e in product.entries if e.endswith(".nat")]
+        else:
+            entries = [
+                e
+                for e in product.entries
+                if "-CHK-BODY-" in e
+                and e.endswith(".nc")
+                and int(Path(e).stem.rsplit("_", 1)[-1]) in chunks
+            ]
         if not entries:
             raise DataError(f"{product} has no usable files for this bbox.")
         with tempfile.TemporaryDirectory(prefix="meteosat-fetch-") as tmp:
