@@ -75,7 +75,11 @@ def label_group(ds, level, geojson, property, time, **kwargs):
             lon2d, lat2d = np.asarray(ds[lon_dim].values), np.asarray(ds[lat_dim].values)
         else:
             raise UsageError("--level / --geojson need latitude/longitude dims or station coords")
-        lon2d = (lon2d + 180.0) % 360.0 - 180.0  # match against [-180, 180) outlines
+        if np.nanmax(lon2d, initial=-np.inf) > 180.0:
+            raise UsageError(
+                f"longitudes run to {np.nanmax(lon2d):g}; label-group needs -180..180 "
+                "(the outlines' range)"
+            )
 
         stations = space_dims != (lat_dim, lon_dim)
 
@@ -127,6 +131,8 @@ def label_group(ds, level, geojson, property, time, **kwargs):
 
         # Features with a null geometry contain nothing.
         geoms = [shape(f["geometry"]) if f.get("geometry") else None for f in features]
+        if any(g is not None and g.bounds[2] > 180.0 for g in geoms):
+            raise UsageError(f"--geojson {geojson} has longitudes above 180; use -180..180")
 
         # Each cell centre / station takes the first unit that contains it, border included.
         out = np.full(lat2d.shape, "", dtype=object)

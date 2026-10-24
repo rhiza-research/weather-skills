@@ -260,7 +260,7 @@ def test_grid_cells_do_not_snap(tmp_path, label_group):
     ]
 
 
-def test_antimeridian_grid_in_0_360_queries_two_spans(tmp_path, monkeypatch):
+def test_antimeridian_grid_queries_two_spans(tmp_path, monkeypatch):
     module = load_skill("label-group", "label_group")
     seen = []
 
@@ -270,7 +270,7 @@ def test_antimeridian_grid_in_0_360_queries_two_spans(tmp_path, monkeypatch):
 
     monkeypatch.setattr(module, "level_features", spy)
     src = write_zarr(
-        make_gridded(lats=(-17.8, -16.0), lons=(175.0, 178.0, 181.0)), tmp_path / "in.zarr"
+        make_gridded(lats=(-17.8, -16.0), lons=(-179.0, 175.0, 178.0)), tmp_path / "in.zarr"
     )
     out = tmp_path / "out.zarr"
 
@@ -282,6 +282,22 @@ def test_antimeridian_grid_in_0_360_queries_two_spans(tmp_path, monkeypatch):
         xr.open_zarr(out, consolidated=True)["country"].sel(latitude=-17.8, longitude=178.0).item()
         == "fiji"
     )
+
+
+def test_0_360_longitudes_are_refused(tmp_path, label_group, capsys):
+    src = write_zarr(make_gridded(lons=(175.0, 181.0)), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(label_group, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--level", "country")
+    assert "needs -180..180" in capsys.readouterr().err
+
+    zones = _geojson(tmp_path, _box("p", 190.0, 0.5, 210.0, 3.5))
+    src = write_zarr(make_gridded(), tmp_path / "in2.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            label_group, "-i", str(src), "-o", str(tmp_path / "o.zarr"),
+            "--geojson", zones, "--property", "basin",
+        )  # fmt: skip
+    assert "longitudes above 180" in capsys.readouterr().err
 
 
 def test_existing_name_coord_is_refused(tmp_path, label_group, capsys):

@@ -48,7 +48,7 @@ The input with new coords; data variables are unchanged.
 - Month groups may not share a month; single initials such as `J` are refused.
 - `--time` needs a `time` dimension; relabel a forecast's lead axis with `step-to-time` first.
 - To summarize per label, pass the coords to `summarize-dim --by`.
-- GeoJSON longitudes must be in -180..180; the data's longitudes are matched in that range.
+- Longitudes, of the data and of `--geojson`, must be in -180..180; 0..360 is an error.
 - An existing coord of the same name is an error.
 
 ### Example
