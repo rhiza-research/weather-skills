@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.1.1",
+#   "weather-skills-core>=0.2.0",
 #   "fsspec",
 #   "aiohttp",
 #   "dask",
@@ -34,7 +34,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.2"
+_SKILL_VERSION = "0.0.3"
 
 # Public GCS mirror. Object keys, one convention for every window (daily is
 # just window=1): climatologies/<dataset>_<variable>_<window>d.zarr
@@ -282,6 +282,17 @@ def fetch(
     clim = _select_lead(clim, prediction_timedelta)
 
     semantic_name = clim.attrs.get("variable", variable)
+    # The years the mirror averaged over, when it records them (not all do).
+    base_period = {
+        f"climatology_{key}": clim.attrs[key]
+        for key in ("start_time", "end_time")
+        if key in clim.attrs
+    }
+    if not base_period:
+        print(
+            f"clim-fetch: the {dataset!r} mirror does not record which years it averaged over.",
+            file=sys.stderr,
+        )
     mean_name, std_name = f"{semantic_name}_avg", f"{semantic_name}_std"
     lat_name, lon_name = detect_spatial_dims(clim)
     clim = clim.rename(
@@ -335,6 +346,7 @@ def fetch(
         climatology_variable=semantic_name,
         climatology_prediction_timedelta_days=prediction_timedelta,
         climatology_window_days=window,
+        **base_period,
     )
     for name in (mean_name, std_name):
         expanded[name].attrs[AGGREGATION_PERIOD_ATTR] = f"{window} day"

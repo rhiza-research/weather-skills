@@ -13,6 +13,9 @@ cli = "weather-skills"
 
 [tool.hatch.build.hooks.skills-runner]
 
+# Runs after skills-runner: drops skills/*/tests from the wheel (hatch_build.py).
+[tool.hatch.build.hooks.custom]
+
 [dependency-groups]
 dev = [
     "pytest>=9",
@@ -21,13 +24,15 @@ dev = [
     "zarr",
     "cftime",
     "geopandas>=1.0",
-    "weather-skills-core>=0.1.1",
+    "weather-skills-core>=0.2.0",
     # Skill-script imports exercised by per-skill tests (mocked network).
     "requests",
     "earthaccess",
     "dynamical-catalog==1.0.1",
     "gcsfs",
     "xarray-regrid",
+    "openpyxl",
+    "netcdf4",
     "matplotlib>=3.8,<3.10",
     "seaborn>=0.13",
     "cartopy",

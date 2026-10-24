@@ -1,11 +1,11 @@
 ---
 name: ecmwf-fetch
-description: "Fetch an ECMWF S2S (extended-range, 46-day) ensemble forecast for one init date over a lat/lon box, as a weather-skills Zarr: precipitation, 2 m temperature, SST, winds, pressure-level fields and more. Also serves inits before 2026 and fields such as ocean variables, 6-hour max/min temperature, surface fluxes and potential vorticity through the ECMWF Data Store."
+description: "Fetch an ECMWF S2S (extended-range, 46-day) ensemble forecast for one init date over a lat/lon box, as a weather-skills Zarr: precipitation, 2 m temperature, SST, winds, pressure-level fields and more. Also serves inits before 2026 and fields such as ocean variables, 6-hour max/min temperature, surface fluxes and potential vorticity through the ECMWF Data Store. Use when dynamical-fetch lacks the init date or field; the Data Store needs a free ECMWF key."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Default source is the dynamical.org catalog (no credentials). ECDS fallback requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`) and ECMWF_DATASTORES_KEY (or a `~/.ecmwfdatastoresrc` file). The store URL (`https://ecds.ecmwf.int/api`) is hardcoded in the skill, not read from the environment; the key is the personal token from your ECDS account.
+compatibility: Requires Python 3.12 and uv. Default source is the dynamical.org catalog (no credentials). ECDS fallback requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`) and ECMWF_DATASTORES_KEY (or a `~/.ecmwfdatastoresrc` file). The store URL (`https://ecds.ecmwf.int/api`) is hardcoded in the skill, not read from the environment; the key is the personal token from your ECDS account, free with sign-up — register an ECMWF account at https://www.ecmwf.int/user/register, then copy the token from https://ecds.ecmwf.int/how-to-api.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.3"
+  version: "0.0.4"
   catalog-group: fetchers
   variables:
     - tp
@@ -24,7 +24,7 @@ metadata:
   openclaw:
     envVars:
       - name: ECMWF_DATASTORES_KEY
-        description: Personal ECDS token. Needed only for the ECDS fallback.
+        description: Personal ECDS token (free ECMWF account at https://www.ecmwf.int/user/register). Needed only for the ECDS fallback.
 ---
 
 # ecmwf-fetch

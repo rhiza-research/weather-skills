@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.1.1",
+#   "weather-skills-core>=0.2.0",
 #   "pillow",
 # ]
 # ///
@@ -41,7 +41,7 @@ _HTML_META_RE = re.compile(
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.4"
 
 
 def _parent_histories(step: dict) -> list[tuple[str, list]]:

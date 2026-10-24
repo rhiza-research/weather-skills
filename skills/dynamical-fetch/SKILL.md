@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.4"
+  version: "0.0.5"
   catalog-group: fetchers
   variables:
     - precipitation_surface
@@ -36,7 +36,7 @@ HRRR ids are rejected (projected grid).
 ### Arguments
 - `--dataset` — catalog id from the lists above.
 - `--date` — forecast init date; selects the 00 UTC init.
-- `--max-lead` — forecasts only: keep leads up to this one (`240h`, `10D`); only those leads are downloaded. Default: every lead (GFS has 209).
+- `--max-lead` — forecasts only: keep output steps up to this one (`240h`, `10D`). Default: every step.
 - `--start-time`, `--end-time` — analysis range; `--end-time` includes the whole end day (half-hourly IMERG for one day is 48 steps).
 - `--bbox` — `N/W/S/E`, longitudes −180..180; W > E crosses the antimeridian. Omit for the full grid.
 - `--variable`, `-v` — catalog variable name; repeat for several. Aliases: `precip`/`tp`/`pr` → `precipitation_surface`; `sst` → `sea_surface_temperature`; `t2m` → `temperature_2m` (or 46-day `average_temperature_2m`); `msl` → `pressure_reduced_to_mean_sea_level`; `sp` → `pressure_surface`; `u10`/`v10`/`u100`/`v100` → `wind_u_10m`/`wind_v_10m`/`wind_u_100m`/`wind_v_100m`; `t`/`gh`/`u`/`v`/`w`/`q` → every pressure level of that field. An unknown name exits and lists `Available:`. Omitting `-v` fetches every field.

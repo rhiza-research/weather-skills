@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads a static climatology Zarr from the public GCS bucket sheerwater-public-datalake over anonymous HTTPS; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.2"
+  version: "0.0.3"
   catalog-group: fetchers
   variables:
     - precip
@@ -48,6 +48,7 @@ An unmirrored pair (e.g. `era5` `tmp2m`) exits 1 and lists the available pairs.
 - Dims `(latitude, longitude, time)`, one row per calendar day in the window.
 - Variables `<var>_avg` (mean) and `<var>_std` (standard deviation), e.g. `precip_avg`, `precip_std`. Precip is `mm day-1`; `sst` and `tmp2m` are `degree_Celsius`; winds are `m/s`.
 - Each variable has `aggregation_period` `"<window> day"`; `data_interval` is `1 day`. Global attrs `climatology_dataset`, `climatology_variable`, `climatology_prediction_timedelta_days`, `climatology_window_days`.
+- `climatology_start_time` and `climatology_end_time` give the first and last dates the mirror averaged over (e.g. `1998-01-01` and `2024-12-31`). They are present only when the mirror records them; when it doesn't, stderr says so and the base period is unknown.
 
 ### Notes
 - Always pass `--bbox` for `chirps` and `imerg_final`; without it the whole global year is read (tens of GB).

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.1.1",
+#   "weather-skills-core>=0.2.0",
 # ]
 # ///
 """Turn a relative date such as last-2w into absolute YYYY-MM-DD dates."""
@@ -16,7 +16,7 @@ from weather_skills_core import UsageError, weather_skill
 from weather_skills_core.standard_utils import parse_date
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.4"
 
 _LAST_RE = re.compile(r"^last-(\d+)([dwmy])$")
 _NOW_RE = re.compile(r"^now-(\d+)([dwmy])$")

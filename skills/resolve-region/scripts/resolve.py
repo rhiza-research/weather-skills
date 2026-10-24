@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.1.1",
+#   "weather-skills-core>=0.2.0",
 #   "shapely>=2.1",
 # ]
 # ///
@@ -20,7 +20,7 @@ from weather_skills_core.region import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.4"
 
 # OSM feature types that name an area but come back from Nominatim as one centre
 # point ("Horn of Africa" is natural/peninsula). Padding that point would print a

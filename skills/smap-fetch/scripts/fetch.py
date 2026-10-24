@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.1.1",
+#   "weather-skills-core>=0.2.0",
 #   "earthaccess",
 #   "h5py",
 # ]
@@ -27,7 +27,7 @@ from weather_skills_core.standard_utils import (
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.4"
 
 _SHORT_NAME = "SPL3SMP_E"
 _FILL = -9999.0

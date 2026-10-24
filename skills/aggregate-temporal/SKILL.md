@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py *)
 metadata:
-  version: "0.0.4"
+  version: "0.0.5"
   catalog-group: transforms
 ---
 
@@ -42,8 +42,6 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window 
 
 ### Notes
 - A cell missing samples that other cells have is NaN for that window; values are never averaged over a partial record.
-- Input that is already aggregated must divide evenly into the period (weekly → `14 day`, not `monthly`), else exit 2. A period shorter than the input's samples (`6 hour` on daily data, or shorter than the widest `step_bounds` cell) also exits 2. Input already at the period is only stamped, not changed.
-- Concatenated segments with gaps (e.g. one week per year) straddle windows; aggregate each segment before concatenating.
 - `--window` is refused on axes with missing rows or CF `{dim}_bounds`; use `--period`.
 
 ### Example
@@ -59,6 +57,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i gfs_precip.zarr -o gfs_precip
 Writes 6-hour mean GFS precip rates; hourly and 3-hourly leads are weighted by their `step_bounds`. Step 42 h is the 42–48 h mean.
 
 ## Details
+
+- Input that is already aggregated must divide evenly into the period (weekly → `14 day`, not `monthly`), else exit 2. A period shorter than the input's samples (`6 hour` on daily data, or shorter than the widest `step_bounds` cell) also exits 2. Input already at the period is only stamped, not changed.
+- Concatenated segments with gaps (e.g. one week per year) straddle windows; aggregate each segment before concatenating.
 
 **Window geometry.** Windows are half-open `[left, right)` and labeled at the left edge, on `step` and with `--end-time` alike: week 1 of a forecast initialized 2026-10-12 is `step = 0` and covers the same days as the `--end-time 2026-10-19` observation week labeled 2026-10-12.
 

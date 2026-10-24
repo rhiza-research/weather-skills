@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.1.1",
+#   "weather-skills-core>=0.2.0",
 #   "pandas",
 #   "tahmo",
 # ]
@@ -29,7 +29,7 @@ from weather_skills_core.standard_utils import is_transient, require_env
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.6"
 
 DEFAULT_WORKERS = 8
 _TAHMO_PREFIX = "TA"
@@ -45,7 +45,22 @@ DAILY_AGG = {
     "temperature": "mean",
     "humidity": "mean",
     "pressure": "mean",
+    "tmax": "max",
+    "tmin": "min",
 }
+# Daily extremes taken from the 5-minute temperature records, under the same
+# complete-day rule as the other variables.
+DERIVED = {"tmax": "temperature", "tmin": "temperature"}
+EXTREMES = {
+    "tmax": ("time: maximum", "daily maximum air temperature"),
+    "tmin": ("time: minimum", "daily minimum air temperature"),
+}
+# TAHMO records every variable at a 5-minute interval, stamped at the interval
+# end. A daily value is kept only when all 288 stamps of that UTC day passed the
+# quality filter; any gap makes the day NaN. This applies to the means as well
+# as the precip sum: a gap removes part of the diurnal cycle (e.g. the warm
+# afternoon), so a partial-day mean is a biased estimate, not an observation.
+SAMPLES_PER_DAY = 288
 # (standard_name, units). Always CF/pint strings — TAHMO getVariables() uses
 # "-" for dimensionless (relative humidity) and that fails pint.quantify().
 CF_META = {
@@ -53,6 +68,8 @@ CF_META = {
     "temperature": ("air_temperature", "degree_Celsius"),
     "humidity": ("relative_humidity", "1"),
     "pressure": ("air_pressure", "kPa"),
+    "tmax": ("air_temperature", "degree_Celsius"),
+    "tmin": ("air_temperature", "degree_Celsius"),
 }
 # TAHMO API leftovers if CF_META has no override.
 _TAHMO_UNITS = {
@@ -157,12 +174,22 @@ def _fetch_raw(api, station_id: str, start: str, end: str):
         )
 
 
-def _station_frame(api, station_id: str, start: str, end: str):
-    """Return a daily-aggregated DataFrame for one station, or None."""
+def _station_frame(api, station_id: str, start: str, end: str, day_start_hour: int = 0):
+    """Return a daily DataFrame for one station (NaN for incomplete days), or None.
+
+    Days ``start`` .. ``end`` inclusive, each starting at ``day_start_hour`` UTC.
+    TAHMO stamps mark the end of each 5-minute interval, so day D holds the
+    stamps in (D HH:00, D+1 HH:00]: the HH:00 stamp closes the previous day.
+    """
     import pandas as pd
 
+    offset = pd.Timedelta(hours=day_start_hour)
+    first = pd.Timestamp(start) + offset
+    last = pd.Timestamp(end) + pd.Timedelta(days=1) + offset
     try:
-        raw = _fetch_raw(api, station_id, start, end)
+        # The API end bound is an inclusive date (00:00), so round up to the
+        # date that includes the HH:00 stamp closing ``end``.
+        raw = _fetch_raw(api, station_id, start, last.ceil("D").date().isoformat())
     except Exception as exc:  # noqa: BLE001
         print(f"{station_id}: DROPPED, fetch failed ({exc})", file=sys.stderr)
         return None
@@ -171,7 +198,7 @@ def _station_frame(api, station_id: str, start: str, end: str):
 
     raw["time"] = pd.to_datetime(raw["time"], format="mixed", utc=True).dt.tz_convert(None)
     keep_vars = set(VAR_MAP.keys())
-    raw = raw[raw["variable"].isin(keep_vars)]
+    raw = raw[raw["variable"].isin(keep_vars) & (raw["time"] > first) & (raw["time"] <= last)]
     if "quality" in raw.columns:
         raw = raw[raw["quality"] <= 2]
     if raw.empty:
@@ -181,19 +208,23 @@ def _station_frame(api, station_id: str, start: str, end: str):
     raw = raw.drop_duplicates(["time", "variable"], keep="first")
     wide = raw.pivot(index="time", columns="variable", values="value")
     wide = wide.rename(columns=VAR_MAP)
+    for name, source in DERIVED.items():
+        if source in wide.columns:
+            wide[name] = wide[source]
 
     agg_spec = {c: DAILY_AGG[c] for c in wide.columns if c in DAILY_AGG}
     if not agg_spec:
         return None
-    resampler = wide.resample("D")
-    # A day with no records is missing, not 0 mm: plain ``sum`` turns an
-    # outage into a dry day. ``min_count=1`` keeps it NaN.
-    daily = pd.DataFrame(
-        {
-            c: resampler[c].sum(min_count=1) if how == "sum" else resampler[c].agg(how)
-            for c, how in agg_spec.items()
-        }
-    )
+    # Re-stamp each record at its interval start, so the HH:00 stamp falls in
+    # the day it closes, and shift by the day-start hour so each day bins as
+    # one calendar day labelled by the date it starts on.
+    wide.index = wide.index - pd.Timedelta(minutes=5) - offset
+    days = wide[list(agg_spec)].resample("D")
+    daily = days.agg(agg_spec)
+    # Plain sum gives 0 mm for an empty day and an undercount for a partial
+    # one; a mean over a partial day is biased. Keep only complete days.
+    daily = daily.where(days.count() >= SAMPLES_PER_DAY)
+    daily = daily.reindex(pd.date_range(start, end, freq="D", name="time"))
     daily["station_id"] = station_id
     return daily
 
@@ -254,6 +285,15 @@ def _ensure_setup(state):
     ),
 )
 @weather_skill.argument(
+    "--day-start-hour",
+    type=int,
+    default=0,
+    help=(
+        "UTC hour each daily value starts at (0-23, default 0). Day D covers "
+        "D HH:00 to D+1 HH:00 UTC and is labelled D; e.g. 6 for KMSA's 06 UTC rainfall day."
+    ),
+)
+@weather_skill.argument(
     "--list-stations",
     action="store_true",
     default=False,
@@ -275,10 +315,23 @@ def _ensure_setup(state):
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_latest, **kwargs):
+def fetch(
+    start_time,
+    end_time,
+    workers,
+    bbox,
+    station,
+    day_start_hour,
+    list_stations,
+    probe_latest,
+    **kwargs,
+):
     """Fetch daily TAHMO weather-station observations as a weather-skills station Zarr."""
     import pandas as pd
     import xarray as xr
+
+    if not 0 <= day_start_hour <= 23:
+        raise UsageError(f"--day-start-hour must be 0-23, got {day_start_hour}.")
 
     if list_stations and bbox is None:
         raise UsageError("--list-stations requires --bbox N/W/S/E.")
@@ -294,21 +347,45 @@ def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_lat
     if probe_latest is not None:
         from datetime import UTC, datetime, timedelta
 
-        end = datetime.now(UTC).date()
+        now = datetime.now(UTC)
+        end = now.date()
         start = end - timedelta(days=14)
+        # Day D ends at D+1 HH:00 UTC, so the newest day that can be complete
+        # is the one that ended last; before HH:00 that is two days back.
+        newest = (now - timedelta(hours=day_start_hour)).date() - timedelta(days=1)
         if station or bbox is not None:
             selected = _select_stations(stations, station, bbox)
         else:
             selected = _ta_stations(stations).head(3)
+        # Stop at the first station with that day complete instead of
+        # downloading every station in the box.
         latest = None
-        for _, row in selected.iterrows():
-            daily = _station_frame(api, row["code"], start.isoformat(), end.isoformat())
-            if daily is None or daily.empty:
+        pool = ThreadPoolExecutor(max_workers=workers)
+        futures = [
+            pool.submit(
+                _station_frame,
+                api,
+                row["code"],
+                start.isoformat(),
+                end.isoformat(),
+                day_start_hour,
+            )
+            for _, row in selected.iterrows()
+        ]
+        for fut in as_completed(futures):
+            daily = fut.result()
+            if daily is None:
                 continue
-            day = daily.index.max().date()
+            observed = daily.drop(columns="station_id").dropna(how="all")
+            if observed.empty:
+                continue
+            day = observed.index.max().date()
             latest = day if latest is None else max(latest, day)
+            if latest >= newest:
+                break
+        pool.shutdown(wait=False, cancel_futures=True)
         if latest is None:
-            raise DataError("TAHMO probe found no recent observations")
+            raise DataError("TAHMO probe found no recent complete days")
         print(latest.isoformat())
         return
 
@@ -316,13 +393,14 @@ def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_lat
     start = start_time.isoformat()
     end = end_time.isoformat()
     print(
-        f"Fetching {len(selected)} TAHMO station(s) {start} → {end}",
+        f"Fetching {len(selected)} TAHMO station(s) {start} → {end}, "
+        f"days starting {day_start_hour:02d}:00 UTC",
         file=sys.stderr,
     )
 
     def _fetch_one(row):
         sid = row["code"]
-        daily = _station_frame(api, sid, start, end)
+        daily = _station_frame(api, sid, start, end, day_start_hour)
         if daily is None:
             return None
         return daily, {
@@ -349,7 +427,8 @@ def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_lat
             daily, meta_row = result
             frames.append(daily)
             meta_rows.append(meta_row)
-            print(f"{sid}: {len(daily)} daily rows", file=sys.stderr)
+            complete = int(daily.drop(columns="station_id").notna().any(axis=1).sum())
+            print(f"{sid}: {complete}/{len(daily)} days with a complete record", file=sys.stderr)
 
     if not frames:
         raise DataError("no data returned for any station.")
@@ -368,7 +447,11 @@ def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_lat
     )
     ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north", axis="Y")
     ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east", axis="X")
-    ds["time"].attrs.update(standard_name="time", axis="T")
+    ds["time"].attrs.update(
+        standard_name="time",
+        axis="T",
+        comment=f"day D covers D {day_start_hour:02d}:00 to D+1 {day_start_hour:02d}:00 UTC",
+    )
     ds["station_id"].attrs.update(cf_role="timeseries_id", long_name="TAHMO station identifier")
     ds["country"].attrs.update(long_name="ISO 3166-1 alpha-2 country code")
     ds["name"].attrs.update(long_name="station name")
@@ -395,6 +478,8 @@ def fetch(start_time, end_time, workers, bbox, station, list_stations, probe_lat
         description = api_meta.get("description")
         if description:
             attrs["long_name"] = description
+        if canonical in EXTREMES:
+            attrs["cell_methods"], attrs["long_name"] = EXTREMES[canonical]
         ds[canonical].attrs.update(attrs)
     ds.attrs.update(
         featureType="timeSeries",

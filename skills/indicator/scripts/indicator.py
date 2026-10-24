@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.1.1",
+#   "weather-skills-core>=0.2.0",
 # ]
 # ///
 """Apply a yes/no weather rule to each day or week of a Zarr, optionally reduced to an onset date or a probability."""
@@ -25,7 +25,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.2"
+_SKILL_VERSION = "0.0.3"
 
 
 # --- --rule parsing ---------------------------------------------------------

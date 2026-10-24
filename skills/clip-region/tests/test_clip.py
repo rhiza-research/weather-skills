@@ -203,6 +203,24 @@ def test_clip_bbox_point_id_obs(tmp_path, clip_region):
     assert list(ds.point_id.values) == ["S0"]
 
 
+def test_clip_bbox_stations_with_scalar_time(tmp_path, clip_region):
+    # A station Zarr after selecting one date: time is a scalar coord, not a dim.
+    src = write_zarr(_tahmo_like().isel(time=0), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        clip_region,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--bbox",
+        "-3.9187/39.5667/-4.1550/39.7639",
+    )
+    ds = xr.open_zarr(out, consolidated=True)
+    assert list(ds.station_id.values) == ["TA00002"]
+    assert "time" not in ds.dims
+
+
 def test_clip_geojson_tahmo_stations(tmp_path, clip_region):
     src = write_zarr(_tahmo_like(), tmp_path / "in.zarr")
     geo = tmp_path / "mombasa.geojson"

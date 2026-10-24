@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.1.1",
+#   "weather-skills-core>=0.2.0",
 # ]
 # ///
 """Compute eastward moisture flux (q·u) and, by default, its column integral (IVT)."""
@@ -19,7 +19,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset, ureg
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.2"
+_SKILL_VERSION = "0.0.3"
 
 # Standard gravity (m s-2). Column integral (1/g) ∫ q u dp then has units kg m-1 s-1.
 G = 9.80665

@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py *)
 metadata:
-  version: "0.0.3"
+  version: "0.0.4"
   catalog-group: transforms
 ---
 
@@ -20,7 +20,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/clip.py -i IN.zarr -o OUT.zarr (--bbox N/W/S/
 ```
 
 ### Arguments
-- `--input`, `-i` — input Zarr, gridded or point_obs.
+- `--input`, `-i` — input Zarr, gridded or station (stations need no time dim, e.g. after selecting one date).
 - `--output`, `-o` — output Zarr.
 - `--bbox` — `N/W/S/E` decimal degrees. Keeps cells whose centre is inside. West > east crosses the antimeridian.
 - `--region` — ISO3 (`KEN`), country name, Natural Earth region (`East Africa`), custom box (`Indian Ocean`), or `country-admin1` (`Kenya-Turkana`). Offline lookup only.
@@ -38,6 +38,7 @@ The input subset in space. With `--region` / `--geojson`:
 - Grids stored in `[0, 360]` longitude are wrapped to `[-180, 180)`; the output keeps the wrapped longitudes.
 - Masked integer variables become float. Variables off the grid or station axis pass through unchanged.
 - An empty selection exits 1.
+- For a statistic in each of several regions, do not clip once per region: `label-group --level admin_1` then `summarize-dim --by admin_1` writes every county's value into one dataset, in two steps.
 - Multi-country regions use coarse 1:110m outlines. Pass a detailed `--geojson` when edge cells matter.
 
 ### Example
