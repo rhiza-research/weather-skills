@@ -1,11 +1,11 @@
 ---
 name: ecmwf-hres-fetch
-description: "Fetch the deterministic ECMWF HRES (IFS high-resolution, single-member) forecast for one init date and run hour over a lat/lon box from the free ECMWF Open Data feed, as a weather-skills Zarr at 0.25°: precipitation, 2 m temperature, pressure, winds, radiation and pressure-level fields out to 15 days. No credentials needed."
+description: "Fetch the deterministic ECMWF HRES (IFS high-resolution, single-member) forecast for one init date and run hour over a lat/lon box from the free ECMWF Open Data feed, as a weather-skills Zarr at 0.25°: precipitation, 2 m temperature, pressure, winds, radiation and pressure-level fields out to 15 days. No credentials needed. Use when a task needs the deterministic high-resolution ECMWF forecast."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`). No credentials or account required — ECMWF Open Data is a public feed.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.2"
+  version: "0.0.3"
   catalog-group: fetchers
   variables:
     - tp

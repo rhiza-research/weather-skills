@@ -2,10 +2,10 @@
 name: smap-fetch
 description: "Fetch NASA SMAP Enhanced L3 (SPL3SMP_E) daily 9 km volumetric surface soil moisture for a region and short date range via NASA Earthdata, as a weather-skills Zarr. Needs an Earthdata login. Use when a task needs gridded soil-moisture observations, e.g. for drought or agricultural analysis, or comparison against models."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Authenticates to NASA Earthdata via the `earthaccess` library — set EARTHDATA_USERNAME and EARTHDATA_PASSWORD in the environment, or use a `.netrc` entry for `urs.earthdata.nasa.gov`.
+compatibility: Requires Python 3.12 and uv. Authenticates to NASA Earthdata via the `earthaccess` library — set EARTHDATA_USERNAME and EARTHDATA_PASSWORD in the environment, or use a `.netrc` entry for `urs.earthdata.nasa.gov`. Earthdata accounts are free with sign-up at https://urs.earthdata.nasa.gov/users/new.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.3"
+  version: "0.0.4"
   catalog-group: fetchers
   variables:
     - soil_moisture

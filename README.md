@@ -35,14 +35,8 @@ credentialed or source-specific fetcher only when it does not.
 | `3dpaws-fetch` | 3D-PAWS station observations from a CHORDS portal (default: FEWS NET Kenya; daily precip, temperature, humidity, pressure, wind) → station Zarr. Requires credentials. |
 | `cumulus-fetch` | Cumulus AI operational ensemble precip (Aurora S2S run) — 30 members, 46 daily leads, 0.25° or 1° global (`--dataset precip`, `precip_1deg`, `precip_era5`) → Zarr. Requires credentials. |
 | `neuralgcm-fetch` | NeuralGCM S2S ensemble (IMERG precip `tp`, ERA5 surface `t2m`/`d2m`) — up to 50 members, 6-hour leads to 60 days, ~2.8° → Zarr. Requires credentials. |
-| `weathernext-fetch` | Google WeatherNext 2 ensemble (2025 on) — 64 members, 6-hour leads to 15 days, 0.25° global, 13 pressure levels → Zarr. Pass `-v` and `--member` (full cube ~1 TB). Requires credentials. |
-| `windborne-fetch` | WindBorne WeatherMesh-6 ensemble (recent runs only) — 128 members (mean, std or all), 3-hour leads to 15 days, 0.25°, 25 pressure levels, limited to the key's region → Zarr. Requires credentials. |
-| `windborne-point-fetch` | WindBorne WeatherMesh-6 forecast at lat/lon points (recent runs only) — 3-hour leads to 15 days, ensemble mean with optional spread, percentiles and rain-exceedance probabilities → station Zarr. Requires credentials. |
-| `windborne-sounding-fetch` | WindBorne WeatherMesh-6 vertical soundings at points — temperature, dewpoint, humidity, winds and height on 21 levels (1000–100 hPa) per lead → Zarr. Requires credentials. |
-| `windborne-conditions-fetch` | WindBorne plain-language daily, day/night or hourly forecast summaries at points → Zarr of text, also printed. Requires credentials. |
-| `windborne-clim-fetch` | WindBorne ERA5 1991–2020 hourly normals at points for a date range → station Zarr. Requires credentials. |
-| `windborne-analysis-fetch` | ECMWF IFS deterministic analysis via WindBorne — 6-hourly, 0.25° global, last ~25 days → Zarr. Requires credentials. |
-| `windborne-degree-days-fetch` | WindBorne population-weighted US heating/cooling degree days by state, daily for ~16 days → Zarr. Requires credentials. |
+| `weathernext-fetch` | Google WeatherNext 2 ensemble (2025 on; 64 members, 6-hour leads to 15 days, 0.25°, 13 pressure levels) or WeatherNext 3 (2026 on; 64-member ensemble, requester pays, or free ensemble mean/percentiles; hourly leads to 15 days, 0.1°) → Zarr. Pass `-v` and `--member` or `--statistic` (full cubes are ~1 TB). Requires credentials. |
+| `windborne-fetch` | WindBorne data, one `--product` per call: WeatherMesh-6 ensemble grids (live or archived runs from mid-2026; 128 members as mean, std or all; 3-hour leads to 15 days, 0.25°), point forecasts with spread, percentiles and rain-exceedance probabilities, vertical soundings, plain-language site summaries, ERA5 1991–2020 hourly normals at points, the recent ECMWF IFS analysis, or US state heating/cooling degree days → Zarr. Requires credentials. |
 | `pbc-fetch` | PBC / StillLearning AI Weather Quest precip **quintile probabilities** (`era5-p_pr_19` week 3, `era5-p_pr_26` week 4), 1.5° global → Zarr. Requires credentials. |
 | `ecmwf-hres-fetch` | Deterministic ECMWF HRES forecast — 0.25°, out to 15 days, surface and pressure-level fields → Zarr. No credentials; needs the eccodes system library. |
 | `arco-era5-fetch` | ERA5 hourly reanalysis (ARCO-ERA5) → Zarr. No credentials. |
@@ -54,7 +48,7 @@ credentialed or source-specific fetcher only when it does not.
 | `ghcn-daily-fetch` | NOAA GHCN-Daily station observations (daily precip and max/min/mean temperature, ~130,000 stations) → station Zarr. No credentials. |
 | `openaq-fetch` | OpenAQ air-quality station observations (daily mean PM2.5, PM10, NO2, O3, SO2, CO) → station Zarr. Requires credentials. |
 | `cams-fetch` | CAMS global air-quality fields (PM2.5, PM10, near-surface NO2/O3/SO2/CO, AOD, total columns) — 5-day forecast at 0.4° (2015 on) or EAC4 reanalysis at 0.75° (2003 on) → Zarr. Requires credentials. |
-| `meteosat-fetch` | A few Meteosat FCI or SEVIRI scans (0° or Indian Ocean) — visible reflectance and infrared brightness temperature on a regular lat/lon grid at native sampling → Zarr. Requires credentials. |
+| `meteosat-fetch` | Meteosat FCI or SEVIRI satellite imagery (0° or Indian Ocean) at chosen times — visible reflectance and infrared brightness temperature on a regular lat/lon grid at native sampling → Zarr. Up to 12 scans per call by default, since each is a ~200 MB whole-disk download. Requires credentials. |
 
 ### Generic middle (operate on any standard dataset)
 | Skill | What it does |
@@ -76,10 +70,12 @@ credentialed or source-specific fetcher only when it does not.
 | `drop` | Drop named data variables or non-index coordinates (`--name`) — e.g. stray `valid_time` / `spatial_ref` before `concat` |
 | `concat` | Join Zarr stores along a named dim (incl. new dims with coord values) |
 | `merge` | Combine the variables of several Zarrs into one dataset on their shared coordinates |
-| `summarize-dim` | Summarize named dims with a statistic (mean/std/min/max/sum/median) — e.g. ensemble spread as the std across `number`, or a time-mean baseline |
+| `label-group` | Add label coords: the country / admin-1 / admin-2 / subregion / continent or GeoJSON polygon each cell or station lies in (`--level`, `--geojson`), and time labels (`--time month`, `year`, `dayofyear`, or month groups `MAM,OND`) — data unchanged |
+| `summarize-dim` | Summarize named dims with a statistic (mean/std/min/max/sum/median) — e.g. ensemble spread as the std across `number`, or a time-mean baseline. `--by LABEL` gives one value per label (per county, per season), e.g. after `label-group` |
 | `point-value` | Sample a gridded dataset at point locations (station Zarr, `--point LAT,LON[,ID]`, or CSV) into a `station_id` point_obs dataset — nearest, bilinear, or N×N cell-mean — for grid-vs-station `difference` / `verify` |
 | `local-extrema` | Find the local highs or lows of a gridded field (pressure centres, rainfall maxima) into a `station_id` point_obs dataset of locations and central values — for H / L map labels or listing centres |
-| `csv-io` | Export a Zarr to a CSV table (units in the headers), or read a CSV — station records, a gridded table, or one gauge (`--point`) — into a Zarr. Day-first dates need `--date-format`; missing codes need `--na-value`. |
+| `csv-io` | Export a Zarr to a CSV table (units in the headers), or read a CSV or Excel sheet — station records, a gridded table, or one gauge (`--point`) — into a Zarr. Day-first dates need `--date-format`; missing codes need `--na-value`. |
+| `netcdf-io` | Export a Zarr to a NetCDF `.nc` file (attrs and history kept), or read one or more `.nc` files into a Zarr. Variables without units need `--units VAR=UNITS`. |
 | `difference` | Subtract one dataset from another (A − B) with inner-join alignment and broadcasting — anomalies vs a baseline, scenario-minus-historical change maps |
 | `standardize-anomaly` | Standardized anomaly aka z-score: `(field − clim_avg) / clim_std` against a climatology (e.g. `clim-fetch`) — dimensionless output, errors on units mismatch. For a plain physical-unit anomaly, use `difference` instead. |
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
@@ -264,12 +260,6 @@ for the full mapping of concept → canonical flag.
 Fetchers read credentials from environment variables (or `.netrc` where
 supported by the underlying client). Nothing is hardcoded. See each skill's
 `compatibility:` frontmatter for the specific vars required.
-
-## Alternatives considered
-
-See [`ALTERNATIVES.md`](ALTERNATIVES.md) for the tools we surveyed (CDO, GDAL,
-xcube, xclim, zarrs_tools, …) and why the current lightweight xarray-based
-implementations are the right trade at this scale.
 
 ## Contributing
 

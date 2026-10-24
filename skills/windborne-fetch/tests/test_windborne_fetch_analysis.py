@@ -1,6 +1,4 @@
-"""Correctness tests for windborne-analysis-fetch (mocked WindBorne API)."""
-
-import uuid
+"""Correctness tests for windborne-fetch --product analysis (mocked WindBorne API)."""
 
 import numpy as np
 import pytest
@@ -9,7 +7,7 @@ from conftest import load_skill, run_skill
 
 @pytest.fixture(scope="module")
 def mod():
-    return load_skill("windborne-analysis-fetch", "fetch")
+    return load_skill("windborne-fetch", "fetch")
 
 
 def _netcdf(tmp_path, name, value, units):
@@ -28,14 +26,20 @@ def _netcdf(tmp_path, name, value, units):
         },
         coords={"latitude": lat, "longitude": lon},
     )
-    # Unique per call: the skill fetches times in parallel threads.
-    path = tmp_path / f"src_{uuid.uuid4().hex}.nc"
+    path = tmp_path / f"src_{name}.nc"
     ds.to_netcdf(path)
     return path.read_bytes()
 
 
 def _fake_api(monkeypatch, tmp_path):
     import requests
+
+    # Built once per test, outside the request handler.
+    files = {
+        "temperature_2m": _netcdf(tmp_path, "temperature_2m", 300.0, "K"),
+        "total_precipitation_1h": _netcdf(tmp_path, "total_precipitation_1h", 0.5, "mm"),
+        "geopotential_500": _netcdf(tmp_path, "geopotential_500", 57000.0, "m2 s-2"),
+    }
 
     class _Resp:
         status_code = 200
@@ -62,12 +66,7 @@ def _fake_api(monkeypatch, tmp_path):
                         ]
                     }
                 )
-            name = params["variable"]
-            if name == "temperature_2m":
-                return _Resp(content=_netcdf(tmp_path, name, 300.0, "K"))
-            if name == "total_precipitation_1h":
-                return _Resp(content=_netcdf(tmp_path, name, 0.5, "mm"))
-            return _Resp(content=_netcdf(tmp_path, name, 57000.0, "m2 s-2"))
+            return _Resp(content=files[params["variable"]])
 
     monkeypatch.setattr(requests, "Session", _Session)
     monkeypatch.setenv("WB_CLIENT_ID", "id")
@@ -81,6 +80,8 @@ def test_range_bbox_units(mod, monkeypatch, tmp_path):
     out = tmp_path / "anl.zarr"
     run_skill(
         mod.fetch,
+        "--product",
+        "analysis",
         "--start-time",
         "2026-10-19",
         "--bbox",
@@ -97,26 +98,68 @@ def test_range_bbox_units(mod, monkeypatch, tmp_path):
         str(out),
     )
     ds = xr.open_zarr(out)
+    # tp covers the hour before each analysis and is labelled at its start;
+    # t2m keeps the analysis times. Each is NaN at the other's times.
     assert list(ds["time"].values) == [
+        np.datetime64("2026-10-19T05:00"),
         np.datetime64("2026-10-19T06:00"),
+        np.datetime64("2026-10-19T11:00"),
         np.datetime64("2026-10-19T12:00"),
     ]
+    t2m = ds["t2m"].isel(latitude=0, longitude=0).values
+    tp = ds["tp"].isel(latitude=0, longitude=0).values
+    np.testing.assert_allclose(t2m, [np.nan, 26.85, np.nan, 26.85], rtol=1e-5)
+    np.testing.assert_allclose(tp, [12.0, np.nan, 12.0, np.nan])
     assert list(ds["longitude"].values) == [0, 30, 60]
     assert list(ds["latitude"].values) == [-30, 0, 30]
-    assert float(ds["t2m"].max()) == pytest.approx(26.85)
-    np.testing.assert_allclose(float(ds["tp"].max()), 12.0)
     assert ds["tp"].attrs["data_interval"] == "1 hour"
     assert ds["t2m"].attrs["data_interval"] == "6 hour"
     assert ds["z"].dims == ("time", "vertical", "latitude", "longitude")
 
 
+def test_repeated_variable_fetched_once(mod, monkeypatch, tmp_path):
+    import xarray as xr
+
+    _fake_api(monkeypatch, tmp_path)
+    out = tmp_path / "anl.zarr"
+    run_skill(mod.fetch, "--product", "analysis", "-v", "t2m", "-v", "t2m", "-o", str(out))
+    ds = xr.open_zarr(out)
+    assert list(ds.data_vars) == ["t2m"]
+    assert ds["time"].values.tolist() == [np.datetime64("2026-10-19T12:00", "ns").tolist()]
+
+
+def test_level_without_pressure_level_field_errors(mod, monkeypatch, tmp_path):
+    _fake_api(monkeypatch, tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            mod.fetch,
+            "--product",
+            "analysis",
+            "-v",
+            "t2m",
+            "--level",
+            "500",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 2
+
+
 def test_probe_latest(mod, monkeypatch, tmp_path, capsys):
     _fake_api(monkeypatch, tmp_path)
-    run_skill(mod.fetch, "--probe-latest")
+    run_skill(mod.fetch, "--product", "analysis", "--probe-latest")
     assert capsys.readouterr().out.strip() == "2026-10-19"
 
 
 def test_range_outside_served_errors(mod, monkeypatch, tmp_path):
     _fake_api(monkeypatch, tmp_path)
     with pytest.raises(SystemExit):
-        run_skill(mod.fetch, "--start-time", "2026-09-01", "-o", str(tmp_path / "x.zarr"))
+        run_skill(
+            mod.fetch,
+            "--product",
+            "analysis",
+            "--start-time",
+            "2026-09-01",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )

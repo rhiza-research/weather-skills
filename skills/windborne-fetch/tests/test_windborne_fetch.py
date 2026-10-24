@@ -117,6 +117,47 @@ def test_tp_becomes_rate_at_interval_start_from_forecast_zero(mod, monkeypatch, 
     assert list(ds["longitude"].values) == [36.25, 36.5]
 
 
+def test_tp_shifts_but_t2m_keeps_its_lead(mod, monkeypatch, tmp_path):
+    import xarray as xr
+
+    def gridded(params):
+        lead = params["forecast_hour"]
+        if params["variable"] == "total_precipitation_3h":
+            return {"total_precipitation_3h": (np.full((5, 3), lead / 3, "float32"), "mm")}
+        return {"temperature_2m": (np.full((5, 3), 273.15 + lead, "float32"), "K")}
+
+    _fake_api(monkeypatch, mod, tmp_path, gridded)
+    out = tmp_path / "wm6.zarr"
+    run_skill(mod.fetch, "-v", "tp", "-v", "t2m", "--max-lead", "6h", "-o", str(out))
+    ds = xr.open_zarr(out)
+    assert list(ds["step"].values.astype("timedelta64[h]").astype(int)) == [0, 3, 6]
+    # t2m is instantaneous: lead h holds the value at forecast zero + h.
+    np.testing.assert_allclose(ds["t2m"].isel(latitude=0, longitude=0).values, [0.0, 3.0, 6.0])
+    # tp at lead h covers (h-3, h]: relabelled to h-3; nothing covers [6 h, 9 h).
+    np.testing.assert_allclose(ds["tp"].isel(latitude=0, longitude=0).values, [8.0, 16.0, np.nan])
+
+
+def test_max_lead_zero_with_tp_errors(mod, monkeypatch, tmp_path, capsys):
+    _fake_api(monkeypatch, mod, tmp_path, lambda p: {})
+    with pytest.raises(SystemExit) as exc:
+        run_skill(mod.fetch, "-v", "tp", "--max-lead", "0", "-o", str(tmp_path / "x.zarr"))
+    assert exc.value.code == 2
+    assert "no value at lead 0" in capsys.readouterr().err
+    assert not (tmp_path / "x.zarr").exists()
+
+
+def test_max_lead_timedelta_and_level_without_upper_field(mod, monkeypatch, tmp_path):
+    def gridded(params):
+        return {"temperature_2m": (np.full((5, 3), 300.0, "float32"), "K")}
+
+    calls = _fake_api(monkeypatch, mod, tmp_path, gridded)
+    run_skill(mod.fetch, "-v", "t2m", "--max-lead", "1D", "-o", str(tmp_path / "a.zarr"))
+    assert max(c[1]["forecast_hour"] for c in calls if c[0] == "gridded") == 24
+    with pytest.raises(SystemExit) as exc:
+        run_skill(mod.fetch, "-v", "t2m", "--level", "500", "-o", str(tmp_path / "b.zarr"))
+    assert exc.value.code == 2
+
+
 def test_members_and_levels(mod, monkeypatch, tmp_path):
     import xarray as xr
 
@@ -134,7 +175,7 @@ def test_members_and_levels(mod, monkeypatch, tmp_path):
         "--date",
         "2026-10-19",
         "--run",
-        "0",
+        "00",
         "-v",
         "t",
         "--level",
@@ -222,3 +263,19 @@ def test_missing_credentials_exit(mod, monkeypatch, tmp_path):
     with pytest.raises(SystemExit) as exc:
         run_skill(mod.fetch, "--probe-latest")
     assert exc.value.code == 2
+
+
+def test_flag_for_another_product_errors(mod, monkeypatch, tmp_path, capsys):
+    _fake_api(monkeypatch, mod, tmp_path, lambda p: {})
+    with pytest.raises(SystemExit) as exc:
+        run_skill(mod.fetch, "--point", "-1,36", "--period", "hourly", "-o", str(tmp_path / "x"))
+    assert exc.value.code == 2
+    assert "--product grid does not take --point, --period" in capsys.readouterr().err
+
+
+def test_point_product_needs_point(mod, monkeypatch, tmp_path, capsys):
+    _fake_api(monkeypatch, mod, tmp_path, lambda p: {})
+    with pytest.raises(SystemExit) as exc:
+        run_skill(mod.fetch, "--product", "sounding", "-o", str(tmp_path / "x"))
+    assert exc.value.code == 2
+    assert "needs --point" in capsys.readouterr().err

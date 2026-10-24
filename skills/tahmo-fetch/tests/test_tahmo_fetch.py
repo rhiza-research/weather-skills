@@ -499,3 +499,74 @@ def test_day_start_hour_out_of_range_exits_2(tmp_path, fetch):
             str(tmp_path / "out.zarr"),
         )
     assert exc.value.code == 2
+
+
+def test_probe_latest_stops_at_first_complete_yesterday(capsys, mod, fetch):
+    from datetime import UTC, datetime, timedelta
+
+    yesterday = datetime.now(UTC).date() - timedelta(days=1)
+    stations = pd.DataFrame(
+        {
+            "code": [f"TA{i:05d}" for i in range(1, 51)],
+            "location_latitude": 1.0,
+            "location_longitude": 36.0,
+        }
+    )
+    fetched = []
+
+    def fake_frame(_api, station_id, _start, _end, _day_start_hour):
+        fetched.append(station_id)
+        daily = pd.DataFrame(
+            {"precip": [1.0], "station_id": station_id},
+            index=pd.to_datetime([yesterday.isoformat()]),
+        )
+        daily.index.name = "time"
+        return daily
+
+    with (
+        patch.object(mod, "_ensure_setup", side_effect=_fake_setup(MagicMock(), stations)),
+        patch.object(mod, "_station_frame", side_effect=fake_frame),
+    ):
+        run_skill(fetch, "--probe-latest", "--bbox", "2/35/0/37", "--workers", "1")
+
+    assert capsys.readouterr().out.strip() == yesterday.isoformat()
+    assert len(fetched) < len(stations)
+
+
+def test_probe_latest_stops_early_with_a_late_day_start_hour(capsys, mod, fetch):
+    from datetime import UTC, datetime, timedelta
+
+    # With 23 UTC days, the newest day that can be complete is two days back
+    # for most of the UTC day; the probe must stop there, not wait for yesterday.
+    hour = 23
+    newest = (datetime.now(UTC) - timedelta(hours=hour)).date() - timedelta(days=1)
+    stations = pd.DataFrame(
+        {
+            "code": [f"TA{i:05d}" for i in range(1, 51)],
+            "location_latitude": 1.0,
+            "location_longitude": 36.0,
+        }
+    )
+    fetched = []
+
+    def fake_frame(_api, station_id, _start, _end, day_start_hour):
+        assert day_start_hour == hour
+        fetched.append(station_id)
+        daily = pd.DataFrame(
+            {"precip": [1.0], "station_id": station_id},
+            index=pd.to_datetime([newest.isoformat()]),
+        )
+        daily.index.name = "time"
+        return daily
+
+    with (
+        patch.object(mod, "_ensure_setup", side_effect=_fake_setup(MagicMock(), stations)),
+        patch.object(mod, "_station_frame", side_effect=fake_frame),
+    ):
+        run_skill(
+            fetch, "--probe-latest", "--bbox", "2/35/0/37", "--workers", "1",
+            "--day-start-hour", str(hour),
+        )  # fmt: skip
+
+    assert capsys.readouterr().out.strip() == newest.isoformat()
+    assert len(fetched) < len(stations)

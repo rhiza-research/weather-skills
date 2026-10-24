@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py *)
 metadata:
-  version: "0.0.4"
+  version: "0.0.5"
   catalog-group: transforms
 ---
 

@@ -2,10 +2,10 @@
 name: cams-fetch
 description: "Fetch CAMS global air-quality fields (PM2.5, PM10, near-surface NO2, O3, SO2, CO, aerosol optical depth, total columns) for a lat/lon box from the Copernicus Atmosphere Data Store, as a gridded weather-skills Zarr: the 5-day forecast (0.4°, 2015 on) or the EAC4 reanalysis (0.75°, 3-hourly, 2003 on). Needs a free ADS_API_KEY. Use when a task needs gridded air-quality or atmospheric-composition data anywhere in the world."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Requires ADS_API_KEY (or a ~/.cdsapirc whose url is the ADS) and the eccodes library that cfgrib loads (installed with the skill on macOS and Linux). Each dataset's licence must be accepted once on the ADS website.
+compatibility: Requires Python 3.12 and uv. Requires ADS_API_KEY (or a ~/.cdsapirc whose url is the ADS), free with sign-up — register at https://ads.atmosphere.copernicus.eu and copy the key from https://ads.atmosphere.copernicus.eu/profile and the eccodes library that cfgrib loads (installed with the skill on macOS and Linux). Each dataset's licence must be accepted once on the ADS website.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.1"
+  version: "0.0.2"
   catalog-group: fetchers
   variables:
     - pm25
@@ -38,7 +38,7 @@ Requests CAMS fields from the ADS with the box cut server-side, so only the regi
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox N/W/S/E --date YYYY-MM-DD [--cycle 00|12] [--max-lead-hours H] [--lead-step H] [-v VAR ...] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox N/W/S/E --date YYYY-MM-DD [--cycle 0|12] [--max-lead 48h] [-v VAR ...] -o OUT.zarr
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset eac4 --bbox N/W/S/E --start-time YYYY-MM-DD --end-time YYYY-MM-DD [-v VAR ...] -o OUT.zarr
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [forecast|eac4]
 ```
@@ -47,11 +47,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [forecast|eac4]
 - `--bbox` — `N/W/S/E` decimal degrees. Required. A box crossing the antimeridian (W > E) is sent as two requests.
 - `--dataset` — `forecast` (CAMS global composition forecast) or `eac4` (reanalysis). Default: `forecast`.
 - `--date` — forecast only: init day, `YYYY-MM-DD`, from 2015-01-01.
-- `--cycle` — forecast only: init hour, `00` or `12` UTC. Default: `00`.
-- `--max-lead-hours` — forecast only: last lead hour, 0–120. Default: 120.
-- `--lead-step` — forecast only: lead spacing in hours. Default: 3. `1` works for `pm*`, `*aod550` and `tc*`; the gases are 3-hourly.
+- `--cycle` — forecast only: init hour UTC, `0` or `12`. Default: `0`.
+- `--max-lead` — forecast only: last lead, as hours (`48`) or a timedelta (`48h`, `2D`), up to `120h`. Leads are 3-hourly. Default: `120h`.
 - `--start-time`, `--end-time` — eac4 only: inclusive range of days, from 2003-01-01. All eight 3-hourly analyses per day; one ADS request per calendar month.
-- `--variable`, `-v` — fields: `pm25`, `pm10`, `no2`, `o3`, `aod550`, `so2`, `co`, `pm1`, `duaod550`, `tcno2`, `tco3`, `tcco`, `tcso2`. Several per flag, repeated, or comma-separated; ADS names (`particulate_matter_2.5um`) also work. Default: `pm25`.
+- `--variable`, `-v` — fields: `pm25`, `pm10`, `no2`, `o3`, `aod550`, `so2`, `co`, `pm1`, `duaod550`, `tcno2`, `tco3`, `tcco`, `tcso2`. Repeat the flag for more. Default: `pm25`.
 - `--probe-latest` — print the last day the ADS catalogue lists (`YYYY-MM-DD`) for IDENT `forecast` or `eac4` (default: `--dataset`) and exit. Needs no key.
 - `--output`, `-o` — output Zarr, overwritten.
 
@@ -69,7 +68,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [forecast|eac4]
 ### Example
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox 5.1/33.9/-4.8/41.9 --date 2026-10-05 --cycle 12 \
-  --max-lead-hours 48 -v pm25 no2 o3 -o cams_kenya.zarr
+  --max-lead 48h -v pm25 -v no2 -v o3 -o cams_kenya.zarr
 ```
 Writes the first 48 h of the 12 UTC forecast of PM2.5 and near-surface NO2 and O3 over Kenya, 3-hourly.
 

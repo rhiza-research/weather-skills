@@ -1,4 +1,4 @@
-"""Correctness tests for windborne-conditions-fetch (mocked WindBorne API)."""
+"""Correctness tests for windborne-fetch --product conditions (mocked WindBorne API)."""
 
 import numpy as np
 import pytest
@@ -7,7 +7,7 @@ from conftest import load_skill, run_skill
 
 @pytest.fixture(scope="module")
 def mod():
-    return load_skill("windborne-conditions-fetch", "fetch")
+    return load_skill("windborne-fetch", "fetch")
 
 
 def _fake_api(monkeypatch, payload):
@@ -57,7 +57,17 @@ def test_daily_text_per_point(mod, monkeypatch, tmp_path, capsys):
     }
     _fake_api(monkeypatch, payload)
     out = tmp_path / "cond.zarr"
-    run_skill(mod.fetch, "--point", "-1.29,36.82,nbo", "--point", "0.5,35.3", "-o", str(out))
+    run_skill(
+        mod.fetch,
+        "--product",
+        "conditions",
+        "--point",
+        "-1.29,36.82,nbo",
+        "--point",
+        "0.5,35.3",
+        "-o",
+        str(out),
+    )
     ds = xr.open_zarr(out)
     assert list(ds["text"].sel(station_id="nbo").values) == ["Day one.", "Day two."]
     # A period one point lacks stays empty.
@@ -70,4 +80,14 @@ def test_daily_text_per_point(mod, monkeypatch, tmp_path, capsys):
 def test_point_count_mismatch_errors(mod, monkeypatch, tmp_path):
     _fake_api(monkeypatch, {"forecasts": [], "forecast_zero": "", "initialization_time": ""})
     with pytest.raises(SystemExit):
-        run_skill(mod.fetch, "--point", "-1,36", "-o", str(tmp_path / "x.zarr"))
+        run_skill(
+            mod.fetch, "--product", "conditions", "--point", "-1,36", "-o", str(tmp_path / "x.zarr")
+        )
+
+
+def test_probe_latest(mod, monkeypatch, capsys):
+    _fake_api(monkeypatch, {"available": ["2026-10-19T00:00:00Z", "2026-10-20T06:00:00Z"]})
+    run_skill(mod.fetch, "--product", "conditions", "--probe-latest")
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "2026-10-20"
+    assert "2026-10-20 06 UTC" in captured.err

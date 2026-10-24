@@ -1,20 +1,11 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core @ git+https://github.com/weather-skills/weather-skills-core@dev",
+#   "weather-skills-core>=0.2.0",
 #   "pandas",
 # ]
 # ///
 """Fetch daily 3D-PAWS weather-station observations from a CHORDS portal as a station Zarr."""
-# 3D-PAWS (3D-Printed Automatic Weather Stations, UCAR/NCAR) stream raw
-# readings to CHORDS portals. Credentials: CHORDS_EMAIL and CHORDS_API_KEY,
-# issued per portal on the portal's /users page.
-#
-# List stations in a region (no ``-o``)::
-#
-#     3dpaws-fetch --list-stations --bbox N/W/S/E
-#
-# Then fetch chosen station ids (or every station in a bbox).
 
 import csv
 import json
@@ -30,10 +21,12 @@ from weather_skills_core.standard_utils import is_transient, require_env
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.1"
+_SKILL_VERSION = "0.0.2"
 
 DEFAULT_PORTAL = "https://3d-fewsnet.icdp.ucar.edu"
 DEFAULT_WORKERS = 8
+# Days whose readings span less than this share are NaN (coverage still written).
+DEFAULT_MIN_COVERAGE = 0.8
 # CHORDS refuses a request over its max_download_points (200,000 on the FEWS
 # NET portal). A 1-minute station with ~23 variables sends ~33,000 points a
 # day, so 3-day requests stay well under the cap.
@@ -64,11 +57,19 @@ VALID_RANGE = {
 # A station with no sensor fitted reports exactly 0 for it, so an exact 0 is
 # missing for these (calm wind and no rain are real zeros and stay).
 ZERO_IS_MISSING = {"mt1", "sh1", "bp1"}
+# A rain reading over this rate (mm per minute of reporting interval) is no
+# real rain: that gauge is broken for the day.
+RAIN_MAX_MM_PER_MIN = 5
 # Two gauges agree when their daily totals differ by at most this much.
-GAUGE_TOLERANCE_MM = 1.0
-GAUGE_TOLERANCE_FRAC = 0.25
+GAUGE_TOLERANCE_MM = 2.0
+GAUGE_TOLERANCE_FRAC = 0.5
+# Longest gap between readings, in reporting intervals, that still counts as
+# covered (3 min at 1-minute stations). A rain reading holds the rain since the
+# previous one (checked against FEWS NET running totals, Oct 2026), so a skip
+# loses no rain.
+GAP_INTERVALS = 3
 CF_META = {
-    "precip": ("lwe_precipitation_rate", "mm day-1", "time: sum", "daily rainfall"),
+    "precip": ("lwe_precipitation_rate", "mm day-1", None, "daily rainfall"),
     "temperature": (
         "air_temperature",
         "degree_Celsius",
@@ -77,7 +78,7 @@ CF_META = {
     ),
     "tmax": ("air_temperature", "degree_Celsius", "time: maximum", "daily maximum air temperature"),
     "tmin": ("air_temperature", "degree_Celsius", "time: minimum", "daily minimum air temperature"),
-    "humidity": ("relative_humidity", "%", "time: mean", "daily mean relative humidity"),
+    "humidity": ("relative_humidity", "1", "time: mean", "daily mean relative humidity"),
     "pressure": ("surface_air_pressure", "hPa", "time: mean", "daily mean station pressure"),
     "wind_speed": ("wind_speed", "m s-1", "time: mean", "daily mean wind speed"),
     "wind_gust": ("wind_speed_of_gust", "m s-1", "time: maximum", "daily maximum wind gust"),
@@ -112,22 +113,24 @@ def _get_json(url: str, params: dict | None = None):
             raise DataError(f"could not reach CHORDS ({exc})") from None
 
 
-def _station_daily(portal, station_id, start, end, day_start_hour, auth):
+def _station_daily(portal, station_id, start, end, day_start_hour, min_coverage, auth):
     """Download one station's readings and reduce them to daily values.
 
     Days ``start`` .. ``end`` inclusive, each starting at ``day_start_hour`` UTC.
     Returns ``(daily DataFrame, reporting interval in minutes)``, or ``(None, None)``
-    when the station sent nothing. Days without a complete record are NaN.
+    when the station sent nothing. Days missing any expected reading are NaN.
     """
     import pandas as pd
 
     offset = pd.Timedelta(hours=day_start_hour)
-    first = start + offset
-    last = end + pd.Timedelta(days=1) + offset
+    # Fetch an hour either side of the requested days, so a gap at the edge of
+    # the first or last day is measured against the readings next to it.
+    fetch_start = start + offset - pd.Timedelta(hours=1)
+    fetch_end = end + pd.Timedelta(days=1) + offset + pd.Timedelta(hours=1)
     rows = []
-    chunk_start = first
-    while chunk_start < last:
-        chunk_end = min(chunk_start + pd.Timedelta(days=CHUNK_DAYS), last)
+    chunk_start = fetch_start
+    while chunk_start < fetch_end:
+        chunk_end = min(chunk_start + pd.Timedelta(days=CHUNK_DAYS), fetch_end)
         params = {
             "start": chunk_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end": chunk_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -145,19 +148,12 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
 
     raw = pd.DataFrame(rows)
     raw["time"] = pd.to_datetime(raw["time"], utc=True).dt.tz_convert(None)
+    # A reading sent twice counts once.
     raw = raw.drop_duplicates("time").set_index("time").sort_index()
-    raw = raw[(raw.index >= first) & (raw.index < last)].apply(pd.to_numeric, errors="coerce")
+    raw = raw[(raw.index >= fetch_start) & (raw.index < fetch_end)]
+    raw = raw.apply(pd.to_numeric, errors="coerce")
     # Gauge 1 is "rg1" on newer stations and "rg" on older ones.
     raw = raw.rename(columns={"rg": "rg1"})
-
-    # The station's reporting interval (1, 10 or 15 minutes on most portals).
-    interval_min = max(1, round(raw.index.to_series().diff().dt.total_seconds().median() / 60))
-    # A day is complete when every slot of the day holds at least one valid
-    # reading. The slot is 3 reporting intervals (at least 5 minutes) rounded up
-    # to a divisor of the day, so a few late or dropped readings are tolerated
-    # but any longer outage blanks the day.
-    need = max(5, 3 * interval_min)
-    slot_min = next(m for m in range(need, 1441) if 1440 % m == 0)
 
     clean = pd.DataFrame(index=raw.index)
     for short, (lo, hi) in VALID_RANGE.items():
@@ -168,29 +164,104 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
             values = values.where(values != 0)
         # A sensor that sent only missing codes is treated as not fitted.
         if values.notna().any():
-            clean[short] = values
+            # Relative humidity is stored as a fraction, as tahmo-fetch does.
+            clean[short] = values / 100 if short == "sh1" else values
     # Shift by the day-start hour so each day bins as one calendar day labelled
     # by the date it starts on.
     clean.index = clean.index - offset
-    filled_slots = clean.notna().resample(f"{slot_min}min").sum() > 0
-    complete = filled_slots.resample("D").sum() == 1440 // slot_min
-    days = clean.resample("D")
 
-    daily = pd.DataFrame(index=complete.index)
+    # Reporting interval in whole minutes: the most common spacing between
+    # readings over the whole fetch (ties go to the shorter). 1-minute stations drift 60-61 s apart on
+    # their own timer; 15-minute stations report just after each quarter hour.
+    # Days at any other spacing (dropped readings, or a changed interval) are
+    # judged at this one and so come out NaN.
+    spacing = (clean.index.to_series().diff().dt.total_seconds() / 60).round()
+    spacing = spacing[spacing >= 1]
+    interval_min = int(spacing.mode().iloc[0]) if len(spacing) else 1
+    interval = pd.Timedelta(minutes=interval_min)
+
+    # Rain gauges, judged day by day. A gauge with any reading over
+    # RAIN_MAX_MM_PER_MIN that day is broken and left out. With both gauges
+    # usable, rain counts only at readings where both reported (rain2 holds
+    # gauge 2 there, to check the totals agree); with one, that gauge alone.
+    day_of = clean.index.floor("D")
+    usable = {}
+    for g in [g for g in ("rg1", "rg2") if g in clean.columns]:
+        over = pd.Series(raw[g].to_numpy() > RAIN_MAX_MM_PER_MIN * interval_min, index=clean.index)
+        broken = over.groupby(day_of).transform("any")
+        reported = clean[g].notna().groupby(day_of).transform("any")
+        usable[g] = reported & ~broken
+        if broken.any():
+            # Count only the requested days, not the hour fetched either side.
+            n = broken.groupby(day_of).first().loc[start:end].sum()
+            print(
+                f"{station_id}: {g} over {RAIN_MAX_MM_PER_MIN} mm/min on {n} day(s), left out",
+                file=sys.stderr,
+            )
+    if len(usable) == 2:
+        both_days = usable["rg1"] & usable["rg2"]
+        both = both_days & clean["rg1"].notna() & clean["rg2"].notna()
+        clean["rain"] = clean["rg1"].where(both | (usable["rg1"] & ~usable["rg2"]))
+        clean["rain"] = clean["rain"].fillna(clean["rg2"].where(usable["rg2"] & ~usable["rg1"]))
+        clean["rain2"] = clean["rg2"].where(both)
+    elif usable:
+        g = next(iter(usable))
+        clean["rain"] = clean[g].where(usable[g])
+    clean = clean.drop(columns=[g for g in ("rg1", "rg2") if g in clean.columns])
+
+    # Coverage: the share of each day with readings. A gap of up to
+    # GAP_INTERVALS counts as covered (1-minute stations skip about one reading
+    # every 15 minutes); a longer one is uncovered from the reading after the
+    # last valid one to the next valid one, split across the days it spans.
+    edge0, edge1 = fetch_start - offset, fetch_end - offset
+    all_days = pd.date_range(edge0.floor("D"), edge1.floor("D"), freq="D")
+    one_day = pd.Timedelta(days=1)
+    coverage = pd.DataFrame(1.0, index=all_days, columns=clean.columns)
+    for short in clean.columns:
+        t = pd.Series([edge0, *clean.index[clean[short].notna()], edge1])
+        prev = t.shift()
+        gap = (t - prev) > (GAP_INTERVALS + 0.5) * interval
+        for a, b in zip(prev[gap] + interval, t[gap], strict=True):
+            day = a.floor("D")
+            while day < b:
+                missed = min(b, day + one_day) - max(a, day)
+                coverage.loc[day, short] -= missed / one_day
+                day += one_day
+    coverage = coverage.clip(lower=0.0).reindex(pd.date_range(start, end, freq="D"), fill_value=0.0)
+
+    days = clean.resample("D")
+    wanted = pd.date_range(start, end, freq="D", name="time")
+    daily = pd.DataFrame(index=wanted)
+    # A day keeps its value when its readings span at least min_coverage of it.
+    kept = (coverage > 0) & (coverage >= min_coverage)
+    # Temperature, humidity, pressure and wind: the statistic of the readings
+    # there are; <var>_coverage says how much of the day they span.
     for name, (short, stat) in SENSORS.items():
         if short in clean.columns:
-            daily[name] = days[short].agg(stat).where(complete[short])
-    if "rg1" in clean.columns:
-        total = days["rg1"].sum().where(complete["rg1"])
-        if "rg2" in clean.columns:
-            # Both gauges must report a complete day and agree; a disagreement
-            # means one gauge is faulty and there is no way to tell which.
-            total2 = days["rg2"].sum().where(complete["rg2"])
+            daily[name] = days[short].agg(stat).reindex(wanted).where(kept[short])
+            daily[f"{name}_coverage"] = coverage[short].to_numpy()
+    # Rain: the total of the readings there are. On a partly covered day that is
+    # only the rain in the covered part, never scaled up; precip_coverage says how
+    # much of the day it is.
+    if "rain" in clean.columns:
+        has_rain = kept["rain"]
+        total = days["rain"].sum().reindex(wanted).where(has_rain)
+        precip_coverage = coverage["rain"]
+        if "rain2" in clean.columns:
+            # On days with both gauges they must agree; a disagreement means one
+            # is faulty and there is no way to tell which. When they agree, the
+            # larger total is used: a gauge fails low (a clogged funnel), and an
+            # impossible high reading already left the gauge out above.
+            checked = days["rain2"].count().reindex(wanted, fill_value=0) > 0
+            total2 = days["rain2"].sum().reindex(wanted)
             larger = pd.concat([total, total2], axis=1).max(axis=1)
             tolerance = (GAUGE_TOLERANCE_FRAC * larger).clip(lower=GAUGE_TOLERANCE_MM)
-            total = total.where((total - total2).abs() <= tolerance)
+            rejected = checked & ((total - total2).abs() > tolerance)
+            total = total.where(~checked, larger.where(total.notna())).where(~rejected)
+            # A rejected day has no usable rain, whatever its readings spanned.
+            precip_coverage = precip_coverage.where(~rejected, 0.0)
         daily["precip"] = total
-    daily = daily.reindex(pd.date_range(start, end, freq="D", name="time"))
+        daily["precip_coverage"] = precip_coverage.to_numpy()
     return daily, interval_min
 
 
@@ -202,10 +273,7 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
 @weather_skill.argument("--end-time", required=True)
 @weather_skill.argument(
     "--bbox",
-    help=(
-        "Select every station with site coordinates in this box. With "
-        "--list-stations, the region to list. Ignored for selection when --station is given."
-    ),
+    help="Every station whose site is in this box (also filters --list-stations).",
 )
 @weather_skill.argument(
     "--station",
@@ -215,10 +283,7 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
 @weather_skill.argument(
     "--portal",
     default=DEFAULT_PORTAL,
-    help=(
-        f"CHORDS portal base URL (default {DEFAULT_PORTAL}, the FEWS NET 3D-PAWS "
-        "network). Another 3D-PAWS portal, e.g. https://3d-kenya.chordsrt.com, needs that portal's key."
-    ),
+    help=f"CHORDS portal base URL (default {DEFAULT_PORTAL}, FEWS NET). Each portal has its own key.",
 )
 @weather_skill.argument(
     "--workers",
@@ -230,20 +295,20 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     "--day-start-hour",
     type=int,
     default=0,
-    help=(
-        "UTC hour each daily value starts at (0-23, default 0). Day D covers "
-        "D HH:00 to D+1 HH:00 UTC and is labelled D; e.g. 6 for KMD's 06 UTC rainfall day."
-    ),
+    help="UTC hour each day starts at (0-23, default 0); 6 for the KMD 06 UTC rain day.",
+)
+@weather_skill.argument(
+    "--min-coverage",
+    type=float,
+    default=DEFAULT_MIN_COVERAGE,
+    help=f"Share of a day (0-1) readings must span to keep its value (default {DEFAULT_MIN_COVERAGE}).",
 )
 @weather_skill.argument(
     "--list-stations",
     action="store_true",
     default=False,
     probe=True,
-    help=(
-        "Print stations in --bbox (or all, without --bbox) as TSV on stdout "
-        "(station_id, name, site, latitude, longitude) and exit. No -o."
-    ),
+    help="Print the stations (in --bbox, if given) as TSV on stdout and exit.",
 )
 @weather_skill.argument(
     "--probe-latest",
@@ -251,11 +316,7 @@ def _station_daily(portal, station_id, start, end, day_start_hour, auth):
     const="",
     metavar="IDENT",
     probe=True,
-    help=(
-        "Print the latest day that has ended at a reporting station (YYYY-MM-DD) "
-        "on stdout and exit, from one latest-reading request per station. Any "
-        "IDENT passed is ignored."
-    ),
+    help="Print the last day that ended before the newest reading (YYYY-MM-DD) and exit.",
 )
 def fetch(
     start_time,
@@ -265,6 +326,7 @@ def fetch(
     portal,
     workers,
     day_start_hour,
+    min_coverage,
     list_stations,
     probe_latest,
     **kwargs,
@@ -275,6 +337,8 @@ def fetch(
 
     if not 0 <= day_start_hour <= 23:
         raise UsageError(f"--day-start-hour must be 0-23, got {day_start_hour}.")
+    if not 0 <= min_coverage <= 1:
+        raise UsageError(f"--min-coverage must be 0-1, got {min_coverage}.")
     if not list_stations and probe_latest is None and not station and bbox is None:
         raise UsageError("pass --station ID (repeatable) or --bbox N/W/S/E.")
 
@@ -380,7 +444,14 @@ def fetch(
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
             pool.submit(
-                _station_daily, portal, row["station_id"], start, end, day_start_hour, auth
+                _station_daily,
+                portal,
+                row["station_id"],
+                start,
+                end,
+                day_start_hour,
+                min_coverage,
+                auth,
             ): row
             for _, row in selected.iterrows()
         }
@@ -397,13 +468,14 @@ def fetch(
             if daily is None:
                 print(f"{sid}: no readings in range", file=sys.stderr)
                 continue
-            complete = int(daily.notna().any(axis=1).sum())
-            if complete == 0:
-                print(f"{sid}: no complete day for any variable", file=sys.stderr)
+            values = daily[[c for c in daily.columns if not c.endswith("_coverage")]]
+            with_data = int(values.notna().any(axis=1).sum())
+            if with_data == 0:
+                print(f"{sid}: no usable day for any variable", file=sys.stderr)
                 continue
             print(
                 f"{sid} ({row['name']}): reports every {interval_min} min, "
-                f"{complete}/{len(daily)} days with a complete record",
+                f"{with_data}/{len(daily)} days with data",
                 file=sys.stderr,
             )
             daily["station_id"] = sid
@@ -411,7 +483,7 @@ def fetch(
             meta_rows.append(row)
 
     if not frames:
-        raise DataError("no complete daily data for any station.")
+        raise DataError("no usable daily data for any station.")
 
     df = pd.concat(frames).reset_index().set_index(["time", "station_id"])
     meta = pd.DataFrame(meta_rows).set_index("station_id")
@@ -433,13 +505,25 @@ def fetch(
     ds["station_id"].attrs.update(cf_role="timeseries_id", long_name="CHORDS instrument id")
     ds["name"].attrs.update(long_name="instrument name")
     ds["site"].attrs.update(long_name="site name")
-    for var in ds.data_vars:
+    for var in [v for v in ds.data_vars if v in CF_META]:
         std_name, units, cell_methods, long_name = CF_META[var]
         ds[var].attrs.update(
             standard_name=std_name,
             units=units,
-            cell_methods=cell_methods,
             long_name=long_name,
+            coordinates="latitude longitude",
+            ancillary_variables=f"{var}_coverage",
+        )
+        # Precip has no cell_methods, as other station fetchers write it.
+        if cell_methods:
+            ds[var].attrs["cell_methods"] = cell_methods
+        # A station absent from the fetch has no readings: coverage 0.
+        ds[f"{var}_coverage"] = ds[f"{var}_coverage"].fillna(0.0).astype("float32")
+        ds[f"{var}_coverage"].attrs.update(
+            long_name=f"share of the day with {var} data",
+            units="1",
+            valid_min=0.0,
+            valid_max=1.0,
             coordinates="latitude longitude",
         )
     ds.attrs.update(
@@ -448,14 +532,11 @@ def fetch(
         weather_skills_source="3dpaws",
         source_url=portal,
     )
-    # A station is complete when it reported every requested day; multi-day
-    # totals are only meaningful for those (missing days are never filled).
-    n_days = (end - start).days + 1
-    for name in sorted(ds.data_vars):
-        complete = int((ds[name].notnull().sum("time") == n_days).sum())
+    # Station-days with a value, and with the whole day covered.
+    for name in sorted(v for v in ds.data_vars if v in CF_META):
         print(
-            f"{name}: {complete} of {ds.sizes['station_id']} stations complete "
-            f"(all {n_days} days {start:%Y-%m-%d} → {end:%Y-%m-%d})",
+            f"{name}: {int(ds[name].notnull().sum())} of {ds[name].size} station-days with "
+            f"a value, {int((ds[f'{name}_coverage'] >= 1).sum())} fully covered",
             file=sys.stderr,
         )
     return stamp_data_interval(ds, period="1 day")
