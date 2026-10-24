@@ -38,6 +38,8 @@ def _keep(ds, variable, where):
 def _export(ds, output, variable):
     """Write ``ds`` as one compressed NetCDF-4 file, attrs and history included."""
     ds = _keep(dequantify_dataset(ds), variable, "dataset")
+    if not ds.data_vars:
+        raise UsageError("dataset has no data variables to export")
     ds.attrs.pop(INPUT_PATH_ATTR, None)
     # NetCDF attributes hold text, numbers and arrays of them: booleans become
     # 0 / 1 and anything else (None, dicts, dates) its text.
@@ -65,7 +67,12 @@ def _read(paths, units):
     for path in paths:
         if not path.is_file():
             raise UsageError(f"NetCDF not found: {path}")
-    parts = [xr.open_dataset(path, engine="netcdf4") for path in paths]
+    parts = []
+    for path in paths:
+        try:
+            parts.append(xr.open_dataset(path, engine="netcdf4"))
+        except (OSError, ValueError) as exc:
+            raise UsageError(f"cannot read {path} as NetCDF: {exc}") from None
     if len(parts) == 1:
         ds = parts[0]
     else:
@@ -76,21 +83,25 @@ def _read(paths, units):
                 f"cannot join the {len(parts)} files on their coordinates: {exc}. "
                 "Read them one at a time and join with concat or merge."
             ) from None
-        # Overlapping files join into repeated coordinate values; a store with
-        # two values at one time is ambiguous, so refuse it.
-        for dim, index in ds.indexes.items():
-            repeated = index[index.duplicated()].unique()
-            if len(repeated):
-                labels = ", ".join(str(v) for v in repeated[:5])
-                more = f" and {len(repeated) - 5} more" if len(repeated) > 5 else ""
-                raise UsageError(
-                    f"the files overlap: {dim} {labels}{more} appear in more than one file. "
-                    "Pass files that do not overlap, or read them one at a time."
-                )
-            if not (index.is_monotonic_increasing or index.is_monotonic_decreasing):
-                raise UsageError(
-                    f"the files do not join into a sorted {dim}; read them one at a time"
-                )
+    # A coordinate value given twice (in one file, or in files that overlap) is
+    # ambiguous, so refuse it; one out of order is only sorted.
+    for dim, index in ds.indexes.items():
+        repeated = index[index.duplicated()].unique()
+        if len(repeated):
+            labels = ", ".join(str(v) for v in repeated[:5])
+            more = f" and {len(repeated) - 5} more" if len(repeated) > 5 else ""
+            raise UsageError(
+                f"{dim} {labels}{more} appear more than once"
+                + (" (the files overlap)" if len(parts) > 1 else "")
+                + ". Pass files that do not overlap, or read them one at a time."
+            )
+        if not (index.is_monotonic_increasing or index.is_monotonic_decreasing):
+            ds = ds.sortby(dim)
+    # Fixed-width text (classic NetCDF char arrays, e.g. station names) reads as
+    # bytes; store it as text.
+    for name in list(ds.variables):
+        if ds[name].dtype.kind == "S":
+            ds[name] = ds[name].str.decode("utf-8")
     if not ds.data_vars:
         raise UsageError(f"{', '.join(p.name for p in paths)} has no data variables")
     for spec in units or []:
