@@ -80,6 +80,7 @@ credentialed or source-specific fetcher only when it does not.
 | `standardize-anomaly` | Standardized anomaly aka z-score: `(field − clim_avg) / clim_std` against a climatology (e.g. `clim-fetch`) — dimensionless output, errors on units mismatch. For a plain physical-unit anomaly, use `difference` instead. |
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
 | `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). |
+| `pbc-correct` | Probabilistic bias correction (PBC) of an ensemble's quintile probabilities: Debias++, Persistence++ and Climatology++ trained on hindcasts and obs; `--components raw` puts a raw ensemble on the same quintiles. |
 | `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
 
 ### Agent capabilities

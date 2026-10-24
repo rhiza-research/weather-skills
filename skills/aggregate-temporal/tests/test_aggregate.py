@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 import xarray as xr
 from conftest import (
@@ -569,20 +570,32 @@ def test_missing_row_lowers_coverage_of_its_own_week(tmp_path, aggregate, stamp_
 
 
 @pytest.mark.parametrize("stamp_interval", [True, False])
-def test_window_refused_across_missing_rows(tmp_path, aggregate, stamp_interval):
+def test_window_spans_missing_rows_as_nan(tmp_path, aggregate, stamp_interval, capsys):
+    """A missing day comes back as a NaN row; windows over it lose coverage, not width."""
     src = write_zarr(_daily_with_gap(stamp_interval), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--window", "7", "--align", "left")
+    ds = xr.open_zarr(out, consolidated=True)
+    assert "1 missing time row(s)" in capsys.readouterr().err
+    labels = pd.DatetimeIndex(ds["time"].values)
+    assert pd.Timestamp("2026-01-05") in labels
+    coverage = ds[AGGREGATION_COVERAGE_COORD].to_series()
+    # Windows starting 2025-12-30 .. 2026-01-05 contain the gap; later ones do not.
+    assert coverage[pd.Timestamp("2026-01-01")] == pytest.approx(6 / 7)
+    assert coverage[pd.Timestamp("2026-01-06")] == pytest.approx(1.0)
+    assert float(ds["precip"].sel(time="2026-01-06").squeeze()) == pytest.approx(1.0)
+
+
+def test_window_refused_on_irregular_axis(tmp_path, aggregate):
+    times = np.array(["2026-01-01T00", "2026-01-02T00", "2026-01-03T12"], dtype="datetime64[ns]")
+    ds = xr.Dataset(
+        {"precip": (("time", "latitude", "longitude"), np.ones((3, 1, 1)))},
+        coords={"time": times, "latitude": [1.0], "longitude": [10.0]},
+    )
+    ds["precip"].attrs.update(units="mm day-1", data_interval="1 day")
+    src = write_zarr(ds, tmp_path / "in.zarr")
     with pytest.raises(SystemExit) as exc:
-        run_skill(
-            aggregate,
-            "-i",
-            str(src),
-            "-o",
-            str(tmp_path / "out.zarr"),
-            "--window",
-            "7",
-            "--stride",
-            "7",
-        )
+        run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "out.zarr"), "--window", "2")
     assert exc.value.code == 2
 
 
