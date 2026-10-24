@@ -125,7 +125,7 @@ def test_time_parts_and_month_groups(tmp_path, label_group):
         ("J", "more than one"),
         ("MAX", "not a run"),
         ("mam", "not a run"),
-        ("MAM,", "not a run"),
+        ("MAM;OND", "not a run"),
         ("MAM,AMJ", "share a month"),
     ],
 )
@@ -198,7 +198,7 @@ def test_overlapping_units_are_reported(tmp_path, label_group, capsys):
     )
 
     # Column lon=11 is in both boxes: 3 cells, kept by the first unit.
-    assert "3 cell(s)/station(s) lie in two overlapping units" in capsys.readouterr().err
+    assert "3 cell(s)/station(s) lie in two units" in capsys.readouterr().err
     assert (xr.open_zarr(out, consolidated=True)["basin"].sel(longitude=11.0) == "a").all()
 
 
@@ -339,3 +339,54 @@ def test_level_admin_2_keys_name_their_admin_1(tmp_path, label_group, monkeypatc
     ds = xr.open_zarr(out, consolidated=True)
     assert ds["admin_2"].values.tolist() == ["kenya-nairobi-westlands", "kenya-kiambu-kiambu_town"]
     assert ds["admin_2_name"].values.tolist() == ["Westlands", "Kiambu Town"]
+
+
+def test_month_groups_add_up_across_flags(tmp_path, label_group):
+    src = write_zarr(make_gridded(n_time=5), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        label_group, "-i", str(src), "-o", str(out),
+        "--time", "DJF,", "--time", "MAM", "--time", "DJF",
+    )  # fmt: skip
+    ds = xr.open_zarr(out, consolidated=True)
+    expected = np.where(
+        np.isin(ds["time"].dt.month, [12, 1, 2]),
+        "DJF",
+        np.where(np.isin(ds["time"].dt.month, [3, 4, 5]), "MAM", ""),
+    )
+    assert ds["month_group"].values.tolist() == expected.tolist()
+
+
+def test_cell_centre_on_shared_border_takes_first_unit(tmp_path, label_group, capsys):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    # Column lon=11 lies on the border of both boxes.
+    zones = _geojson(tmp_path, _box("a", 9.5, 0.5, 11.0, 3.5), _box("b", 11.0, 0.5, 13.5, 3.5))
+    out = tmp_path / "out.zarr"
+    run_skill(
+        label_group, "-i", str(src), "-o", str(out), "--geojson", zones, "--property", "basin"
+    )
+    basin = xr.open_zarr(out, consolidated=True)["basin"]
+    assert (basin != "").all()
+    assert (basin.sel(longitude=11.0) == "a").all()
+    assert "shared border" in capsys.readouterr().err
+
+
+def test_null_geometry_is_skipped_and_null_property_refused(tmp_path, label_group, capsys):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    hollow = _box("hollow", 9.5, 0.5, 13.5, 3.5)
+    hollow["geometry"] = None
+    zones = _geojson(tmp_path, hollow, _box("b", 9.5, 0.5, 13.5, 3.5))
+    out = tmp_path / "out.zarr"
+    run_skill(
+        label_group, "-i", str(src), "-o", str(out), "--geojson", zones, "--property", "basin"
+    )
+    assert (xr.open_zarr(out, consolidated=True)["basin"] == "b").all()
+    assert "hollow" in capsys.readouterr().err
+
+    unnamed = _box(None, 9.5, 0.5, 13.5, 3.5)
+    zones = _geojson(tmp_path, unnamed)
+    with pytest.raises(SystemExit):
+        run_skill(
+            label_group, "-i", str(src), "-o", str(out), "--geojson", zones, "--property", "basin"
+        )
+    assert "missing or null on 1 feature" in capsys.readouterr().err
