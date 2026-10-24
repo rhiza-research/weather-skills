@@ -406,3 +406,34 @@ def test_probe_latest_prints_last_ended_day(capsys, mod, fetch):
         run_skill(fetch, "--probe-latest", "--station", "1", "--station", "2")
     out = capsys.readouterr().out.strip()
     assert out == (today - pd.Timedelta(days=4)).strftime("%Y-%m-%d")
+
+
+def test_broken_gauge_is_left_out_for_that_day(tmp_path, mod, fetch, capsys):
+    def make(t):
+        # Gauge 1 reads 40 mm a minute on day 2 (Voi, Embu in Oct 2026); gauge 2 is fine.
+        return {"rg1": 40.0 if t.day == 2 else 0.1, "rg2": 0.1, "mt1": 20.0}
+
+    ds = _run(tmp_path, mod, fetch, {"1": _free_running("2026-10-01", 2, make, pad_hours=1)})
+    # Day 1 both gauges agree; day 2 is gauge 2 alone.
+    np.testing.assert_allclose(ds["precip"].values[:, 0], [143.1, 143.1], rtol=0.01)
+    np.testing.assert_allclose(ds["precip_coverage"].values[:, 0], [1.0, 1.0])
+    assert "rg1 over 5 mm/min on 1 day(s)" in capsys.readouterr().err
+
+
+def test_heavy_rain_at_a_15_minute_station_is_not_broken(tmp_path, mod, fetch):
+    def make(t):
+        # 30 mm in a quarter hour is 2 mm a minute: heavy, but real.
+        wet = t == pd.Timestamp("2026-10-01T06:00")
+        return {"rg1": 30.0 if wet else 0.0, "rg2": 30.0 if wet else 0.0, "mt1": 20.0}
+
+    ds = _run(tmp_path, mod, fetch, {"1": _readings("2026-10-01", 2, 15, make)})
+    np.testing.assert_allclose(ds["precip"].values[:, 0], [30.0, 0.0])
+
+
+def test_station_with_only_gauge_2(tmp_path, mod, fetch):
+    def make(t):
+        return {"rg2": 0.1 if t.day == 1 else 0.0, "mt1": 20.0}
+
+    ds = _run(tmp_path, mod, fetch, {"1": _readings("2026-10-01", 2, 15, make)})
+    np.testing.assert_allclose(ds["precip"].values[:, 0], [9.6, 0.0])
+    np.testing.assert_allclose(ds["precip_coverage"].values[:, 0], [1.0, 1.0])

@@ -57,6 +57,9 @@ VALID_RANGE = {
 # A station with no sensor fitted reports exactly 0 for it, so an exact 0 is
 # missing for these (calm wind and no rain are real zeros and stay).
 ZERO_IS_MISSING = {"mt1", "sh1", "bp1"}
+# A rain reading over this rate (mm per minute of reporting interval) is no
+# real rain: that gauge is broken for the day.
+RAIN_MAX_MM_PER_MIN = 5
 # Two gauges agree when their daily totals differ by at most this much.
 GAUGE_TOLERANCE_MM = 1.0
 GAUGE_TOLERANCE_FRAC = 0.25
@@ -166,11 +169,6 @@ def _station_daily(portal, station_id, start, end, day_start_hour, min_coverage,
     # Shift by the day-start hour so each day bins as one calendar day labelled
     # by the date it starts on.
     clean.index = clean.index - offset
-    # Rain counts only at readings where every fitted gauge reported, so two
-    # gauges compare like with like on a partly covered day.
-    if "rg2" in clean.columns and "rg1" in clean.columns:
-        both = clean["rg1"].notna() & clean["rg2"].notna()
-        clean[["rg1", "rg2"]] = clean[["rg1", "rg2"]].where(both, axis=0)
 
     # Reporting interval in whole minutes: the most common spacing between
     # readings over the whole fetch (ties go to the shorter). 1-minute stations drift 60-61 s apart on
@@ -181,6 +179,34 @@ def _station_daily(portal, station_id, start, end, day_start_hour, min_coverage,
     spacing = spacing[spacing >= 1]
     interval_min = int(spacing.mode().iloc[0]) if len(spacing) else 1
     interval = pd.Timedelta(minutes=interval_min)
+
+    # Rain gauges, judged day by day. A gauge with any reading over
+    # RAIN_MAX_MM_PER_MIN that day is broken and left out. With both gauges
+    # usable, rain counts only at readings where both reported (rain2 holds
+    # gauge 2 there, to check the totals agree); with one, that gauge alone.
+    day_of = clean.index.floor("D")
+    usable = {}
+    for g in [g for g in ("rg1", "rg2") if g in clean.columns]:
+        over = pd.Series(raw[g].to_numpy() > RAIN_MAX_MM_PER_MIN * interval_min, index=clean.index)
+        broken = over.groupby(day_of).transform("any")
+        reported = clean[g].notna().groupby(day_of).transform("any")
+        usable[g] = reported & ~broken
+        if broken.any():
+            n = broken.groupby(day_of).first().sum()
+            print(
+                f"{station_id}: {g} over {RAIN_MAX_MM_PER_MIN} mm/min on {n} day(s), left out",
+                file=sys.stderr,
+            )
+    if len(usable) == 2:
+        both_days = usable["rg1"] & usable["rg2"]
+        both = both_days & clean["rg1"].notna() & clean["rg2"].notna()
+        clean["rain"] = clean["rg1"].where(both | (usable["rg1"] & ~usable["rg2"]))
+        clean["rain"] = clean["rain"].fillna(clean["rg2"].where(usable["rg2"] & ~usable["rg1"]))
+        clean["rain2"] = clean["rg2"].where(both)
+    elif usable:
+        g = next(iter(usable))
+        clean["rain"] = clean[g].where(usable[g])
+    clean = clean.drop(columns=[g for g in ("rg1", "rg2") if g in clean.columns])
 
     # Coverage: the share of each day with readings. A gap of up to
     # GAP_INTERVALS counts as covered (1-minute stations skip about one reading
@@ -216,17 +242,18 @@ def _station_daily(portal, station_id, start, end, day_start_hour, min_coverage,
     # Rain: the total of the readings there are. On a partly covered day that is
     # only the rain in the covered part, never scaled up; precip_coverage says how
     # much of the day it is.
-    if "rg1" in clean.columns:
-        has_rain = kept["rg1"]
-        total = days["rg1"].sum().reindex(wanted).where(has_rain)
-        precip_coverage = coverage["rg1"]
-        if "rg2" in clean.columns:
-            # The gauges must agree; a disagreement means one is faulty and there
-            # is no way to tell which.
-            total2 = days["rg2"].sum().reindex(wanted).where(has_rain)
+    if "rain" in clean.columns:
+        has_rain = kept["rain"]
+        total = days["rain"].sum().reindex(wanted).where(has_rain)
+        precip_coverage = coverage["rain"]
+        if "rain2" in clean.columns:
+            # On days with both gauges they must agree; a disagreement means one
+            # is faulty and there is no way to tell which.
+            checked = days["rain2"].count().reindex(wanted, fill_value=0) > 0
+            total2 = days["rain2"].sum().reindex(wanted)
             larger = pd.concat([total, total2], axis=1).max(axis=1)
             tolerance = (GAUGE_TOLERANCE_FRAC * larger).clip(lower=GAUGE_TOLERANCE_MM)
-            rejected = (total - total2).abs() > tolerance
+            rejected = checked & ((total - total2).abs() > tolerance)
             total = total.where(~rejected)
             # A rejected day has no usable rain, whatever its readings spanned.
             precip_coverage = precip_coverage.where(~rejected, 0.0)
