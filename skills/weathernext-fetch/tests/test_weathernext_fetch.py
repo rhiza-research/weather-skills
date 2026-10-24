@@ -675,3 +675,43 @@ def test_precip_fields_stay_float32(tmp_path, fetch_mod, monkeypatch):
     )  # fmt: skip
     with xr.open_zarr(out, consolidated=True) as ds:
         assert ds["tp_mean"].dtype == np.float32 and ds["tp_p90"].dtype == np.float32
+
+
+def test_filesystem_uses_credentials_json(fetch_mod, monkeypatch):
+    import json
+
+    import gcsfs
+
+    info = {"type": "service_account", "project_id": "p"}
+    monkeypatch.setenv("GCLOUD_SERVICE_CREDENTIALS", json.dumps(info))
+    seen = {}
+
+    def fake_gcs_filesystem(**kwargs):
+        seen.update(kwargs)
+        return "fake-fs"
+
+    monkeypatch.setattr(gcsfs, "GCSFileSystem", fake_gcs_filesystem)
+    product = fetch_mod._resolve_product("3", None)
+    assert fetch_mod._filesystem(product, "bill") == "fake-fs"
+    assert seen == {"requester_pays": "bill", "token": info}
+
+
+def test_filesystem_rejects_invalid_credentials_json(fetch_mod, monkeypatch):
+    monkeypatch.setenv("GCLOUD_SERVICE_CREDENTIALS", "{not valid json")
+    with pytest.raises(fetch_mod.DataError, match="not valid JSON"):
+        fetch_mod._filesystem(fetch_mod._resolve_product("2", None))
+
+
+def test_filesystem_falls_back_without_credentials_json(fetch_mod, monkeypatch):
+    import gcsfs
+
+    monkeypatch.delenv("GCLOUD_SERVICE_CREDENTIALS", raising=False)
+    seen = {}
+
+    def fake_gcs_filesystem(**kwargs):
+        seen.update(kwargs)
+        return "fake-fs"
+
+    monkeypatch.setattr(gcsfs, "GCSFileSystem", fake_gcs_filesystem)
+    assert fetch_mod._filesystem(fetch_mod._resolve_product("2", None)) == "fake-fs"
+    assert seen == {}
