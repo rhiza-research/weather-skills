@@ -383,6 +383,79 @@ def test_end_labelled_lead0_dropped_and_relabelled_to_start(tmp_path, mod, fetch
     assert bounds == [[0, 3], [3, 6], [6, 12]]
 
 
+def _weathernext2_like_ds():
+    """WeatherNext 2: y/x axes, no lead 0, 6 h precip totals in mm, t2m instant."""
+    shape = (1, 2, 3, 2, 2)
+    precip = np.full(shape, 1.5)
+    precip[0, 0, 0, 0, 0] = -0.2
+    dims = ("init_time", "ensemble_member", "lead_time", "y", "x")
+    return xr.Dataset(
+        {
+            "total_precipitation_surface": (dims, precip, {"units": "mm", "step_type": "accum"}),
+            "temperature_2m": (dims, np.ones(shape), {"units": "degree_Celsius"}),
+        },
+        coords={
+            "init_time": [np.datetime64("2026-01-01")],
+            "ensemble_member": [0, 1],
+            "lead_time": np.array([6, 12, 18], dtype="timedelta64[h]").astype("timedelta64[ns]"),
+            "y": [1.0, 2.0],
+            "x": [10.0, 11.0],
+        },
+    )
+
+
+def test_open_dataset_renames_regular_y_x(mod, monkeypatch):
+    class _Catalog:
+        @staticmethod
+        def list():
+            return ["google-weathernext2-forecast-operational-virtual"]
+
+        @staticmethod
+        def open(dataset):
+            return _weathernext2_like_ds()
+
+    monkeypatch.setitem(__import__("sys").modules, "dynamical_catalog", _Catalog)
+    state = mod._open_dataset({}, "google-weathernext2-forecast-operational-virtual")
+    assert state["shape"] == "ensemble"
+    assert {"latitude", "longitude"} <= set(state["ds"].dims)
+
+
+def test_accum_totals_without_lead0_relabelled_to_start_as_rates(tmp_path, mod, fetch):
+    ds = _weathernext2_like_ds().rename({"y": "latitude", "x": "longitude"})
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "ensemble"}):
+        run_skill(fetch, "--dataset", "t", "--date", "2026-01-01", "-v", "precip", "-o", str(out))
+    written = xr.open_zarr(out, consolidated=True)
+    precip = written["total_precipitation_surface"]
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0, 6, 12]
+    assert precip.attrs["units"] == "mm day-1"
+    # 1.5 mm per 6 h is 6 mm day-1; the negative total is zeroed.
+    assert float(precip.max()) == pytest.approx(6.0)
+    assert float(precip.min()) == 0.0
+
+
+def test_accum_totals_keep_catalog_steps_beside_instant_fields(tmp_path, mod, fetch):
+    ds = _weathernext2_like_ds().rename({"y": "latitude", "x": "longitude"})
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "ensemble"}):
+        run_skill(
+            fetch,
+            "--dataset",
+            "t",
+            "--date",
+            "2026-01-01",
+            "-v",
+            "precip",
+            "-v",
+            "t2m",
+            "-o",
+            str(out),
+        )
+    written = xr.open_zarr(out, consolidated=True)
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [6, 12, 18]
+    assert float(written["total_precipitation_surface"].min()) == 0.0
+
+
 def test_lead0_kept_when_any_requested_field_is_finite(tmp_path, mod, fetch):
     ds = _end_labelled_forecast_ds()
     written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "-v", "temperature_2m")

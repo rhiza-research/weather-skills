@@ -18,7 +18,11 @@ from weather_skills_core.standard_utils import (
     ensure_normalized_longitude,
     np_to_date,
 )
-from weather_skills_core.units import stamp_data_interval, to_standard_units
+from weather_skills_core.units import (
+    precip_amounts_to_rates,
+    stamp_data_interval,
+    to_standard_units,
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.5"
@@ -122,6 +126,9 @@ def _resolve_variables(requested, data_vars, dataset: str):
         # where a store has them (GFS, GEFS, IFS 15-day); else the 46-day daily mean.
         if aliased and aliased.removeprefix("average_") in name_set:
             aliased = aliased.removeprefix("average_")
+        # WeatherNext 2 stores 6-hour precip totals as total_precipitation_surface.
+        if aliased and f"total_{aliased}" in name_set:
+            aliased = f"total_{aliased}"
         if aliased in name_set:
             _take(aliased)
             continue
@@ -223,6 +230,10 @@ def _open_dataset(state, dataset) -> dict:
                 f"unknown dataset {dataset!r}. Available datasets:\n  " + "\n  ".join(catalog)
             )
         ds = dynamical_catalog.open(dataset)
+        # WeatherNext 2 names its regular lat/lon axes y/x. HRRR also has y/x,
+        # but in meters with a 2-D `latitude`, so it is still rejected below.
+        if {"y", "x"} <= set(ds.dims) and "latitude" not in ds.variables:
+            ds = ds.rename({"y": "latitude", "x": "longitude"})
 
         if "latitude" not in ds.dims or "longitude" not in ds.dims:
             raise UsageError(
@@ -456,6 +467,26 @@ def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max
                 "Dropped all-NaN lead 0 and relabelled steps to interval start.",
                 file=sys.stderr,
             )
+    # WeatherNext 2 has no lead 0: its first lead ends the first 6 h total. When
+    # every field is such a total (step_type accum), relabel to interval start.
+    # Small negative totals are model artifacts; the catalog says to zero them.
+    accum = [name for name in ds.data_vars if ds[name].attrs.get("step_type") == "accum"]
+    for name in accum:
+        ds[name] = ds[name].clip(min=0, keep_attrs=True)
+    leads = ds["step"].values if is_forecast else None
+    if (
+        is_forecast
+        and accum
+        and len(accum) == len(ds.data_vars)
+        and leads[0] > np.timedelta64(0, "ns")
+    ):
+        ds = ds.assign_coords(step=np.concatenate([[np.timedelta64(0, "ns")], leads[:-1]]))
+        for name in ds.data_vars:
+            note = (
+                "dynamical-fetch relabelled steps to interval start: step s covers [s, next lead)."
+            )
+            ds[name].attrs["comment"] = f"{ds[name].attrs.get('comment', '')} {note}".strip()
+        print("Relabelled steps to interval start (catalog has no lead 0).", file=sys.stderr)
     if is_forecast and max_lead is not None:
         ds = ds.sel(step=slice(None, limit))
         # Mixed with instant fields, an end-labelled field has no value at step 0.
@@ -485,6 +516,8 @@ def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max
             out = to_standard_units(out, variables=[name])
         except UsageError:
             continue
+    # Period totals (WeatherNext 2 6 h precip in mm) become mm day-1 rates.
+    out = precip_amounts_to_rates(out, deaccumulate=False)
     return stamp_data_interval(out)
 
 
