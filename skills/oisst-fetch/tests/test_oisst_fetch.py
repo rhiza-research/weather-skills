@@ -215,6 +215,101 @@ def test_netcdf_access_failure_is_retried(tmp_path, fetch):
     assert xr.open_zarr(out, consolidated=True).sizes["time"] == 2
 
 
+def test_year_is_read_in_blocks_of_31_days(tmp_path, fetch):
+    """NOAA PSL cuts a response off after ~60 s; a year must not be one request."""
+    from xarray.backends import BackendArray
+    from xarray.core import indexing
+
+    times = np.arange("2024-01-01", "2025-01-01", dtype="datetime64[D]").astype("datetime64[ns]")
+    data = np.full((times.size, 2, 2), 25.0, dtype="float32")
+    keys = []
+
+    class RecordingArray(BackendArray):
+        shape, dtype = data.shape, data.dtype
+
+        def __getitem__(self, key):
+            return indexing.explicit_indexing_adapter(
+                key, self.shape, indexing.IndexingSupport.OUTER, self._raw
+            )
+
+        def _raw(self, key):
+            keys.append(key)
+            return data[key]
+
+    sst = xr.Variable(
+        ("time", "lat", "lon"),
+        indexing.LazilyIndexedArray(RecordingArray()),
+        attrs={"units": "degC"},
+    )
+    remote = xr.Dataset(
+        {"sst": sst}, coords={"time": times, "lat": [-0.5, 0.5], "lon": [10.5, 11.5]}
+    )
+
+    out = tmp_path / "out.zarr"
+    with patch("xarray.open_dataset", return_value=remote):
+        run_skill(
+            fetch,
+            "--start-time",
+            "2024-01-01",
+            "--end-time",
+            "2024-12-31",
+            "--bbox",
+            "1/10/-1/12",
+            "-o",
+            str(out),
+        )
+
+    days = [len(range(*k[0].indices(times.size))) for k in keys]
+    assert max(days) <= 31
+    assert sum(days) == 366
+    assert xr.open_zarr(out, consolidated=True).sizes["time"] == 366
+
+
+def test_dap_failure_is_retried_not_called_too_large(tmp_path, fetch):
+    """A dropped transfer (DAP failure) is a server hiccup, not a request-size problem."""
+    out = tmp_path / "out.zarr"
+    dap_failure = OSError("NetCDF: DAP failure")
+    with (
+        patch("xarray.open_dataset", side_effect=[dap_failure, dap_failure, _oisst_piece()]),
+        patch("time.sleep"),
+    ):
+        run_skill(
+            fetch,
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "--bbox",
+            "3/10/0/13",
+            "-o",
+            str(out),
+        )
+    assert xr.open_zarr(out, consolidated=True).sizes["time"] == 2
+
+
+def test_persistent_dap_failure_exits_1_with_one_at_a_time_advice(capsys, fetch):
+    with (
+        patch("xarray.open_dataset", side_effect=OSError("NetCDF: DAP failure")),
+        patch("time.sleep"),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_skill(
+            fetch,
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "--bbox",
+            "3/10/0/13",
+            "-o",
+            "unused.zarr",
+        )
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "one oisst-fetch at a time" in err
+    assert "too large" not in err
+
+
 def test_probe_latest_rejects_ident(fetch):
     with pytest.raises(SystemExit) as exc:
         run_skill(fetch, "--probe-latest", "final")
