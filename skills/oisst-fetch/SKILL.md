@@ -37,7 +37,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ### Notes
 - Days less than about 15 days old are preliminary and may be revised; nothing in the output marks them. A window ending in that span prints a stderr note.
 - Days outside the published record are left out, not filled, and stderr reports how many are missing. A window with no data exits 1.
-- The server limits request size. A too-large request exits 2 asking for a smaller `--bbox` or shorter window. A transient server error is retried once, then exits 1; retrying later may work.
+- One call can span many years: each year is read in blocks of up to 31 days, which stay under the server's ~60 s response limit at any `--bbox`. Run one oisst-fetch at a time rather than one per year in parallel; NOAA PSL throttles bursts of requests (429). A dropped or throttled transfer is retried twice (after 10 s and 30 s), then exits 1; retrying a few minutes later may work.
 - The whole selection is held in memory: about 4 MB per global day.
 
 ### Example
