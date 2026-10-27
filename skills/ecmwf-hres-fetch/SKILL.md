@@ -47,6 +47,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - `--run` — init hour UTC: `0`, `6`, `12`, or `18`. Default: `0`. 00/12 runs reach 360 h (3-hourly to 144 h, then 6-hourly); 06/18 runs reach 144 h, 3-hourly.
 - `--bbox` — required for a fetch. `N/W/S/E` decimal degrees. Open Data serves global files, so the full globe is downloaded for every step and clipped locally; a small bbox saves memory, not download time (`tp` for a 00 UTC run is ~80 MB; a pressure-level field is ~13×).
 - `--variable`, `-v` — one field per flag; repeat for several. Default: `tp`. Surface: `tp`, `t2m`, `d2m`, `msl`, `u10`, `v10`, `gust10`, `sp`, `tcwv`, `mucape`, `skt`, `ssrd`, `strd`, `str`, `ttr`. Pressure levels (1000–50 hPa, 13 levels): `t`, `gh`, `u`, `v`, `q`, `r`. Open Data names (`2t`, `10u`) are accepted. An unknown name exits and lists `Available (most used first):`.
+- `--max-lead` — keep steps up to this lead: `24`, `24h` or `1D` (bare numbers are hours); `0` is the analysis time only. Default: every published step. Each step is a global download, so a short lead is much faster (all steps of `q` and `u` on pressure levels is ~1.4 GB). With `tp`, one more step is fetched so the rate for every step up to the limit is kept.
 - `--probe-latest [IDENT]` — print the latest init date on stdout and exit; stderr names its run hour. `IDENT` is ignored.
 - `--output`, `-o` — output Zarr, overwritten.
 
@@ -57,6 +58,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - 06/18 runs stamp `data_interval = 3 hour`; 00/12 runs, whose spacing changes at 144 h, get `step_bounds`. Stamped `weather_skills_source=ecmwf-hres`.
 
 ### Notes
+- When `data.ecmwf.int` is busy it answers `503 Slow Down`. The skill tries it 3 times, 10 s apart, then moves to the AWS mirror instead of waiting.
 - `ssrd`, `strd`, `str`, `ttr` stay cumulative since init (J m-2); deaccumulate them for a rate.
 - `gust10` is the maximum gust since the previous output step.
 - `tcwv` is water vapour only; `mucape` is most-unstable CAPE (Open Data has no plain `cape`).
