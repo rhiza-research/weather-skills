@@ -100,19 +100,33 @@ def _list_stores(folder: str) -> list[str]:
 
 def _open_store(url: str, bbox, workers: int):
     """Open one init's store and load it, subset to ``bbox``."""
+    import weakref
+
     import xarray as xr
     import zarr
+    from adlfs.utils import close_service_client
+    from zarr.core.sync import sync
 
     try:
-        with (
-            zarr.config.set({"async.concurrency": workers}),
-            xr.open_zarr(url, storage_options=_storage_options(), chunks=None) as ds,
-        ):
-            return (bbox_subset(ds, bbox) if bbox is not None else ds).load()
+        with zarr.config.set({"async.concurrency": workers}):
+            store = zarr.storage.FsspecStore.from_url(
+                url, storage_options=_storage_options(), read_only=True
+            )
+            with xr.open_zarr(store, chunks=None) as ds:
+                ds = (bbox_subset(ds, bbox) if bbox is not None else ds).load()
     except (DataError, UsageError):
         raise
     except Exception as exc:  # noqa: BLE001
         raise _azure_error(exc, f"failed to open {url}") from None
+    # zarr opens adlfs asynchronously, which leaves the filesystem without an
+    # event loop, so adlfs's exit finalizer (sync(None, close_service_client, fs))
+    # raises "Loop is not running". Close the Azure session on zarr's loop
+    # instead and drop that finalizer.
+    sync(close_service_client(store.fs))
+    for finalizer in list(weakref.finalize._registry):
+        if (finalizer.peek() or (None,))[0] is store.fs:
+            finalizer.detach()
+    return ds
 
 
 def _to_standard(ds):
