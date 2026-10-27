@@ -66,6 +66,13 @@ _STALE_RANGE_ATTRS = (
 _TIME_UNITS = "days since 1970-01-01 00:00:00"
 _TIME_CALENDAR = "standard"
 _RETRY_SLEEP_S = 2.0
+# Waits before the 2nd and 3rd attempt at a year; NOAA PSL answers bursts of
+# requests with 429 Too Many Requests, which surfaces as an access/DAP failure.
+_READ_RETRY_SLEEPS_S = (10.0, 30.0)
+# NOAA PSL cuts an OPeNDAP response off after ~60 s, and read time grows with the
+# number of days (~0.3 s/day for a Nino3.4 box, ~0.5 s/day global), so a year is
+# read as blocks of at most this many days (a global block is ~15 s and 125 MB).
+_DAYS_PER_REQUEST = 31
 _PRELIM_DAYS = 15
 _PRELIM_NOTE = (
     f"Note: OISST days less than {_PRELIM_DAYS} days old are preliminary and may be revised; "
@@ -135,29 +142,22 @@ def _looks_like_html_error(exc: Exception) -> bool:
 def _is_retryable(exc: Exception) -> bool:
     if _is_availability_failure(exc):
         return False
-    # "NetCDF: Access failure" (errno -77) is an intermittent NOAA PSL OPeNDAP
-    # failure; the same request succeeds on retry.
+    # "NetCDF: Access failure" (errno -77) and "DAP failure" are what netCDF4
+    # raises when NOAA PSL drops the transfer (429 throttling, a cut-off
+    # response, HTTP/2 stream errors); the same request succeeds later.
+    text = str(exc).lower()
     return (
         is_transient(exc)
         or _looks_like_html_error(exc)
         or _is_undecoded_time(exc)
-        or "access failure" in str(exc).lower()
+        or "access failure" in text
+        or "dap failure" in text
     )
 
 
 def _is_undecoded_time(exc: Exception) -> bool:
     text = str(exc).lower()
     return "isnat" in text or "not a datetime" in text or "error page instead of data" in text
-
-
-def _is_transport_failure(exc: Exception) -> bool:
-    if _is_availability_failure(exc) or _is_retryable(exc):
-        return False
-    text = str(exc).lower()
-    return any(
-        m in text
-        for m in ("dap failure", "dap2", "dap", "curl", "connection", "timed out", "timeout")
-    )
 
 
 def _latest_day(ds):
@@ -287,8 +287,7 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
     pieces = []
     for year in years:
         piece = None
-        last_exc = None
-        for attempt in range(2):
+        for attempt in range(len(_READ_RETRY_SLEEPS_S) + 1):
             try:
                 # No dask chunking: chunked OPeNDAP reads were observed to write zeros.
                 dy = _open_year(year)
@@ -307,20 +306,28 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
                             lon_slices = (
                                 [slice(w, e)] if w <= e else [slice(w, None), slice(None, e)]
                             )
-                    piece = xr.concat(
-                        [src.sel(longitude=s).load() for s in lon_slices], dim="longitude"
-                    )
+                    blocks = []
+                    for i in range(0, src.sizes["time"], _DAYS_PER_REQUEST):
+                        block = src.isel(time=slice(i, i + _DAYS_PER_REQUEST))
+                        blocks.append(
+                            xr.concat(
+                                [block.sel(longitude=s).load() for s in lon_slices],
+                                dim="longitude",
+                            )
+                        )
+                    piece = xr.concat(blocks, dim="time") if len(blocks) > 1 else blocks[0]
                 break
             except SkillError:
                 raise
             except Exception as exc:
-                last_exc = exc
-                if attempt == 0 and _is_retryable(exc):
+                if attempt < len(_READ_RETRY_SLEEPS_S) and _is_retryable(exc):
+                    wait = _READ_RETRY_SLEEPS_S[attempt]
                     print(
-                        f"OISST OPeNDAP transient error reading {year} ({exc}); retrying once",
+                        f"OISST OPeNDAP transient error reading {year} ({exc}); "
+                        f"retrying in {wait:.0f} s",
                         file=sys.stderr,
                     )
-                    time.sleep(_RETRY_SLEEP_S)
+                    time.sleep(wait)
                     continue
                 if _is_availability_failure(exc) and year >= today.year:
                     # Not published yet: the coverage note below reports the missing days.
@@ -333,15 +340,10 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
                     ) from exc
                 if _is_retryable(exc):
                     raise DataError(
-                        f"NOAA PSL OPeNDAP was unreachable for year {year} ({exc}). "
-                        "This is a transient server error; retry the request."
-                    ) from exc
-                if _is_transport_failure(exc):
-                    raise UsageError(
-                        f"OISST OPeNDAP rejected the data transfer for {start_iso}..{end_iso} "
-                        f"bbox {bbox_label} (year {year}): {exc}. OISST is served "
-                        "over NOAA PSL OPeNDAP, which limits request size; this request is too large. "
-                        "Reduce --bbox and/or shorten the date range."
+                        f"NOAA PSL OPeNDAP kept failing for year {year} after "
+                        f"{len(_READ_RETRY_SLEEPS_S) + 1} attempts ({exc}). The server throttles "
+                        "bursts of requests: run one oisst-fetch at a time (one call can cover "
+                        "many years) and retry in a few minutes."
                     ) from exc
                 raise UsageError(f"unexpected failure reading OISST year {year}: {exc}.") from exc
         if piece is None:
