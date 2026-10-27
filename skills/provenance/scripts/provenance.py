@@ -22,11 +22,9 @@ from weather_skills_core.provenance import (
     validate_chain,
 )
 
-DEFAULT_REPO = "https://github.com/rhiza-research/weather-skills"
-DEFAULT_CLI = "forecasting-skills"
-# Ref a step runs from when it recorded no commit: the CLI above lives on dev
-# (the default branch names its CLI differently).
-DEFAULT_REF = "dev"
+DEFAULT_REPO = "https://github.com/weather-skills/weather-skills"
+# Ref a step runs from when it recorded no commit.
+DEFAULT_REF = "main"
 # Joins whose inputs are not a repeated --input, in the order the decorator
 # records them (declaration order).
 JOIN_FLAGS = {
@@ -227,14 +225,10 @@ def _command(step: dict, inputs: list, output: str) -> str:
     repo = step.get("repo") if isinstance(step.get("repo"), str) and step["repo"] else DEFAULT_REPO
     commit = step.get("commit")
     ref = commit if isinstance(commit, str) and commit else DEFAULT_REF
-    # weather-skills (or a fork) has the CLI. Another repo may name its CLI
-    # differently or have none: run the skill's one script from a checkout, as
-    # skills-runner does.
-    if repo.rsplit("/", 1)[-1] == DEFAULT_REPO.rsplit("/", 1)[-1]:
-        parts = ["uvx", "--from", f"git+{repo}@{ref}", DEFAULT_CLI, skill]
-    else:
-        checkout = f'"$(_checkout {shlex.quote(repo)} {shlex.quote(ref)})"'
-        parts = ["uv", "run", "--script", f"{checkout}/skills/{skill}/scripts/*.py"]
+    # Run the skill's one script from a checkout at that ref, as skills-runner
+    # does: works for any repo, whatever its CLI was called at that commit.
+    script = f'"$(_script {shlex.quote(repo)} {shlex.quote(ref)} {shlex.quote(skill)})"'
+    parts = ["uv", "run", "--script", script]
     for dest, value in sorted(args.items()):
         flag = "--" + dest.replace("_", "-")
         if value is None or value is False:
@@ -326,17 +320,20 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
 
 
 def _with_checkout_helper(lines: list) -> list:
-    """Define ``_checkout`` after the header when a step runs from a repo checkout."""
-    if not any("$(_checkout " in line for line in lines):
+    """Define ``_script`` after the header when a step runs from a repo checkout."""
+    if not any("$(_script " in line for line in lines):
         return lines
     helper = [
-        "# Clone each repo once per ref into ./_checkouts and print its path.",
-        "_checkout() {",
+        "# Clone each repo once per ref into ./_checkouts and print the skill's script.",
+        "# Skills sit at skills/<pack>/<skill>, or skills/<skill> in older commits.",
+        "_script() {",
         '  local dir="_checkouts/${1##*/}@$2"',
         '  if [ ! -d "$dir" ]; then',
         '    git clone -q "$1" "$dir" && git -C "$dir" checkout -q "$2"',
         "  fi",
-        '  echo "$dir"',
+        '  for f in "$dir"/skills/*/"$3"/scripts/*.py "$dir"/skills/"$3"/scripts/*.py; do',
+        '    if [ -e "$f" ]; then echo "$f"; return; fi',
+        "  done",
         "}",
         "",
     ]
