@@ -2,6 +2,7 @@
 
 import json
 import re
+import subprocess
 
 import pytest
 from conftest import load_skill, make_gridded, run_skill, write_zarr
@@ -144,8 +145,8 @@ def test_script_pins_commit_and_reproduces_join(tmp_path, provenance, capsys):
     run_skill(provenance, "-i", str(out), "--format", "script")
 
     captured = capsys.readouterr().out
-    assert "uvx --from git+https://github.com/example/weather-skills@aaaaaaaaaaaa" in captured
-    assert "uvx --from git+https://github.com/example/weather-skills@deadbeefcafebabe" in captured
+    assert "$(_script https://github.com/example/weather-skills aaaaaaaaaaaa" in captured
+    assert "$(_script https://github.com/example/weather-skills deadbeefcafebabe" in captured
     assert "chirps-fetch" in captured
     assert "dynamical-fetch" in captured
     assert "concat" in captured
@@ -198,11 +199,37 @@ def _script(provenance, path, capsys):
 
 
 def test_script_unpinned_step_runs_from_dev(tmp_path, provenance, capsys):
+    # Every step runs its script from a checkout, whatever the repo's CLI is called.
     out = _stamp_history(tmp_path / "f.zarr", [_fetch("chirps-fetch")])
 
     captured = _script(provenance, out, capsys)
 
-    assert "git+https://github.com/rhiza-research/weather-skills@dev weather-skills" in captured
+    repo = "https://github.com/rhiza-research/weather-skills"
+    assert f'uv run --script "$(_script {repo} dev chirps-fetch)"' in captured
+    assert "uvx" not in captured
+
+
+def test_script_helper_finds_both_layouts(tmp_path, provenance, capsys):
+    # skills/<pack>/<skill> now; skills/<skill> in commits before the move.
+    out = _stamp_history(tmp_path / "f.zarr", [_fetch("chirps-fetch")])
+    script = _script(provenance, out, capsys)
+    helper = script[script.index("_script() {") : script.index("}\n") + 1]
+    for name, layout in [("new", "skills/weather-skills/a"), ("old", "skills/a")]:
+        (tmp_path / "_checkouts" / f"{name}@r" / layout / "scripts").mkdir(parents=True)
+        (tmp_path / "_checkouts" / f"{name}@r" / layout / "scripts" / "a.py").touch()
+
+    found = subprocess.run(
+        ["bash", "-c", f"{helper}\n_script x/new r a; _script x/old r a"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+
+    assert found == [
+        "_checkouts/new@r/skills/weather-skills/a/scripts/a.py",
+        "_checkouts/old@r/skills/a/scripts/a.py",
+    ]
 
 
 def test_script_runs_other_repo_skill_from_checkout(tmp_path, provenance, capsys):
@@ -222,9 +249,8 @@ def test_script_runs_other_repo_skill_from_checkout(tmp_path, provenance, capsys
 
     captured = _script(provenance, out, capsys)
 
-    assert "_checkout() {" in captured
-    assert f'uv run --script "$(_checkout {repo} bbbb)"/skills/make-map/scripts/*.py' in captured
-    assert f"{repo}@bbbb weather-skills" not in captured
+    assert "_script() {" in captured
+    assert f'uv run --script "$(_script {repo} bbbb make-map)"' in captured
 
 
 def test_script_emits_structured_args(tmp_path, provenance, capsys):
@@ -247,7 +273,7 @@ def test_script_verify_join_uses_forecast_and_obs(tmp_path, provenance, capsys):
 
     captured = _script(provenance, out, capsys)
 
-    assert "verify --forecast a.zarr --obs b.zarr --output v.zarr" in captured
+    assert 'verify)" --forecast a.zarr --obs b.zarr --output v.zarr' in captured
 
 
 def test_script_reproduces_join_before_later_step(tmp_path, clip_region, provenance, capsys):
@@ -277,10 +303,10 @@ def test_script_reproduces_join_before_later_step(tmp_path, clip_region, provena
     # <UPSTREAM> for a core that leaves inputs out of args.
     for out in ("a", "b"):
         assert re.search(
-            rf"clip-region --bbox -1/10/-3/13 --input \S+ --output {out}\.zarr", captured
+            rf'clip-region\)" --bbox -1/10/-3/13 --input \S+ --output {out}\.zarr', captured
         )
-    assert "difference --input a.zarr --input b.zarr --output step1.zarr" in captured
-    assert "clip-region --bbox -1/10/-2/12 --input step1.zarr --output final.zarr" in captured
+    assert 'difference)" --input a.zarr --input b.zarr --output step1.zarr' in captured
+    assert 'clip-region)" --bbox -1/10/-2/12 --input step1.zarr --output final.zarr' in captured
 
 
 def test_malformed_entries_do_not_traceback(tmp_path, provenance, capsys):
@@ -296,7 +322,7 @@ def test_malformed_entries_do_not_traceback(tmp_path, provenance, capsys):
 
     assert "args: (malformed: not an object)" in human
     assert "input: [?, ?]" in human
-    assert "concat --input step1.zarr --input '?'" in captured
+    assert "concat)\" --input step1.zarr --input '?'" in captured
 
 
 def test_reads_html_and_jpeg_figures(tmp_path, provenance, capsys):
