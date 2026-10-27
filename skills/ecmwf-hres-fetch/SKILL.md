@@ -1,6 +1,6 @@
 ---
 name: ecmwf-hres-fetch
-description: "Fetch the deterministic ECMWF HRES (IFS high-resolution, single-member) forecast for one init date and run hour over a lat/lon box from the free ECMWF Open Data feed, as a weather-skills Zarr at 0.25°: precipitation, 2 m temperature, pressure, winds, radiation and pressure-level fields out to 15 days. No credentials needed. Use when a task needs the deterministic high-resolution ECMWF forecast."
+description: "Fetch the deterministic ECMWF HRES (IFS high-resolution, single-member) forecast for one init date and run hour over a lat/lon box from the free ECMWF Open Data feed, as a weather-skills Zarr at 0.25°, out to 15 days. Slow: every lead is a global download. For ECMWF forecasts use dynamical-fetch first (IFS-ENS 0.25° and its control member, AIFS single and ensemble), and ecmwf-fetch for S2S. Use this only when a task names HRES, or needs a field dynamical-fetch lacks: humidity or winds on pressure levels, levels other than 500/850/925 hPa, CAPE, column water vapour, skin temperature, or net and top-of-atmosphere radiation."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`). No credentials or account required — ECMWF Open Data is a public feed.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -34,6 +34,13 @@ metadata:
 # ecmwf-hres-fetch
 
 Fetches one deterministic ECMWF HRES run from ECMWF Open Data as a weather-skills standard dataset Zarr.
+
+**Use dynamical-fetch first.** It reads only the bbox and leads asked for, so it takes seconds; this skill downloads the whole globe for every lead, which takes minutes and stalls when `data.ecmwf.int` is busy.
+- ECMWF IFS at 0.25°: `ecmwf-ifs-ens-forecast-15-day-0-25-degree`, 00 UTC inits. Since IFS Cycle 48r1 the ensemble runs at HRES resolution, so its control member (`select` member 0) stands in for HRES; the ensemble mean is usually the better forecast.
+- A deterministic run at 00, 06, 12 or 18 UTC: `ecmwf-aifs-single-forecast`.
+- Subseasonal (46-day): dynamical-fetch's 46-day IFS-ENS ids, or ecmwf-fetch.
+
+Those stores carry precipitation, 2 m temperature and dewpoint, sea-level and surface pressure, 10 m and 100 m winds, gusts (IFS-ENS), downward radiation, cloud cover, and `t` / `gh` at 500, 850 and 925 hPa. Use this skill when a task names HRES or needs what they lack: `q`, `r`, `u` or `v` on pressure levels, other levels, `mucape`, `tcwv`, `skt`, `str` or `ttr`. Keep `--max-lead` short.
 
 ## Usage
 
