@@ -133,7 +133,8 @@ def _resolve_variables(requested, data_vars, dataset: str):
     if missing:
         raise UsageError(
             f"variable(s) not in {dataset}: {', '.join(missing)}.\n"
-            f"Available: {', '.join(sorted(data_vars))}"
+            f"Available: {', '.join(sorted(data_vars))}\n"
+            "Run with --list-variables to see them with units and pressure levels."
         )
     return resolved
 
@@ -273,11 +274,51 @@ def _open_dataset(state, dataset) -> dict:
     ),
 )
 @weather_skill.argument(
+    "--list-variables",
+    action="store_true",
+    probe=True,
+    help=(
+        "Print the --dataset's variables (name, units, long name; pressure levels for "
+        "the pressure-level group) on stdout and exit. Does not download fields."
+    ),
+)
+@weather_skill.argument(
     "--max-lead",
     help=("Forecasts only: keep output steps up to this one (240h, 10D). Default: every step."),
 )
-def fetch(bbox, dataset, date, start_time, end_time, variable, probe_latest, max_lead, **kwargs):
+def fetch(
+    bbox,
+    dataset,
+    date,
+    start_time,
+    end_time,
+    variable,
+    probe_latest,
+    list_variables,
+    max_lead,
+    **kwargs,
+):
     """Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
+    if list_variables:
+        if not dataset:
+            raise UsageError("--list-variables needs --dataset.")
+        ds = _open_dataset({}, dataset)["ds"]
+        print(f"{dataset} variables (pass the name to -v):")
+        for name in sorted(ds.data_vars):
+            attrs = ds[name].attrs
+            print(f"  {name}\t{attrs.get('units', '')}\t{attrs.get('long_name', '')}")
+        import dynamical_catalog
+
+        try:
+            pds = dynamical_catalog.open(dataset, group=_PRESSURE_GROUP, chunks=None)
+        except Exception:  # noqa: BLE001 — most stores have no pressure-level group
+            return
+        levels = ", ".join(f"{float(v):g}" for v in pds["pressure_level"].values)
+        print(f"{_PRESSURE_GROUP} group, levels {levels} hPa (-v NAME takes every level):")
+        for name in sorted(pds.data_vars):
+            attrs = pds[name].attrs
+            print(f"  {name}\t{attrs.get('units', '')}\t{attrs.get('long_name', '')}")
+        return
     if probe_latest is not None:
         import numpy as np
 
