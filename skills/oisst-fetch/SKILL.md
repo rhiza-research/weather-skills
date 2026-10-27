@@ -37,8 +37,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ### Notes
 - Days less than about 15 days old are preliminary and may be revised; nothing in the output marks them. A window ending in that span prints a stderr note.
 - Days outside the published record are left out, not filled, and stderr reports how many are missing. A window with no data exits 1.
-- OISST is a large daily 0.25° dataset served slowly, so long windows are slow. The server cuts a response off after about 60 s, so the fetch splits the window into blocks of at most 31 days and reads them one after another. Each block takes about 9 s for a small box such as Niño3.4 and about 15 s for the globe: roughly 2 to 3 minutes per year, or over an hour for a few decades. Keep `--bbox` to the area needed. For multi-decade analyses that do not need daily 0.25° detail, a coarser or monthly SST source is faster.
-- One call can span many years. Run one oisst-fetch at a time rather than one per year in parallel; NOAA PSL throttles bursts of requests (429). A dropped or throttled transfer is retried twice (after 10 s and 30 s), then exits 1; retrying a few minutes later may work.
+- Large and slow: windows are read in month-long blocks, about 2–3 minutes per year. For multi-decade analyses, prefer a coarser or monthly SST source.
+- Run one fetch at a time; parallel requests get throttled (429). Dropped transfers are retried twice, then exit 1.
 - The whole selection is held in memory: about 4 MB per global day.
 
 ### Example
