@@ -624,3 +624,51 @@ def test_probe_latest_warns_only_when_last_lead_missing(mod, fetch, capsys, publ
     captured = capsys.readouterr()
     assert captured.out.strip() == "2026-01-01"
     assert ("still publishing" in captured.err) == publishing
+
+
+def test_list_variables_prints_root_and_pressure_level_fields(mod, fetch, capsys):
+    root = _forecast_catalog_ds()
+    root["tp"].attrs.update(units="kg m-2 s-1", long_name="Precipitation rate")
+    pressure = xr.Dataset(
+        {"specific_humidity": (("pressure_level",), [0.01, 0.005], {"units": "1"})},
+        coords={"pressure_level": [1000.0, 700.0]},
+    )
+
+    class _Catalog:
+        @staticmethod
+        def open(dataset, group=None, chunks=None):
+            assert group == "pressure_level"
+            return pressure
+
+    with (
+        patch.object(mod, "_open_dataset", return_value={"ds": root, "shape": "forecast"}),
+        patch.dict("sys.modules", {"dynamical_catalog": _Catalog}),
+    ):
+        run_skill(fetch, "--dataset", "x", "--list-variables")
+    out = capsys.readouterr().out
+    assert "  tp\tkg m-2 s-1\tPrecipitation rate" in out
+    assert "levels 1000, 700 hPa" in out
+    assert "  specific_humidity\t1\t" in out
+
+
+def test_list_variables_without_pressure_group(mod, fetch, capsys):
+    class _Catalog:
+        @staticmethod
+        def open(dataset, group=None, chunks=None):
+            raise KeyError(group)
+
+    with (
+        patch.object(
+            mod, "_open_dataset", return_value={"ds": _forecast_catalog_ds(), "shape": "forecast"}
+        ),
+        patch.dict("sys.modules", {"dynamical_catalog": _Catalog}),
+    ):
+        run_skill(fetch, "--dataset", "x", "--list-variables")
+    out = capsys.readouterr().out
+    assert "  tp\t" in out and "pressure_level group" not in out
+
+
+def test_unknown_variable_points_to_list_variables(mod):
+    with pytest.raises(Exception) as exc:
+        mod._resolve_variables(["list_vars_please"], ["tp"], "x")
+    assert "--list-variables" in str(exc.value)

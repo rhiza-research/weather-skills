@@ -27,6 +27,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --date YYYY-MM-DD [--bb
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--bbox N/W/S/E] -v VAR -o OUT.zarr
 # Latest init or analysis day (no download)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest ID
+# A dataset's variables, units and pressure levels (no download)
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --list-variables
 ```
 
 **Forecast ids** (use `--date`): `noaa-gefs-forecast-35-day` (31 members), `ecmwf-ifs-ens-forecast-15-day-0-25-degree` (51), `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` (101), `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` (101), `ecmwf-aifs-ens-forecast` (51), `noaa-gfs-forecast`, `ecmwf-aifs-single-forecast`, `dwd-icon-eu-forecast-5-day` (Europe).
@@ -41,6 +43,7 @@ HRRR ids are rejected (projected grid).
 - `--bbox` — `N/W/S/E`, longitudes −180..180; W > E crosses the antimeridian. Omit for the full grid.
 - `--variable`, `-v` — catalog variable name; repeat for several. Aliases: `precip`/`tp`/`pr` → `precipitation_surface`; `sst` → `sea_surface_temperature`; `t2m` → `temperature_2m` (or 46-day `average_temperature_2m`); `msl` → `pressure_reduced_to_mean_sea_level`; `sp` → `pressure_surface`; `u10`/`v10`/`u100`/`v100` → `wind_u_10m`/`wind_v_10m`/`wind_u_100m`/`wind_v_100m`; `t`/`gh`/`u`/`v`/`w`/`q` → every pressure level of that field. An unknown name exits and lists `Available:`. Omitting `-v` fetches every field.
 - `--probe-latest [ID]` — print the latest init or analysis date and exit. stderr notes a forecast init whose last lead is not published yet; a sub-daily analysis's latest day is partial (stderr says so).
+- `--list-variables` — with `--dataset`, print each variable (name, units, long name) and, where the store has one, the `pressure_level` group's fields and levels, then exit. Use it to find a field's name before fetching; does not download fields.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
