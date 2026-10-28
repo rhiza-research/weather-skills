@@ -243,6 +243,18 @@ def test_aggregate_requires_period_or_window(tmp_path, aggregate):
     assert exc.value.code == 2
 
 
+def test_window_row_count_error_names_window(tmp_path, aggregate, capsys):
+    src = write_zarr(make_gridded(n_time=7), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    with pytest.raises(SystemExit) as exc:
+        run_skill(aggregate, "-i", str(src), "-o", str(out), "--window", "7")
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "--window '7'" in err
+    assert "--period" not in err
+
+
 def _s2s_accum_forecast():
     """S2S-like steps with known cumulative tp (mm)."""
     import numpy as np

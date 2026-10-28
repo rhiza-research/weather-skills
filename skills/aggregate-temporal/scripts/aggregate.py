@@ -43,8 +43,11 @@ _METHOD_TO_CF = {"mean": "mean", "max": "maximum", "min": "minimum"}
 _NAMED_PERIODS = tuple(PERIOD_TO_AGGREGATION)
 
 
-def _resolve_period(period: str) -> dict:
-    """Named period or a pint duration (``21 day``, ``6 hour``); ``anchor_days`` may be fractional."""
+def _resolve_period(period: str, flag: str = "--period") -> dict:
+    """Named period or a pint duration (``21 day``, ``6 hour``); ``anchor_days`` may be fractional.
+
+    ``flag`` is the option the value came from, for error messages.
+    """
     if period in PERIOD_TO_AGGREGATION:
         return {
             "key": period,
@@ -56,14 +59,14 @@ def _resolve_period(period: str) -> dict:
         quantity = parse_aggregation_period(period)
     except UsageError as exc:
         raise UsageError(
-            f"--period {period!r} must be one of {', '.join(_NAMED_PERIODS)} "
+            f"{flag} {period!r} must be one of {', '.join(_NAMED_PERIODS)} "
             f"or a pint duration (e.g. '21 day', '6 hour'): {exc}"
         ) from None
     days = float(quantity.to("day").magnitude)
     seconds = days * 86400
     if days <= 0 or abs(seconds - round(seconds)) > 1e-6:
         raise UsageError(
-            f"--period {period!r} must be a named period "
+            f"{flag} {period!r} must be a named period "
             f"({', '.join(_NAMED_PERIODS)}) or a positive whole number of seconds "
             "(e.g. '21 day', '6 hour')"
         )
@@ -678,7 +681,7 @@ def aggregate(
         except ValueError:
             pass
 
-    spec = _resolve_period(period or window)
+    spec = _resolve_period(period or window, "--period" if period else "--window")
     if window is not None and spec["key"] == "monthly":
         raise UsageError("--window takes a fixed length such as '30 day'; months vary in length")
     if window is None and native_interval and _durations_equal(spec["agg"], native_interval):
