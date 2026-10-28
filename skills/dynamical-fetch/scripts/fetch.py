@@ -397,12 +397,14 @@ def fetch(
 
     requested_as: dict[str, list[str]] = {}
     if variable:
+        # Resolve the full list first so an unknown -v error names every missing one.
+        catalog_vars = list(ds.data_vars)
+        ds = ds[_resolve_variables(variable, catalog_vars, dataset)]
         for token in variable:
-            for name in _resolve_variables([token], ds.data_vars, dataset):
+            for name in _resolve_variables([token], catalog_vars, dataset):
                 tokens = requested_as.setdefault(_written_name(name), [])
                 if token != _written_name(name) and token not in tokens:
                     tokens.append(token)
-        ds = ds[_resolve_variables(variable, ds.data_vars, dataset)]
 
     if is_forecast:
         inits = ds["init_time"].values

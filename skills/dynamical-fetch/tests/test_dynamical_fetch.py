@@ -805,3 +805,22 @@ def test_stdout_lists_all_variables_without_v(tmp_path, mod, fetch, capsys):
         run_skill(fetch, "--dataset", "test-forecast", "--date", "2026-01-01", "-o", str(out))
 
     assert capsys.readouterr().out.splitlines() == ["variable: precipitation_surface"]
+
+
+def test_unknown_variables_are_all_named(tmp_path, mod, fetch, capsys):
+    state = {"ds": _precip_forecast_catalog_ds(), "shape": "forecast"}
+    with patch.object(mod, "_open_dataset", return_value=state), pytest.raises(SystemExit):
+        run_skill(
+            fetch,
+            "--dataset",
+            "test-forecast",
+            "--date",
+            "2026-01-01",
+            "-v",
+            "foo",
+            "-v",
+            "bar",
+            "-o",
+            str(tmp_path / "out.zarr"),
+        )
+    assert "not in test-forecast: foo, bar." in capsys.readouterr().err
