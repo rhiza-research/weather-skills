@@ -134,6 +134,7 @@ def resolve_region(code, geojson, pad, **kwargs):
     if geojson:
         out_fc = {"type": "FeatureCollection", "features": [match]}
         try:
+            Path(geojson).parent.mkdir(parents=True, exist_ok=True)
             Path(geojson).write_text(json.dumps(out_fc, separators=(",", ":")))
         except OSError as exc:
             raise DataError(f"could not write boundary polygon to {geojson}: {exc}") from None

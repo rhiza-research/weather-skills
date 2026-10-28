@@ -19,12 +19,12 @@ metadata:
 
 # imerg-fetch
 
-Downloads IMERG daily files for a date range and writes the global daily precipitation grid.
+Downloads IMERG daily files for a date range and writes the daily precipitation grid, globally or cut to `--bbox`.
 
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--version late|final] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--version late|final] [--bbox N/W/S/E] -o OUT.zarr
 # Latest published day of one product (no download)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [late|final]
 ```
@@ -32,21 +32,22 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [late|final]
 ### Arguments
 - `--start-time`, `--end-time` — inclusive date range.
 - `--version` — `late` (`GPM_3IMERGDL`, near real time) or `final` (`GPM_3IMERGDF`). Default: `late`.
+- `--bbox` — `N/W/S/E` decimal degrees; W > E crosses the antimeridian. Default: the whole globe.
 - `--probe-latest` — print the latest published day (`YYYY-MM-DD`) on stdout and exit. Optional value `late` or `final`; without one it uses `--version`.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- `precip`, the daily mean rate in `mm day-1`, dims `(time, latitude, longitude)`, latitude ascending, on the full global 0.1° grid.
+- `precip`, the daily mean rate in `mm day-1`, dims `(time, latitude, longitude)`, latitude ascending, on the 0.1° grid (global, or the cells inside `--bbox`).
 - `data_interval` `1 day`. Global attrs `weather_skills_source=imerg`, `imerg_version` (`late` or `final`), and `source` naming the GES DISC collection.
 
 ### Notes
 - Credentials come from `EARTHDATA_USERNAME` / `EARTHDATA_PASSWORD`, then `~/.netrc`; failure exits 1.
 - Pick `--version` from the window. Final lags months (its V07 collection ends 2025-09-30 as of October 2026); run `--probe-latest final` and use `final` only up to that day, `late` after it. A window crossing that day needs two fetches, or `late` throughout. A `final` window with no published day exits 1.
 - An `--end-time` past the latest day writes the days available and warns on stderr. A missing day inside the range exits 1. Missing days are never filled.
-- There is no `--bbox`: each day downloads the whole global file (about 32 MB) and holds it in memory. Keep windows short and clip afterwards.
+- Each day still downloads the whole global file (about 32 MB), one at a time, deleted once it is cut to `--bbox`; long windows take time but not disk. Without `--bbox` the output holds about 26 MB per day in memory, so pass `--bbox` for anything longer than a few weeks.
 
 ### Example
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time 2026-10-01 --end-time 2026-10-10 --version late -o imerg_late_oct.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time 2026-10-01 --end-time 2026-10-10 --version late --bbox 5.5/33.5/-5/42.5 -o imerg_late_oct.zarr
 ```
-Writes 10 days of global IMERG Late daily rainfall rates.
+Writes 10 days of IMERG Late daily rainfall rates over Kenya.
