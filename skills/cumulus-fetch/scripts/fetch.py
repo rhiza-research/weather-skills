@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import bisect
 import re
 import sys
 
@@ -52,8 +53,9 @@ def _storage_options() -> dict[str, str]:
     (raw,) = require_env(
         _SAS_ENV,
         message=(
-            f"{_SAS_ENV} must be set to a read SAS for Azure container "
-            f"{_ACCOUNT}/{_CONTAINER} (list and read: sp=rl)."
+            f"{_SAS_ENV} is not set in this workspace, so Cumulus cannot be read; retrying "
+            "will not help. Ask the workspace admin to add the Cumulus credential: a read "
+            f"SAS for Azure container {_ACCOUNT}/{_CONTAINER} (list and read: sp=rl)."
         ),
     )
     token = raw.strip().strip("'\"").split("?", 1)[-1]
@@ -191,7 +193,8 @@ def fetch(dataset, date, bbox, variable, probe_latest, workers, **kwargs):
     if folder not in _DATASETS.values():
         raise UsageError(
             f"unknown Cumulus dataset {name!r}. Available: {', '.join(_DATASETS)} "
-            f"(or a folder name: {', '.join(_DATASETS.values())})."
+            f"(or a folder name: {', '.join(_DATASETS.values())}). cumulus-fetch reads "
+            "only the live forecast runs; hindcast (reforecast) runs are not served here."
         )
     if workers < 1:
         raise UsageError(f"--workers must be at least 1 (got {workers}).")
@@ -210,13 +213,25 @@ def fetch(dataset, date, bbox, variable, probe_latest, workers, **kwargs):
 
     # Names sort by init date then hour, so the last match is the latest init.
     stores = _list_stores(folder)
+    published = stores
     if date is not None:
         stores = [s for s in stores if s.startswith(date.isoformat())]
     if not stores:
-        wanted = f"init {date.isoformat()}" if date else "init stores"
+        if date is None:
+            raise DataError(f"no Cumulus init stores under {prefix}.")
+        # List the published inits around the requested date so one call is enough.
+        dates = sorted({s[:10] for s in published})
+        i = bisect.bisect_left(dates, date.isoformat())
+        near = dates[max(0, i - 3) : i + 3]
         raise DataError(
-            f"no Cumulus {wanted} under {prefix}. "
-            "Omit --date to take the latest, or pass --probe-latest to see what is published."
+            f"no Cumulus init {date.isoformat()} under {prefix}. "
+            + (
+                f"Nearest published inits: {', '.join(near)} "
+                f"({len(dates)} inits from {dates[0]} to {dates[-1]}). "
+                if dates
+                else "Nothing is published. "
+            )
+            + "Omit --date to take the latest."
         )
     store = stores[-1]
     print(f"Opening {prefix}{store}", file=sys.stderr)

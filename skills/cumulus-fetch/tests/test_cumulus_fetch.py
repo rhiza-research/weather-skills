@@ -121,10 +121,22 @@ def test_unknown_variable_exits_2(tmp_path, fetch_mod, remote):
     assert exc.value.code == 2
 
 
-def test_missing_date_exits_1(tmp_path, fetch_mod, remote):
+def test_missing_date_exits_1(tmp_path, fetch_mod, remote, capsys):
     with pytest.raises(SystemExit) as exc:
         run_skill(fetch_mod.fetch, "--date", "2020-01-01", "-o", str(tmp_path / "unused.zarr"))
     assert exc.value.code == 1
+    assert "Nearest published inits: 2026-09-07, 2026-09-18" in capsys.readouterr().err
+
+
+def test_missing_date_lists_the_inits_around_it(tmp_path, fetch_mod, monkeypatch, capsys):
+    """One failed --date shows what is published nearby, so the model need not guess again."""
+    stores = [f"2026-09-{d:02d}-00.zarr" for d in (1, 4, 7, 11, 14, 18, 21, 25)]
+    monkeypatch.setattr(fetch_mod, "_list_stores", lambda folder: stores)
+    with pytest.raises(SystemExit):
+        run_skill(fetch_mod.fetch, "--date", "2026-09-12", "-o", str(tmp_path / "unused.zarr"))
+    err = capsys.readouterr().err
+    assert "Nearest published inits: 2026-09-04, 2026-09-07, 2026-09-11, 2026-09-14," in err
+    assert "2026-09-18, 2026-09-21 (8 inits from 2026-09-01 to 2026-09-25)" in err
 
 
 @pytest.mark.parametrize(
@@ -149,11 +161,12 @@ def test_azure_error_redacts_sas(fetch_mod):
     assert "sp=rl" in message
 
 
-def test_missing_sas_exits_2(fetch_mod, monkeypatch):
+def test_missing_sas_exits_2(fetch_mod, monkeypatch, capsys):
     monkeypatch.delenv("AZURE_STORAGE_SAS_TOKEN", raising=False)
     with pytest.raises(SystemExit) as exc:
         run_skill(fetch_mod.fetch, "--probe-latest")
     assert exc.value.code == 2
+    assert "Ask the workspace admin" in capsys.readouterr().err
 
 
 def test_malformed_sas_exits_2(fetch_mod, monkeypatch):
@@ -177,6 +190,12 @@ def test_unknown_dataset_exits_2(tmp_path, fetch_mod, remote, flag):
     with pytest.raises(SystemExit) as exc:
         run_skill(fetch_mod.fetch, flag, "2m_temperature", "-o", str(tmp_path / "out.zarr"))
     assert exc.value.code == 2
+
+
+def test_hindcast_run_name_says_only_live_runs(tmp_path, fetch_mod, remote, capsys):
+    with pytest.raises(SystemExit):
+        run_skill(fetch_mod.fetch, "--dataset", "gratis-czajkowski", "--probe-latest")
+    assert "hindcast (reforecast) runs are not served here" in capsys.readouterr().err
 
 
 def test_folder_name_accepted_as_dataset(tmp_path, fetch_mod, remote):
