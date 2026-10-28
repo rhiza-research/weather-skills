@@ -29,7 +29,7 @@ credentialed or source-specific fetcher only when it does not.
 | `dynamical-fetch` | **Preferred when the catalog has it.** dynamical.org open catalog (GFS, GEFS, ECMWF IFS-ENS 15-day and 46-day, AIFS, ICON-EU, MRMS, analyses, **IMERG**, **CHIRPS**) via `--dataset`, credential-free → Zarr. Default IMERG source: `nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`. CHIRPS products: `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`. |
 | `ecmwf-fetch` | ECDS **fallback** for ECMWF S2S / ER (pre-2026, ocean, unmapped fields). Prefer `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` for 2026+ catalog fields. |
 | `chirps-fetch` | Default CHIRPS source: dynamical.org final + prelim fallback → `precip` Zarr |
-| `imerg-fetch` | Earthdata **daily** IMERG Late/Final fallback (`GPM_3IMERGDL` / `GPM_3IMERGDF`) → Zarr. Default IMERG is `dynamical-fetch`, not this skill. |
+| `imerg-fetch` | Earthdata **daily** IMERG Final (`GPM_3IMERGDF`) → Zarr; Late only if `dynamical-fetch` fails. All other IMERG comes from `dynamical-fetch`. |
 | `clim-fetch` | Climatology (mean + std) for a `--dataset` (`imerg_final`, `era5`, `chirps`, `ecmwf_ifs`, `oisst`, …), at a selected `--prediction-timedelta` lead and `--window` (days; correctly rolled up, centered, with circular padding if not pre-mirrored), expanded to a `--start-time`/`--end-time` window → Zarr. OISST SST is `--dataset oisst --variable sst`. |
 | `tahmo-fetch` | TAHMO station observations (daily-aggregated) → Zarr |
 | `3dpaws-fetch` | 3D-PAWS station observations from a CHORDS portal (default: FEWS NET Kenya; daily precip, temperature, humidity, pressure, wind) → station Zarr. Requires credentials. |
@@ -71,7 +71,7 @@ credentialed or source-specific fetcher only when it does not.
 | `concat` | Join Zarr stores along a named dim (incl. new dims with coord values) |
 | `merge` | Combine the variables of several Zarrs into one dataset on their shared coordinates |
 | `label-group` | Add label coords: the country / admin-1 / admin-2 / subregion / continent or GeoJSON polygon each cell or station lies in (`--level`, `--geojson`), and time labels (`--time month`, `year`, `dayofyear`, or month groups `MAM,OND`) — data unchanged |
-| `summarize-dim` | Summarize named dims with a statistic (mean/std/min/max/sum/median) — e.g. ensemble spread as the std across `number`, or a time-mean baseline. `--by LABEL` gives one value per label (per county, per season), e.g. after `label-group` |
+| `summarize-dim` | Summarize named dims with a statistic (mean/std/min/max/sum/median/quantile) — e.g. ensemble spread as the std across `number`, a 10–90% band with `--method quantile -q 0.1 -q 0.9`, or a time-mean baseline. `--by LABEL` gives one value per label (per county, per season), e.g. after `label-group` |
 | `point-value` | Sample a gridded dataset at point locations (station Zarr, `--point LAT,LON[,ID]`, or CSV) into a `station_id` point_obs dataset — nearest, bilinear, or N×N cell-mean — for grid-vs-station `difference` / `verify` |
 | `local-extrema` | Find the local highs or lows of a gridded field (pressure centres, rainfall maxima) into a `station_id` point_obs dataset of locations and central values — for H / L map labels or listing centres |
 | `csv-io` | Export a Zarr to a CSV table (units in the headers), or read a CSV or Excel sheet — station records, a gridded table, or one gauge (`--point`) — into a Zarr. Day-first dates need `--date-format`; missing codes need `--na-value`. |

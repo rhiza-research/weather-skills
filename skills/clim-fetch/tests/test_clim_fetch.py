@@ -163,6 +163,7 @@ def test_base_period_is_carried_through_or_reported_missing(tmp_path, mod, capsy
     if recorded:
         assert out.attrs["climatology_start_time"] == "1998-01-01"
         assert out.attrs["climatology_end_time"] == "2024-12-31"
+        assert "averaged over 1998-01-01 to 2024-12-31" in err
         assert "does not record which years" not in err
     else:
         assert "climatology_start_time" not in out.attrs

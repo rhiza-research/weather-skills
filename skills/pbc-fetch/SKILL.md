@@ -2,23 +2,23 @@
 name: pbc-fetch
 description: "Fetch a StillLearning PBC (probabilistic bias correction) AI Weather Quest precipitation forecast for week 3 or week 4 from the private Sheerwater datalake, as a weather-skills Zarr. Values are the probability of each rainfall quintile on a 1.5° global grid, not amounts. Needs Google Cloud service-account credentials. Use when a task needs PBC subseasonal precipitation probabilities."
 license: MIT
-compatibility: "Requires Python 3.12 and uv. Reads private GCS gs://sheerwater-datalake/pbc-data via gcsfs. Requires Google Cloud credentials: NEURAL_GCM_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
+compatibility: "Requires Python 3.12 and uv. Reads private GCS gs://sheerwater-datalake/pbc-data via gcsfs. Requires Google Cloud credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.4"
+  version: "0.0.5"
   catalog-group: fetchers
   variables:
     - pr
   openclaw:
     requires:
       env:
-        - NEURAL_GCM_SERVICE_CREDENTIALS
-    primaryEnv: NEURAL_GCM_SERVICE_CREDENTIALS
+        - GCLOUD_SERVICE_CREDENTIALS
+    primaryEnv: GCLOUD_SERVICE_CREDENTIALS
     envVars:
-      - name: NEURAL_GCM_SERVICE_CREDENTIALS
+      - name: GCLOUD_SERVICE_CREDENTIALS
         description: Full contents of a GCP service-account key JSON with read access to gs://sheerwater-datalake/pbc-data. Use this when the runtime can only inject secret values, not files.
       - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON file that can read gs://sheerwater-datalake/pbc-data. Used only if NEURAL_GCM_SERVICE_CREDENTIALS is unset.
+        description: Path to a GCP service-account JSON file that can read gs://sheerwater-datalake/pbc-data. Used only if GCLOUD_SERVICE_CREDENTIALS is unset.
 ---
 
 # pbc-fetch
@@ -55,7 +55,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [ID]
 ### Notes
 - Values are probabilities, not amounts: do not convert them to mm or totals.
 - To map one category, select a single `quintile` value first.
-- Credentials are read from `NEURAL_GCM_SERVICE_CREDENTIALS` first, then `GOOGLE_APPLICATION_CREDENTIALS` or Application Default Credentials. Without access the skill exits 1 and says which to set.
+- Credentials are read from `GCLOUD_SERVICE_CREDENTIALS` first, then `GOOGLE_APPLICATION_CREDENTIALS` or Application Default Credentials. Without access the skill exits 1 and says which to set.
 
 ### Example
 ```bash

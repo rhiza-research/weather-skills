@@ -64,6 +64,12 @@ def test_geojson_write(tmp_path, resolve_region):
     assert data["features"][0]["properties"]["iso3"] == "KEN"
 
 
+def test_geojson_write_creates_parent_folder(tmp_path, resolve_region):
+    geo = tmp_path / "dairy" / "ken.geojson"
+    run_skill(resolve_region, "KEN", "--geojson", str(geo))
+    assert json.loads(geo.read_text())["type"] == "FeatureCollection"
+
+
 def test_lowercase_iso3_is_usage_error(resolve_region):
     with pytest.raises(SystemExit) as exc:
         run_skill(resolve_region, "ken")

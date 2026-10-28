@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import bisect
 import json
 import os
 import re
@@ -26,7 +27,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.5"
 
 _BUCKET = "neuralgcm-s2s"
 _PREFIX = "staging/realtime/tomorrow_now_2026/v1"
@@ -67,7 +68,7 @@ _VAR_ALIASES = {
 
 _AUTH_MSG = (
     "cannot read gs://neuralgcm-s2s (private GCS). Set "
-    "NEURAL_GCM_SERVICE_CREDENTIALS to the full service-account key JSON "
+    "GCLOUD_SERVICE_CREDENTIALS to the full service-account key JSON "
     "(no file needed), GOOGLE_APPLICATION_CREDENTIALS to a service-account "
     "JSON file path, or run `gcloud auth application-default login`."
 )
@@ -86,16 +87,14 @@ def _canonical_dataset(dataset: str) -> str:
 def _filesystem():
     import gcsfs
 
-    creds_json = os.environ.get("NEURAL_GCM_SERVICE_CREDENTIALS")
+    creds_json = os.environ.get("GCLOUD_SERVICE_CREDENTIALS")
     if creds_json:
         try:
             info = json.loads(creds_json)
         except json.JSONDecodeError as exc:
-            raise DataError(f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
+            raise DataError(f"GCLOUD_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
         if not isinstance(info, dict):
-            raise DataError(
-                "NEURAL_GCM_SERVICE_CREDENTIALS must be a service-account key JSON object."
-            )
+            raise DataError("GCLOUD_SERVICE_CREDENTIALS must be a service-account key JSON object.")
         try:
             return gcsfs.GCSFileSystem(token=info)
         except Exception as exc:  # noqa: BLE001 — surface ADC failures as DataError
@@ -113,7 +112,7 @@ def _gcs_error(exc: Exception, what: str) -> DataError:
     lowered = text.lower()
     if any(token in lowered for token in ("401", "403", "forbidden", "credential", "anonymous")):
         hint = (
-            " Check GCS credentials: set NEURAL_GCM_SERVICE_CREDENTIALS "
+            " Check GCS credentials: set GCLOUD_SERVICE_CREDENTIALS "
             "(service-account key JSON), GOOGLE_APPLICATION_CREDENTIALS (a key "
             "file path), or run `gcloud auth application-default login`."
         )
@@ -164,10 +163,19 @@ def _resolve_stamp(date, cycle: str | None, dataset: str) -> str:
         hour = cycle or "00"
         stamp = f"{date.strftime('%Y%m%d')}T{hour}"
         if not _store_exists(stamp, dataset):
+            # List the published inits around the requested one so one call is enough.
+            stamps = _list_init_stamps()
+            i = bisect.bisect_left(stamps, stamp)
+            near = [f"{_stamp_to_date(s)} {s[-2:]}Z" for s in stamps[max(0, i - 3) : i + 3]]
+            listing = (
+                f"Nearest published inits: {', '.join(near)} ({len(stamps)} inits from "
+                f"{_stamp_to_date(stamps[0])} to {_stamp_to_date(stamps[-1])}). "
+                if stamps
+                else "Nothing is published. "
+            )
             raise DataError(
-                f"no {dataset!r} store at {_store_url(stamp, dataset)}. "
-                "Pick a published init (`--probe-latest`), or omit --date to take "
-                "the latest. Inits are 00 and 12 UTC (`--cycle`)."
+                f"no {dataset!r} store at {_store_url(stamp, dataset)}. {listing}"
+                "Omit --date to take the latest. Inits are 00 and 12 UTC (`--cycle`)."
             )
         return stamp
 
