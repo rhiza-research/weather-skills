@@ -3,6 +3,7 @@
 # dependencies = [
 #   "weather-skills-core>=0.2.0",
 #   "pillow",
+#   "pypdf>=5",
 # ]
 # ///
 """Print the processing history recorded on a Zarr or plot image as a lineage, JSON, or a script that regenerates it."""
@@ -39,6 +40,9 @@ _HTML_META_RE = re.compile(
     rf'<meta\s+name=["\']{HISTORY_ATTR}["\']\s+content=["\'](.*?)["\']\s*/?>',
     re.IGNORECASE | re.DOTALL,
 )
+_SVG_META_RE = re.compile(
+    rf'<metadata\s+id=["\']{HISTORY_ATTR}["\']\s*>(.*?)</metadata>', re.DOTALL
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.4"
@@ -63,7 +67,9 @@ def _read_raw_histories(path: Path) -> tuple[dict, str | None]:
 
     A zarr keeps one store attr; a PNG keeps tEXt keys (``weather_skills_history``
     and, for older two-input plots, ``weather_skills_history_<label>``); a JPEG
-    keeps the EXIF UserComment; an HTML figure keeps a ``<meta>`` tag.
+    keeps the EXIF UserComment; a GIF its comment block; an HTML figure a
+    ``<meta>`` tag; a PDF a ``/weather_skills_history`` document-info key; an
+    SVG a ``<metadata id="weather_skills_history">`` element.
     """
     if not path.exists():
         raise UsageError(f"Error: {path} not found.", prefix=False)
@@ -80,7 +86,7 @@ def _read_raw_histories(path: Path) -> tuple[dict, str | None]:
             ) from None
         raw = {HISTORY_ATTR: attrs[HISTORY_ATTR]} if attrs.get(HISTORY_ATTR) else {}
         return raw, attrs.get(SOURCE_ATTR)
-    if path.is_file() and suffix in (".png", ".jpg", ".jpeg"):
+    if path.is_file() and suffix in (".png", ".jpg", ".jpeg", ".gif"):
         from PIL import Image
 
         try:
@@ -91,6 +97,11 @@ def _read_raw_histories(path: Path) -> tuple[dict, str | None]:
             raise UsageError(
                 f"Error: could not open {path} as an image: {exc}", prefix=False
             ) from None
+        if suffix == ".gif":
+            comment = info.get("comment")
+            if isinstance(comment, bytes):
+                comment = comment.decode("utf-8", "replace")
+            return ({HISTORY_ATTR: comment} if comment else {}), None
         if suffix != ".png":
             if isinstance(comment, bytes):
                 comment = comment.removeprefix(b"ASCII\x00\x00\x00").decode("utf-8", "replace")
@@ -103,9 +114,22 @@ def _read_raw_histories(path: Path) -> tuple[dict, str | None]:
     if path.is_file() and suffix in (".html", ".htm"):
         match = _HTML_META_RE.search(path.read_text(encoding="utf-8", errors="replace"))
         return ({HISTORY_ATTR: html.unescape(match.group(1))} if match else {}), None
+    if path.is_file() and suffix == ".svg":
+        match = _SVG_META_RE.search(path.read_text(encoding="utf-8", errors="replace"))
+        return ({HISTORY_ATTR: html.unescape(match.group(1))} if match else {}), None
+    if path.is_file() and suffix == ".pdf":
+        from pypdf import PdfReader
+
+        try:
+            raw = (PdfReader(path).metadata or {}).get(f"/{HISTORY_ATTR}")
+        except Exception as exc:  # noqa: BLE001
+            raise UsageError(
+                f"Error: could not open {path} as a PDF: {exc}", prefix=False
+            ) from None
+        return ({HISTORY_ATTR: str(raw)} if raw else {}), None
     raise UsageError(
-        f"Error: {path} is neither a zarr directory nor a .png/.jpg/.html figure; "
-        "cannot inspect provenance.",
+        f"Error: {path} is neither a zarr directory nor a .png/.jpg/.gif/.html/.pdf/.svg "
+        "figure; cannot inspect provenance.",
         prefix=False,
     )
 
@@ -404,7 +428,7 @@ def _render_script(data: dict) -> None:
     "-i",
     "--input",
     required=True,
-    help="Artifact to inspect: a zarr dir or a .png, .jpg, or .html figure.",
+    help="Artifact to inspect: a zarr dir or a .png, .jpg, .gif, .html, .pdf, or .svg figure.",
 )
 @weather_skill.argument(
     "--format",

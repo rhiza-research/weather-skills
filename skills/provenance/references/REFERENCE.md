@@ -5,7 +5,10 @@
 - Zarr: the `weather_skills_history` store attribute (and an optional `weather_skills_source`).
 - PNG: the `weather_skills_history` tEXt chunk, plus any `weather_skills_history_<label>` chunks (each read as a separate labelled branch).
 - JPEG: the EXIF UserComment.
+- GIF: the comment block.
 - HTML: `<meta name="weather_skills_history" content="…">`.
+- PDF: a `/weather_skills_history` key in the document info dictionary.
+- SVG: `<metadata id="weather_skills_history">…</metadata>`.
 
 ## Schema checked by `--check`
 

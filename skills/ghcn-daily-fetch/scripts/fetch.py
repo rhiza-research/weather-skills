@@ -316,8 +316,8 @@ def fetch(start_time, end_time, bbox, workers, variable, probe_latest, **kwargs)
 
     ds = xr.Dataset.from_dataframe(df)
     # Days no selected station reported become NaN rows so the axis is a regular
-    # daily one (aggregate-temporal --window refuses gaps). It runs from
-    # --start-time to the last reported day only: nothing past the data is added.
+    # daily one. It runs from --start-time to the last reported day only:
+    # nothing past the data is added.
     ds = ds.reindex(time=pd.date_range(start_iso, ds["time"].values.max(), freq="D"))
     ds = ds.assign_coords(
         latitude=("station_id", meta.loc[ds["station_id"].values, "latitude"].values),

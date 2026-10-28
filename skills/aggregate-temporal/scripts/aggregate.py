@@ -11,7 +11,7 @@ import datetime as _dt
 import sys
 
 from weather_skills_core import Dataset, UsageError, weather_skill
-from weather_skills_core.standard_utils import roll_and_agg
+from weather_skills_core.standard_utils import stride_dates
 from weather_skills_core.units import (
     AGGREGATION_COVERAGE_COORD,
     AGGREGATION_PERIOD_ATTR,
@@ -43,8 +43,11 @@ _METHOD_TO_CF = {"mean": "mean", "max": "maximum", "min": "minimum"}
 _NAMED_PERIODS = tuple(PERIOD_TO_AGGREGATION)
 
 
-def _resolve_period(period: str) -> dict:
-    """Named period or a pint duration (``21 day``, ``6 hour``); ``anchor_days`` may be fractional."""
+def _resolve_period(period: str, flag: str = "--period") -> dict:
+    """Named period or a pint duration (``21 day``, ``6 hour``); ``anchor_days`` may be fractional.
+
+    ``flag`` is the option the value came from, for error messages.
+    """
     if period in PERIOD_TO_AGGREGATION:
         return {
             "key": period,
@@ -56,14 +59,14 @@ def _resolve_period(period: str) -> dict:
         quantity = parse_aggregation_period(period)
     except UsageError as exc:
         raise UsageError(
-            f"--period {period!r} must be one of {', '.join(_NAMED_PERIODS)} "
+            f"{flag} {period!r} must be one of {', '.join(_NAMED_PERIODS)} "
             f"or a pint duration (e.g. '21 day', '6 hour'): {exc}"
         ) from None
     days = float(quantity.to("day").magnitude)
     seconds = days * 86400
     if days <= 0 or abs(seconds - round(seconds)) > 1e-6:
         raise UsageError(
-            f"--period {period!r} must be a named period "
+            f"{flag} {period!r} must be a named period "
             f"({', '.join(_NAMED_PERIODS)}) or a positive whole number of seconds "
             "(e.g. '21 day', '6 hour')"
         )
@@ -264,6 +267,30 @@ def _aggregate_from_bounds(ds, dim, spec, method, bins):
     return _assign_coverage(out, dim, coverages)
 
 
+def _aggregate_from_samples(ds, dim, spec, method, bins):
+    """Reduce the samples in each ``[left, right)`` of ``bins`` of ``(left, right, label)``."""
+    import numpy as np
+    import xarray as xr
+
+    raw = np.asarray(ds[dim].values)
+    timestep_days = _timestep_days(ds, dim)
+    native_interval = _coverage_cell(ds)
+    present = _present(ds, dim)
+    chunks, labels, coverages = [], [], []
+    for left, right, label in bins:
+        keep = np.nonzero((raw >= left) & (raw < right))[0]
+        if keep.size == 0:
+            continue
+        expected = _expected_from_interval(spec, left, native_interval, timestep_days)
+        chunks.append(_reduce(ds.isel({dim: keep}), method=method, dim=dim))
+        labels.append(label)
+        coverages.append(_coverage_fraction(float(present[keep].sum()), expected))
+    if not chunks:
+        raise UsageError(_empty_bins_message(spec, dim))
+    out = xr.concat(chunks, dim=dim).assign_coords({dim: labels})
+    return _assign_coverage(out, dim, coverages)
+
+
 def _coverage_fraction(n_present: float, expected: int) -> float:
     if expected <= 0:
         return 1.0
@@ -402,7 +429,6 @@ def _aggregate_time_anchored(ds, dim, spec, method, end_time, *, start_time=None
     coverage floor.
     """
     import numpy as np
-    import xarray as xr
 
     period_days = spec["anchor_days"]
     raw = np.asarray(ds[dim].values)
@@ -442,9 +468,6 @@ def _aggregate_time_anchored(ds, dim, spec, method, end_time, *, start_time=None
         right = pd.Timestamp(end_time)
         label = lambda edge: np.datetime64(edge)  # noqa: E731
 
-    timestep_days = _timestep_days(ds, dim)
-    native_interval = _coverage_cell(ds)
-    present = _present(ds, dim)
     bins, r = [], right
     # Stop once the right edge is at/before the first sample — do not require
     # left >= data_min, or a bin that still holds data is never created.
@@ -452,29 +475,15 @@ def _aggregate_time_anchored(ds, dim, spec, method, end_time, *, start_time=None
         left = r - bin_width
         bins.append((left, r))
         r = left
-    bins.reverse()
+    bins = [(left, right, label(left)) for left, right in reversed(bins)]
     if _cf_bounds(ds, dim) is not None:
-        bound_bins = [(left, right, label(left)) for left, right in bins]
-        return _aggregate_from_bounds(ds, dim, spec, method, bound_bins)
-    chunks, labels, coverages = [], [], []
-    for left, right in bins:
-        keep = np.nonzero((raw >= left) & (raw < right))[0]
-        if keep.size == 0:
-            continue
-        expected = _expected_from_interval(spec, left, native_interval, timestep_days)
-        chunks.append(_reduce(ds.isel({dim: keep}), method=method, dim=dim))
-        labels.append(label(left))
-        coverages.append(_coverage_fraction(float(present[keep].sum()), expected))
-    if not chunks:
-        raise UsageError(_empty_bins_message(spec, dim))
-    out = xr.concat(chunks, dim=dim).assign_coords({dim: labels})
-    return _assign_coverage(out, dim, coverages)
+        return _aggregate_from_bounds(ds, dim, spec, method, bins)
+    return _aggregate_from_samples(ds, dim, spec, method, bins)
 
 
 def _aggregate_step(ds, spec, method):
     import numpy as np
     import pandas as pd
-    import xarray as xr
 
     if spec["key"] == "monthly":
         raise UsageError("monthly aggregation is not defined for step")
@@ -483,30 +492,70 @@ def _aggregate_step(ds, spec, method):
     bounds = _cf_bounds(ds, "step")
     max_step = bounds[:, 1].max() if bounds is not None else steps.max()
     edges = np.arange(0, max_step + window, window, dtype=steps.dtype)
+    bins = [(left, left + window, left) for left in edges]
     if bounds is not None:
-        bins = []
-        for left in edges:
-            right = left + window
-            bins.append((left, right, left))
         return _aggregate_from_bounds(ds, "step", spec, method, bins)
-    native_interval = _coverage_cell(ds)
-    timestep_days = _timestep_days(ds, "step")
-    present = _present(ds, "step")
-    chunks, labels, coverages = [], [], []
-    for left in edges:
-        right = left + window
-        mask = (steps >= left) & (steps < right)
-        if not mask.any():
-            continue
-        n_present = float(present[mask].sum())
-        expected = _expected_from_interval(spec, right, native_interval, timestep_days)
-        chunks.append(_reduce(ds.isel(step=np.where(mask)[0]), method=method, dim="step"))
-        labels.append(left)
-        coverages.append(_coverage_fraction(n_present, expected))
-    if not chunks:
-        raise UsageError(_empty_bins_message(spec, "step"))
-    out = xr.concat(chunks, dim="step").assign_coords(step=labels)
-    return _assign_coverage(out, "step", coverages)
+    return _aggregate_from_samples(ds, "step", spec, method, bins)
+
+
+def _aggregate_rolling(ds, dim, spec, method, align, stride, interval):
+    """One ``spec``-long window per sample, labeled at that sample.
+
+    ``align`` puts the sample at the window's start (left), middle (center),
+    or end (right). Windows that run past the data or into a gap are kept with
+    their ``aggregation_coverage``, like --period bins.
+    """
+    import numpy as np
+
+    raw = np.asarray(ds[dim].values)
+    anchors = np.arange(raw.size)
+    if isinstance(stride, int):
+        if stride < 1:
+            raise UsageError(f"--stride must be >= 1; got {stride}")
+        anchors = anchors[::stride]
+    elif stride is not None:
+        if raw.dtype.kind != "M":
+            raise UsageError("a date --stride (day, week, Monday, ...) needs a datetime time axis")
+        anchors = anchors[np.isin(raw, stride_dates(raw[0], raw[-1], stride=stride))]
+        if anchors.size == 0:
+            raise UsageError(
+                f"--stride {stride} picks no dates on the {dim!r} axis; use an integer --stride"
+            )
+
+    # Each sample's cell, [start, end) in ns: its CF bounds, or the native interval.
+    bounds = _cf_bounds(ds, dim)
+    times = _as_ns(raw)
+    if bounds is not None:
+        starts, ends = _as_ns(bounds[:, 0]), _as_ns(bounds[:, 1])
+    else:
+        cell = 0
+        if interval is not None:
+            cell = int(round(float(parse_aggregation_period(interval).to("ns").magnitude)))
+        starts, ends = times, times + cell
+    width = int(round(spec["anchor_days"] * 86400e9))
+    cells = np.maximum(ends - starts, 1)
+    if align == "left":
+        window_starts = starts
+    elif align == "right":
+        window_starts = ends - width
+    else:
+        # Centre on the sample, rounded back to a whole cell for even counts.
+        window_starts = starts - (width // cells - 1) // 2 * cells
+
+    bins = []
+    for i in anchors:
+        offset_ns = int(window_starts[i] - times[i])
+        if raw.dtype.kind in "Mm":
+            left = raw[i] + np.timedelta64(offset_ns, "ns")
+            right = left + np.timedelta64(width, "ns")
+        else:
+            # cftime dates add datetime.timedelta.
+            left = raw[i] + _dt.timedelta(microseconds=offset_ns // 1000)
+            right = left + _dt.timedelta(microseconds=width // 1000)
+        bins.append((left, right, raw[i]))
+    if bounds is not None:
+        return _aggregate_from_bounds(ds, dim, spec, method, bins)
+    return _aggregate_from_samples(ds, dim, spec, method, bins)
 
 
 def _stamp_attrs(out, dim, agg_period, method, interval, *, data_interval=None):
@@ -519,19 +568,6 @@ def _stamp_attrs(out, dim, agg_period, method, interval, *, data_interval=None):
             attrs[DATA_INTERVAL_ATTR] = native
         out[name].attrs = attrs
     return out
-
-
-def _rolling_aggregation_period(ds, dim, window, interval):
-    """Pint duration for a rolling window of ``window`` input steps."""
-    if interval is not None:
-        try:
-            from weather_skills_core.units import parse_aggregation_period
-
-            step = parse_aggregation_period(interval)
-            return format_duration(step * window)
-        except UsageError:
-            pass
-    return f"{window} day"
 
 
 @weather_skill(
@@ -550,18 +586,20 @@ def _rolling_aggregation_period(ds, dim, window, interval):
     help=(
         "Calendar/step window: daily, weekly (7 days), dekadal (a fixed 10 days, "
         "not calendar dekads 1-10/11-20/21-end), monthly (calendar months), or "
-        "a pint duration (e.g. '21 day', or sub-daily '6 hour'). Mutex with --window."
+        "a duration (e.g. '21 day', or sub-daily '6 hour'). Mutex with --window."
     ),
 )
 @weather_skill.argument(
     "--window",
-    type=int,
-    help="Rolling window in axis steps (mutex with --period).",
+    help=(
+        "Rolling window length: daily, weekly, dekadal, or a duration (e.g. '7 day', "
+        "'12 hour'); one window per sample. Mutex with --period."
+    ),
 )
 @weather_skill.argument("--align", default="left", choices=["left", "right", "center"])
 @weather_skill.argument(
     "--stride",
-    help="With --window: int step or stride_dates string (day/week/Monday/...).",
+    help="With --window: keep every Nth window (int), or day/week/month/year/weekday dates.",
 )
 @weather_skill.argument("--method", default="mean", choices=["mean", "max", "min"])
 @weather_skill.argument("--time-dim")
@@ -643,62 +681,10 @@ def aggregate(
         except ValueError:
             pass
 
-    if window is not None:
-        if has_bounds:
-            raise UsageError(
-                "--window is a step count; irregular axes with CF bounds require --period"
-            )
-        if interval is not None and ds.sizes[dim] > 1:
-            import numpy as np
-            import pandas as pd
-
-            spacing = pd.to_timedelta(np.diff(np.asarray(ds[dim].values)))
-            native = pd.Timedelta(
-                seconds=float(parse_aggregation_period(interval).to("s").magnitude)
-            )
-            if (spacing != native).any():
-                # A window of N rows across a gap spans more than N intervals.
-                raise UsageError(
-                    f"--window counts rows and {dim!r} has missing rows (spacing other "
-                    f"than {interval}); use --period, which counts them against coverage"
-                )
-        try:
-            out = roll_and_agg(ds, window, dim, method, align=align, stride=stride_val)
-        except KeyError:
-            # A calendar stride (month, Monday) picks dates; on a weekly or
-            # monthly axis most of them are not labels, so there is nothing to pick.
-            raise UsageError(
-                f"--stride {stride} picks dates that are not on the {dim!r} axis "
-                f"(spacing {interval}); use an integer --stride (e.g. 4 for every "
-                "4th window), or --period for calendar bins"
-            ) from None
-        n = out.sizes.get(dim, 0)
-        if n:
-            import numpy as np
-            import xarray as xr
-
-            present = xr.DataArray(
-                _finite_along(ds, dim).astype("float64"),
-                dims=[dim],
-                coords={dim: ds[dim]},
-            )
-            if window == 1 and stride is None:
-                cov = present
-            else:
-                cov = roll_and_agg(
-                    present.to_dataset(name="_c"),
-                    window,
-                    dim,
-                    "mean",
-                    align=align,
-                    stride=stride_val,
-                )["_c"]
-            out = _assign_coverage(out, dim, np.asarray(cov.values, dtype=float))
-        agg_period = _rolling_aggregation_period(ds, dim, window, interval)
-        return _stamp_attrs(out, dim, agg_period, method, interval, data_interval=native_interval)
-
-    spec = _resolve_period(period)
-    if native_interval and _durations_equal(spec["agg"], native_interval):
+    spec = _resolve_period(period or window, "--period" if period else "--window")
+    if window is not None and spec["key"] == "monthly":
+        raise UsageError("--window takes a fixed length such as '30 day'; months vary in length")
+    if window is None and native_interval and _durations_equal(spec["agg"], native_interval):
         import numpy as np
 
         out = ds
@@ -715,7 +701,7 @@ def aggregate(
         if spec["anchor_days"] < widest - 1e-9:
             # A bin shorter than a sample would spread that sample's mean over it.
             raise UsageError(
-                f"--period {period} is shorter than the widest {dim} interval in the input "
+                f"{spec['key']!r} is shorter than the widest {dim} interval in the input "
                 f"({widest * 24:g} hour); "
                 "aggregate to that interval or longer"
             )
@@ -729,7 +715,7 @@ def aggregate(
             fits = ratio >= 1 and abs(ratio - round(ratio)) < 1e-6
         if not fits:
             raise UsageError(
-                f"--period {period} bins cannot hold whole {cell} input samples; aggregate "
+                f"{spec['key']!r} windows cannot hold whole {cell} input samples; aggregate "
                 f"from data at a spacing that divides {spec['agg']} (e.g. the daily input)"
             )
         raw = ds[dim].values
@@ -742,7 +728,9 @@ def aggregate(
                     f"--end-time {end_time} is not on the {cell} grid of the input "
                     f"(first sample {str(raw[0])[:10]}), so bins would split input samples"
                 )
-    if dim == "step":
+    if window is not None:
+        out = _aggregate_rolling(ds, dim, spec, method, align, stride_val, interval)
+    elif dim == "step":
         out = _aggregate_step(ds, spec, method)
         if end_time is not None or start_time is not None:
             print(
@@ -798,7 +786,7 @@ def aggregate(
             file=sys.stderr,
         )
         # Interior partial bins of a back-to-back resample mean the input has gaps.
-        if dim != "step" and end_time is None and low[1:-1].any():
+        if window is None and dim != "step" and end_time is None and low[1:-1].any():
             print(
                 f"Bins run back to back from {pd.Index(out[dim].values)[0]}, so a "
                 "series with gaps (e.g. one window per year after concat) straddles "
@@ -806,7 +794,9 @@ def aggregate(
                 file=sys.stderr,
             )
 
-    return _stamp_attrs(out, dim, spec["agg"], method, interval, data_interval=spec["agg"])
+    # Rolling windows overlap, one per sample, so the output keeps the input spacing.
+    data_interval = native_interval if window is not None else spec["agg"]
+    return _stamp_attrs(out, dim, spec["agg"], method, interval, data_interval=data_interval)
 
 
 if __name__ == "__main__":
