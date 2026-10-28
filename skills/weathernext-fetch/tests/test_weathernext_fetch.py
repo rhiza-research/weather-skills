@@ -772,6 +772,8 @@ def test_init_window_keeps_00utc_inits_on_a_time_axis(tmp_path, fetch_mod, monke
         days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
         assert days == ["2025-01-31", "2025-02-01"]
         assert ds["valid_time"].dims == ("time", "step")
+        # The 6 h lead spacing, not the 1-day gap between inits.
+        assert ds["2m_temperature"].attrs["data_interval"] == "6 hour"
         np.testing.assert_allclose(
             ds["2m_temperature"].values[:, 0, 0, 0, 0], [31 - 273.15, 1 - 273.15], rtol=1e-5
         )

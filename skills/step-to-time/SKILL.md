@@ -32,6 +32,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/step_to_time.py -i IN.zarr -o OUT.zarr
 
 ### Notes
 - A cube with both a `time` axis and a `step` axis exits 2; select one init or one step first. A `time` axis without a scalar `step` coord (already on dates) also exits 2.
+- Many inits at one lead: the `time` axis must hold the inits (`standard_name: forecast_reference_time`, as the forecast fetchers write it, or none). The output's `time` is `standard_name: time`, so running the skill again on its own output exits 2 instead of shifting twice.
 - Also exits 2 on a missing (NaT) init, or a `step` or init `time` axis that is not strictly increasing.
 
 ### Example

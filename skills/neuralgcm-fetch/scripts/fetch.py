@@ -464,7 +464,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, cycle, probe_late
                     "steps are NaN (not filled).",
                     file=sys.stderr,
                 )
-    return stamp_data_interval(ds)
+    return stamp_data_interval(ds, dim="step" if "step" in ds.dims else None)
 
 
 if __name__ == "__main__":

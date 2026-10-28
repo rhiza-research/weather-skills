@@ -602,7 +602,7 @@ def fetch(
             continue
     # Period totals (WeatherNext 2 6 h precip in mm) become mm day-1 rates.
     out = precip_amounts_to_rates(out, deaccumulate=False)
-    return stamp_data_interval(out)
+    return stamp_data_interval(out, dim="step" if is_forecast else None)
 
 
 if __name__ == "__main__":

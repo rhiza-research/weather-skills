@@ -318,6 +318,8 @@ def test_init_window_keeps_00utc_inits_on_a_time_axis(tmp_path, fetch_mod, monke
     assert opened == ["20250131T00", "20250201T00"]
     with xr.open_zarr(out, consolidated=True) as ds:
         assert ds["tp"].dims == ("time", "step", "number", "latitude", "longitude")
+        # The 6 h lead spacing, not the 1-day gap between inits.
+        assert ds["tp"].attrs["data_interval"] == "6 hour"
         days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
         assert days == ["2025-01-31", "2025-02-01"]
         # Day 31 → 0.031 m / 6 h = 124 mm day-1; day 1 → 4 mm day-1.

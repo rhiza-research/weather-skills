@@ -29,6 +29,13 @@ def step_to_time(ds, **kwargs):
 
     if "time" in ds.dims and "step" in ds.coords and ds["step"].ndim == 0:
         # Many inits at one lead: shift each init on the time axis by that lead.
+        if ds["time"].attrs.get("standard_name", "forecast_reference_time") != (
+            "forecast_reference_time"
+        ):
+            raise UsageError(
+                "time is already on valid dates (its standard_name is not "
+                "forecast_reference_time); it holds no inits to shift"
+            )
         init = ds["time"].values
         lead = ds["step"].values
         if init.dtype == object:

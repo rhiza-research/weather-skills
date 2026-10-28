@@ -794,6 +794,18 @@ def test_init_range_keeps_00utc_inits_on_a_time_axis(tmp_path, mod, fetch):
     assert load_history(tmp_path / "out.zarr")[-1]["args"]["start_time"] == ["2025-01-31"]
 
 
+def test_init_range_stamps_lead_spacing_not_init_spacing(tmp_path, mod, fetch):
+    """Daily inits with 6 h leads: data_interval is the 6 h step, not the 1-day init gap."""
+    ds = _daily_inits_forecast_ds().assign_coords(
+        lead_time=np.array([6, 12, 18], dtype="timedelta64[h]").astype("timedelta64[ns]")
+    )
+    written = _fetch_windows(
+        tmp_path, mod, fetch, ds, "--start-time", "2025-01-30", "--end-time", "2025-02-01"
+    )
+    assert written.sizes["time"] == 3
+    assert written["temperature_2m"].attrs["data_interval"] == "6 hour"
+
+
 def test_repeated_windows_take_disjoint_inits(tmp_path, mod, fetch):
     written = _fetch_windows(
         tmp_path,
