@@ -29,6 +29,11 @@ def test_repo_flag_targets_allow_listed_repo(capsys, submit_feedback):
     assert "github.com/rhiza-research/weather-skills-plotting/issues/new" in capsys.readouterr().out
 
 
+def test_core_feedback_goes_to_the_weather_skills_org(capsys, submit_feedback):
+    run_skill(submit_feedback, "--title", "t", "--body", "b", "--repo", "weather-skills-core")
+    assert "github.com/weather-skills/weather-skills-core/issues/new" in capsys.readouterr().out
+
+
 def test_repo_flag_rejects_other_repos(submit_feedback):
     with pytest.raises(SystemExit) as exc:
         run_skill(submit_feedback, "--title", "t", "--body", "b", "--repo", "someone/else")
