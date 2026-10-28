@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.1",
 #   # >=0.3.34 for the IFS Cycle 50r1 (2026-05-12) date-aware oper/scda
 #   # stream fix in Client.patch_stream — older pins misroute 06/18Z runs.
 #   "ecmwf-opendata==0.3.34",
