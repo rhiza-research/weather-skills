@@ -164,7 +164,17 @@ def test_checkpoint_missing_at_date_lists_what_is_there(tmp_path, fetch_mod, rem
         )
     assert exc.value.code == 1
     err = capsys.readouterr().err
-    assert "That init has only: ckpt-n30_cfg2" in err and "ask the user" in err
+    assert "That init has only: ckpt-n30_cfg2" in err and "different setup" in err
+
+
+def test_setup_other_than_the_latest_warns(tmp_path, fetch_mod, remote, capsys):
+    remote["tree"] = _tree(ckpts=("ckpt-n20_cfg2", "ckpt-n20_cfg3"))
+    remote["tree"][f"{ROOT}/2026-10-27/{DIFF}"] = ["ckpt-n20_cfg2"]
+    args = ("--date", "2026-10-20", "--checkpoint", "cfg3", "-o", str(tmp_path / "a.zarr"))
+    run_skill(fetch_mod.fetch, *args)
+    assert "differs from the one the latest init 2026-10-27 runs" in capsys.readouterr().err
+    run_skill(fetch_mod.fetch, "--date", "2026-10-20", "-o", str(tmp_path / "b.zarr"))
+    assert "differs from" not in capsys.readouterr().err
 
 
 def test_bbox_subsets(tmp_path, fetch_mod, remote):
