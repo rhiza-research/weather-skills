@@ -1,5 +1,7 @@
 """Correctness tests for provenance."""
 
+import json
+
 import pytest
 from conftest import load_skill, make_gridded, run_skill, write_zarr
 from weather_skills_core.provenance import stamp_zarr
@@ -312,4 +314,27 @@ def test_reads_html_and_jpeg_figures(tmp_path, provenance, capsys):
         assert "chirps-fetch" in captured
         assert "bbox='1/2/3/4'" in captured
         assert "workers" not in captured
+        assert "valid weather_skills_history" in capsys.readouterr().out
+
+
+def test_reads_gif_pdf_and_svg_figures(tmp_path, provenance, capsys):
+    from PIL import Image
+    from weather_skills_core.provenance import stamp_figure
+
+    history = [_fetch("chirps-fetch", args={"bbox": "1/2/3/4", "title": "Rain <b>—</b> & wk 1"})]
+    gif = tmp_path / "fig.gif"
+    Image.new("RGB", (200, 200)).save(gif)
+    pdf = tmp_path / "fig.pdf"
+    Image.new("RGB", (200, 200)).save(pdf)
+    svg = tmp_path / "fig.svg"
+    svg.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">'
+        '<rect width="200" height="200"/></svg>'
+    )
+    for path in (gif, pdf, svg):
+        stamp_figure(path, history)
+
+        run_skill(provenance, "-i", str(path), "--format", "json")
+        assert json.loads(capsys.readouterr().out) == history
+        run_skill(provenance, "-i", str(path), "--check")
         assert "valid weather_skills_history" in capsys.readouterr().out
