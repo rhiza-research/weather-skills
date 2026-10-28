@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Requires Python 3.12 and uv. Reads private consolidated Zarr from gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1 via gcsfs. Requires Google Cloud credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.4"
+  version: "0.0.5"
   catalog-group: fetchers
   variables:
     - tp
@@ -38,7 +38,7 @@ The bucket is private. Set one of, in order of precedence: `GCLOUD_SERVICE_CREDE
 
 ### Arguments
 - `--dataset` — product under each init. Default: `imerg:precip` (alias `precip`) → `tp`. `era5:surface` (alias `surface`) → `t2m`, `d2m`.
-- `--date` — init date. Default: the latest init that has `--dataset`. A missing init exits 1; nothing is substituted.
+- `--date` — init date. Default: the latest init that has `--dataset`. A missing init exits 1 and lists the nearest published inits; nothing is substituted. Pick one of those rather than trying other dates.
 - `--cycle` — init hour UTC: `00` or `12`. Default: `00` with `--date`, otherwise the newest cycle.
 - `--bbox` — `N/W/S/E` decimal degrees; negative longitudes work. Default: the full global grid.
 - `--variable`, `-v` — one field per flag; repeat for several. Default: every field in the product. Aliases: `tp`/`precip`/`pr`/`total_precipitation`, `t2m`/`2m_temperature`, `d2m`/`2m_dewpoint_temperature`. A name not in the product exits and lists `Available:`.

@@ -26,7 +26,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.5"
 
 _ARCO_STORE = "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"
 _STORAGE_OPTIONS = {"token": "anon"}
@@ -147,8 +147,29 @@ def _stamp_coord_attrs(ds) -> None:
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(start_time, end_time, bbox, variable, probe_latest, **kwargs):
+@weather_skill.argument(
+    "--list-variables",
+    action="store_true",
+    probe=True,
+    help=(
+        "Print the store's variables (name, units, long name, and which carry pressure "
+        "levels) on stdout and exit. Does not download fields."
+    ),
+)
+def fetch(start_time, end_time, bbox, variable, probe_latest, list_variables, **kwargs):
     """Fetch ERA5 reanalysis from Google's public ARCO-ERA5 store as a weather-skills Zarr."""
+    if list_variables:
+        ds = _open_arco({})
+        print("ARCO-ERA5 variables (pass the name to -v):")
+        for name in sorted(ds.data_vars):
+            attrs = ds[name].attrs
+            levels = "\tpressure levels" if "level" in ds[name].dims else ""
+            print(f"  {name}\t{attrs.get('units', '')}\t{attrs.get('long_name', '')}{levels}")
+        if "level" in ds.coords:
+            print(
+                "Pressure levels (hPa): " + ", ".join(f"{float(v):g}" for v in ds["level"].values)
+            )
+        return
     if probe_latest is not None:
         import numpy as np
 
@@ -188,7 +209,8 @@ def fetch(start_time, end_time, bbox, variable, probe_latest, **kwargs):
         if missing:
             raise UsageError(
                 f"variable(s) not in ARCO-ERA5: {', '.join(missing)}.\n"
-                f"Available: {', '.join(sorted(ds.data_vars))}"
+                f"Available: {', '.join(sorted(ds.data_vars))}\n"
+                "Run with --list-variables to see them with units and pressure levels."
             )
         ds = ds[variable]
     else:

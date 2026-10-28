@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import bisect
 import json
 import os
 import re
@@ -26,7 +27,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.5"
 
 _BUCKET = "neuralgcm-s2s"
 _PREFIX = "staging/realtime/tomorrow_now_2026/v1"
@@ -162,10 +163,19 @@ def _resolve_stamp(date, cycle: str | None, dataset: str) -> str:
         hour = cycle or "00"
         stamp = f"{date.strftime('%Y%m%d')}T{hour}"
         if not _store_exists(stamp, dataset):
+            # List the published inits around the requested one so one call is enough.
+            stamps = _list_init_stamps()
+            i = bisect.bisect_left(stamps, stamp)
+            near = [f"{_stamp_to_date(s)} {s[-2:]}Z" for s in stamps[max(0, i - 3) : i + 3]]
+            listing = (
+                f"Nearest published inits: {', '.join(near)} ({len(stamps)} inits from "
+                f"{_stamp_to_date(stamps[0])} to {_stamp_to_date(stamps[-1])}). "
+                if stamps
+                else "Nothing is published. "
+            )
             raise DataError(
-                f"no {dataset!r} store at {_store_url(stamp, dataset)}. "
-                "Pick a published init (`--probe-latest`), or omit --date to take "
-                "the latest. Inits are 00 and 12 UTC (`--cycle`)."
+                f"no {dataset!r} store at {_store_url(stamp, dataset)}. {listing}"
+                "Omit --date to take the latest. Inits are 00 and 12 UTC (`--cycle`)."
             )
         return stamp
 
