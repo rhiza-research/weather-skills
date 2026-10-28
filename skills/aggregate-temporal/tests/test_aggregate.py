@@ -503,6 +503,15 @@ def test_weekly_period_on_weekly_step_keeps_values(tmp_path, aggregate):
     assert weekly["tp"].attrs.get("data_interval") == "7 day"
 
 
+def test_weekly_period_on_weekly_keeps_partial_coverage(tmp_path, aggregate):
+    """Re-running weekly on weekly output must not mark a partial week complete."""
+    weekly = _weekly(tmp_path, aggregate, 17)
+    out = tmp_path / "again.zarr"
+    run_skill(aggregate, "-i", str(weekly), "-o", str(out), "--period", "weekly")
+    again = xr.open_zarr(out, consolidated=True)
+    assert again[AGGREGATION_COVERAGE_COORD].values.tolist() == pytest.approx([1, 1, 3 / 7])
+
+
 def _tahmo_like_week():
     """3 stations x 7 days; S1 reported only 2 days (like TA00442), S2 none."""
     ds = make_point_obs(n_time=7, n_points=3, fill=4.0, start="2026-09-28")

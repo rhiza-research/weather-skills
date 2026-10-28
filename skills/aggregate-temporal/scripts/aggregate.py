@@ -388,8 +388,13 @@ def aggregate(
             bins.append((label, right, label))
 
     if same:
+        # Keep the input's own coverage: a 3/7-complete week stays 3/7 complete.
         out = ds
         coverages = np.ones(ds.sizes[dim])
+        if AGGREGATION_COVERAGE_COORD in ds.coords and ds[AGGREGATION_COVERAGE_COORD].dims == (
+            dim,
+        ):
+            coverages = ds[AGGREGATION_COVERAGE_COORD].values
     else:
         # A sample is present when every variable has some finite value at it: a
         # persistent spatial hole (land mask) is not missing, an unpublished forecast
