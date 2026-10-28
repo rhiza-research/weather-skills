@@ -38,6 +38,8 @@ def step_to_time(ds, **kwargs):
             )
         init = ds["time"].values
         lead = ds["step"].values
+        if np.isnat(lead):
+            raise UsageError("the forecast lead (scalar step coord) is missing (NaT)")
         if init.dtype == object:
             valid = np.array(
                 [t + lead.astype("timedelta64[us]").item() for t in init], dtype=object

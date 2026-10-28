@@ -286,3 +286,11 @@ def test_time_axis_without_step_exits(tmp_path, step_to_time):
     with pytest.raises(SystemExit) as exc:
         run_skill(step_to_time, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
     assert exc.value.code == 2
+
+
+def test_many_inits_missing_lead_exits(tmp_path, step_to_time):
+    ds = _inits_at_one_lead(["2025-07-02"], 13).assign_coords(step=np.timedelta64("NaT", "ns"))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(step_to_time, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
