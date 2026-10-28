@@ -28,7 +28,7 @@ Fetches one Cumulus downscaled init (all leads, ensemble mean or members) and wr
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--model diffusion|flow-matching|unet] [--target era5|imerg] [--members] [--date YYYY-MM-DD] [--bbox N/W/S/E] -o OUT.zarr
 # Latest init date with output (no download)
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--target era5|imerg] --probe-latest [MODEL]
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [MODEL]
 ```
 
 ### Arguments
@@ -42,7 +42,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--target era5|imerg] --probe-latest
 - `--target` — precipitation product the model was trained to reproduce: `era5` or `imerg`. Default: `era5`.
 - `--members` — fetch the individual members instead of the ensemble mean. A model with one field (`unet`) exits 1.
 - `--checkpoint` — substring of the checkpoint folder. Only needed when an init has several; otherwise the skill uses the newest and warns on stderr.
-- `--date` — init date. Default: the latest init with output for `--model` and `--target`. A date with no output exits 1.
+- `--date` — init date. Default: the latest init with output for `--model`. A date with no output exits 1.
 - `--bbox` — `N/W/S/E` decimal degrees inside the domain. Omit for the full domain (about 50 MB per init for the mean, ten times that with `--members`).
 - `--variable`, `-v` — the product holds one field, written as `tp`. Accepts `tp`, `precip`, `precipitation`, `total_precipitation` or `precip_24h`; anything else exits 2. Optional.
 - `--workers` — maximum concurrent file downloads, at least 1. Default: 16.

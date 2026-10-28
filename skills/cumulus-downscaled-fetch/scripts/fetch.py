@@ -108,6 +108,7 @@ def _azure_error(exc: Exception, what: str) -> DataError:
 )
 @weather_skill.argument(
     "--checkpoint",
+    default="",
     help="Substring of the checkpoint folder to use when an init has several.",
 )
 @weather_skill.argument(
@@ -131,7 +132,7 @@ def _azure_error(exc: Exception, what: str) -> DataError:
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest init YYYY-MM-DD with output for --model / --target (or none) "
+        "Print the latest init YYYY-MM-DD with output for --model (or none) "
         "on stdout and exit. Optional IDENT selects a --model."
     ),
 )
@@ -179,18 +180,13 @@ def fetch(
         with xr.open_dataset(io.BytesIO(raw), engine="h5netcdf") as ds:
             return ds["precip_24h"].squeeze("time", drop=True).load()
 
-    # Walk back from the newest init to the first whose checkpoints hold this target.
+    # Walk back from the newest init to the first that has this model.
     inits = [i for i in ls(_ROOT) if _INIT_RE.fullmatch(i)]
     if date is not None:
         inits = [i for i in inits if i == date.isoformat()]
     init = None
     for candidate in reversed(inits):
-        model_dir = f"{_ROOT}/{candidate}/{model_folder}"
-        ckpts = [
-            c
-            for c in ls(model_dir)
-            if target_folder in ls(f"{model_dir}/{c}") and (not checkpoint or checkpoint in c)
-        ]
+        ckpts = [c for c in ls(f"{_ROOT}/{candidate}/{model_folder}") if checkpoint in c]
         if ckpts:
             init = candidate
             break
@@ -201,7 +197,7 @@ def fetch(
     if init is None:
         wanted = f"init {date.isoformat()}" if date else "any init"
         raise DataError(
-            f"no Cumulus downscaled output for model {model_folder!r}, target {target!r}"
+            f"no Cumulus downscaled output for model {model_folder!r}"
             + (f", checkpoint matching {checkpoint!r}" if checkpoint else "")
             + f" at {wanted} under az://{_ACCOUNT}/{_ROOT}/. "
             "Pass --probe-latest to see the latest init with output, or try another --model."
