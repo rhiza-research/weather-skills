@@ -41,7 +41,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [MODEL]
   | `unet` | deterministic UNet | one field | 2026-10-04 |
 - `--target` — precipitation product the model was trained to reproduce: `era5` or `imerg`. Default: `era5`.
 - `--members` — fetch the individual members instead of the ensemble mean. A model with one field (`unet`) exits 1.
-- `--checkpoint` — substring of the checkpoint folder, e.g. `n20_cfg2`. When an init has several and this is omitted, the skill keeps the one later inits carry on running and warns; if that does not settle it, it exits 1 and lists them.
+- `--checkpoint` — substring of the checkpoint folder. When an init has several and this is omitted, the skill keeps the one later inits carry on running and warns; if that does not settle it, it exits 1 and lists them.
 - `--date` — init date. Default: the latest init with output for `--model`. A date with no output exits 1.
 - `--bbox` — `N/W/S/E` decimal degrees inside the domain. Omit for the full domain (about 50 MB per init for the mean, ten times that with `--members`).
 - `--variable`, `-v` — the product holds one field, written as `tp`. Accepts `tp`, `precip`, `precipitation`, `total_precipitation` or `precip_24h`; anything else exits 2. Optional.
@@ -57,8 +57,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [MODEL]
 
 ### Notes
 - The container is private. Set `AZURE_STORAGE_SAS_TOKEN` (a read SAS with list and read, `sp=rl`) before the first call, including `--probe-latest`. A leading `?` or a full blob URL is accepted. Never print the value. When it is not set the workspace has no Cumulus access: say so and use another forecast instead of retrying.
-- The model and checkpoint folder names are the downscaling setup; any change in them is a change in setup. The live pipeline moves to better checkpoints over time and keeps older ones running for evaluation, so some inits have several. A different guidance weighting (`cfg…`) changes the patterns visibly; a different number of sampler steps (`n…`) changes them little. stderr prints `Checkpoint:`, and `weather_skills_source` records it.
-- When the checkpoint differs from the one the latest init runs, stderr warns. Comparing inits across setups is fine (it can even show the effect of a setup), but tell the user which inits used which checkpoint. For a consistent multi-init dataset, pass one `--checkpoint` for every init.
+- Each model and checkpoint folder is a separate downscaling setup, and some inits have several. stderr prints `Checkpoint:`, and `weather_skills_source` records it.
+- When the checkpoint differs from the one the latest init runs, stderr warns. When comparing inits across setups, tell the user which inits used which checkpoint. For a consistent multi-init dataset, pass one `--checkpoint` for every init.
 - An init still being written can lack leads: a missing lead stays NaN (never filled), steps end at the last published lead, and stderr warns. Pass an earlier `--date` for all 46 leads.
 - For the global, coarser Cumulus forecast use `cumulus-fetch`.
 
