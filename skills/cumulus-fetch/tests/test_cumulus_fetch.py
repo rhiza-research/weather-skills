@@ -232,3 +232,111 @@ def test_azure_error_redacts_url_encoded_signature(fetch_mod):
     message = str(fetch_mod._azure_error(exc, "failed"))
     assert "AbC" not in message
     assert "sig%3DREDACTED" in message
+
+
+_WINDOW_STORES = [
+    "2025-01-30-00.zarr",
+    "2025-01-31-00.zarr",
+    "2025-02-01-00.zarr",
+    "2025-02-01-12.zarr",
+    "2026-01-15-00.zarr",
+]
+
+
+def _mock_windows(monkeypatch, fetch_mod, opened=None, short=()):
+    """Per-init stores whose tp is the init's day of month; ``short`` inits lack leads 2+."""
+
+    def fake_open(url, bbox, workers):
+        name = url.rsplit("/", 1)[-1]
+        if opened is not None:
+            opened.append(name)
+        day = int(name[8:10])
+        ds = _live_store(values=(day, day, day) if name not in short else (day, np.nan, np.nan))
+        init = np.datetime64(f"{name[:10]}T{name[11:13]}", "ns")
+        return ds.drop_vars("valid_time").assign_coords(init_time=[init])
+
+    monkeypatch.setattr(fetch_mod, "_list_stores", lambda folder: list(_WINDOW_STORES))
+    monkeypatch.setattr(fetch_mod, "_open_store", fake_open)
+
+
+def test_init_window_keeps_00utc_inits_on_a_time_axis(tmp_path, fetch_mod, monkeypatch):
+    opened = []
+    _mock_windows(monkeypatch, fetch_mod, opened)
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch, "--start-time", "2025-01-31", "--end-time", "2025-02-01", "-o", str(out)
+    )
+    # 2025-02-01-12 is not a 00 UTC init.
+    assert opened == ["2025-01-31-00.zarr", "2025-02-01-00.zarr"]
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds["tp"].dims == ("time", "step", "number", "latitude", "longitude")
+        days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+        assert days == ["2025-01-31", "2025-02-01"]
+        np.testing.assert_allclose(ds["tp"].values[:, 0, 0, 0, 0], [31.0, 1.0])
+    assert load_history(out)[-1]["args"]["start_time"] == ["2025-01-31"]
+
+
+def test_repeated_init_windows_take_disjoint_inits(tmp_path, fetch_mod, monkeypatch):
+    _mock_windows(monkeypatch, fetch_mod)
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--start-time",
+        "2025-01-01",
+        "--end-time",
+        "2025-01-31",
+        "--start-time",
+        "2026-01-01",
+        "--end-time",
+        "2026-01-31",
+        "-o",
+        str(out),
+    )
+    with xr.open_zarr(out, consolidated=True) as ds:
+        days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+    assert days == ["2025-01-30", "2025-01-31", "2026-01-15"]
+
+
+def test_init_window_keeps_short_init_nan(tmp_path, fetch_mod, monkeypatch, capsys):
+    _mock_windows(monkeypatch, fetch_mod, short={"2025-01-31-00.zarr"})
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch, "--start-time", "2025-01-30", "--end-time", "2025-01-31", "-o", str(out)
+    )
+    assert "Cumulus init 2025-01-31 has no data from step 1 d" in capsys.readouterr().err
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds.sizes["step"] == 3
+        assert ds["tp"].isel(time=1, step=slice(1, None)).isnull().all()
+        assert ds["tp"].isel(time=0).notnull().all()
+
+
+def test_date_and_init_window_together_exit_2(tmp_path, fetch_mod, monkeypatch):
+    _mock_windows(monkeypatch, fetch_mod)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch,
+            "--date",
+            "2025-01-31",
+            "--start-time",
+            "2025-01-31",
+            "--end-time",
+            "2025-02-01",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 2
+
+
+def test_init_window_with_no_init_exits_1(tmp_path, fetch_mod, monkeypatch):
+    _mock_windows(monkeypatch, fetch_mod)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch,
+            "--start-time",
+            "2024-06-01",
+            "--end-time",
+            "2024-06-30",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 1
