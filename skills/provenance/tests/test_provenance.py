@@ -338,3 +338,17 @@ def test_reads_gif_pdf_and_svg_figures(tmp_path, provenance, capsys):
         assert json.loads(capsys.readouterr().out) == history
         run_skill(provenance, "-i", str(path), "--check")
         assert "valid weather_skills_history" in capsys.readouterr().out
+
+
+def test_reads_geojson_and_table_histories(tmp_path, provenance, capsys):
+    from weather_skills_core.provenance import stamp_figure
+
+    history = [_fetch("chirps-fetch", args={"bbox": "1/2/3/4"})]
+    geo = tmp_path / "region.geojson"
+    geo.write_text('{"type": "FeatureCollection", "features": []}')
+    table = tmp_path / "rain.csv"
+    table.write_text("time,precip\n2026-01-01,1.0\n")
+    for path in (geo, table):
+        stamp_figure(path, history)
+        run_skill(provenance, "-i", str(path), "--check")
+        assert "valid weather_skills_history" in capsys.readouterr().out

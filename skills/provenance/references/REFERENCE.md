@@ -9,6 +9,8 @@
 - HTML: `<meta name="weather_skills_history" content="…">`.
 - PDF: a `/weather_skills_history` key in the document info dictionary.
 - SVG: `<metadata id="weather_skills_history">…</metadata>`.
+- GeoJSON / JSON: a top-level `weather_skills_history` member.
+- CSV / Excel: a `<name>.history.json` sidecar beside the table, holding the history and the table's sha256; a table edited after export no longer matches and reads as having no history.
 
 ## Schema checked by `--check`
 

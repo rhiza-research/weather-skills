@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.2",
 #   "shapely>=2.1",
 # ]
 # ///
@@ -11,7 +11,7 @@ import json
 import sys
 from pathlib import Path
 
-from weather_skills_core import DataError, UsageError, weather_skill
+from weather_skills_core import DataError, UsageError, provenance, weather_skill
 from weather_skills_core.region import (
     bbox_from_feature,
     geocode_nominatim,
@@ -82,6 +82,11 @@ def resolve_region(code, geojson, pad, **kwargs):
             "a sub-national region (e.g. kenya-nairobi), "
             "or a landmark (e.g. 'Nairobi, Kenya')."
         )
+    if geojson and not provenance.can_replace_output(Path(geojson)):
+        raise UsageError(
+            f"--geojson {geojson} already exists and was not written by a weather skill, "
+            "so it may be your own data; pass a new path"
+        )
     if len(text) == 3 and text.isalpha() and text != text.upper():
         raise UsageError(
             f"{code!r} is not an ISO 3166-1 alpha-3 (iso3) code. "
@@ -138,6 +143,14 @@ def resolve_region(code, geojson, pad, **kwargs):
             Path(geojson).write_text(json.dumps(out_fc, separators=(",", ":")))
         except OSError as exc:
             raise DataError(f"could not write boundary polygon to {geojson}: {exc}") from None
+        entry = provenance.build_entry(
+            "resolve-region",
+            _SKILL_VERSION,
+            {"code": code, "pad": pad},
+            None,
+            revision=provenance.resolve_skill_revision(__file__),
+        )
+        provenance.stamp_figure(Path(geojson), [entry])
         print(f"Wrote boundary polygon: {geojson}", file=sys.stderr)
 
     print(f"{n}/{w}/{s}/{e}")

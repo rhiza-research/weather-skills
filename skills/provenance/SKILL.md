@@ -1,8 +1,8 @@
 ---
 name: provenance
-description: "Read the processing history (weather_skills_history) recorded on a weather-skills Zarr or plot image (PNG, JPEG, GIF, HTML, PDF, SVG) and print it as a readable lineage, raw JSON, or a bash script that regenerates the file. Can also validate that history against its schema. Use to answer how a file was made and how to reproduce it."
+description: "Read the processing history (weather_skills_history) recorded on a weather-skills Zarr, plot image (PNG, JPEG, GIF, HTML, PDF, SVG), GeoJSON, or CSV/Excel table and print it as a readable lineage, raw JSON, or a bash script that regenerates the file. Can also validate that history against its schema. Use to answer how a file was made and how to reproduce it."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Inspects a zarr directory or a .png/.jpg/.gif/.html/.pdf/.svg figure; reads no credentials and writes nothing.
+compatibility: Requires Python 3.12 and uv. Inspects a zarr directory, a figure, a GeoJSON, or a CSV/Excel table; reads no credentials and writes nothing.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py *)
 metadata:
   version: "0.0.4"
@@ -20,7 +20,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py -i ARTIFACT [--format human|jso
 ```
 
 ### Arguments
-- `--input`, `-i` — a Zarr directory, or a `.png`, `.jpg`/`.jpeg`, `.gif`, `.html`/`.htm`, `.pdf`, or `.svg` figure. Required.
+- `--input`, `-i` — a Zarr directory; a `.png`, `.jpg`/`.jpeg`, `.gif`, `.html`/`.htm`, `.pdf` or `.svg` figure; a `.geojson`/`.json` file; or a `.csv`/`.xlsx` table (its history is in `<name>.history.json` beside it). Required.
 - `--format` — `human` (readable lineage), `json` (raw history), or `script` (bash reproduction). Default: `human`.
 - `--check` — validate the history's schema instead of printing it; overrides `--format`.
 
