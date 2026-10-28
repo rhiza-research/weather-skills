@@ -447,6 +447,9 @@ def fetch(
         ds = ds.rename(rename)
         # One init: scalar `time`. A range of inits: a `time` axis (the init).
         ds = ds.rename({"init_time": "time"})
+        # GEFS and WeatherNext 2 store members before leads; put every
+        # forecast in one order.
+        ds = ds.transpose(*[d for d in ("time", "step", "number") if d in ds.dims], ...)
     else:
         # Each window keeps every sub-daily step of its end day (IMERG
         # half-hourly), not just its 00:00 instant. Windows may overlap.

@@ -975,3 +975,32 @@ def test_analysis_repeated_windows_take_each_window(tmp_path, mod, fetch):
     days = xr.open_zarr(out)["time"].values.astype("datetime64[D]").astype(str).tolist()
     # The second window runs past the data: kept as far as it goes, not padded.
     assert days == ["2025-01-01", "2025-01-02", "2026-01-01", "2026-01-02"]
+
+
+@pytest.mark.parametrize(
+    ("extra", "dims"),
+    [
+        (("--date", "2026-01-01"), ("step", "number", "latitude", "longitude")),
+        (
+            ("--start-time", "2026-01-01", "--end-time", "2026-01-02"),
+            ("time", "step", "number", "latitude", "longitude"),
+        ),
+    ],
+)
+def test_members_stored_before_leads_come_out_after_step(tmp_path, mod, fetch, extra, dims):
+    # GEFS and WeatherNext 2 store ensemble_member before lead_time.
+    data = np.ones((2, 2, 2, 2, 2))
+    ds = xr.Dataset(
+        {"tp": (("init_time", "ensemble_member", "lead_time", "latitude", "longitude"), data)},
+        coords={
+            "init_time": np.array(["2026-01-01", "2026-01-02"], dtype="datetime64[ns]"),
+            "ensemble_member": [0, 1],
+            "lead_time": np.array([1, 2], dtype="timedelta64[D]").astype("timedelta64[ns]"),
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "ensemble"}):
+        run_skill(fetch, "--dataset", "t", *extra, "-o", str(out))
+    assert xr.open_zarr(out, consolidated=True)["tp"].dims == dims

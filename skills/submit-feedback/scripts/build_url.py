@@ -21,7 +21,6 @@ _SKILL_VERSION = "0.0.4"
 OWNER = "rhiza-research"
 REPOS = (
     "weather-skills",
-    "chc-skills",
     "weather-skills-plotting",
     "weather-skills-core",
 )

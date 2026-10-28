@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# End-to-end demo: replicate the daily S2S pipeline from
-# ECMWF-S2S4AFRICA/.github/workflows/daily_download2.0.yml using the
-# forecasting-skills CLI. Requires ECMWF_API_*, EARTHDATA_*, TAHMO_API_*.
+# End-to-end demo: a daily S2S rainfall pipeline (ECMWF forecast, IMERG and
+# CHIRPS observations, TAHMO stations, weekly and dekadal totals per country)
+# using the weather-skills CLI. Requires ECMWF_DATASTORES_KEY, EARTHDATA_*,
+# TAHMO_API_*. Plotting is not part of this repo, so the demo stops at Zarrs.
 
 set -euo pipefail
 
@@ -14,7 +15,7 @@ eval "$(direnv export bash 2>/dev/null || true)"
 days_ago() { date -u -d "$1 days ago" +%Y-%m-%d 2>/dev/null || date -u -v-"$1"d +%Y-%m-%d; }
 date_minus() { date -u -d "$1 - $2 days" +%Y-%m-%d 2>/dev/null || date -u -j -v-"$2"d -f "%Y-%m-%d" "$1" +%Y-%m-%d; }
 # Positional args: INIT_DATE END_DATE OUT
-# Defaults reproduce upstream daily_download2.0.yml: INIT = now_dt - 2, END = now_dt.
+# Defaults: INIT = two days ago, END = today.
 INIT_DATE="${1:-$(days_ago 2)}"
 END_DATE="${2:-$(days_ago 0)}"
 START_DATE=$(date_minus "$END_DATE" 60)
@@ -27,9 +28,9 @@ uv tool install --force --reinstall ../
 
 # Africa is a continent, not a country, so the continental extent is passed as an
 # explicit bbox rather than via resolve-region (which is country-level).
-forecasting-skills ecmwf-fetch  --date  "$INIT_DATE"  --bbox=23/-20/-37/59 --output "$OUT/ecmwf.zarr"
-forecasting-skills imerg-fetch  --start "$START_DATE" --end "$END_DATE" --output "$OUT/imerg.zarr"
-forecasting-skills chirps-fetch --start "$START_DATE" --end "$END_DATE" --output "$OUT/chirps.zarr"
+weather-skills ecmwf-fetch  --date  "$INIT_DATE"  --bbox=23/-20/-37/59 --output "$OUT/ecmwf.zarr"
+weather-skills imerg-fetch  --start-time "$START_DATE" --end-time "$END_DATE" --output "$OUT/imerg.zarr"
+weather-skills chirps-fetch --start-time "$START_DATE" --end-time "$END_DATE" --output "$OUT/chirps.zarr"
 
 for COUNTRY in "${COUNTRIES[@]}"; do
     d="$OUT/$COUNTRY"
@@ -38,46 +39,35 @@ for COUNTRY in "${COUNTRIES[@]}"; do
     # Resolve the country once: capture the bbox on stdout and write the boundary
     # polygon to boundary.geojson (the --geojson status note goes to stderr, so the
     # command substitution captures only the bbox).
-    BBOX=$(forecasting-skills resolve-region "${ISO[$COUNTRY]}" --geojson "$d/boundary.geojson")
+    BBOX=$(weather-skills resolve-region "${ISO[$COUNTRY]}" --geojson "$d/boundary.geojson")
 
-    forecasting-skills clip-region        -i "$OUT/ecmwf.zarr"          -o "$d/ecmwf.zarr"         --bbox="$BBOX"
-    forecasting-skills aggregate-temporal -i "$d/ecmwf.zarr"    -o "$d/ecmwf_weekly.zarr"  --period weekly  --method mean
-    forecasting-skills aggregate-temporal -i "$d/ecmwf.zarr"    -o "$d/ecmwf_dekadal.zarr" --period dekadal --method mean
-    forecasting-skills convert-to-totals  -i "$d/ecmwf_weekly.zarr"  -o "$d/ecmwf_weekly_totals.zarr"
-    forecasting-skills convert-to-totals  -i "$d/ecmwf_dekadal.zarr" -o "$d/ecmwf_dekadal_totals.zarr"
-    forecasting-skills plot               -i "$d/ecmwf_weekly_totals.zarr"  -o "$d/weekly_precip.png"  --variable tp --bbox="$BBOX"
-    forecasting-skills plot               -i "$d/ecmwf_dekadal_totals.zarr" -o "$d/dekadal_precip.png" --variable tp --bbox="$BBOX"
-    # Upstream daily_download2.0.yml runs a downscale step (dowscale_dekade.py) producing
-    # dekadal_precip_downscaled.png. We run the downscale + plot here for parity with
-    # the workflow steps.
-    forecasting-skills downscale          -i "$d/ecmwf_dekadal.zarr" -o "$d/ecmwf_dekadal_ds.zarr" --method linear-interpolation --target-resolution 0.25 --variable tp
-    forecasting-skills convert-to-totals  -i "$d/ecmwf_dekadal_ds.zarr" -o "$d/ecmwf_dekadal_ds_totals.zarr"
-    forecasting-skills plot               -i "$d/ecmwf_dekadal_ds_totals.zarr" -o "$d/dekadal_precip_ds.png" --variable tp
+    weather-skills clip-region        -i "$OUT/ecmwf.zarr"          -o "$d/ecmwf.zarr"         --bbox="$BBOX"
+    weather-skills aggregate-temporal -i "$d/ecmwf.zarr"    -o "$d/ecmwf_weekly.zarr"  --period weekly  --method mean
+    weather-skills aggregate-temporal -i "$d/ecmwf.zarr"    -o "$d/ecmwf_dekadal.zarr" --period dekadal --method mean
+    weather-skills convert-to-totals  -i "$d/ecmwf_weekly.zarr"  -o "$d/ecmwf_weekly_totals.zarr"
+    weather-skills convert-to-totals  -i "$d/ecmwf_dekadal.zarr" -o "$d/ecmwf_dekadal_totals.zarr"
+    # Dekadal forecast downscaled to 0.25°.
+    weather-skills downscale          -i "$d/ecmwf_dekadal.zarr" -o "$d/ecmwf_dekadal_ds.zarr" --algorithm linear-interpolation --target-resolution 0.25 --variable tp
+    weather-skills convert-to-totals  -i "$d/ecmwf_dekadal_ds.zarr" -o "$d/ecmwf_dekadal_ds_totals.zarr"
 
-    forecasting-skills clip-region        -i "$OUT/imerg.zarr"  -o "$d/imerg.zarr"         --bbox="$BBOX"
-    forecasting-skills aggregate-temporal -i "$d/imerg.zarr"    -o "$d/imerg_weekly.zarr"  --period weekly  --method mean --end-time "$END_DATE"
-    forecasting-skills aggregate-temporal -i "$d/imerg.zarr"    -o "$d/imerg_dekadal.zarr" --period dekadal --method mean --end-time "$END_DATE"
-    forecasting-skills convert-to-totals  -i "$d/imerg_weekly.zarr"  -o "$d/imerg_weekly_totals.zarr"
-    forecasting-skills convert-to-totals  -i "$d/imerg_dekadal.zarr" -o "$d/imerg_dekadal_totals.zarr"
+    weather-skills clip-region        -i "$OUT/imerg.zarr"  -o "$d/imerg.zarr"         --bbox="$BBOX"
+    weather-skills aggregate-temporal -i "$d/imerg.zarr"    -o "$d/imerg_weekly.zarr"  --period weekly  --method mean --end-time "$END_DATE"
+    weather-skills aggregate-temporal -i "$d/imerg.zarr"    -o "$d/imerg_dekadal.zarr" --period dekadal --method mean --end-time "$END_DATE"
+    weather-skills convert-to-totals  -i "$d/imerg_weekly.zarr"  -o "$d/imerg_weekly_totals.zarr"
+    weather-skills convert-to-totals  -i "$d/imerg_dekadal.zarr" -o "$d/imerg_dekadal_totals.zarr"
 
-    forecasting-skills clip-region        -i "$OUT/chirps.zarr" -o "$d/chirps.zarr"         --bbox="$BBOX"
-    forecasting-skills aggregate-temporal -i "$d/chirps.zarr"   -o "$d/chirps_weekly.zarr"  --period weekly  --method mean --end-time "$END_DATE"
-    forecasting-skills aggregate-temporal -i "$d/chirps.zarr"   -o "$d/chirps_dekadal.zarr" --period dekadal --method mean --end-time "$END_DATE"
-    forecasting-skills convert-to-totals  -i "$d/chirps_weekly.zarr"  -o "$d/chirps_weekly_totals.zarr"
-    forecasting-skills convert-to-totals  -i "$d/chirps_dekadal.zarr" -o "$d/chirps_dekadal_totals.zarr"
+    weather-skills clip-region        -i "$OUT/chirps.zarr" -o "$d/chirps.zarr"         --bbox="$BBOX"
+    weather-skills aggregate-temporal -i "$d/chirps.zarr"   -o "$d/chirps_weekly.zarr"  --period weekly  --method mean --end-time "$END_DATE"
+    weather-skills aggregate-temporal -i "$d/chirps.zarr"   -o "$d/chirps_dekadal.zarr" --period dekadal --method mean --end-time "$END_DATE"
+    weather-skills convert-to-totals  -i "$d/chirps_weekly.zarr"  -o "$d/chirps_weekly_totals.zarr"
+    weather-skills convert-to-totals  -i "$d/chirps_dekadal.zarr" -o "$d/chirps_dekadal_totals.zarr"
 
-    forecasting-skills tahmo-fetch --bbox="$BBOX" --start-time "$START_DATE" --end-time "$END_DATE" --output "$d/tahmo.zarr"
+    weather-skills tahmo-fetch --bbox="$BBOX" --start-time "$START_DATE" --end-time "$END_DATE" --output "$d/tahmo.zarr"
 
-    # plot-compare requires its two inputs to already share a time axis, so the
-    # daily station data is pre-aggregated to the same window/anchor/method as
-    # the imerg/chirps gridded aggregations before comparing.
-    forecasting-skills aggregate-temporal -i "$d/tahmo.zarr" -o "$d/tahmo_weekly.zarr"  --variable precip --period weekly  --method mean --end-time "$END_DATE"
-    forecasting-skills aggregate-temporal -i "$d/tahmo.zarr" -o "$d/tahmo_dekadal.zarr" --variable precip --period dekadal --method mean --end-time "$END_DATE"
-    forecasting-skills convert-to-totals  -i "$d/tahmo_weekly.zarr"  -o "$d/tahmo_weekly_totals.zarr"  --variable precip
-    forecasting-skills convert-to-totals  -i "$d/tahmo_dekadal.zarr" -o "$d/tahmo_dekadal_totals.zarr" --variable precip
-
-    forecasting-skills plot-compare -i "$d/tahmo_weekly_totals.zarr"  -i "$d/imerg_weekly_totals.zarr"   --variable precip --panels 4 --bbox="$BBOX" --mask-geojson "$d/boundary.geojson" -o "$d/imerg_${COUNTRY}_weekly.png"
-    forecasting-skills plot-compare -i "$d/tahmo_dekadal_totals.zarr" -i "$d/imerg_dekadal_totals.zarr"  --variable precip             --bbox="$BBOX" --mask-geojson "$d/boundary.geojson" -o "$d/imerg_${COUNTRY}_dekadal.png"
-    forecasting-skills plot-compare -i "$d/tahmo_weekly_totals.zarr"  -i "$d/chirps_weekly_totals.zarr"  --variable precip --panels 4 --bbox="$BBOX" --mask-geojson "$d/boundary.geojson" -o "$d/chirps_${COUNTRY}_weekly.png"
-    forecasting-skills plot-compare -i "$d/tahmo_dekadal_totals.zarr" -i "$d/chirps_dekadal_totals.zarr" --variable precip             --bbox="$BBOX" --mask-geojson "$d/boundary.geojson" -o "$d/chirps_${COUNTRY}_dekadal.png"
+    # Station data aggregated to the same windows as the IMERG/CHIRPS totals,
+    # ready to compare against them.
+    weather-skills aggregate-temporal -i "$d/tahmo.zarr" -o "$d/tahmo_weekly.zarr"  --variable precip --period weekly  --method mean --end-time "$END_DATE"
+    weather-skills aggregate-temporal -i "$d/tahmo.zarr" -o "$d/tahmo_dekadal.zarr" --variable precip --period dekadal --method mean --end-time "$END_DATE"
+    weather-skills convert-to-totals  -i "$d/tahmo_weekly.zarr"  -o "$d/tahmo_weekly_totals.zarr"  --variable precip
+    weather-skills convert-to-totals  -i "$d/tahmo_dekadal.zarr" -o "$d/tahmo_dekadal_totals.zarr" --variable precip
 done

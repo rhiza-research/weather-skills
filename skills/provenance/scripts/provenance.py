@@ -23,8 +23,7 @@ from weather_skills_core.provenance import (
 
 DEFAULT_REPO = "https://github.com/rhiza-research/weather-skills"
 DEFAULT_CLI = "weather-skills"
-# Ref a step runs from when it recorded no commit: the CLI above lives on dev
-# (the default branch names its CLI differently).
+# Ref a step runs from when it recorded no commit.
 DEFAULT_REF = "dev"
 # Joins whose inputs are not a repeated --input, in the order the decorator
 # records them (declaration order).
@@ -33,6 +32,10 @@ JOIN_FLAGS = {
     "standardize-anomaly": ["--input", "--climatology"],
     "point-value": ["--input", "--points"],
 }
+# Skills whose recorded args include a positional, and skills that write their
+# stamped file through a flag other than --output.
+POSITIONAL_ARGS = {"resolve-region": "code"}
+OUTPUT_FLAGS = {"resolve-region": "--geojson"}
 _EXIF_USER_COMMENT = 0x9286
 # Other files the skills stamp; core reads them (tables from their sidecar).
 _OTHER_SUFFIXES = (
@@ -248,7 +251,12 @@ def _command(step: dict, inputs: list, output: str) -> str:
     else:
         checkout = f'"$(_checkout {shlex.quote(repo)} {shlex.quote(ref)})"'
         parts = ["uv", "run", "--script", f"{checkout}/skills/{skill}/scripts/*.py"]
+    positional = POSITIONAL_ARGS.get(skill)
+    if positional in args:
+        parts.append(shlex.quote(str(args[positional])))
     for dest, value in sorted(args.items()):
+        if dest == positional:
+            continue
         flag = "--" + dest.replace("_", "-")
         if value is None or value is False:
             continue
@@ -266,7 +274,7 @@ def _command(step: dict, inputs: list, output: str) -> str:
                 parts += [flag, shlex.quote(str(item))]
     for flag, path in inputs:
         parts += [flag, shlex.quote(path)]
-    parts += ["--output", shlex.quote(output)]
+    parts += [OUTPUT_FLAGS.get(skill, "--output"), shlex.quote(output)]
     line = " ".join(parts)
     if step.get("dirty") is True:
         return (

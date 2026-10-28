@@ -351,3 +351,15 @@ def test_reads_geojson_and_table_histories(tmp_path, provenance, capsys):
         stamp_figure(path, history)
         run_skill(provenance, "-i", str(path), "--check")
         assert "valid weather_skills_history" in capsys.readouterr().out
+
+
+def test_script_reruns_resolve_region_geojson(tmp_path, provenance, capsys):
+    resolve_region = load_skill("resolve-region", "resolve").resolve_region
+    geo = tmp_path / "io.geojson"
+    run_skill(resolve_region, "Indian Ocean", "--geojson", str(geo))
+    capsys.readouterr()
+
+    captured = _script(provenance, geo, capsys)
+
+    assert "resolve-region 'Indian Ocean' --pad 0.25 --geojson io.geojson" in captured
+    assert "--code" not in captured

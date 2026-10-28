@@ -23,7 +23,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py --title TITLE (--body TEXT | --b
 - `--title` — issue title. Required, not empty.
 - `--body` — issue body as markdown.
 - `--body-file` — read the body from this UTF-8 file instead. Pass exactly one of `--body`, `--body-file`.
-- `--repo` — the `rhiza-research` repo that owns the skill: `weather-skills`, `weather-skills-core`, `weather-skills-plotting`, or `chc-skills`. Default: `weather-skills`.
+- `--repo` — the `rhiza-research` repo that owns the skill: `weather-skills`, `weather-skills-core`, or `weather-skills-plotting`. Default: `weather-skills`.
 
 ### Output
 - Exit 0: the URL alone on stdout (`https://github.com/rhiza-research/<repo>/issues/new?title=…&body=…`); a length note on stderr.
