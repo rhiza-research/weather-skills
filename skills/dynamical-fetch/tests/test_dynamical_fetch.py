@@ -383,6 +383,33 @@ def test_end_labelled_lead0_dropped_and_relabelled_to_start(tmp_path, mod, fetch
     assert bounds == [[0, 3], [3, 6], [6, 12]]
 
 
+def test_instant_fields_on_uneven_leads_get_cells_from_each_step(tmp_path, mod, fetch):
+    """IFS-like t2m 3- then 6-hourly: each sample's cell starts at its own step."""
+    leads = np.array([0, 3, 6, 12, 18], dtype="timedelta64[h]").astype("timedelta64[ns]")
+    ds = xr.Dataset(
+        {
+            "temperature_2m": (
+                ("init_time", "lead_time", "latitude", "longitude"),
+                np.ones((1, 5, 2, 2)),
+            )
+        },
+        coords={
+            "init_time": [np.datetime64("2026-01-01", "ns")],
+            "lead_time": leads,
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    ds["temperature_2m"].attrs.update(units="degree_Celsius", step_type="instant")
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "forecast"}):
+        run_skill(fetch, "--dataset", "t", "--date", "2026-01-01", "-v", "t2m", "-o", str(out))
+    written = xr.open_zarr(out, consolidated=True)
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0, 3, 6, 12, 18]
+    bounds = (written["step_bounds"].values / np.timedelta64(1, "h")).tolist()
+    assert bounds == [[0, 3], [3, 6], [6, 12], [12, 18], [18, 24]]
+
+
 def _weathernext2_like_ds():
     """WeatherNext 2: y/x axes, no lead 0, 6 h precip totals in mm, t2m instant."""
     shape = (1, 2, 3, 2, 2)

@@ -551,6 +551,17 @@ def fetch(
                 "Dropped all-NaN lead 0 and relabelled steps to interval start.",
                 file=sys.stderr,
             )
+        elif not any(bool(first[name].isnull().all()) for name in ds.data_vars):
+            # Only instant fields: they keep the catalog labels. On uneven leads
+            # give each sample the cell [s, next lead) like the relabelled
+            # averages above, so a day bin holds the samples labelled in that
+            # day; stamp_data_interval would infer cells ending at each step.
+            leads = ds["step"].values
+            if len(set(np.diff(leads))) > 1:
+                ends = np.append(leads[1:], leads[-1] + (leads[-1] - leads[-2]))
+                pairs = np.stack([leads, ends], axis=1)
+                ds = ds.assign_coords(step_bounds=(("step", "nv"), pairs))
+                ds["step"].attrs["bounds"] = "step_bounds"
     # WeatherNext 2 has no lead 0: its first lead ends the first 6 h total. When
     # every field is such a total (step_type accum), relabel to interval start.
     # Small negative totals are model artifacts; the catalog says to zero them.
