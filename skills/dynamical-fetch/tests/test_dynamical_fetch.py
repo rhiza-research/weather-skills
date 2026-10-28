@@ -838,9 +838,13 @@ def test_select_valid_keeps_cells_valid_in_the_window_and_nans_the_rest(tmp_path
     assert "--select valid" in written["temperature_2m"].attrs["comment"]
 
 
-def test_select_valid_counts_end_labelled_field_from_interval_start(tmp_path, mod, fetch):
-    # Mixed with an instant field, precip keeps the catalog's end labels: its
-    # value at lead L covers [L - 1 D, L). Leads 0..3 D, value = lead in days.
+@pytest.mark.parametrize("step_type", ["avg", "max"])
+def test_select_valid_counts_end_labelled_field_from_interval_start(
+    tmp_path, mod, fetch, step_type
+):
+    # Mixed with an instant field, an interval field (precip mean, or a max)
+    # keeps the catalog's end labels: its value at lead L covers [L - 1 D, L).
+    # Leads 0..3 D, value = lead in days.
     leads = np.arange(4)
     steps = (leads * np.timedelta64(1, "D")).astype("timedelta64[ns]")
     precip = leads.astype(float)
@@ -851,7 +855,7 @@ def test_select_valid_counts_end_labelled_field_from_interval_start(tmp_path, mo
             "precipitation_surface": (
                 ("init_time", "lead_time", "latitude", "longitude"),
                 precip[None, :, None, None] * np.ones(shape),
-                {"step_type": "avg", "units": "mm s-1"},
+                {"step_type": step_type, "units": "mm s-1"},
             ),
             "temperature_2m": (
                 ("init_time", "lead_time", "latitude", "longitude"),

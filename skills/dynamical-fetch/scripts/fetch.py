@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.1",
 #   "dynamical-catalog==1.0.1",
 #   "pandas",
 # ]
@@ -603,15 +603,18 @@ def fetch(
             )
             ds = ds.drop_vars(empty)
     if select == "valid":
-        # Valid time is init + step; an averaged field counts from its interval
-        # start. Fetched with instant fields, averaged fields keep the catalog's
-        # end labels (not relabelled above), so their interval starts at the
-        # previous lead. Cells outside every window are NaN: not selected, not filled.
+        # Valid time is init + step; an interval field (avg, accum, max, min)
+        # counts from its interval start. Fetched with instant fields, interval
+        # fields keep the catalog's end labels (not relabelled above), so their
+        # interval starts at the previous lead. Cells outside every window are
+        # NaN: not selected, not filled.
         steps = ds["step"].values
         previous = xr.DataArray(np.concatenate([steps[:1], steps[:-1]]), dims="step")
         kept = xr.zeros_like(ds["time"] + ds["step"], dtype=bool)
         for name in ds.data_vars:
-            end_labelled = not relabelled and ds[name].attrs.get("step_type") in ("avg", "accum")
+            end_labelled = (
+                not relabelled and ds[name].attrs.get("step_type", "instant") != "instant"
+            )
             valid = ds["time"] + (previous if end_labelled else ds["step"])
             inside = xr.zeros_like(kept)
             for lo, hi in spans:
