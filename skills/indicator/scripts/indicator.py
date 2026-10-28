@@ -47,6 +47,12 @@ _COUNT_OR_CONSEC = frozenset(
     {"count-above", "count-below", "consecutive-above", "consecutive-below"}
 )
 _CONSEC = frozenset({"consecutive-above", "consecutive-below"})
+_EXAMPLES = (
+    "Examples: 'precip > 25' (each step's own value), 'precip sum 8d >= 25', "
+    "'precip count-above 1 10d >= 5', 'precip consecutive-below 1 7d' (7 dry days in a row), "
+    "'precip sum 3d >= 20 and not precip consecutive-below 1 7d within 21d' (onset with no "
+    "false start)."
+)
 _WINDOW_RE = re.compile(r"^(\d+)([dw])$", re.IGNORECASE)
 _SPLIT_RE = re.compile(r"\s+(and|or)\s+", re.IGNORECASE)
 
@@ -136,12 +142,35 @@ def _parse_clause(text: str, source: str) -> Clause:
 
     variable = tokens[i]
     i += 1
+    if i < len(tokens) and tokens[i] in _OPS:
+        # Plain threshold, e.g. 'tp > 25': each step's own value (window 0 = one step).
+        op = _parse_op(tokens[i], source)
+        if i + 1 >= len(tokens):
+            raise UsageError(f"clause {text!r} in --rule {source!r} is missing a threshold")
+        try:
+            threshold = float(tokens[i + 1])
+        except ValueError as exc:
+            raise UsageError(
+                f"threshold {tokens[i + 1]!r} in --rule {source!r} is not a number"
+            ) from exc
+        after, within = _parse_tail(tokens, i + 2, text, source, "value")
+        return Clause(
+            negate=negate,
+            variable=variable,
+            agg="value",
+            window=0,
+            op=op,
+            threshold=threshold,
+            daily_threshold=None,
+            after=after,
+            within=within,
+        )
     if i >= len(tokens) or tokens[i] not in _AGGS:
         aliases = ", ".join(sorted(ALIASES))
         raise UsageError(
             f"could not parse clause {text!r} in --rule {source!r}. "
-            f"Expected '{{variable}} {{agg}} …' with agg one of {', '.join(_AGGS)}. "
-            f"Known aliases: {aliases}"
+            f"Expected '{{variable}} {{op}} {{threshold}}' or '{{variable}} {{agg}} …' with agg "
+            f"one of {', '.join(_AGGS)}. Known aliases: {aliases}. {_EXAMPLES}"
         )
     agg = tokens[i]
     i += 1
@@ -184,12 +213,42 @@ def _parse_clause(text: str, source: str) -> Clause:
             ) from exc
         i += 1
 
+    after, within = _parse_tail(tokens, i, text, source, agg)
+    return Clause(
+        negate=negate,
+        variable=variable,
+        agg=agg,
+        window=window,
+        op=op,
+        threshold=threshold,
+        daily_threshold=daily_threshold,
+        after=after,
+        within=within,
+    )
+
+
+def _parse_tail(tokens: list[str], i: int, text: str, source: str, agg: str):
+    """Parse the optional ``after Nd`` / ``within Nd`` qualifiers from ``tokens[i:]``."""
     after = None
     within = None
     while i < len(tokens):
         tag = tokens[i]
         if tag not in ("after", "within"):
-            raise UsageError(f"unexpected {tag!r} in clause {text!r} of --rule {source!r}")
+            hint = ""
+            if tag in _OPS and agg in _CONSEC:
+                hint = (
+                    " consecutive-above/-below take no comparator: they are true when every "
+                    "step in the window is above/below the daily threshold. For 'at least N "
+                    "steps' use count-above/-below with '>= N'."
+                )
+            elif tag == "then":
+                hint = (
+                    " Clauses join with 'and' or 'or'; for something that must follow, put "
+                    "'after Nd' or 'within Nd' on the later clause."
+                )
+            raise UsageError(
+                f"unexpected {tag!r} in clause {text!r} of --rule {source!r}.{hint} {_EXAMPLES}"
+            )
         if i + 1 >= len(tokens):
             raise UsageError(f"{tag} in --rule {source!r} needs a window (e.g. {tag} 10d)")
         days = _parse_window(tokens[i + 1], source)
@@ -207,17 +266,7 @@ def _parse_clause(text: str, source: str) -> Clause:
         raise UsageError(
             f"clause {text!r} in --rule {source!r} cannot take both 'after' and 'within'"
         )
-    return Clause(
-        negate=negate,
-        variable=variable,
-        agg=agg,
-        window=window,
-        op=op,
-        threshold=threshold,
-        daily_threshold=daily_threshold,
-        after=after,
-        within=within,
-    )
+    return after, within
 
 
 # --- evaluation and reductions ------------------------------------------------
@@ -302,7 +351,8 @@ def _steps(days: int, step_days: int) -> int:
 
 def _evaluate_clause(da: xr.DataArray, clause, dim: str, step_days: int) -> xr.DataArray:
     da = _strip_pint(da)
-    core = _core_mask(da, clause, dim, _steps(clause.window, step_days))
+    window = 1 if clause.agg == "value" else _steps(clause.window, step_days)
+    core = _core_mask(da, clause, dim, window)
     if clause.after is not None:
         core = core.shift({dim: -_steps(clause.after, step_days)})
     if clause.within is not None:
@@ -314,8 +364,8 @@ def _evaluate_clause(da: xr.DataArray, clause, dim: str, step_days: int) -> xr.D
 
 def _core_mask(da: xr.DataArray, clause, dim: str, window: int) -> xr.DataArray:
     agg = clause.agg
-    if agg in ("sum", "mean"):
-        rolled = _left_roll(da, dim, window, agg)
+    if agg in ("sum", "mean", "value"):
+        rolled = _left_roll(da, dim, window, "sum" if agg == "value" else agg)
         compared = _OPS[clause.op](rolled, clause.threshold)
         return xr.where(rolled.isnull(), np.nan, compared.astype("float32"))
     daily = clause.daily_threshold
@@ -426,8 +476,9 @@ def _probability(mask: xr.DataArray) -> xr.DataArray:
 
 
 def _axis(ds, time_dim: str | None) -> str:
+    """Axis to evaluate along: a dim, or a scalar coord left by selecting one step or date."""
     if time_dim:
-        if time_dim not in ds.dims:
+        if time_dim not in ds.dims and not (time_dim in ds.coords and ds[time_dim].ndim == 0):
             raise UsageError(f"--time-dim {time_dim!r} not in dataset dims {list(ds.dims)}")
         return time_dim
     if "time" in ds.dims and ds.sizes["time"] > 1:
@@ -436,6 +487,9 @@ def _axis(ds, time_dim: str | None) -> str:
         return "step"
     if "time" in ds.dims:
         return "time"
+    for name in ("step", "time"):
+        if name in ds.coords and ds[name].ndim == 0:
+            return name
     raise UsageError(
         "could not identify a daily time or step dim; pass --time-dim. "
         f"Available dims: {list(ds.dims)}"
@@ -495,6 +549,10 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **k
     """Apply a yes/no weather rule to each day or week of a Zarr, optionally reduced to an onset date or a probability."""
     spec = parse_rule(rule)
     dim = _axis(ds, time_dim)
+    # One selected step or date (e.g. week 2 only): evaluate it as a length-1 axis.
+    scalar_axis = dim not in ds.dims
+    if scalar_axis:
+        ds = ds.expand_dims(dim)
     step_days = _step_days(ds, dim)
     # Thresholds are in standard units: air temperature in degree_Celsius, precip
     # in mm per step (a rate in any units times the step; daily mm day-1 is unchanged).
@@ -507,6 +565,8 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **k
     out = apply_reductions(
         mask, dim, cumulative=bool(cumulative), detect=detect, probability=bool(probability)
     )
+    if scalar_axis and dim in out.dims:
+        out = out.squeeze(dim)  # back to a scalar coord, as in the input
     payload = json.dumps(spec.to_json(), default=str)
     for name in out.data_vars:
         attrs = dict(out[name].attrs)
@@ -521,7 +581,9 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **k
     print(f"indicator  {spec.source}  ({names})")
     # Forward-looking rules (windows, within/after) cannot be decided at the end
     # of the series: NaN there is "not yet known", not "no event".
-    ahead = max(c.window - step_days + (c.after or c.within or 0) for c in spec.clauses)
+    ahead = max(
+        max(c.window, step_days) - step_days + (c.after or c.within or 0) for c in spec.clauses
+    )
     if ahead > 0:
         import datetime as _dt
 

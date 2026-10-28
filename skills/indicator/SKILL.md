@@ -21,15 +21,18 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 
 `RULE` is an alias or clauses joined by all `and` or all `or`:
 ```text
+[not] VAR OP THR [after Nd | within Nd]
 [not] VAR AGG [DAILY_THR] WINDOW [OP THR] [after Nd | within Nd]
 ```
+- `VAR OP THR` (e.g. `tp > 25`): each step's own value, so on weekly totals it is the week's total. Same as `VAR sum 1d` on daily data or `VAR sum 1w` on weekly data.
 - `AGG`: `sum`, `mean`, `count-above`, `count-below` (number of steps above/below `DAILY_THR`), `consecutive-above`, `consecutive-below` (every step in the window above/below `DAILY_THR`; no `OP THR`).
 - `WINDOW`: `Nd` or `Nw`, starting on the labelled date and looking forward. `OP`: `>=`, `<=`, `>`, `<`.
-- `after Nd`: evaluate the clause N days later. `within Nd`: true if the clause is true on any of the next N days. `not` inverts the clause.
+- `after Nd`: evaluate the clause N days later. `within Nd`: true if the clause is true on any of the next N days (days 1 to N after the date). `not` inverts the clause.
+- There is no `then`: a later condition is a clause with `after` or `within`. A false-start check is an onset clause `and not` a dry spell `within` the days that follow, e.g. onset of at least 20 mm in 3 days on at least 2 wet days, with no 7-day dry spell starting in the next 10 days: `precip sum 3d >= 20 and precip count-above 1 3d >= 2 and not precip consecutive-below 1 7d within 10d`. To keep the whole spell inside the next 10 days, use `within 4d` (spells starting on days 1–4).
 - Aliases: `icpac-onset` = `precip sum 3d >= 20 and not precip consecutive-below 1 7d within 21d`; `chc-onset` = `precip sum 10d > 25 and precip sum 20d > 20 after 10d`.
 
 ### Arguments
-- `--input`, `-i` — daily or weekly Zarr on `time` or `step`.
+- `--input`, `-i` — daily or weekly Zarr on `time` or `step`. A single selected step or date (a scalar `step` or `time`, e.g. week 2 only) works when `data_interval` is stamped.
 - `--output`, `-o` — output Zarr.
 - `--rule` — alias or clause string. Required.
 - `--variable`, `-v` — use this variable in every clause instead of the one written in the rule.
