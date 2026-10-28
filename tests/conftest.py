@@ -132,3 +132,12 @@ def load_skill(skill_dir_name, script_stem):
 def run_skill(fn, *argv):
     """Invoke a decorated skill with an argv list (in-process)."""
     return fn(list(argv))
+
+
+def with_coverage(ds, name, values=None):
+    """``ds`` with a per-cell ``<name>_coverage`` (default 1) linked from ``name``."""
+    values = np.ones(ds[name].shape) if values is None else values
+    ds = ds.copy()
+    ds[f"{name}_coverage"] = (ds[name].dims, np.asarray(values, dtype="float32"), {"units": "1"})
+    ds[name].attrs["ancillary_variables"] = f"{name}_coverage"
+    return ds

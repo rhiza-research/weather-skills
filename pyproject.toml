@@ -40,9 +40,9 @@ dev = [
 
 [tool.uv.sources]
 skills-runner = { git = "https://github.com/tescalada/skills-runner" }
-# summarize-dim needs weather_skills_core.reduce (weather-skills-core PR #8); back to
-# the dev branch once that merges, then PyPI for the merge to main.
-weather-skills-core = { git = "https://github.com/weather-skills/weather-skills-core", branch = "reduce-module" }
+# Needs weather-skills-core per-cell coverage (stacked on core PR #8); back to the
+# dev branch once those merge, then PyPI for the merge to main.
+weather-skills-core = { git = "https://github.com/weather-skills/weather-skills-core", branch = "per-cell-coverage" }
 
 [tool.pytest.ini_options]
 testpaths = ["skills"]

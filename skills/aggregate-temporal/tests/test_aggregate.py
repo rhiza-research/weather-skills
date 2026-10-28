@@ -844,3 +844,69 @@ def test_date_stride_off_the_axis_is_a_usage_error(tmp_path, aggregate, capsys):
         )
     assert exc.value.code == 2
     assert "integer --stride" in capsys.readouterr().err
+
+
+def _two_stations_missing_different_days(same_day=False, bounds=False):
+    """Issue 150: each station misses one day of the week, the same day or different days."""
+    ds = make_point_obs(n_time=7, n_points=2, fill=5.0, start="2026-09-28")
+    ds["precip"].values[0, 1] = np.nan
+    ds["precip"].values[1, 1 if same_day else 4] = np.nan
+    if bounds:
+        start = ds["time"].values
+        ds = ds.assign_coords(
+            time_bounds=(("time", "nv"), np.stack([start, start + np.timedelta64(1, "D")], 1))
+        )
+        ds["time"].attrs["bounds"] = "time_bounds"
+    return ds
+
+
+@pytest.mark.parametrize("same_day", [False, True])
+@pytest.mark.parametrize("bounds", [False, True])
+def test_stations_missing_different_days_are_not_complete(tmp_path, aggregate, same_day, bounds):
+    """No station has a whole week, so the week is not complete and totals are refused."""
+    convert = load_skill("convert-to-totals", "convert_to_totals").convert_to_totals
+    src = write_zarr(_two_stations_missing_different_days(same_day, bounds), tmp_path / "in.zarr")
+    weekly = tmp_path / "weekly.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(weekly), "--period", "weekly")
+
+    ds = xr.open_zarr(weekly, consolidated=True)
+    np.testing.assert_allclose(ds["precip_coverage"].values.ravel(), [6 / 7, 6 / 7], rtol=1e-6)
+    assert ds["precip"].attrs["ancillary_variables"] == "precip_coverage"
+    assert float(ds[AGGREGATION_COVERAGE_COORD].values[0]) == pytest.approx(6 / 7)
+    np.testing.assert_allclose(ds["precip"].values.ravel(), [5.0, 5.0])  # rates of days measured
+    with pytest.raises(SystemExit):
+        run_skill(convert, "-i", str(weekly), "-o", str(tmp_path / "strict.zarr"))
+    run_skill(convert, "-i", str(weekly), "-o", str(tmp_path / "est.zarr"), "--min-coverage", "0.8")
+    est = xr.open_zarr(tmp_path / "est.zarr", consolidated=True)
+    np.testing.assert_allclose(est["precip"].values.ravel(), [35.0, 35.0])
+    assert "precip_coverage" in est  # kept: these totals are estimates
+
+
+def test_per_cell_coverage_on_a_grid_with_a_land_mask(tmp_path, aggregate):
+    ds = make_gridded(n_time=7, fill=2.0)
+    ds["precip"].values[3, 0, 1] = np.nan  # one day missing at one cell
+    ds["precip"].values[:, 0, 0] = np.nan  # a cell never observed
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--period", "weekly")
+    weekly = xr.open_zarr(out, consolidated=True)
+    cov = weekly["precip_coverage"].values[0]
+    assert cov[0, 0] == 0.0 and cov[0, 1] == pytest.approx(6 / 7) and cov[1, 1] == 1.0
+    assert float(weekly[AGGREGATION_COVERAGE_COORD].values[0]) == 1.0
+    assert weekly["precip_coverage"].attrs["units"] == "1"
+    assert "aggregation_period" not in weekly["precip_coverage"].attrs
+
+
+def test_reaggregate_uses_each_cells_coverage(tmp_path, aggregate):
+    """Weekly to 14 days: stations 6/7 in their first week (different days) are 13/14."""
+    ds = make_point_obs(n_time=14, n_points=2, fill=1.0, start="2026-01-01")
+    ds["precip"].values[0, 2] = np.nan
+    ds["precip"].values[1, 4] = np.nan
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    weekly, fortnight = tmp_path / "weekly.zarr", tmp_path / "fortnight.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(weekly), "--period", "weekly")
+    run_skill(aggregate, "-i", str(weekly), "-o", str(fortnight), "--period", "14 day")
+    out = xr.open_zarr(fortnight, consolidated=True)
+    np.testing.assert_allclose(out["precip_coverage"].values.ravel(), [13 / 14, 13 / 14], rtol=1e-6)
+    assert float(out[AGGREGATION_COVERAGE_COORD].values[0]) == pytest.approx(13 / 14)
+    assert list(out.data_vars) == ["precip", "precip_coverage"]

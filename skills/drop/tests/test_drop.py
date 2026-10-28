@@ -60,3 +60,14 @@ def test_drop_missing_name_is_refused(tmp_path, drop):
 
 def test_drop_last_data_var_is_refused(tmp_path, drop):
     _usage_error(drop, tmp_path, make_gridded(), "precip")
+
+
+def test_dropping_a_variable_drops_its_coverage(tmp_path, drop):
+    from conftest import make_gridded, with_coverage
+
+    ds = with_coverage(make_gridded(), "precip")
+    ds["t2m"] = ds["precip"].copy(data=ds["precip"].values * 0 + 290).assign_attrs(units="K")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(drop, "-i", str(src), "-o", str(out), "--name", "precip")
+    assert list(xr.open_zarr(out, consolidated=True).data_vars) == ["t2m"]
