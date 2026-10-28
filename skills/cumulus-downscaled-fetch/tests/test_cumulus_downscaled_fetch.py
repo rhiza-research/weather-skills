@@ -146,6 +146,15 @@ def test_several_checkpoints_exit_1_until_one_is_picked(tmp_path, fetch_mod, rem
     assert remote["read"] and all("ckpt-n20_cfg2" in p for p in remote["read"])
 
 
+def test_several_checkpoints_keep_the_one_a_later_init_runs(tmp_path, fetch_mod, remote, capsys):
+    remote["tree"] = _tree(ckpts=("ckpt-n20_cfg2", "ckpt-n20_cfg3"))
+    remote["tree"][f"{ROOT}/2026-10-27/{DIFF}"] = ["ckpt-n20_cfg2"]
+    run_skill(fetch_mod.fetch, "--date", "2026-10-20", "-o", str(tmp_path / "a.zarr"))
+    err = capsys.readouterr().err
+    assert "Using ckpt-n20_cfg2, the one init 2026-10-27 still runs" in err
+    assert remote["read"] and all("ckpt-n20_cfg2" in p for p in remote["read"])
+
+
 def test_checkpoint_missing_at_date_lists_what_is_there(tmp_path, fetch_mod, remote, capsys):
     remote["tree"] = _tree(ckpts=("ckpt-n30_cfg2",))
     with pytest.raises(SystemExit) as exc:
