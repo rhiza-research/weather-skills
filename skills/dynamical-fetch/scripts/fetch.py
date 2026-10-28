@@ -263,8 +263,21 @@ def _open_dataset(state, dataset) -> dict:
     version=_SKILL_VERSION,
 )
 @weather_skill.argument("--date")
-@weather_skill.argument("--start-time")
-@weather_skill.argument("--end-time")
+@weather_skill.argument(
+    "--start-time",
+    action="append",
+    help="Window start; repeat with --end-time for several windows (each January).",
+)
+@weather_skill.argument("--end-time", action="append", help="Window end, paired with --start-time.")
+@weather_skill.argument(
+    "--select",
+    choices=("init", "valid"),
+    default="init",
+    help=(
+        "Forecasts with --start-time/--end-time: pick 00 UTC inits in the windows (init), "
+        "or every init and lead whose valid time is in them (valid)."
+    ),
+)
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v", action="append")
 @weather_skill.argument(
@@ -307,6 +320,7 @@ def fetch(
     probe_latest,
     list_variables,
     max_lead,
+    select,
     **kwargs,
 ):
     """Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
@@ -359,6 +373,7 @@ def fetch(
         return
 
     import numpy as np
+    import xarray as xr
 
     state = _open_dataset({}, dataset)
     ds = state["ds"]
@@ -367,18 +382,21 @@ def fetch(
     if variable:
         ds = _merge_pressure_if_needed(ds, dataset, variable)
 
+    # One (start, end) pair per window; --end-time is an inclusive calendar day.
+    windows = list(zip(start_time or [], end_time or [], strict=True))
     if is_forecast:
-        if date is None:
-            raise UsageError(f"{dataset} is a forecast dataset; --date is required.")
-        if start_time is not None or end_time is not None:
+        if (date is None) == (not windows):
             raise UsageError(
-                f"{dataset} is a forecast dataset; use --date, not --start-time/--end-time."
+                f"{dataset} is a forecast dataset; pass --date for one init, or "
+                "--start-time/--end-time for a range of inits (not both)."
             )
-        date_iso = date.isoformat()
+        if select == "valid" and not windows:
+            raise UsageError("--select valid needs --start-time/--end-time windows.")
+        when = date.isoformat() if date is not None else "selected"
     else:
         if max_lead is not None:
             raise UsageError(f"{dataset} is an analysis dataset; --max-lead is for forecasts.")
-        if start_time is None or end_time is None:
+        if not windows:
             raise UsageError(
                 f"{dataset} is an analysis dataset; --start-time and --end-time are required."
             )
@@ -386,21 +404,20 @@ def fetch(
             raise UsageError(
                 f"{dataset} is an analysis dataset; use --start-time/--end-time, not --date."
             )
-        start_iso = start_time.isoformat()
-        end_iso = end_time.isoformat()
+        if select != "init":
+            raise UsageError(f"{dataset} is an analysis dataset; --select is for forecasts.")
+    spans = [
+        (np.datetime64(start.isoformat()), np.datetime64(end.isoformat()) + np.timedelta64(1, "D"))
+        for start, end in windows
+    ]
+    window_text = ", ".join(f"{start}..{end}" for start, end in windows)
 
     if variable:
         ds = ds[_resolve_variables(variable, ds.data_vars, dataset)]
 
     if is_forecast:
         inits = ds["init_time"].values
-        init_target = np.datetime64(f"{date_iso}T00:00:00").astype(inits.dtype)
-
-        def _no_init() -> DataError:
-            return DataError(
-                f"{dataset} has no {date_iso} 00 UTC init; available init range is "
-                f"{np_to_date(inits.min()).isoformat()}..{np_to_date(inits.max()).isoformat()}."
-            )
+        init_range = f"{np_to_date(inits.min()).isoformat()}..{np_to_date(inits.max()).isoformat()}"
 
         if max_lead is not None:
             import pandas as pd
@@ -417,38 +434,61 @@ def fetch(
             # step below, and the extra lead is trimmed after that.
             n = int((ds["lead_time"].values <= limit).sum())
             ds = ds.isel(lead_time=slice(0, n + 1))
-        if init_target not in inits:
-            raise _no_init()
-        try:
+        if date is not None:
+            init_target = np.datetime64(f"{date.isoformat()}T00:00:00").astype(inits.dtype)
+            if init_target not in inits:
+                raise DataError(
+                    f"{dataset} has no {date.isoformat()} 00 UTC init; "
+                    f"available init range is {init_range}."
+                )
             ds = ds.sel(init_time=init_target)
-        except KeyError:
-            raise _no_init() from None
+        else:
+            # 00 UTC inits only, as with --date. A valid-time window also takes
+            # the inits up to one longest lead before it.
+            reach = ds["lead_time"].values.max() if select == "valid" else np.timedelta64(0, "ns")
+            midnight = inits == inits.astype("datetime64[D]")
+            keep = np.zeros(inits.size, dtype=bool)
+            for lo, hi in spans:
+                keep |= midnight & (inits >= lo - reach) & (inits < hi)
+            if not keep.any():
+                raise DataError(
+                    f"{dataset} has no 00 UTC init for {window_text} (--select {select}); "
+                    f"available init range is {init_range}."
+                )
+            ds = ds.isel(init_time=np.nonzero(keep)[0])
+            print(f"Selected {int(keep.sum())} inits.", file=sys.stderr)
         ds = ds.drop_vars([c for c in _DROP_COORDS if c in ds.coords])
         rename = {"lead_time": "step"}
         if shape == "ensemble":
             rename["ensemble_member"] = "number"
         ds = ds.rename(rename)
-        ds = ds.assign_coords(time=ds["init_time"]).drop_vars("init_time")
+        # One init: scalar `time`. A range of inits: a `time` axis (the init).
+        ds = ds.rename({"init_time": "time"})
     else:
-        # --end-time is an inclusive calendar day: keep every sub-daily step of
-        # that day (IMERG half-hourly), not just its 00:00 instant.
-        day_end = np.datetime64(end_iso) + np.timedelta64(1, "D") - np.timedelta64(1, "ns")
-        native = ds["time"].values[:2]
-        spacing = native[1] - native[0] if len(native) > 1 else np.timedelta64(1, "D")
-        ds = ds.sel(time=slice(np.datetime64(start_iso), day_end))
-        if ds.sizes.get("time", 0) == 0:
-            raise DataError(f"{dataset} has no data in {start_iso}..{end_iso}.")
-        ds = ds.drop_vars([c for c in _DROP_COORDS if c in ds.coords])
-        # The catalog only lists published times, so a window running past the
-        # latest (or before the first) time comes back shorter. Say so; never pad.
+        # Each window keeps every sub-daily step of its end day (IMERG
+        # half-hourly), not just its 00:00 instant. Windows may overlap.
         times = ds["time"].values
-        if times[0] > np.datetime64(start_iso) or times[-1] + spacing <= day_end:
-            print(
-                f"WARNING: {dataset} covers only {str(times[0])[:16]}..{str(times[-1])[:16]} "
-                f"of the requested {start_iso}..{end_iso}; writing that partial window "
-                "(not padded).",
-                file=sys.stderr,
-            )
+        spacing = times[1] - times[0] if len(times) > 1 else np.timedelta64(1, "D")
+        keep = np.zeros(times.size, dtype=bool)
+        for (start, end), (lo, hi) in zip(windows, spans, strict=True):
+            inside = (times >= lo) & (times < hi)
+            keep |= inside
+            # The catalog only lists published times, so a window running past
+            # the latest (or before the first) time comes back shorter. Say so;
+            # never pad.
+            if not inside.any():
+                print(f"WARNING: {dataset} has no data in {start}..{end}.", file=sys.stderr)
+            elif times[inside][0] > lo or times[inside][-1] + spacing < hi:
+                print(
+                    f"WARNING: {dataset} covers only {str(times[inside][0])[:16]}.."
+                    f"{str(times[inside][-1])[:16]} of the requested {start}..{end}; "
+                    "writing that partial window (not padded).",
+                    file=sys.stderr,
+                )
+        if not keep.any():
+            raise DataError(f"{dataset} has no data in {window_text}.")
+        ds = ds.isel(time=np.nonzero(keep)[0])
+        ds = ds.drop_vars([c for c in _DROP_COORDS if c in ds.coords])
 
     # Spatial subset after the time/variable selection: an antimeridian bbox
     # concatenates two longitude wings, which reads every selected value.
@@ -472,7 +512,7 @@ def fetch(
             empty &= ds[name].isnull().all(other).values
         if empty.all():
             raise DataError(
-                f"{dataset} {date_iso} init has no data for the requested variables and "
+                f"{dataset} {when} init has no data for the requested variables and "
                 "bbox (still publishing?); try the previous day's init."
             )
         # A fresh init is still publishing its long leads (all-NaN). Drop that
@@ -481,7 +521,7 @@ def fetch(
         if last < ds.sizes["step"] - 1:
             hours = ds["step"].values / np.timedelta64(1, "h")
             print(
-                f"WARNING: {dataset} {date_iso} init has no data after catalog lead "
+                f"WARNING: {dataset} {when} init has no data after catalog lead "
                 f"{hours[last]:g} h (of {hours[-1]:g} h; still publishing?). Dropped the "
                 "empty leads (not padded); use the previous day's init for every lead.",
                 file=sys.stderr,
@@ -539,6 +579,20 @@ def fetch(
                 file=sys.stderr,
             )
             ds = ds.drop_vars(empty)
+    if select == "valid":
+        # Valid time is init + step (an averaged field's step is its interval
+        # start). Cells outside every window are NaN: not selected, not filled.
+        valid = ds["time"] + ds["step"]
+        inside = xr.zeros_like(valid, dtype=bool)
+        for lo, hi in spans:
+            inside |= (valid >= lo) & (valid < hi)
+        ds = ds.where(inside).isel(time=inside.any("step").values, step=inside.any("time").values)
+        for name in ds.data_vars:
+            note = (
+                "dynamical-fetch --select valid: init/step cells whose valid time "
+                f"(time + step) is outside {window_text} are NaN."
+            )
+            ds[name].attrs["comment"] = f"{ds[name].attrs.get('comment', '')} {note}".strip()
     ds = _stack_pressure_levels(ds)
 
     print(f"Fetching dynamical:{dataset} (shape={shape})", file=sys.stderr)
