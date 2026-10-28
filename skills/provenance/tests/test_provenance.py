@@ -202,7 +202,7 @@ def test_script_unpinned_step_runs_from_main(tmp_path, provenance, capsys):
 
     captured = _script(provenance, out, capsys)
 
-    repo = "https://github.com/weather-skills/weather-skills"
+    repo = "https://github.com/weather-skills/weather-skills-catalog"
     assert f'uv run --script "$(_script {repo} main chirps-fetch)"' in captured
     assert "uvx" not in captured
 
@@ -228,6 +228,12 @@ def test_script_helper_finds_both_layouts(tmp_path, provenance, capsys):
         "_checkouts/new@r/skills/weather-skills/a/scripts/a.py",
         "_checkouts/old@r/skills/a/scripts/a.py",
     ]
+    missing = subprocess.run(
+        ["bash", "-c", f"{helper}\n_script x/new r b"], cwd=tmp_path, capture_output=True, text=True
+    )
+    assert missing.returncode == 1
+    assert missing.stdout == ""
+    assert "no script for b" in missing.stderr
 
 
 def test_script_runs_other_repo_skill_from_checkout(tmp_path, provenance, capsys):

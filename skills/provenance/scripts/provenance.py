@@ -22,7 +22,7 @@ from weather_skills_core.provenance import (
     validate_chain,
 )
 
-DEFAULT_REPO = "https://github.com/weather-skills/weather-skills"
+DEFAULT_REPO = "https://github.com/weather-skills/weather-skills-catalog"
 # Ref a step runs from when it recorded no commit.
 DEFAULT_REF = "main"
 # Joins whose inputs are not a repeated --input, in the order the decorator
@@ -329,11 +329,18 @@ def _with_checkout_helper(lines: list) -> list:
         "_script() {",
         '  local dir="_checkouts/${1##*/}@$2"',
         '  if [ ! -d "$dir" ]; then',
-        '    git clone -q "$1" "$dir" && git -C "$dir" checkout -q "$2"',
+        "    # A ref that won't check out must not leave the default branch behind.",
+        '    if ! { git clone -q "$1" "$dir" && git -C "$dir" checkout -q "$2"; }; then',
+        '      rm -rf "$dir"',
+        '      echo "_script: cannot check out $1 at $2" >&2',
+        "      return 1",
+        "    fi",
         "  fi",
         '  for f in "$dir"/skills/*/"$3"/scripts/*.py "$dir"/skills/"$3"/scripts/*.py; do',
         '    if [ -e "$f" ]; then echo "$f"; return; fi',
         "  done",
+        '  echo "_script: no script for $3 in $dir" >&2',
+        "  return 1",
         "}",
         "",
     ]
