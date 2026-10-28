@@ -186,9 +186,16 @@ def inspect_zarr(ds, format, max_values, skip_nan, **kwargs):
             }
         )
     data_vars = [_data_var(name, da, max_values, skip_nan) for name, da in ds.data_vars.items()]
+    # Dataset-level attrs, minus the processing history (the provenance skill reads that).
+    attrs = {str(k): str(v) for k, v in ds.attrs.items() if k != "weather_skills_history"}
 
     if format == "json":
-        print(json.dumps({"dims": dims, "coords": coords, "data_vars": data_vars}, indent=2))
+        print(
+            json.dumps(
+                {"dims": dims, "coords": coords, "data_vars": data_vars, "attrs": attrs},
+                indent=2,
+            )
+        )
         return
 
     print("Dimensions:")
@@ -223,6 +230,10 @@ def inspect_zarr(ds, format, max_values, skip_nan, **kwargs):
         )
         extra = f"  ({len(v['sample']) - 1} of {of})" if v["sample_truncated"] else ""
         print(f"    sample: {shown}{extra}")
+    if attrs:
+        print("\nAttributes:")
+        for key, val in attrs.items():
+            print(f"  {key}: {val}")
 
 
 if __name__ == "__main__":
