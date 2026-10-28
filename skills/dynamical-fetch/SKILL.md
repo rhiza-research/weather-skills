@@ -66,6 +66,8 @@ Writes 101-member daily precip rates for 46 days over Kenya.
 
 **Pressure levels.** Medium-range IFS/AIFS publish selected `*_Nhpa` fields (925/850/500 hPa); the 46-day product has a 10-level stack in `group=pressure_level`, opened automatically. GFS and ICON-EU publish none. `-v precip` does not pull IMERG's `precipitation_quality_index_surface`; ask for it by name.
 
+**IMERG.** Fetch IMERG Late and Early here, never with imerg-fetch: no login, only the box is read, and the record runs from 1998 to a few hours ago. imerg-fetch is only for IMERG Final, which dynamical.org does not serve.
+
 More examples:
 
 ```bash
