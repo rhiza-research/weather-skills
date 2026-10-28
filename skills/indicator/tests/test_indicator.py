@@ -527,3 +527,53 @@ def test_within_one_true_day_decides_an_incomplete_lookahead(tmp_path, indicator
     )  # fmt: skip
     # Spell mask is 1,1,1,0,0,nan,nan: day 0/1 see a spell; day 2 needs days 5-7.
     np.testing.assert_array_equal(_cell(out).values, [0, 0] + [np.nan] * 5)
+
+
+def test_plain_threshold_parses_as_one_step_value(indicator_mod):
+    spec = indicator_mod.parse_rule("tp > 25")
+    (clause,) = spec.clauses
+    assert (clause.variable, clause.agg, clause.op, clause.threshold) == ("tp", "value", ">", 25.0)
+    clause = indicator_mod.parse_rule("not precip <= 1 within 3d").clauses[0]
+    assert clause.negate and clause.agg == "value" and clause.within == 3
+
+
+def test_plain_threshold_weekly_probability_matches_one_week_sum(tmp_path, indicator_fn):
+    # Weekly forecast in mm day-1: 'tp > 25' compares each week's own total in mm.
+    ds = make_forecast(n_step=2, lats=(1.0,), lons=(10.0,), name="tp", members=4)
+    ds = ds.assign_coords(step=np.arange(2) * np.timedelta64(7, "D"))
+    ds["tp"].attrs.update(units="mm day-1", **{DATA_INTERVAL_ATTR: "7 day"})
+    ds["tp"].values[:, :, 0, 0] = 10.0  # 70 mm/week
+    ds["tp"].values[:, 0, 0, 0] = [1.0, 3.0, 4.0, 5.0]  # week 1: 7, 21, 28, 35 mm
+    src = write_zarr(ds, tmp_path / "fc.zarr")
+    plain, summed = tmp_path / "plain.zarr", tmp_path / "sum.zarr"
+    for out, rule in ((plain, "tp > 25"), (summed, "tp sum 1w > 25")):
+        run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", rule, "--probability")
+    assert _cell(plain, "probability").values.tolist() == pytest.approx([0.5, 1.0])
+    np.testing.assert_array_equal(
+        _cell(plain, "probability").values, _cell(summed, "probability").values
+    )
+
+
+def test_plain_threshold_daily_has_no_lookahead_note(tmp_path, indicator_fn, capsys):
+    ds = _daily(5, fill=0.0)
+    ds["precip"].values[2, 0, 0] = 30.0
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip >= 30")
+    assert _cell(out).values.tolist() == pytest.approx([0, 0, 1, 0, 0])
+    assert "cannot be decided" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "rule, hint",
+    [
+        ("list", "Examples:"),
+        ("precip consecutive-below 1 10d >= 7", "take no comparator"),
+        ("precip sum 3d >= 20 then precip sum 1d >= 1", "join with 'and' or 'or'"),
+    ],
+)
+def test_parse_errors_show_examples(indicator_mod, rule, hint):
+    with pytest.raises(UsageError) as exc:
+        indicator_mod.parse_rule(rule)
+    assert hint in str(exc.value)
+    assert "'precip > 25'" in str(exc.value)
