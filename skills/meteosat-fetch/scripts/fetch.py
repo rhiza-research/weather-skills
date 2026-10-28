@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.2",
 #   "cftime",
 #   "xarray",
 #   "zarr",
@@ -39,7 +39,7 @@ from weather_skills_core.cf import stamp_cf_attrs
 from weather_skills_core.standard_utils import is_transient
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.2"
+_SKILL_VERSION = "0.0.3"
 
 # (instrument, service) -> (Data Store collection id, sub-satellite longitude)
 _SOURCES = {
