@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads NOAA OISST v2.1 from NOAA PSL's OPeNDAP server (psl.noaa.gov) over HTTPS; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.4"
+  version: "0.0.5"
   catalog-group: fetchers
   variables:
     - sst
@@ -37,7 +37,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ### Notes
 - Days less than about 15 days old are preliminary and may be revised; nothing in the output marks them. A window ending in that span prints a stderr note.
 - Days outside the published record are left out, not filled, and stderr reports how many are missing. A window with no data exits 1.
-- The server limits request size. A too-large request exits 2 asking for a smaller `--bbox` or shorter window. A transient server error is retried once, then exits 1; retrying later may work.
+- Large and slow: windows are read in month-long blocks, about 2–3 minutes per year. For multi-decade analyses, prefer a coarser or monthly SST source.
+- Run one fetch at a time; parallel requests get throttled (429). Dropped transfers are retried twice, then exit 1.
 - The whole selection is held in memory: about 4 MB per global day.
 
 ### Example

@@ -132,9 +132,8 @@ Required names (from each skill's `metadata.openclaw.requires.env`):
 - `meteosat-fetch` — `EUMETSAT_CONSUMER_KEY`, `EUMETSAT_CONSUMER_SECRET`
 - `windborne-fetch` — `WB_CLIENT_ID`, `WB_API_KEY`
 - `3dpaws-fetch` — `CHORDS_EMAIL`, `CHORDS_API_KEY`
-- `weathernext-fetch` — `GOOGLE_APPLICATION_CREDENTIALS` (plus `GOOGLE_CLOUD_PROJECT` for the requester-pays WeatherNext 3 ensemble)
 - `cumulus-fetch` — `AZURE_STORAGE_SAS_TOKEN`
-- `neuralgcm-fetch` / `pbc-fetch` — `NEURAL_GCM_SERVICE_CREDENTIALS`
+- `neuralgcm-fetch` / `pbc-fetch` / `weathernext-fetch` — `GCLOUD_SERVICE_CREDENTIALS` (plus `GOOGLE_CLOUD_PROJECT` for the requester-pays WeatherNext 3 ensemble)
 
 `--probe-latest` still needs credentials when the probe talks to a keyed
 API (`openaq-fetch`, `tahmo-fetch`, `imerg-fetch`, `smap-fetch`, `meteosat-fetch`,

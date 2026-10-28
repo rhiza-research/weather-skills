@@ -226,3 +226,20 @@ def test_skip_nan_on_all_nan_variable(tmp_path, inspect_zarr, capsys):
     run_skill(inspect_zarr, "-i", str(src), "--skip-nan")
 
     assert "sample: (no finite values)" in capsys.readouterr().out
+
+
+def test_dataset_attrs_shown_without_history(tmp_path, inspect_zarr, capsys):
+    ds = make_gridded()
+    ds.attrs.update(climatology_start_time="1998-01-01", weather_skills_history="[]")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+
+    run_skill(inspect_zarr, "-i", str(src))
+    out = capsys.readouterr().out
+    assert "Attributes:" in out
+    assert "climatology_start_time: 1998-01-01" in out
+    assert "weather_skills_history" not in out
+
+    run_skill(inspect_zarr, "-i", str(src), "--format", "json")
+    attrs = json.loads(capsys.readouterr().out)["attrs"]
+    assert attrs["climatology_start_time"] == "1998-01-01"
+    assert "weather_skills_history" not in attrs

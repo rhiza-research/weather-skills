@@ -184,3 +184,35 @@ def test_level_units_stay_hpa(tmp_path, mod, fetch):
     got = xr.open_zarr(out, consolidated=True)
     assert got["level"].attrs["units"] == "hPa"
     assert got["level"].attrs["standard_name"] == "air_pressure"
+
+
+def test_list_variables_marks_pressure_level_fields(mod, fetch, capsys):
+    ds = _arco_ds()
+    ds["specific_humidity"] = (
+        ("level", "latitude", "longitude"),
+        np.zeros((2, ds.sizes["latitude"], ds.sizes["longitude"])),
+        {"units": "kg kg**-1", "long_name": "Specific humidity"},
+    )
+    ds = ds.assign_coords(level=[700, 850])
+    with patch.object(mod, "_open_arco", return_value=ds):
+        run_skill(fetch, "--list-variables")
+    out = capsys.readouterr().out
+    assert "  2m_temperature\tK\t2 metre temperature\n" in out
+    assert "  specific_humidity\tkg kg**-1\tSpecific humidity\tpressure levels" in out
+    assert "Pressure levels (hPa): 700, 850" in out
+
+
+def test_unknown_variable_points_to_list_variables(tmp_path, mod, fetch, capsys):
+    with patch.object(mod, "_open_arco", return_value=_arco_ds()), pytest.raises(SystemExit):
+        run_skill(
+            fetch,
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-01",
+            "-v",
+            "xx_list",
+            "-o",
+            str(tmp_path / "out.zarr"),
+        )
+    assert "--list-variables" in capsys.readouterr().err

@@ -34,7 +34,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.4"
 
 # Public GCS mirror. Object keys, one convention for every window (daily is
 # just window=1): climatologies/<dataset>_<variable>_<window>d.zarr
@@ -288,7 +288,14 @@ def fetch(
         for key in ("start_time", "end_time")
         if key in clim.attrs
     }
-    if not base_period:
+    if base_period:
+        print(
+            f"clim-fetch: the {dataset!r} mirror averaged over "
+            f"{base_period.get('climatology_start_time', '?')} to "
+            f"{base_period.get('climatology_end_time', '?')}.",
+            file=sys.stderr,
+        )
+    else:
         print(
             f"clim-fetch: the {dataset!r} mirror does not record which years it averaged over.",
             file=sys.stderr,

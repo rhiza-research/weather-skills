@@ -21,7 +21,7 @@ from weather_skills_core.standard_utils import bbox_subset, ensure_normalized_lo
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.5"
 
 _BUCKET = "sheerwater-datalake"
 _PREFIX = "pbc-data"
@@ -46,7 +46,7 @@ _DATASET_CHOICES = [*_DATASETS, *_ALIASES]
 
 _AUTH_MSG = (
     "cannot read gs://sheerwater-datalake/pbc-data (private GCS). Set "
-    "NEURAL_GCM_SERVICE_CREDENTIALS to the full service-account key JSON "
+    "GCLOUD_SERVICE_CREDENTIALS to the full service-account key JSON "
     "(no file needed), GOOGLE_APPLICATION_CREDENTIALS to a service-account "
     "JSON file path, or run `gcloud auth application-default login`."
 )
@@ -55,21 +55,19 @@ _FS = None
 
 
 def _gcs():
-    """Authenticated GCS filesystem: NEURAL_GCM_SERVICE_CREDENTIALS, then
+    """Authenticated GCS filesystem: GCLOUD_SERVICE_CREDENTIALS, then
     GOOGLE_APPLICATION_CREDENTIALS / Application Default Credentials.
     """
     global _FS
     if _FS is None:
         import gcsfs
 
-        creds_json = os.environ.get("NEURAL_GCM_SERVICE_CREDENTIALS")
+        creds_json = os.environ.get("GCLOUD_SERVICE_CREDENTIALS")
         if creds_json:
             try:
                 info = json.loads(creds_json)
             except json.JSONDecodeError as exc:
-                raise DataError(
-                    f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc})."
-                ) from None
+                raise DataError(f"GCLOUD_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
             try:
                 _FS = gcsfs.GCSFileSystem(token=info)
             except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
