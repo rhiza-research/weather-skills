@@ -92,24 +92,24 @@ _GRIDDED_STORE = "sheerwater-datalake/hindcasts/tahmo_precip.zarr"
 _GRID_STEP = 0.25
 _GRIDDED_AUTH_MSG = (
     f"cannot read gs://{_GRIDDED_STORE} (private GCS). Set "
-    "NEURAL_GCM_SERVICE_CREDENTIALS to the full service-account key JSON "
+    "GCLOUD_SERVICE_CREDENTIALS to the full service-account key JSON "
     "(no file needed), GOOGLE_APPLICATION_CREDENTIALS to a service-account "
     "JSON file path, or run `gcloud auth application-default login`."
 )
 
 
 def _gcs():
-    """Authenticated GCS filesystem: NEURAL_GCM_SERVICE_CREDENTIALS, then
+    """Authenticated GCS filesystem: GCLOUD_SERVICE_CREDENTIALS, then
     GOOGLE_APPLICATION_CREDENTIALS / Application Default Credentials.
     """
     import gcsfs
 
-    creds_json = os.environ.get("NEURAL_GCM_SERVICE_CREDENTIALS")
+    creds_json = os.environ.get("GCLOUD_SERVICE_CREDENTIALS")
     if creds_json:
         try:
             info = json.loads(creds_json)
         except json.JSONDecodeError as exc:
-            raise DataError(f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
+            raise DataError(f"GCLOUD_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
         try:
             return gcsfs.GCSFileSystem(token=info)
         except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly

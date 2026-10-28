@@ -2,7 +2,7 @@
 name: tahmo-fetch
 description: "Fetch daily TAHMO weather-station observations (rainfall, mean, max and min temperature, humidity, pressure) from the Trans-African Hydro-Meteorological Observatory network, for chosen station ids or every station in a lat/lon box, as a weather-skills station Zarr. Can also list the stations in a box, or with --gridded read Sheerwater's historical daily TAHMO rainfall grid (0.25° cell means, 2015-2025) from private GCS. Needs TAHMO credentials (station mode) or Google Cloud credentials (--gridded). Use when a task needs in-situ station data in Africa, for example to compare against gridded satellite or forecast data."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Installs the TAHMO Python SDK directly from GitHub (git+https://github.com/rhiza-research/tahmo-api) via uv script metadata. Requires TAHMO_API_USERNAME and TAHMO_API_PASSWORD in the environment. With --gridded, reads private GCS gs://sheerwater-datalake/hindcasts/tahmo_precip.zarr via gcsfs instead, and needs Google Cloud credentials: NEURAL_GCM_SERVICE_CREDENTIALS (the raw service-account key JSON), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`.
+compatibility: Requires Python 3.12 and uv. Installs the TAHMO Python SDK directly from GitHub (git+https://github.com/rhiza-research/tahmo-api) via uv script metadata. Requires TAHMO_API_USERNAME and TAHMO_API_PASSWORD in the environment. With --gridded, reads private GCS gs://sheerwater-datalake/hindcasts/tahmo_precip.zarr via gcsfs instead, and needs Google Cloud credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.6"
@@ -21,10 +21,10 @@ metadata:
         - TAHMO_API_PASSWORD
     primaryEnv: TAHMO_API_USERNAME
     envVars:
-      - name: NEURAL_GCM_SERVICE_CREDENTIALS
+      - name: GCLOUD_SERVICE_CREDENTIALS
         description: --gridded only. Full contents of a GCP service-account key JSON with read access to gs://sheerwater-datalake/hindcasts. Use this when the runtime can only inject secret values, not files.
       - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: --gridded only. Path to a GCP service-account JSON file that can read gs://sheerwater-datalake/hindcasts. Used only if NEURAL_GCM_SERVICE_CREDENTIALS is unset.
+        description: --gridded only. Path to a GCP service-account JSON file that can read gs://sheerwater-datalake/hindcasts. Used only if GCLOUD_SERVICE_CREDENTIALS is unset.
 ---
 
 # tahmo-fetch
@@ -76,7 +76,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest --gridded --start-tim
 ### Gridded history (`--gridded`)
 - Reads `gs://sheerwater-datalake/hindcasts/tahmo_precip.zarr`, Sheerwater's gold TAHMO release gridded to 0.25°. Days run 2015-03-05 to 2025-09-15 (first data 2015-03-24); the store is not updated daily, so use station mode for recent days. `--probe-latest --gridded` prints its last day with data. Cells with data span about 30°S-10°N, 24-49°E (East and Southern Africa); a `--bbox` with no such cell, or a range with no data in it, exits 1.
 - How a value is built, which differs from station mode: each station's day is the sum of its 5-minute records that passed the release QC (flag > 0.9) on that UTC calendar date, then averaged over the stations in the cell. Days with gaps in a station's record are not removed, so a station-day can undercount. The store keeps no station count or completeness per cell. When complete days matter, fetch the stations in station mode instead.
-- Credentials: `NEURAL_GCM_SERVICE_CREDENTIALS` (the key JSON itself), else `GOOGLE_APPLICATION_CREDENTIALS` or Application Default Credentials. Without access it exits 1 and says what to set. No TAHMO login is needed.
+- Credentials: `GCLOUD_SERVICE_CREDENTIALS` (the key JSON itself), else `GOOGLE_APPLICATION_CREDENTIALS` or Application Default Credentials. Without access it exits 1 and says what to set. No TAHMO login is needed.
 - stderr prints how many cells have data and how many are complete for the whole range. Never fill the NaN days.
 
 ### Example

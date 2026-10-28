@@ -688,7 +688,7 @@ def test_gridded_range_outside_store_exits_1(tmp_path, mod, fetch):
 
 def test_gridded_bad_service_account_json_exits_1(tmp_path, fetch):
     with (
-        patch.dict(os.environ, {"NEURAL_GCM_SERVICE_CREDENTIALS": "{not json"}),
+        patch.dict(os.environ, {"GCLOUD_SERVICE_CREDENTIALS": "{not json"}),
         pytest.raises(SystemExit) as exc,
     ):
         run_skill(
