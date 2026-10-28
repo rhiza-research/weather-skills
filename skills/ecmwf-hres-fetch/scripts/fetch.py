@@ -297,6 +297,18 @@ def _standardize(ds):
         if name in ds.data_vars:
             ds[name] = _to_celsius(ds[name])
     ds = precip_amounts_to_rates(ds)
+    # Without tp nothing is deaccumulated and instant fields keep their labels.
+    # On uneven leads (3- then 6-hourly) give each sample the cell [s, next
+    # lead) like the tp rates, so a day bin holds the samples labelled in that
+    # day; stamp_data_interval would infer cells ending at each step.
+    if "step" in ds.dims and "step_bounds" not in ds.coords and ds.sizes["step"] > 2:
+        import numpy as np
+
+        leads = ds["step"].values
+        if len(set(np.diff(leads))) > 1:
+            ends = np.append(leads[1:], leads[-1] + (leads[-1] - leads[-2]))
+            ds = ds.assign_coords(step_bounds=(("step", "nv"), np.stack([leads, ends], axis=1)))
+            ds["step"].attrs["bounds"] = "step_bounds"
     return stamp_data_interval(ds)
 
 

@@ -62,7 +62,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - Dims `(step, latitude, longitude)`, plus `vertical` (hPa) for pressure-level fields. Scalar `time` is the init.
 - `precip` (total precipitation) is a rate in `mm day-1` over `[step, next step)`, labelled at the interval start (`step=0` is 0–3 h). The last lead has no interval, so it is dropped — for every field when `precip` is in the request.
 - `t2m`, `d2m`, `skt`, `t` are `degree_Celsius`; `gh` is metres; other units as published.
-- 06/18 runs stamp `data_interval = 3 hour`; 00/12 runs, whose spacing changes at 144 h, get `step_bounds`. Stamped `weather_skills_source=ecmwf-hres`.
+- 06/18 runs stamp `data_interval = 3 hour`; 00/12 runs, whose spacing changes at 144 h, get `step_bounds`: each step covers `[step, next lead)`, for instant fields too, so a daily bin over `step` holds the samples labelled in that day. Stamped `weather_skills_source=ecmwf-hres`.
 
 ### Notes
 - Under load either source answers `503 Slow Down`. Each source gets one attempt, with no waiting; if every source is rate-limiting the skill exits saying so. Fetch one init at a time and try again in a few minutes.
