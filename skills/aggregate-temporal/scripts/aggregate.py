@@ -168,7 +168,7 @@ def aggregate(
         if bounds.ndim != 2 or bounds.shape[-1] != 2:
             raise UsageError(f"{bounds_name!r} must have shape ({dim}, 2) start/end")
         starts, ends = _as_ns(bounds[:, 0]), _as_ns(bounds[:, 1])
-        ds = ds.drop_vars(bounds_name)
+        ds = ds.drop_vars([bounds_name, f"{dim}_bounds"], errors="ignore")
         ds[dim].attrs = {k: v for k, v in ds[dim].attrs.items() if k != "bounds"}
     else:
         native_interval = data_interval_of(ds)
@@ -340,10 +340,10 @@ def aggregate(
                 "(--end-time is exclusive: pass the day after the last day to include).",
                 file=sys.stderr,
             )
-        floor = raw.min()
         if raw.dtype.kind == "O" and hasattr(raw.flat[0], "calendar"):
             import cftime
 
+            floor = raw.min()
             calendar = raw.flat[0].calendar
             if start_time is not None:
                 try:
@@ -364,7 +364,7 @@ def aggregate(
                     f"--end-time {end_time.isoformat()} invalid in {calendar!r}"
                 ) from None
         else:
-            floor = pd.Timestamp(floor)
+            floor = pd.to_datetime(raw).min()
             if start_time is not None:
                 floor = max(floor, pd.Timestamp(start_time))
             right = pd.Timestamp(end_time)
@@ -494,10 +494,10 @@ def aggregate(
     data_interval = native_interval if window is not None or same else agg
     cell_methods = format_cell_methods(dim, _METHOD_TO_CF[method], interval=native_interval)
     for name in out.data_vars:
-        out[name].attrs[AGGREGATION_PERIOD_ATTR] = agg
-        out[name].attrs["cell_methods"] = cell_methods
+        attrs = {**out[name].attrs, AGGREGATION_PERIOD_ATTR: agg, "cell_methods": cell_methods}
         if data_interval:
-            out[name].attrs[DATA_INTERVAL_ATTR] = data_interval
+            attrs[DATA_INTERVAL_ATTR] = data_interval
+        out[name].attrs = attrs
     return out
 
 
