@@ -89,7 +89,18 @@ def unit_convert(ds, variable, to_units, to_standard, standard_name, **kwargs):
     try:
         ureg.Unit(to_units)
     except Exception:  # noqa: BLE001 — any pint parse failure is a usage error
-        raise UsageError(f"--to-units {to_units!r} is not a recognized unit") from None
+        try:
+            scaled = ureg.Quantity(to_units).magnitude != 1
+        except Exception:  # noqa: BLE001
+            scaled = False
+        hint = ""
+        if scaled:
+            # mm/(3 day) or mm/(92 day): a unit string cannot carry a number.
+            hint = (
+                "; a unit cannot contain a number. For a total over N days, aggregate-temporal "
+                "to N-day (or seasonal) windows, then convert-to-totals"
+            )
+        raise UsageError(f"--to-units {to_units!r} is not a recognized unit{hint}") from None
     # Write the standard spelling (mm day-1, not mm/day or millimeter / day).
     out_units = next(
         (spec["units"] for spec in STANDARD.values() if units_equal(to_units, spec["units"])),
@@ -111,6 +122,13 @@ def unit_convert(ds, variable, to_units, to_standard, standard_name, **kwargs):
                 converted_da, density_converted = convert_dataarray(da, to_units)
             except UsageError as e:
                 hint = ""
+                if "delta_" in str(ureg.Unit(src_units)) and "delta_" not in str(
+                    ureg.Unit(to_units)
+                ):
+                    hint = (
+                        "; this is a temperature difference, so its targets are differences "
+                        "too: K, delta_degC or delta_degF"
+                    )
                 if {kind_from_units(src_units), kind_from_units(to_units)} == {
                     "precip",
                     "precip_amount",

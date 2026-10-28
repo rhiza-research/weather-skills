@@ -39,6 +39,7 @@ Pass exactly one of `--to-units`, `--to-standard`.
 - Mass precip (`kg m-2`, `kg m-2 s-1`) converts to depth (`mm`, `mm day-1`) with a water density of 1000 kg m-3.
 - Absolute temperatures take the offset (300 K → 26.85 °C). Temperature differences in `delta_degC` / `delta_degF` stay differences (`--to-standard` writes `delta_degC`); an absolute target such as `degC` exits 2. A difference stored in plain `K` looks absolute, so do not convert it to `degC`.
 - Rate ↔ amount (`mm day-1` ↔ `mm`) exits 2: it needs a time period, which unit conversion does not supply.
+- A unit cannot contain a number: `mm/(3 day)` or `mm/(92 day)` exits 2. For an N-day or seasonal total, aggregate-temporal to that window, then convert-to-totals.
 
 ### Example
 ```bash
