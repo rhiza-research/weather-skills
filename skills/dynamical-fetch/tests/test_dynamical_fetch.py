@@ -838,6 +838,67 @@ def test_select_valid_keeps_cells_valid_in_the_window_and_nans_the_rest(tmp_path
     assert "--select valid" in written["temperature_2m"].attrs["comment"]
 
 
+def test_select_valid_counts_end_labelled_field_from_interval_start(tmp_path, mod, fetch):
+    # Mixed with an instant field, precip keeps the catalog's end labels: its
+    # value at lead L covers [L - 1 D, L). Leads 0..3 D, value = lead in days.
+    leads = np.arange(4)
+    steps = (leads * np.timedelta64(1, "D")).astype("timedelta64[ns]")
+    precip = leads.astype(float)
+    precip[0] = np.nan
+    shape = (1, 4, 2, 2)
+    ds = xr.Dataset(
+        {
+            "precipitation_surface": (
+                ("init_time", "lead_time", "latitude", "longitude"),
+                precip[None, :, None, None] * np.ones(shape),
+                {"step_type": "avg", "units": "mm s-1"},
+            ),
+            "temperature_2m": (
+                ("init_time", "lead_time", "latitude", "longitude"),
+                leads.astype(float)[None, :, None, None] * np.ones(shape),
+                {"step_type": "instant", "units": "degree_Celsius"},
+            ),
+        },
+        coords={
+            "init_time": np.array(["2025-01-31"], dtype="datetime64[ns]"),
+            "lead_time": steps,
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    written = _fetch_windows(
+        tmp_path,
+        mod,
+        fetch,
+        ds,
+        "--start-time",
+        "2025-02-01",
+        "--end-time",
+        "2025-02-01",
+        "--select",
+        "valid",
+    )
+    point = written.isel(time=0, latitude=0, longitude=0)
+    lead_days = point["step"].values / np.timedelta64(1, "D")
+    # t2m at 2025-02-01 00 UTC is lead 1 D; the precip interval 02-01..02-02 ends at lead 2 D.
+    assert lead_days[point["temperature_2m"].notnull().values].tolist() == [1]
+    assert lead_days[point["precipitation_surface"].notnull().values].tolist() == [2]
+    assert "interval start" in written["precipitation_surface"].attrs["comment"]
+
+
+def test_init_range_reports_still_publishing_newest_init(tmp_path, mod, fetch, capsys):
+    ds = _daily_inits_forecast_ds().isel(init_time=[0, 1])
+    ds["temperature_2m"][1, 2] = np.nan
+    written = _fetch_windows(
+        tmp_path, mod, fetch, ds, "--start-time", "2025-01-30", "--end-time", "2025-01-31"
+    )
+    err = capsys.readouterr().err
+    assert "2025-01-31T00 UTC init has no data after catalog lead 48 h" in err
+    # Its last lead stays NaN; the older init keeps every lead.
+    assert written["temperature_2m"].isel(time=1, step=2).isnull().all()
+    assert written["temperature_2m"].isel(time=0).notnull().all()
+
+
 def test_forecast_date_and_range_together_exit_2(tmp_path, mod, fetch):
     with pytest.raises(SystemExit) as exc:
         _fetch_windows(

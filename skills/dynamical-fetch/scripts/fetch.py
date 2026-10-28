@@ -527,11 +527,33 @@ def fetch(
                 file=sys.stderr,
             )
             ds = ds.isel(step=slice(0, last + 1))
+        # A range of inits: the newest may still be publishing its long leads
+        # while older inits fill them, so the check above passes. Its empty
+        # leads stay NaN (not filled); say which init is short.
+        if "time" in ds.dims:
+            init_empty = np.ones((ds.sizes["time"], ds.sizes["step"]), dtype=bool)
+            for name in ds.data_vars:
+                other = [d for d in ds[name].dims if d not in ("time", "step")]
+                init_empty &= ds[name].isnull().all(other).transpose("time", "step").values
+            hours = ds["step"].values / np.timedelta64(1, "h")
+            for i, row in enumerate(init_empty):
+                init = str(ds["time"].values[i])[:13]
+                if row.all():
+                    print(f"WARNING: {dataset} {init} UTC init has no data (NaN).", file=sys.stderr)
+                elif row[-1]:
+                    print(
+                        f"WARNING: {dataset} {init} UTC init has no data after catalog lead "
+                        f"{hours[np.nonzero(~row)[0][-1]]:g} h (still publishing?); its later "
+                        "leads are NaN (not filled).",
+                        file=sys.stderr,
+                    )
+    relabelled = False
     if is_forecast and ds.sizes.get("step", 0) > 1 and len(ds.data_vars) > 0:
         first = ds.isel(step=0)
         if all(bool(first[name].isnull().all()) for name in ds.data_vars):
             leads = ds["step"].values
             ds = ds.isel(step=slice(1, None)).assign_coords(step=leads[:-1])
+            relabelled = True
             # GEFS / IFS ENS go 3- to 6-hourly. Write each cell's [start, end]
             # here: stamp_data_interval would infer bounds as if steps were ends.
             if len(set(np.diff(leads))) > 1:
@@ -562,6 +584,7 @@ def fetch(
         and leads[0] > np.timedelta64(0, "ns")
     ):
         ds = ds.assign_coords(step=np.concatenate([[np.timedelta64(0, "ns")], leads[:-1]]))
+        relabelled = True
         for name in ds.data_vars:
             note = (
                 "dynamical-fetch relabelled steps to interval start: step s covers [s, next lead)."
@@ -580,19 +603,28 @@ def fetch(
             )
             ds = ds.drop_vars(empty)
     if select == "valid":
-        # Valid time is init + step (an averaged field's step is its interval
-        # start). Cells outside every window are NaN: not selected, not filled.
-        valid = ds["time"] + ds["step"]
-        inside = xr.zeros_like(valid, dtype=bool)
-        for lo, hi in spans:
-            inside |= (valid >= lo) & (valid < hi)
-        ds = ds.where(inside).isel(time=inside.any("step").values, step=inside.any("time").values)
+        # Valid time is init + step; an averaged field counts from its interval
+        # start. Fetched with instant fields, averaged fields keep the catalog's
+        # end labels (not relabelled above), so their interval starts at the
+        # previous lead. Cells outside every window are NaN: not selected, not filled.
+        steps = ds["step"].values
+        previous = xr.DataArray(np.concatenate([steps[:1], steps[:-1]]), dims="step")
+        kept = xr.zeros_like(ds["time"] + ds["step"], dtype=bool)
         for name in ds.data_vars:
+            end_labelled = not relabelled and ds[name].attrs.get("step_type") in ("avg", "accum")
+            valid = ds["time"] + (previous if end_labelled else ds["step"])
+            inside = xr.zeros_like(kept)
+            for lo, hi in spans:
+                inside |= (valid >= lo) & (valid < hi)
+            ds[name] = ds[name].where(inside)
+            kept |= inside
+            start = "time + previous step (interval start)" if end_labelled else "time + step"
             note = (
-                "dynamical-fetch --select valid: init/step cells whose valid time "
-                f"(time + step) is outside {window_text} are NaN."
+                f"dynamical-fetch --select valid: init/step cells whose valid time ({start}) "
+                f"is outside {window_text} are NaN."
             )
             ds[name].attrs["comment"] = f"{ds[name].attrs.get('comment', '')} {note}".strip()
+        ds = ds.isel(time=kept.any("step").values, step=kept.any("time").values)
     ds = _stack_pressure_levels(ds)
 
     print(f"Fetching dynamical:{dataset} (shape={shape})", file=sys.stderr)
