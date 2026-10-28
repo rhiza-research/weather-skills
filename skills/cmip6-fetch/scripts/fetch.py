@@ -113,6 +113,16 @@ def _open_remote(state, model, experiment, variable, member, table, grid) -> dic
         except AttributeError:
             ds = xr.open_zarr(mapper, consolidated=True, use_cftime=True)
 
+        # Some stores hold their yearly files out of order (MPI-ESM1-2-HR
+        # historical runs 1915-1959, then 1895-1919, ...): sort, unless two
+        # entries share a date, which sorting cannot resolve.
+        if not ds.indexes["time"].is_monotonic_increasing:
+            if not ds.indexes["time"].is_unique:
+                raise DataError(
+                    f"the CMIP6 store {zstore} repeats time steps; refusing to pick one."
+                )
+            ds = ds.sortby("time")
+
         source_calendar = ds["time"].encoding.get("calendar")
         if source_calendar is None:
             raise DataError(
