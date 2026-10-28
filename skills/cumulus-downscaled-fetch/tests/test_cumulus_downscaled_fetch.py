@@ -1,5 +1,8 @@
 """Correctness tests for cumulus-downscaled-fetch (Azure listing and file reads mocked)."""
 
+import sys
+import types
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -57,19 +60,24 @@ def remote(fetch_mod, monkeypatch):
     """Mock Azure: listing from a fake tree; each file's value = member number + 1 (mean: 5)."""
     state = {"tree": _tree(), "read": []}
 
-    def fake_read(paths, workers):
-        state["read"].extend(paths)
-        out = []
-        for path in paths:
-            parent, name = path.rsplit("/", 1)
-            init, hours = name[:10], int(name[-7:-3])
-            member = parent.rsplit("/", 1)[-1]
-            value = int(member[7:]) + 1 if member.startswith("member_") else 5.0
-            out.append(_lead_file(init, hours, value))
-        return out
+    class FakeFS:
+        def ls(self, path, detail=False):
+            if path not in state["tree"]:
+                raise FileNotFoundError(path)
+            return [f"{path}/{name}" for name in state["tree"][path]]
 
-    monkeypatch.setattr(fetch_mod, "_ls", lambda path: sorted(state["tree"].get(path, [])))
-    monkeypatch.setattr(fetch_mod, "_read_leads", fake_read)
+        def cat_file(self, path):
+            state["read"].append(path)
+            return path.encode()
+
+    def fake_open_dataset(buf, engine):
+        parent, name = buf.getvalue().decode().rsplit("/", 1)
+        member = parent.rsplit("/", 1)[-1]
+        value = int(member[7:]) + 1 if member.startswith("member_") else 5.0
+        return _lead_file(name[:10], int(name[-7:-3]), value)
+
+    monkeypatch.setattr(fetch_mod, "_filesystem", FakeFS)
+    monkeypatch.setattr(xr, "open_dataset", fake_open_dataset)
     return state
 
 
@@ -164,7 +172,8 @@ def test_unknown_variable_exits_2(tmp_path, fetch_mod, remote):
 )
 def test_sas_token_forms(fetch_mod, monkeypatch, raw):
     monkeypatch.setenv("AZURE_STORAGE_SAS_TOKEN", raw)
-    assert fetch_mod._storage_options()["sas_token"] == "sv=1&sig=abc"
+    monkeypatch.setitem(sys.modules, "adlfs", types.SimpleNamespace(AzureBlobFileSystem=dict))
+    assert fetch_mod._filesystem()["sas_token"] == "sv=1&sig=abc"
 
 
 def test_azure_error_redacts_sas(fetch_mod):

@@ -56,8 +56,8 @@ _TP_ALIASES = {"tp", "precip", "precipitation", "total_precipitation", "precip_2
 DEFAULT_WORKERS = 16
 
 
-def _storage_options() -> dict[str, str]:
-    """adlfs options from the SAS in the env (raw query, leading ``?``, or full blob URL)."""
+def _filesystem():
+    """adlfs filesystem from the SAS in the env (raw query, leading ``?``, or full blob URL)."""
     (raw,) = require_env(
         _SAS_ENV,
         message=(
@@ -71,7 +71,9 @@ def _storage_options() -> dict[str, str]:
             f"{_SAS_ENV} is set but does not look like an Azure SAS "
             "(expected a query string containing sig=)."
         )
-    return {"account_name": _ACCOUNT, "sas_token": token}
+    import adlfs
+
+    return adlfs.AzureBlobFileSystem(account_name=_ACCOUNT, sas_token=token)
 
 
 def _azure_error(exc: Exception, what: str) -> DataError:
@@ -87,46 +89,6 @@ def _azure_error(exc: Exception, what: str) -> DataError:
     if any(s in text.lower() for s in ("401", "403", "forbidden", "authenticat", "authoriz")):
         hint = f" Check {_SAS_ENV}: it needs list and read (sp=rl) on {_ACCOUNT}/{_CONTAINER}."
     return DataError(f"{what} ({text}).{hint}")
-
-
-def _filesystem():
-    options = _storage_options()  # check the SAS before importing adlfs
-    import adlfs
-
-    return adlfs.AzureBlobFileSystem(**options)
-
-
-def _ls(path: str) -> list[str]:
-    """Child names under ``path`` (empty when it does not exist)."""
-    fs = _filesystem()
-    try:
-        paths = fs.ls(path, detail=False)
-    except FileNotFoundError:
-        return []
-    except Exception as exc:  # noqa: BLE001
-        raise _azure_error(exc, f"Azure listing failed for az://{_ACCOUNT}/{path}/") from None
-    return sorted(p.rstrip("/").rsplit("/", 1)[-1] for p in paths)
-
-
-def _read_leads(paths: list[str], workers: int):
-    """Open each lead NetCDF (one 24 h total) and return them in order."""
-    import io
-    from concurrent.futures import ThreadPoolExecutor
-
-    import xarray as xr
-
-    fs = _filesystem()
-
-    def read(path):
-        try:
-            raw = fs.cat_file(path)
-        except Exception as exc:  # noqa: BLE001
-            raise _azure_error(exc, f"failed to read az://{_ACCOUNT}/{path}") from None
-        with xr.open_dataset(io.BytesIO(raw), engine="h5netcdf") as ds:
-            return ds.load()
-
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(read, paths))
 
 
 @weather_skill(
@@ -181,11 +143,13 @@ def fetch(
     # ``az://italynorthdata/data/live_forecasts/downscaled_models/aurora/<domain>/<init>/...``
     # with the SAS in ``AZURE_STORAGE_SAS_TOKEN``, optionally subsets by
     # ``--bbox``, and returns a Dataset for the decorator to write.
+    import io
+    from concurrent.futures import ThreadPoolExecutor
+
     import numpy as np
     import xarray as xr
 
-    probe = probe_latest
-    model_folder = _MODELS.get(probe or model, probe or model)
+    model_folder = _MODELS.get(probe_latest or model, probe_latest or model)
     target_folder = _TARGETS[target]
     if workers < 1:
         raise UsageError(f"--workers must be at least 1 (got {workers}).")
@@ -194,29 +158,44 @@ def fetch(
         raise UsageError(
             f"variable(s) not in this Cumulus product: {', '.join(sorted(unknown))}.\nAvailable: tp"
         )
+    fs = _filesystem()
 
-    def checkpoints(init):
-        """Checkpoint folders under ``init`` that hold this target's output."""
-        found = []
-        for ckpt in _ls(f"{_ROOT}/{init}/{model_folder}"):
-            if target_folder in _ls(f"{_ROOT}/{init}/{model_folder}/{ckpt}"):
-                found.append(ckpt)
-        if checkpoint:
-            found = [c for c in found if checkpoint in c]
-        return found
+    def ls(path):
+        """Sorted child names under ``path`` (empty when it does not exist)."""
+        try:
+            paths = fs.ls(path, detail=False)
+        except FileNotFoundError:
+            return []
+        except Exception as exc:  # noqa: BLE001
+            raise _azure_error(exc, f"Azure listing failed for az://{_ACCOUNT}/{path}/") from None
+        return sorted(p.rstrip("/").rsplit("/", 1)[-1] for p in paths)
 
-    inits = [i for i in _ls(_ROOT) if _INIT_RE.fullmatch(i)]
+    def read(path):
+        """One lead NetCDF: the 24 h total ending at init + lead."""
+        try:
+            raw = fs.cat_file(path)
+        except Exception as exc:  # noqa: BLE001
+            raise _azure_error(exc, f"failed to read az://{_ACCOUNT}/{path}") from None
+        with xr.open_dataset(io.BytesIO(raw), engine="h5netcdf") as ds:
+            return ds["precip_24h"].squeeze("time", drop=True).load()
+
+    # Walk back from the newest init to the first whose checkpoints hold this target.
+    inits = [i for i in ls(_ROOT) if _INIT_RE.fullmatch(i)]
     if date is not None:
         inits = [i for i in inits if i == date.isoformat()]
-    # Walk back from the newest init to the first that has this model's output.
-    init = ckpts = None
+    init = None
     for candidate in reversed(inits):
-        ckpts = checkpoints(candidate)
+        model_dir = f"{_ROOT}/{candidate}/{model_folder}"
+        ckpts = [
+            c
+            for c in ls(model_dir)
+            if target_folder in ls(f"{model_dir}/{c}") and (not checkpoint or checkpoint in c)
+        ]
         if ckpts:
             init = candidate
             break
 
-    if probe is not None:
+    if probe_latest is not None:
         print(init or "none")
         return
     if init is None:
@@ -237,25 +216,22 @@ def fetch(
     data_dir = f"{_ROOT}/{init}/{model_folder}/{ckpt}/{target_folder}/precip_24h/data"
     print(f"Reading az://{_ACCOUNT}/{data_dir}/", file=sys.stderr)
 
-    if members:
-        member_dirs = [d for d in _ls(data_dir) if _MEMBER_RE.fullmatch(d)]
-        if not member_dirs:
-            raise DataError(
-                f"no member_* folders under az://{_ACCOUNT}/{data_dir}/ "
-                "(this model publishes only one field). Omit --members."
-            )
-    else:
-        member_dirs = [None]
+    member_dirs = [d for d in ls(data_dir) if _MEMBER_RE.fullmatch(d)] if members else [None]
+    if not member_dirs:
+        raise DataError(
+            f"no member_* folders under az://{_ACCOUNT}/{data_dir}/ "
+            "(this model publishes only one field). Omit --members."
+        )
 
     fields = []
     for member in member_dirs:
         folder = f"{data_dir}/{member}" if member else data_dir
-        files = [f for f in _ls(folder) if _FILE_RE.fullmatch(f)]
+        files = [f for f in ls(folder) if _FILE_RE.fullmatch(f)]
         if not files:
             raise DataError(f"no lead files under az://{_ACCOUNT}/{folder}/ (still publishing?).")
-        leads = _read_leads([f"{folder}/{f}" for f in files], workers)
-        da = xr.concat([ds["precip_24h"].squeeze("time", drop=True) for ds in leads], "step")
-        # Each file is the 24 h total ending at init + lead; label it by the period start.
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            da = xr.concat(list(pool.map(read, [f"{folder}/{f}" for f in files])), "step")
+        # Label each 24 h total by its period start (file lead minus 24 h).
         hours = [int(_FILE_RE.fullmatch(f).group(1)) for f in files]
         da = da.assign_coords(
             step=np.array(hours, dtype="timedelta64[h]") - np.timedelta64(24, "h")
@@ -268,23 +244,22 @@ def fetch(
     if members:
         numbers = [int(_MEMBER_RE.fullmatch(d).group(1)) for d in member_dirs]
         tp = xr.concat(fields, "number", join="outer").assign_coords(number=numbers)
-        tp = tp.transpose("number", "step", "latitude", "longitude")
     else:
-        tp = fields[0].transpose("step", "latitude", "longitude")
+        tp = fields[0]
     # A lead file that is not there stays NaN (never filled); steps end at the last file.
-    tp = tp.sortby("step").sortby("latitude")
     days = np.arange(int(tp["step"].max() / np.timedelta64(1, "D")) + 1)
     tp = tp.reindex(step=(days * np.timedelta64(1, "D")).astype(tp["step"].dtype))
+    tp = tp.sortby("latitude").transpose(..., "step", "latitude", "longitude")
     empty = days[tp.isnull().all([d for d in tp.dims if d != "step"]).values]
     if len(days) < 46 or len(empty):
+        gaps = (
+            f"; step(s) {', '.join(map(str, empty))} d have no file (left NaN)"
+            if len(empty)
+            else ""
+        )
         print(
-            f"WARNING: init {init} has {len(days) - len(empty)} of 46 daily leads"
-            + (
-                f"; step(s) {', '.join(map(str, empty))} d have no file (left NaN)"
-                if len(empty)
-                else ""
-            )
-            + ". Still publishing? Pass --date with an earlier init for every lead.",
+            f"WARNING: init {init} has {len(days) - len(empty)} of 46 daily leads{gaps}. "
+            "Still publishing? Pass --date with an earlier init for every lead.",
             file=sys.stderr,
         )
 
