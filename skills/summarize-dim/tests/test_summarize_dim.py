@@ -66,7 +66,7 @@ def test_sum_over_space_of_physical_units_is_refused(tmp_path, summarize_dim, ca
             "sum",
         )
     assert exc.value.code == 2
-    assert "use --method mean" in capsys.readouterr().err
+    assert "use method mean" in capsys.readouterr().err
 
 
 def _celsius(lats=(0.0, 60.0), lons=(10.0, 11.0)):
@@ -239,7 +239,7 @@ def test_sum_by_spatial_label_is_refused(tmp_path, summarize_dim, capsys):
             "sum",
         )
     assert exc.value.code == 2
-    assert "(via --by region)" in capsys.readouterr().err
+    assert "(via by region)" in capsys.readouterr().err
 
 
 def test_by_rejects_dim_coord(tmp_path, summarize_dim, capsys):
@@ -525,7 +525,7 @@ def test_sum_over_stations_is_refused(tmp_path, summarize_dim, capsys):
             "sum",
         )
     assert exc.value.code == 2
-    assert "--method sum over point_id would add up" in capsys.readouterr().err
+    assert "sum over point_id would add up" in capsys.readouterr().err
 
 
 def test_by_labels_that_never_meet_is_an_error(tmp_path, summarize_dim, capsys):
@@ -605,7 +605,7 @@ def test_weekly_steps_crossing_a_season_are_refused(tmp_path, summarize_dim, cap
             "--method",
             "sum",
         )
-    assert "runs into the next --by" in capsys.readouterr().err
+    assert "runs into the next" in capsys.readouterr().err
 
 
 def test_daily_steps_stamped_at_noon_are_kept(tmp_path, summarize_dim):
@@ -631,3 +631,94 @@ def test_daily_steps_stamped_at_noon_are_kept(tmp_path, summarize_dim):
     )
     precip = xr.open_zarr(out, consolidated=True)["precip"]
     assert precip.sel(point_id="S0", year=2020, month_group="OND").item() == 92.0
+
+
+def test_lat_weighted_mean_per_by_group(tmp_path, summarize_dim):
+    import numpy as np
+
+    ds = _labeled().assign_coords(latitude=[0.0, 60.0])
+    ds = ds.assign_coords(region=(("latitude", "longitude"), np.full((2, 3), "r")))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "region",
+        "--method",
+        "mean",
+        "--lat-weighted",
+    )
+
+    result = xr.open_zarr(out, consolidated=True)["precip"].isel(time=0)
+    # Equator row (0, 1, 2) at weight 1, 60°N row (3, 4, 5) at weight 0.5.
+    assert result.item() == pytest.approx((1 * 1 + 0.5 * 4) / 1.5)
+    assert result.attrs["units"] == "mm day-1"
+
+
+def test_quantile_by_group(tmp_path, summarize_dim):
+    import numpy as np
+
+    src = write_zarr(_labeled(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "time",
+        "--by",
+        "region",
+        "--method",
+        "quantile",
+        "--q",
+        "0.1",
+        "0.9",
+        "--q",
+        "0.5",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    precip = ds["precip"]
+    assert precip.dims == ("quantile", "region")
+    assert ds["quantile"].values.tolist() == [0.1, 0.9, 0.5]
+    values = _labeled()["precip"].values  # region a: cells (0,0), (0,1); b: row 1
+    expected = np.quantile(values[:, 0, :2], [0.1, 0.9, 0.5])
+    np.testing.assert_allclose(precip.sel(region="a").values, expected)
+    assert precip.attrs["units"] == "mm day-1"
+    assert "quantile (q: 0.1 0.9 0.5; grouped by region)" in precip.attrs["cell_methods"]
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (("--method", "quantile"), "needs q"),
+        (("--method", "mean", "--q", "0.5"), "only used with method quantile"),
+        (("--method", "quantile", "--q", "1.5"), "in [0, 1]"),
+        (
+            ("--method", "quantile", "--q", "0.5", "--lat-weighted"),
+            "weighted quantile is not supported",
+        ),
+    ],
+)
+def test_quantile_errors(tmp_path, summarize_dim, capsys, args, message):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--dim",
+            "latitude",
+            *args,
+        )
+    assert message in capsys.readouterr().err
