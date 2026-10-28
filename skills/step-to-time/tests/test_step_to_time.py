@@ -140,3 +140,47 @@ def test_noleap_init_crosses_month_end(tmp_path, step_to_time):
     run_skill(step_to_time, "-i", str(src), "-o", str(out))
     times = xr.open_zarr(out, consolidated=True, use_cftime=True)["time"].values
     assert [(t.month, t.day) for t in times] == [(2, 27), (2, 28), (3, 1)]
+
+
+def _inits_at_one_lead(inits, lead_days):
+    return xr.Dataset(
+        {"tp": (("time", "number"), np.ones((len(inits), 2)), {"units": "mm day-1"})},
+        coords={
+            "time": np.asarray(inits, dtype="datetime64[ns]"),
+            "step": np.timedelta64(lead_days, "D").astype("timedelta64[ns]"),
+            "number": [0, 1],
+        },
+    )
+
+
+def test_many_inits_at_one_lead_shift_to_valid_dates(tmp_path, step_to_time):
+    ds = _inits_at_one_lead(["2025-07-02", "2025-07-03", "2025-07-05"], 13)
+    ds = ds.assign_coords(
+        step_bounds=("nv", np.array([13, 14], dtype="timedelta64[D]").astype("timedelta64[ns]"))
+    )
+    ds["step"].attrs["bounds"] = "step_bounds"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(step_to_time, "-i", str(src), "-o", str(out))
+
+    result = xr.open_zarr(out, consolidated=True)
+    assert result["time"].values.astype("datetime64[D]").astype(str).tolist() == [
+        "2025-07-15",
+        "2025-07-16",
+        "2025-07-18",
+    ]
+    assert result["step"].values == np.timedelta64(13, "D")
+    assert result["time"].attrs.get("bounds") == "time_bounds"
+    bounds = result["time_bounds"].values.astype("datetime64[D]").astype(str)
+    assert bounds[0].tolist() == ["2025-07-15", "2025-07-16"]
+    assert np.array_equal(result["tp"].values, ds["tp"].values)
+
+
+def test_many_inits_and_many_leads_exits(tmp_path, step_to_time):
+    ds = _inits_at_one_lead(["2025-07-02", "2025-07-03"], 13)
+    ds = ds.drop_vars("step").expand_dims(step=[np.timedelta64(13, "D").astype("timedelta64[ns]")])
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(step_to_time, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
