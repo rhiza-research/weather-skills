@@ -5,7 +5,7 @@
 #   "gcsfs",
 # ]
 # ///
-"""Fetch a NeuralGCM subseasonal ensemble forecast for one init date as a weather-skills Zarr."""
+"""Fetch a NeuralGCM subseasonal ensemble forecast for one init date or a range of inits as a weather-skills Zarr."""
 
 from __future__ import annotations
 
@@ -336,7 +336,7 @@ def _select_variables(ds, variable):
     ),
 )
 def fetch(dataset, date, start_time, end_time, bbox, variable, cycle, probe_latest, **kwargs):
-    """Fetch a NeuralGCM subseasonal ensemble forecast for one init date as a weather-skills Zarr."""
+    """Fetch a NeuralGCM subseasonal ensemble forecast for one init date or a range of inits as a weather-skills Zarr."""
     # Opens a consolidated Zarr under
     # ``gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/<init>/<dataset>/``
     # with the credentials described in SKILL.md, maps dims onto the

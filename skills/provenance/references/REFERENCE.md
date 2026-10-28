@@ -28,7 +28,7 @@ Unknown keys are listed as notes and do not fail validation.
 
 ## Reproduction script
 
-- A step from the weather-skills repo (or a fork with the same name) runs as `uvx --from git+<repo>@<commit> forecasting-skills <skill> …`. With no recorded commit it runs from `dev`, which may have moved since.
+- A step from the weather-skills repo (or a fork with the same name) runs as `uvx --from git+<repo>@<commit> weather-skills <skill> …`. With no recorded commit it runs from `dev`, which may have moved since.
 - A step from another repo is cloned once per commit into `./_checkouts` and its script run with `uv run --script`.
 - Recorded args are argparse names (`time_dim`) and become flags (`--time-dim`). `True` becomes a bare flag; `False` and `None` are dropped; lists repeat the flag; a list of lists gives one flag with several values; objects are passed as JSON.
 - Inputs thread from the previous step's output. Steps with several input branches rebuild each branch first. `verify` gets `--forecast`/`--obs`, `standardize-anomaly` `--input`/`--climatology`, `point-value` `--input`/`--points`; other multi-input skills get repeated `--input`. A PNG with `forecast`/`mclimate` branches passes them as `--forecast`/`--mclimate`.

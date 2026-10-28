@@ -54,7 +54,7 @@ Fetches one WeatherNext forecast init, or every init in one or more date windows
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--version 2|3] [--product ensemble|statistics] [--date YYYY-MM-DD] [--cycle HH] [--bbox N/W/S/E] -v VAR [-v VAR ...] [--member N ...] [--statistic STAT ...] [--max-lead 72h] [--billing-project PROJECT] -o OUT.zarr
 # Every 00 UTC (or --cycle) init in a window, in one call; repeat the pair for several windows
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--version 2|3 ...] --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--start-time ... --end-time ...] [--cycle HH] --bbox N/W/S/E -v VAR --member N ... --max-lead 240h -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--version 2|3 ...] --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--start-time ... --end-time ...] [--cycle HH] --bbox N/W/S/E -v VAR [--member N ... | --statistic STAT ...] --max-lead 240h -o OUT.zarr
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--version 3 ...] --probe-latest [--cycle HH]
 ```
 
@@ -124,5 +124,5 @@ Writes WeatherNext 3 hourly mean and 90th-percentile precip over Kenya for 3 day
 - Every read downloads whole chunks, and each chunk is the full globe for one member and one 6 h lead (WeatherNext 2) or 6 h lead block (WeatherNext 3). Estimate the download as fields × members × 6 h blocks × chunk size.
 - Compressed chunk sizes, measured Oct 2026: WeatherNext 2 ~2–3.5 MB; WeatherNext 3 0.1° surface field ~19 MB. One field, 64 members, 72 h (12 blocks) is ~2 GB from WeatherNext 2 and ~15 GB from WeatherNext 3. A whole field for 15 days is ~9–13 GB (WeatherNext 2) or ~290 GB (WeatherNext 3).
 - WeatherNext 2 and WeatherNext 3 statistics are free to read. WeatherNext 3 ensemble reads are billed to `--billing-project` as GCS egress, about $0.12 per GB outside Google Cloud: ~$1.80 for the 15 GB example, ~$35 for a whole 15-day field. Say the estimate before fetching.
-- Windows multiply all of this by the number of inits: each init is its own store, read and loaded for the box, then the inits are joined (memory about inits × members × steps × box cells × 4 bytes per field, doubled while joining). With windows always pass `-v`, `--member` and `--max-lead`: WeatherNext 2, one field, 4 members to 10 days is ~0.4 GB read per init, so a month of daily inits is ~13 GB. Keep a WeatherNext 2 window to about a month at that size, and say the read estimate before fetching.
+- Windows multiply all of this by the number of inits: each init is its own store, read and loaded for the box, then the inits are joined (memory about inits × members × steps × box cells × 4 bytes per field, doubled while joining). With windows always pass `-v`, `--member` (or `--statistic` with `--product statistics`) and `--max-lead`: WeatherNext 2, one field, 4 members to 10 days is ~0.4 GB read per init, so a month of daily inits is ~13 GB. Keep a WeatherNext 2 window to about a month at that size, and say the read estimate before fetching.
 - Only the per-init realtime stores are read; the older multi-init WeatherNext 2 stores and WeatherNext 3 backfill stores are not.

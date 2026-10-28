@@ -6,7 +6,7 @@
 #   "gcsfs",
 # ]
 # ///
-"""Fetch a Google WeatherNext 2 or 3 forecast for one init date as a weather-skills Zarr."""
+"""Fetch a Google WeatherNext 2 or 3 forecast for one init date or a range of inits as a weather-skills Zarr."""
 
 from __future__ import annotations
 
@@ -754,7 +754,7 @@ def fetch(
     probe_latest,
     **kwargs,
 ):
-    """Fetch a Google WeatherNext 2 or 3 forecast for one init date as a weather-skills Zarr."""
+    """Fetch a Google WeatherNext 2 or 3 forecast for one init date or a range of inits as a weather-skills Zarr."""
     # Opens one per-init consolidated Zarr from the chosen realtime archive with
     # Google Cloud Application Default Credentials, maps dims onto the standard
     # ensemble-forecast cube (WeatherNext 3 leads flattened to one hourly

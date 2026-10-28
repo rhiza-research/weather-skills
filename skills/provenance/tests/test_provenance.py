@@ -197,12 +197,11 @@ def _script(provenance, path, capsys):
 
 
 def test_script_unpinned_step_runs_from_dev(tmp_path, provenance, capsys):
-    # The default branch names its CLI `weather-skills`; `forecasting-skills` is on dev.
     out = _stamp_history(tmp_path / "f.zarr", [_fetch("chirps-fetch")])
 
     captured = _script(provenance, out, capsys)
 
-    assert "git+https://github.com/rhiza-research/weather-skills@dev forecasting-skills" in captured
+    assert "git+https://github.com/rhiza-research/weather-skills@dev weather-skills" in captured
 
 
 def test_script_runs_other_repo_skill_from_checkout(tmp_path, provenance, capsys):
@@ -224,7 +223,7 @@ def test_script_runs_other_repo_skill_from_checkout(tmp_path, provenance, capsys
 
     assert "_checkout() {" in captured
     assert f'uv run --script "$(_checkout {repo} bbbb)"/skills/make-map/scripts/*.py' in captured
-    assert f"{repo}@bbbb forecasting-skills" not in captured
+    assert f"{repo}@bbbb weather-skills" not in captured
 
 
 def test_script_emits_structured_args(tmp_path, provenance, capsys):

@@ -5,7 +5,7 @@
 #   "adlfs",
 # ]
 # ///
-"""Fetch the Cumulus AI ensemble precipitation forecast for one init date as a weather-skills Zarr."""
+"""Fetch the Cumulus AI ensemble precipitation forecast for one init date or a range of inits as a weather-skills Zarr."""
 
 from __future__ import annotations
 
@@ -192,7 +192,7 @@ def _to_standard(ds):
     ),
 )
 def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, workers, **kwargs):
-    """Fetch the Cumulus AI ensemble precipitation forecast for one init date as a weather-skills Zarr."""
+    """Fetch the Cumulus AI ensemble precipitation forecast for one init date or a range of inits as a weather-skills Zarr."""
     # Opens the init's Zarr store
     # ``az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr/<variable>/YYYY-MM-DD-HH.zarr``
     # with the SAS in ``AZURE_STORAGE_SAS_TOKEN``, optionally subsets by

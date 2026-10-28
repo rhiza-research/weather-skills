@@ -53,7 +53,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [ID]
 - `pr`, units `1`, dims `(quintile, step, latitude, longitude)`, scalar `time` = init, and `valid_time` on `step` (first day of the valid week). With windows, `(time, step, quintile, latitude, longitude)`, one `time` per init, and `valid_time` on `(time, step)`.
 - `quintile` is `0.2, 0.4, 0.6, 0.8, 1.0`, the upper bound of each quintile; the five probabilities sum to 1. Cells with no signal hold 0.2; there are no NaNs.
 - One `step`. Global 1.5° grid (the ECMWF 1.5° points), longitude `[-180, 180)`.
-- `data_interval` `7 day`. Global attrs `weather_skills_source=sheerwater-pbc:<dataset>`, `pbc_dataset`, `pbc_folder` (`<first>..<last>` with windows).
+- `data_interval` `7 day`. Global attrs `weather_skills_source=sheerwater-pbc:<dataset>`, `pbc_dataset`, `pbc_folder` (`<first folder>..<last folder>` with windows; folder dates are the first valid day, not the init).
 
 ### Notes
 - Values are probabilities, not amounts: do not convert them to mm or totals.

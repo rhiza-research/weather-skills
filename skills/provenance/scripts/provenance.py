@@ -5,7 +5,7 @@
 #   "pillow",
 # ]
 # ///
-"""Print the processing history recorded on a Zarr or plot image as a lineage, JSON, or a script that regenerates it."""
+"""Print the processing history recorded on a Zarr, figure, GeoJSON or table as a lineage, JSON, or a script that regenerates it."""
 
 import json
 import shlex
@@ -22,7 +22,7 @@ from weather_skills_core.provenance import (
 )
 
 DEFAULT_REPO = "https://github.com/rhiza-research/weather-skills"
-DEFAULT_CLI = "forecasting-skills"
+DEFAULT_CLI = "weather-skills"
 # Ref a step runs from when it recorded no commit: the CLI above lives on dev
 # (the default branch names its CLI differently).
 DEFAULT_REF = "dev"
@@ -431,7 +431,7 @@ def _render_script(data: dict) -> None:
     help="Validate weather_skills_history schema (exit 0/1/2).",
 )
 def provenance(input, format, check, **kwargs):
-    """Print the processing history recorded on a Zarr or plot image as a lineage, JSON, or a script that regenerates it."""
+    """Print the processing history recorded on a Zarr, figure, GeoJSON or table as a lineage, JSON, or a script that regenerates it."""
     if check:
         code, report = _run_check(Path(input))
         if code == 0:

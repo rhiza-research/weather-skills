@@ -59,7 +59,7 @@ Writes 6-hour mean GFS precip rates; hourly and 3-hourly leads are weighted by t
 ## Details
 
 - Input that is already aggregated must divide evenly into the period (weekly → `14 day`, not `monthly`), else exit 2. A period shorter than the input's samples (`6 hour` on daily data, or shorter than the widest `step_bounds` cell) also exits 2. Input already at the period is only stamped, not changed.
-- Concatenated segments with gaps (e.g. one week per year) straddle `--period` windows; aggregate each segment before concatenating. `--window` handles them in one call: no window holds samples from both sides of a gap.
+- Concatenated segments with gaps (e.g. one week per year) straddle `--period` windows; aggregate each segment before concatenating. `--window` handles them in one call when the segments are further apart than the window: a window spans only its own length, so it never reaches across such a gap.
 
 **Window geometry.** Windows are half-open `[left, right)` and labeled at the left edge, on `step` and with `--end-time` alike: week 1 of a forecast initialized 2026-10-12 is `step = 0` and covers the same days as the `--end-time 2026-10-19` observation week labeled 2026-10-12.
 
