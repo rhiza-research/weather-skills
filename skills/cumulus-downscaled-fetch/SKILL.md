@@ -41,7 +41,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [MODEL]
   | `unet` | deterministic UNet | one field | 2026-10-04 |
 - `--target` — precipitation product the model was trained to reproduce: `era5` or `imerg`. Default: `era5`.
 - `--members` — fetch the individual members instead of the ensemble mean. A model with one field (`unet`) exits 1.
-- `--checkpoint` — substring of the checkpoint folder. Only needed when an init has several; otherwise the skill uses the newest and warns on stderr.
+- `--checkpoint` — substring of the checkpoint folder, e.g. `n20_cfg2`. Needed when an init has several: without it such an init exits 1 and lists them.
 - `--date` — init date. Default: the latest init with output for `--model`. A date with no output exits 1.
 - `--bbox` — `N/W/S/E` decimal degrees inside the domain. Omit for the full domain (about 50 MB per init for the mean, ten times that with `--members`).
 - `--variable`, `-v` — the product holds one field, written as `tp`. Accepts `tp`, `precip`, `precipitation`, `total_precipitation` or `precip_24h`; anything else exits 2. Optional.
@@ -57,6 +57,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [MODEL]
 
 ### Notes
 - The container is private. Set `AZURE_STORAGE_SAS_TOKEN` (a read SAS with list and read, `sp=rl`) before the first call, including `--probe-latest`. A leading `?` or a full blob URL is accepted. Never print the value. When it is not set the workspace has no Cumulus access: say so and use another forecast instead of retrying.
+- The checkpoint folder name is the downscaling setup: training run, sampler steps (`n20`, `n30`), guidance strength (`cfg2`, `cfg3`) and ensemble size (`ens10`). Different setups give visibly different patterns. The setup changes between inits, and some inits have two. stderr prints `Checkpoint:` and `weather_skills_source` records it.
+- To compare or combine several inits, fetch them all with one `--checkpoint`. If some init lacks it, do not swap in another setup silently: tell the user which inits have which checkpoint and ask whether to use a different setup for those, or decline.
 - An init still being written can lack leads: a missing lead stays NaN (never filled), steps end at the last published lead, and stderr warns. Pass an earlier `--date` for all 46 leads.
 - For the global, coarser Cumulus forecast use `cumulus-fetch`.
 
