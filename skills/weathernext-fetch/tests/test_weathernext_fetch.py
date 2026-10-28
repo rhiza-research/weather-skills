@@ -715,3 +715,148 @@ def test_filesystem_falls_back_without_credentials_json(fetch_mod, monkeypatch):
     monkeypatch.setattr(gcsfs, "GCSFileSystem", fake_gcs_filesystem)
     assert fetch_mod._filesystem(fetch_mod._resolve_product("2", None)) == "fake-fs"
     assert seen == {}
+
+
+_WINDOW_STAMPS = [
+    "20250130_00hr_01_preds",
+    "20250131_00hr_01_preds",
+    "20250201_00hr_01_preds",
+    "20250201_12hr_01_preds",
+    "20260115_00hr_01_preds",
+]
+
+
+def _mock_windows(monkeypatch, fetch_mod, *, missing=(), short=(), listed=None):
+    """Per-init v2 stores whose t2m is the init's day of month (K); ``short`` lacks leads 2+."""
+
+    def fake_list(product, billing_project=None, day=None):
+        if listed is not None:
+            listed.append(day)
+        return [s for s in _WINDOW_STAMPS if s.startswith(day or "")]
+
+    def fake_open(stamp, *args):
+        ds = _native_predictions(t2m_fill=float(stamp[6:8]))
+        init = np.datetime64(f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}T{stamp[9:11]}", "ns")
+        lead = ds["time"].values.astype("timedelta64[ns]")
+        ds = ds.assign_coords(init_time=init, datetime=("time", init + lead))
+        if stamp in short:
+            ds["2m_temperature"][:, 2:] = np.nan
+            ds["total_precipitation_6hr"][:, 2:] = np.nan
+        return ds
+
+    monkeypatch.setattr(fetch_mod, "_list_init_stamps", fake_list)
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, *args: stamp not in missing)
+    monkeypatch.setattr(fetch_mod, "_open_remote", fake_open)
+
+
+def test_init_window_keeps_00utc_inits_on_a_time_axis(tmp_path, fetch_mod, monkeypatch):
+    listed = []
+    _mock_windows(monkeypatch, fetch_mod, listed=listed)
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--start-time",
+        "2025-01-31",
+        "--end-time",
+        "2025-02-01",
+        "-v",
+        "t2m",
+        "-o",
+        str(out),
+    )
+    # One listing per month in the window.
+    assert listed == ["202501", "202502"]
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds["2m_temperature"].dims == ("time", "step", "number", "lat", "lon")
+        # 20250201_12hr is not a 00 UTC init.
+        days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+        assert days == ["2025-01-31", "2025-02-01"]
+        assert ds["valid_time"].dims == ("time", "step")
+        np.testing.assert_allclose(
+            ds["2m_temperature"].values[:, 0, 0, 0, 0], [31 - 273.15, 1 - 273.15], rtol=1e-5
+        )
+    assert load_history(out)[-1]["args"]["start_time"] == ["2025-01-31"]
+
+
+def test_repeated_init_windows_take_disjoint_inits(tmp_path, fetch_mod, monkeypatch):
+    _mock_windows(monkeypatch, fetch_mod)
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--start-time",
+        "2025-01-01",
+        "--end-time",
+        "2025-01-31",
+        "--start-time",
+        "2026-01-01",
+        "--end-time",
+        "2026-01-31",
+        "-v",
+        "tp",
+        "-o",
+        str(out),
+    )
+    with xr.open_zarr(out, consolidated=True) as ds:
+        days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+    assert days == ["2025-01-30", "2025-01-31", "2026-01-15"]
+
+
+def test_init_window_warns_on_missing_and_short_inits(tmp_path, fetch_mod, monkeypatch, capsys):
+    _mock_windows(
+        monkeypatch,
+        fetch_mod,
+        missing={"20250131_00hr_01_preds"},
+        short={"20250201_00hr_01_preds"},
+    )
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--start-time",
+        "2025-01-30",
+        "--end-time",
+        "2025-02-01",
+        "-v",
+        "t2m",
+        "-o",
+        str(out),
+    )
+    err = capsys.readouterr().err
+    assert "no complete store for init 20250131_00hr_01_preds" in err
+    assert "2025-02-01T00 UTC init has no data after step 12 h" in err
+    with xr.open_zarr(out, consolidated=True) as ds:
+        days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+        assert days == ["2025-01-30", "2025-02-01"]
+        assert ds["2m_temperature"].isel(time=1, step=slice(2, None)).isnull().all()
+        assert ds["2m_temperature"].isel(time=0).notnull().all()
+
+
+def test_date_and_init_window_together_exit_2(tmp_path, fetch_mod, monkeypatch):
+    _mock_windows(monkeypatch, fetch_mod)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch,
+            "--date",
+            "2025-01-31",
+            "--start-time",
+            "2025-01-31",
+            "--end-time",
+            "2025-02-01",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 2
+
+
+def test_init_window_with_no_init_exits_1(tmp_path, fetch_mod, monkeypatch):
+    _mock_windows(monkeypatch, fetch_mod)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch,
+            "--start-time",
+            "2024-06-01",
+            "--end-time",
+            "2024-06-30",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 1
