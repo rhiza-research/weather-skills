@@ -181,7 +181,8 @@ def fetch(
             return ds["precip_24h"].squeeze("time", drop=True).load()
 
     # Walk back from the newest init to the first that has this model.
-    inits = [i for i in ls(_ROOT) if _INIT_RE.fullmatch(i)]
+    all_inits = [i for i in ls(_ROOT) if _INIT_RE.fullmatch(i)]
+    inits = all_inits
     if date is not None:
         inits = [i for i in inits if i == date.isoformat()]
     init = None
@@ -209,7 +210,24 @@ def fetch(
             )
         )
     # Checkpoints at one init are different setups (sampler steps n20/n30,
-    # guidance cfg2/cfg3, ensemble size) with different patterns: never guess one.
+    # guidance cfg2/cfg3, ensemble size) with different patterns. Without
+    # --checkpoint, keep the one later inits carry on running.
+    if len(ckpts) > 1 and not checkpoint:
+        kept = ckpts
+        for later in (i for i in all_inits if i > init):
+            later_ckpts = ls(f"{_ROOT}/{later}/{model_folder}")
+            if later_ckpts:
+                kept = [c for c in kept if c in later_ckpts]
+                if len(kept) <= 1:
+                    break
+        if len(kept) == 1:
+            print(
+                f"WARNING: init {init} has {len(ckpts)} checkpoints for {model_folder}: "
+                f"{', '.join(ckpts)}. Using {kept[0]}, the one init {later} still "
+                "runs; pass --checkpoint to pick another.",
+                file=sys.stderr,
+            )
+            ckpts = kept
     if len(ckpts) > 1:
         raise DataError(
             f"init {init} has {len(ckpts)} checkpoints for {model_folder}"

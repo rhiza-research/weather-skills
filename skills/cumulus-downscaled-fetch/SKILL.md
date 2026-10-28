@@ -41,7 +41,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [MODEL]
   | `unet` | deterministic UNet | one field | 2026-10-04 |
 - `--target` — precipitation product the model was trained to reproduce: `era5` or `imerg`. Default: `era5`.
 - `--members` — fetch the individual members instead of the ensemble mean. A model with one field (`unet`) exits 1.
-- `--checkpoint` — substring of the checkpoint folder, e.g. `n20_cfg2`. Needed when an init has several: without it such an init exits 1 and lists them.
+- `--checkpoint` — substring of the checkpoint folder, e.g. `n20_cfg2`. When an init has several and this is omitted, the skill keeps the one later inits carry on running and warns; if that does not settle it, it exits 1 and lists them.
 - `--date` — init date. Default: the latest init with output for `--model`. A date with no output exits 1.
 - `--bbox` — `N/W/S/E` decimal degrees inside the domain. Omit for the full domain (about 50 MB per init for the mean, ten times that with `--members`).
 - `--variable`, `-v` — the product holds one field, written as `tp`. Accepts `tp`, `precip`, `precipitation`, `total_precipitation` or `precip_24h`; anything else exits 2. Optional.
