@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.2",
 #   "dynamical-catalog==1.0.1",
 #   "pandas",
 # ]
@@ -263,8 +263,12 @@ def _open_dataset(state, dataset) -> dict:
     version=_SKILL_VERSION,
 )
 @weather_skill.argument("--date")
-@weather_skill.argument("--start-time")
-@weather_skill.argument("--end-time")
+@weather_skill.argument(
+    "--start-time",
+    action="append",
+    help="Window start; repeat with --end-time for several windows (each January).",
+)
+@weather_skill.argument("--end-time", action="append", help="Window end, paired with --start-time.")
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v", action="append")
 @weather_skill.argument(
@@ -367,18 +371,19 @@ def fetch(
     if variable:
         ds = _merge_pressure_if_needed(ds, dataset, variable)
 
+    # One (start, end) pair per window; --end-time is an inclusive calendar day.
+    windows = list(zip(start_time or [], end_time or [], strict=True))
     if is_forecast:
-        if date is None:
-            raise UsageError(f"{dataset} is a forecast dataset; --date is required.")
-        if start_time is not None or end_time is not None:
+        if (date is None) == (not windows):
             raise UsageError(
-                f"{dataset} is a forecast dataset; use --date, not --start-time/--end-time."
+                f"{dataset} is a forecast dataset; pass --date for one init, or "
+                "--start-time/--end-time for a range of inits (not both)."
             )
-        date_iso = date.isoformat()
+        when = date.isoformat() if date is not None else "selected"
     else:
         if max_lead is not None:
             raise UsageError(f"{dataset} is an analysis dataset; --max-lead is for forecasts.")
-        if start_time is None or end_time is None:
+        if not windows:
             raise UsageError(
                 f"{dataset} is an analysis dataset; --start-time and --end-time are required."
             )
@@ -386,21 +391,18 @@ def fetch(
             raise UsageError(
                 f"{dataset} is an analysis dataset; use --start-time/--end-time, not --date."
             )
-        start_iso = start_time.isoformat()
-        end_iso = end_time.isoformat()
+    spans = [
+        (np.datetime64(start.isoformat()), np.datetime64(end.isoformat()) + np.timedelta64(1, "D"))
+        for start, end in windows
+    ]
+    window_text = ", ".join(f"{start}..{end}" for start, end in windows)
 
     if variable:
         ds = ds[_resolve_variables(variable, ds.data_vars, dataset)]
 
     if is_forecast:
         inits = ds["init_time"].values
-        init_target = np.datetime64(f"{date_iso}T00:00:00").astype(inits.dtype)
-
-        def _no_init() -> DataError:
-            return DataError(
-                f"{dataset} has no {date_iso} 00 UTC init; available init range is "
-                f"{np_to_date(inits.min()).isoformat()}..{np_to_date(inits.max()).isoformat()}."
-            )
+        init_range = f"{np_to_date(inits.min()).isoformat()}..{np_to_date(inits.max()).isoformat()}"
 
         if max_lead is not None:
             import pandas as pd
@@ -417,38 +419,59 @@ def fetch(
             # step below, and the extra lead is trimmed after that.
             n = int((ds["lead_time"].values <= limit).sum())
             ds = ds.isel(lead_time=slice(0, n + 1))
-        if init_target not in inits:
-            raise _no_init()
-        try:
+        if date is not None:
+            init_target = np.datetime64(f"{date.isoformat()}T00:00:00").astype(inits.dtype)
+            if init_target not in inits:
+                raise DataError(
+                    f"{dataset} has no {date.isoformat()} 00 UTC init; "
+                    f"available init range is {init_range}."
+                )
             ds = ds.sel(init_time=init_target)
-        except KeyError:
-            raise _no_init() from None
+        else:
+            # 00 UTC inits only, as with --date: the windows select init times.
+            midnight = inits == inits.astype("datetime64[D]")
+            keep = np.zeros(inits.size, dtype=bool)
+            for lo, hi in spans:
+                keep |= midnight & (inits >= lo) & (inits < hi)
+            if not keep.any():
+                raise DataError(
+                    f"{dataset} has no 00 UTC init in {window_text}; "
+                    f"available init range is {init_range}."
+                )
+            ds = ds.isel(init_time=np.nonzero(keep)[0])
+            print(f"Selected {int(keep.sum())} inits.", file=sys.stderr)
         ds = ds.drop_vars([c for c in _DROP_COORDS if c in ds.coords])
         rename = {"lead_time": "step"}
         if shape == "ensemble":
             rename["ensemble_member"] = "number"
         ds = ds.rename(rename)
-        ds = ds.assign_coords(time=ds["init_time"]).drop_vars("init_time")
+        # One init: scalar `time`. A range of inits: a `time` axis (the init).
+        ds = ds.rename({"init_time": "time"})
     else:
-        # --end-time is an inclusive calendar day: keep every sub-daily step of
-        # that day (IMERG half-hourly), not just its 00:00 instant.
-        day_end = np.datetime64(end_iso) + np.timedelta64(1, "D") - np.timedelta64(1, "ns")
-        native = ds["time"].values[:2]
-        spacing = native[1] - native[0] if len(native) > 1 else np.timedelta64(1, "D")
-        ds = ds.sel(time=slice(np.datetime64(start_iso), day_end))
-        if ds.sizes.get("time", 0) == 0:
-            raise DataError(f"{dataset} has no data in {start_iso}..{end_iso}.")
-        ds = ds.drop_vars([c for c in _DROP_COORDS if c in ds.coords])
-        # The catalog only lists published times, so a window running past the
-        # latest (or before the first) time comes back shorter. Say so; never pad.
+        # Each window keeps every sub-daily step of its end day (IMERG
+        # half-hourly), not just its 00:00 instant. Windows may overlap.
         times = ds["time"].values
-        if times[0] > np.datetime64(start_iso) or times[-1] + spacing <= day_end:
-            print(
-                f"WARNING: {dataset} covers only {str(times[0])[:16]}..{str(times[-1])[:16]} "
-                f"of the requested {start_iso}..{end_iso}; writing that partial window "
-                "(not padded).",
-                file=sys.stderr,
-            )
+        spacing = times[1] - times[0] if len(times) > 1 else np.timedelta64(1, "D")
+        keep = np.zeros(times.size, dtype=bool)
+        for (start, end), (lo, hi) in zip(windows, spans, strict=True):
+            inside = (times >= lo) & (times < hi)
+            keep |= inside
+            # The catalog only lists published times, so a window running past
+            # the latest (or before the first) time comes back shorter. Say so;
+            # never pad.
+            if not inside.any():
+                print(f"WARNING: {dataset} has no data in {start}..{end}.", file=sys.stderr)
+            elif times[inside][0] > lo or times[inside][-1] + spacing < hi:
+                print(
+                    f"WARNING: {dataset} covers only {str(times[inside][0])[:16]}.."
+                    f"{str(times[inside][-1])[:16]} of the requested {start}..{end}; "
+                    "writing that partial window (not padded).",
+                    file=sys.stderr,
+                )
+        if not keep.any():
+            raise DataError(f"{dataset} has no data in {window_text}.")
+        ds = ds.isel(time=np.nonzero(keep)[0])
+        ds = ds.drop_vars([c for c in _DROP_COORDS if c in ds.coords])
 
     # Spatial subset after the time/variable selection: an antimeridian bbox
     # concatenates two longitude wings, which reads every selected value.
@@ -472,7 +495,7 @@ def fetch(
             empty &= ds[name].isnull().all(other).values
         if empty.all():
             raise DataError(
-                f"{dataset} {date_iso} init has no data for the requested variables and "
+                f"{dataset} {when} init has no data for the requested variables and "
                 "bbox (still publishing?); try the previous day's init."
             )
         # A fresh init is still publishing its long leads (all-NaN). Drop that
@@ -481,12 +504,32 @@ def fetch(
         if last < ds.sizes["step"] - 1:
             hours = ds["step"].values / np.timedelta64(1, "h")
             print(
-                f"WARNING: {dataset} {date_iso} init has no data after catalog lead "
+                f"WARNING: {dataset} {when} init has no data after catalog lead "
                 f"{hours[last]:g} h (of {hours[-1]:g} h; still publishing?). Dropped the "
                 "empty leads (not padded); use the previous day's init for every lead.",
                 file=sys.stderr,
             )
             ds = ds.isel(step=slice(0, last + 1))
+        # A range of inits: the newest may still be publishing its long leads
+        # while older inits fill them, so the check above passes. Its empty
+        # leads stay NaN (not filled); say which init is short.
+        if "time" in ds.dims:
+            init_empty = np.ones((ds.sizes["time"], ds.sizes["step"]), dtype=bool)
+            for name in ds.data_vars:
+                other = [d for d in ds[name].dims if d not in ("time", "step")]
+                init_empty &= ds[name].isnull().all(other).transpose("time", "step").values
+            hours = ds["step"].values / np.timedelta64(1, "h")
+            for i, row in enumerate(init_empty):
+                init = str(ds["time"].values[i])[:13]
+                if row.all():
+                    print(f"WARNING: {dataset} {init} UTC init has no data (NaN).", file=sys.stderr)
+                elif row[-1]:
+                    print(
+                        f"WARNING: {dataset} {init} UTC init has no data after catalog lead "
+                        f"{hours[np.nonzero(~row)[0][-1]]:g} h (still publishing?); its later "
+                        "leads are NaN (not filled).",
+                        file=sys.stderr,
+                    )
     if is_forecast and ds.sizes.get("step", 0) > 1 and len(ds.data_vars) > 0:
         first = ds.isel(step=0)
         if all(bool(first[name].isnull().all()) for name in ds.data_vars):
@@ -508,6 +551,17 @@ def fetch(
                 "Dropped all-NaN lead 0 and relabelled steps to interval start.",
                 file=sys.stderr,
             )
+        elif not any(bool(first[name].isnull().all()) for name in ds.data_vars):
+            # Only instant fields: they keep the catalog labels. On uneven leads
+            # give each sample the cell [s, next lead) like the relabelled
+            # averages above, so a day bin holds the samples labelled in that
+            # day; stamp_data_interval would infer cells ending at each step.
+            leads = ds["step"].values
+            if len(set(np.diff(leads))) > 1:
+                ends = np.append(leads[1:], leads[-1] + (leads[-1] - leads[-2]))
+                pairs = np.stack([leads, ends], axis=1)
+                ds = ds.assign_coords(step_bounds=(("step", "nv"), pairs))
+                ds["step"].attrs["bounds"] = "step_bounds"
     # WeatherNext 2 has no lead 0: its first lead ends the first 6 h total. When
     # every field is such a total (step_type accum), relabel to interval start.
     # Small negative totals are model artifacts; the catalog says to zero them.
@@ -515,6 +569,15 @@ def fetch(
     for name in accum:
         ds[name] = ds[name].clip(min=0, keep_attrs=True)
     leads = ds["step"].values if is_forecast else None
+    # Each total covers the gap since the previous lead (from 0 for the first).
+    # Read it from the catalog leads now: --max-lead can leave a single step,
+    # and then nothing is left to infer the cell length from.
+    accum_interval = None
+    if is_forecast and accum:
+        gaps = np.diff(np.concatenate([[np.timedelta64(0, "ns")], leads]))
+        gaps = gaps[gaps > np.timedelta64(0, "ns")]
+        if len(set(gaps.tolist())) == 1:
+            accum_interval = f"{gaps[0] / np.timedelta64(1, 'h'):g} hour"
     if (
         is_forecast
         and accum
@@ -557,9 +620,14 @@ def fetch(
             out = to_standard_units(out, variables=[name])
         except UsageError:
             continue
+    # Stamp the lead spacing first: with an init window, `time` is the init axis
+    # and its 1-day gaps are not the cell length the rate conversion needs.
+    if accum_interval:
+        out = stamp_data_interval(out, period=accum_interval)
+    else:
+        out = stamp_data_interval(out, dim="step" if is_forecast else None)
     # Period totals (WeatherNext 2 6 h precip in mm) become mm day-1 rates.
-    out = precip_amounts_to_rates(out, deaccumulate=False)
-    return stamp_data_interval(out)
+    return precip_amounts_to_rates(out, deaccumulate=False)
 
 
 if __name__ == "__main__":
