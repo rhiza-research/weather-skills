@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Requires ADS_API_KEY (or a ~/.cdsapirc whose url is the ADS), free with sign-up — register at https://ads.atmosphere.copernicus.eu and copy the key from https://ads.atmosphere.copernicus.eu/profile and the eccodes library that cfgrib loads (installed with the skill on macOS and Linux). Each dataset's licence must be accepted once on the ADS website.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.2"
+  version: "0.0.3"
   catalog-group: fetchers
   variables:
     - pm25

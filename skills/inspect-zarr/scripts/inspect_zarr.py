@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.2",
 #   "pandas",
 # ]
 # ///
@@ -14,7 +14,7 @@ import numpy as np
 from weather_skills_core import Dataset, UsageError, weather_skill
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.5"
+_SKILL_VERSION = "0.0.6"
 
 # Data arrays can be huge. Stats scan the array but the printed sample never
 # exceeds this many values, even when --max-values is 0 (which still dumps
