@@ -196,19 +196,30 @@ def fetch(
         return
     if init is None:
         wanted = f"init {date.isoformat()}" if date else "any init"
+        there = ls(f"{_ROOT}/{inits[0]}/{model_folder}") if date and inits else []
         raise DataError(
             f"no Cumulus downscaled output for model {model_folder!r}"
             + (f", checkpoint matching {checkpoint!r}" if checkpoint else "")
             + f" at {wanted} under az://{_ACCOUNT}/{_ROOT}/. "
-            "Pass --probe-latest to see the latest init with output, or try another --model."
+            + (
+                f"That init has only: {', '.join(there)}. A different checkpoint is a "
+                "different setup: ask the user before using it alongside other inits."
+                if there
+                else "Pass --probe-latest to see the latest init with output, or try another --model."
+            )
         )
-    ckpt = ckpts[-1]
+    # Checkpoints at one init are different setups (sampler steps n20/n30,
+    # guidance cfg2/cfg3, ensemble size) with different patterns: never guess one.
     if len(ckpts) > 1:
-        print(
-            f"WARNING: init {init} has {len(ckpts)} checkpoints for {model_folder}: "
-            f"{', '.join(ckpts)}. Using {ckpt}; pass --checkpoint to pick another.",
-            file=sys.stderr,
+        raise DataError(
+            f"init {init} has {len(ckpts)} checkpoints for {model_folder}"
+            + (f" matching {checkpoint!r}" if checkpoint else "")
+            + f": {', '.join(ckpts)}. Pass --checkpoint with a substring that picks one. "
+            "Use the same checkpoint for every init you compare; if the inits do not "
+            "all have it, ask the user before mixing setups."
         )
+    (ckpt,) = ckpts
+    print(f"Checkpoint: {ckpt}", file=sys.stderr)
     data_dir = f"{_ROOT}/{init}/{model_folder}/{ckpt}/{target_folder}/precip_24h/data"
     print(f"Reading az://{_ACCOUNT}/{data_dir}/", file=sys.stderr)
 

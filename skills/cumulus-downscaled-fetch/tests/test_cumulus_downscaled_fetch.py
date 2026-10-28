@@ -133,14 +133,29 @@ def test_missing_interior_lead_stays_nan(tmp_path, fetch_mod, remote, capsys):
         assert values[0] == 5.0 and np.isnan(values[1]) and values[2] == 5.0
 
 
-def test_several_checkpoints_warn_and_select(tmp_path, fetch_mod, remote, capsys):
-    remote["tree"] = _tree(ckpts=("ckpt-cfg2", "ckpt-cfg3"))
-    run_skill(fetch_mod.fetch, "-o", str(tmp_path / "a.zarr"))
-    assert "pass --checkpoint" in capsys.readouterr().err
-    assert all("ckpt-cfg3" in p for p in remote["read"])
-    remote["read"].clear()
+def test_several_checkpoints_exit_1_until_one_is_picked(tmp_path, fetch_mod, remote, capsys):
+    remote["tree"] = _tree(ckpts=("ckpt-n20_cfg2", "ckpt-n20_cfg3"))
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "-o", str(tmp_path / "a.zarr"))
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "ckpt-n20_cfg2, ckpt-n20_cfg3" in err and "--checkpoint" in err
+    assert remote["read"] == []
     run_skill(fetch_mod.fetch, "--checkpoint", "cfg2", "-o", str(tmp_path / "b.zarr"))
-    assert all("ckpt-cfg2" in p for p in remote["read"])
+    assert "Checkpoint: ckpt-n20_cfg2" in capsys.readouterr().err
+    assert remote["read"] and all("ckpt-n20_cfg2" in p for p in remote["read"])
+
+
+def test_checkpoint_missing_at_date_lists_what_is_there(tmp_path, fetch_mod, remote, capsys):
+    remote["tree"] = _tree(ckpts=("ckpt-n30_cfg2",))
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch,
+            *("--date", "2026-10-27", "--checkpoint", "n20_cfg2", "-o", str(tmp_path / "x.zarr")),
+        )
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "That init has only: ckpt-n30_cfg2" in err and "ask the user" in err
 
 
 def test_bbox_subsets(tmp_path, fetch_mod, remote):
