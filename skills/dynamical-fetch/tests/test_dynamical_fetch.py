@@ -434,6 +434,32 @@ def test_accum_totals_without_lead0_relabelled_to_start_as_rates(tmp_path, mod, 
     assert float(precip.min()) == 0.0
 
 
+def test_accum_totals_in_an_init_window_divide_by_the_lead_spacing(tmp_path, mod, fetch):
+    """Daily inits of 6 h totals: rates use the 6 h cell, not the 1-day gap between inits."""
+    one = _weathernext2_like_ds().rename({"y": "latitude", "x": "longitude"})
+    ds = xr.concat([one, one.assign_coords(init_time=[np.datetime64("2026-01-02")])], "init_time")
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "ensemble"}):
+        run_skill(
+            fetch,
+            "--dataset",
+            "t",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "-v",
+            "precip",
+            "-o",
+            str(out),
+        )
+    precip = xr.open_zarr(out, consolidated=True)["total_precipitation_surface"]
+    assert precip.sizes["time"] == 2
+    assert precip.attrs["data_interval"] == "6 hour"
+    # 1.5 mm per 6 h is 6 mm day-1 for every init.
+    assert float(precip.max()) == pytest.approx(6.0)
+
+
 def test_accum_totals_keep_catalog_steps_beside_instant_fields(tmp_path, mod, fetch):
     ds = _weathernext2_like_ds().rename({"y": "latitude", "x": "longitude"})
     out = tmp_path / "out.zarr"

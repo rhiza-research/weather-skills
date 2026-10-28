@@ -600,9 +600,11 @@ def fetch(
             out = to_standard_units(out, variables=[name])
         except UsageError:
             continue
+    # Stamp the lead spacing first: with an init window, `time` is the init axis
+    # and its 1-day gaps are not the cell length the rate conversion needs.
+    out = stamp_data_interval(out, dim="step" if is_forecast else None)
     # Period totals (WeatherNext 2 6 h precip in mm) become mm day-1 rates.
-    out = precip_amounts_to_rates(out, deaccumulate=False)
-    return stamp_data_interval(out, dim="step" if is_forecast else None)
+    return precip_amounts_to_rates(out, deaccumulate=False)
 
 
 if __name__ == "__main__":
