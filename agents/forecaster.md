@@ -126,7 +126,7 @@ Required names (from each skill's `metadata.openclaw.requires.env`):
 
 - `ecmwf-fetch` — `ECMWF_DATASTORES_KEY` (ECDS fallback only)
 - `imerg-fetch` / `smap-fetch` — `EARTHDATA_USERNAME`, `EARTHDATA_PASSWORD`
-- `tahmo-fetch` — `TAHMO_API_USERNAME`, `TAHMO_API_PASSWORD`
+- `tahmo-fetch` — `TAHMO_API_USERNAME`, `TAHMO_API_PASSWORD` (station mode); `GCLOUD_SERVICE_CREDENTIALS` with `--gridded`
 - `openaq-fetch` — `OPENAQ_API_KEY`
 - `cams-fetch` — `ADS_API_KEY` (not needed for `--probe-latest`)
 - `meteosat-fetch` — `EUMETSAT_CONSUMER_KEY`, `EUMETSAT_CONSUMER_SECRET`
