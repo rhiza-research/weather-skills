@@ -183,6 +183,52 @@ def test_max_lead_parsing(mod):
             mod._parse_max_lead(bad)
 
 
+def _uneven_leads(ds):
+    """Steps 138, 141, 144, 150 h: 3-hourly, then 6-hourly like a 00Z run."""
+    import numpy as np
+
+    leads = np.array([138, 141, 144, 150], dtype="timedelta64[h]").astype("timedelta64[ns]")
+    return ds.isel(step=[0, 1, 2, 2]).assign_coords(step=leads)
+
+
+def _fetch_uneven(mod, monkeypatch, tmp_path, open_grib, variables):
+    import numpy as np
+    import xarray as xr
+
+    _fake_opendata(monkeypatch, lambda source, request, target: None)
+    monkeypatch.setattr(mod, "_open_grib", open_grib)
+    out = tmp_path / "hres.zarr"
+    args = ["--date", "2026-02-15", "--bbox", "5/34/-5/42", "-o", str(out)]
+    for name in variables:
+        args += ["-v", name]
+    run_skill(mod.fetch, *args)
+    ds = xr.open_zarr(out)
+    return ds, ds["step_bounds"].values / np.timedelta64(1, "h")
+
+
+def test_instant_fields_on_uneven_leads_get_cells_from_each_step(mod, monkeypatch, tmp_path):
+    # t2m keeps its labels: each sample owns [s, next lead), so a day bin over
+    # step holds the samples labelled in that day (not cells ending at s).
+    ds, bounds = _fetch_uneven(
+        mod, monkeypatch, tmp_path, lambda path: _uneven_leads(_grib_like_t2m()), ["t2m"]
+    )
+    assert bounds.tolist() == [[138, 141], [141, 144], [144, 150], [150, 156]]
+    assert "data_interval" not in ds["t2m"].attrs
+
+
+def test_tp_on_uneven_leads_is_labelled_at_interval_start(mod, monkeypatch, tmp_path):
+    def grib(path):
+        ds = _uneven_leads(_grib_like_t2m())
+        ds["tp"] = ds["t2m"].copy(
+            data=ds["t2m"].values * 0 + [[[0.0]], [[0.003]], [[0.006]], [[0.012]]]
+        )
+        ds["tp"].attrs = {"units": "m"}
+        return ds
+
+    _, bounds = _fetch_uneven(mod, monkeypatch, tmp_path, grib, ["tp", "t2m"])
+    assert bounds.tolist() == [[138, 141], [141, 144], [144, 150]]
+
+
 def test_slow_down_retries_are_capped_then_aws_is_tried(mod, monkeypatch, tmp_path):
     # ecmwf-opendata's default is 500 tries 120 s apart: a "503 Slow Down" from
     # data.ecmwf.int hung a chat for 30 minutes before the AWS mirror was tried.
