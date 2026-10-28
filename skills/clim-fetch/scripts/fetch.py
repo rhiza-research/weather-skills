@@ -288,7 +288,14 @@ def fetch(
         for key in ("start_time", "end_time")
         if key in clim.attrs
     }
-    if not base_period:
+    if base_period:
+        print(
+            f"clim-fetch: the {dataset!r} mirror averaged over "
+            f"{base_period.get('climatology_start_time', '?')} to "
+            f"{base_period.get('climatology_end_time', '?')}.",
+            file=sys.stderr,
+        )
+    else:
         print(
             f"clim-fetch: the {dataset!r} mirror does not record which years it averaged over.",
             file=sys.stderr,
