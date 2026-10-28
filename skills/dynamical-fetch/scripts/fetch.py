@@ -558,6 +558,15 @@ def fetch(
     for name in accum:
         ds[name] = ds[name].clip(min=0, keep_attrs=True)
     leads = ds["step"].values if is_forecast else None
+    # Each total covers the gap since the previous lead (from 0 for the first).
+    # Read it from the catalog leads now: --max-lead can leave a single step,
+    # and then nothing is left to infer the cell length from.
+    accum_interval = None
+    if is_forecast and accum:
+        gaps = np.diff(np.concatenate([[np.timedelta64(0, "ns")], leads]))
+        gaps = gaps[gaps > np.timedelta64(0, "ns")]
+        if len(set(gaps.tolist())) == 1:
+            accum_interval = f"{gaps[0] / np.timedelta64(1, 'h'):g} hour"
     if (
         is_forecast
         and accum
@@ -602,7 +611,10 @@ def fetch(
             continue
     # Stamp the lead spacing first: with an init window, `time` is the init axis
     # and its 1-day gaps are not the cell length the rate conversion needs.
-    out = stamp_data_interval(out, dim="step" if is_forecast else None)
+    if accum_interval:
+        out = stamp_data_interval(out, period=accum_interval)
+    else:
+        out = stamp_data_interval(out, dim="step" if is_forecast else None)
     # Period totals (WeatherNext 2 6 h precip in mm) become mm day-1 rates.
     return precip_amounts_to_rates(out, deaccumulate=False)
 

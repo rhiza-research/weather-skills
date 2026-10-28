@@ -460,6 +460,24 @@ def test_accum_totals_in_an_init_window_divide_by_the_lead_spacing(tmp_path, mod
     assert float(precip.max()) == pytest.approx(6.0)
 
 
+@pytest.mark.parametrize(
+    "when", [["--date", "2026-01-01"], ["--start-time", "2026-01-01", "--end-time", "2026-01-02"]]
+)
+def test_accum_totals_cut_to_one_step_keep_the_6h_cell(tmp_path, mod, fetch, when):
+    """--max-lead below the second lead leaves one step: the cell is still 6 h, not inferred."""
+    one = _weathernext2_like_ds().rename({"y": "latitude", "x": "longitude"})
+    ds = xr.concat([one, one.assign_coords(init_time=[np.datetime64("2026-01-02")])], "init_time")
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "ensemble"}):
+        run_skill(
+            fetch, "--dataset", "t", *when, "-v", "precip", "--max-lead", "0h", "-o", str(out)
+        )
+    precip = xr.open_zarr(out, consolidated=True)["total_precipitation_surface"]
+    assert precip.sizes["step"] == 1
+    assert precip.attrs["data_interval"] == "6 hour"
+    assert float(precip.max()) == pytest.approx(6.0)
+
+
 def test_accum_totals_keep_catalog_steps_beside_instant_fields(tmp_path, mod, fetch):
     ds = _weathernext2_like_ds().rename({"y": "latitude", "x": "longitude"})
     out = tmp_path / "out.zarr"
