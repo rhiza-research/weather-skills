@@ -19,7 +19,7 @@ from weather_skills_core.region import LEVELS, level_features
 from weather_skills_core.standard_dataset import detect_spatial_dims, names_for
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.2"
+_SKILL_VERSION = "0.0.3"
 
 _TIME_PARTS = ("month", "year", "dayofyear")
 _INITIALS = "JFMAMJJASOND"

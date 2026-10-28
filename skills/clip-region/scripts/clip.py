@@ -13,7 +13,7 @@ from weather_skills_core.region import lookup_region
 from weather_skills_core.standard_utils import bbox_subset, clip_by_geometry, polygon_from_geojson
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.5"
 
 
 @weather_skill(

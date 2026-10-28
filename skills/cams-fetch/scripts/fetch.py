@@ -40,7 +40,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.2"
+_SKILL_VERSION = "0.0.3"
 
 # The ADS API base URL is a fixed, public endpoint, not a secret.
 _ADS_URL = "https://ads.atmosphere.copernicus.eu/api"

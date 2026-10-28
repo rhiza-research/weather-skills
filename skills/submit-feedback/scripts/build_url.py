@@ -14,7 +14,7 @@ from urllib.parse import quote
 from weather_skills_core import DataError, UsageError, weather_skill
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.5"
 
 # Feedback goes to one of the rhiza-research skill repos: allow-listed, so the
 # caller cannot direct it elsewhere by guessing a slug.

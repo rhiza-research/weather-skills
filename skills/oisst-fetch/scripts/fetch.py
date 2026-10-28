@@ -24,7 +24,7 @@ from weather_skills_core.standard_utils import (
 from weather_skills_core.units import convert_dataarray, stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.5"
+_SKILL_VERSION = "0.0.6"
 
 _OPENDAP_URL = (
     "https://psl.noaa.gov/thredds/dodsC/Datasets/noaa.oisst.v2.highres/sst.day.mean.{year}.nc"
