@@ -745,3 +745,183 @@ def test_unknown_variable_points_to_list_variables(mod):
     with pytest.raises(Exception) as exc:
         mod._resolve_variables(["list_vars_please"], ["tp"], "x")
     assert "--list-variables" in str(exc.value)
+
+
+def _daily_inits_forecast_ds():
+    """Daily 00 UTC inits (plus one 12 UTC), daily leads 1..3 D; value = init day of month."""
+    inits = np.array(
+        ["2025-01-30", "2025-01-31", "2025-02-01", "2025-02-01T12", "2026-01-15", "2026-02-10"],
+        dtype="datetime64[ns]",
+    )
+    steps = np.array([1, 2, 3], dtype="timedelta64[D]").astype("timedelta64[ns]")
+    days = inits.astype("datetime64[D]").astype(object)
+    data = np.array([d.day for d in days], dtype=float)[:, None, None, None] * np.ones((1, 3, 2, 2))
+    return xr.Dataset(
+        {"temperature_2m": (("init_time", "lead_time", "latitude", "longitude"), data)},
+        coords={
+            "init_time": inits,
+            "lead_time": steps,
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+
+
+def _fetch_windows(tmp_path, mod, fetch, ds, *extra):
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "forecast"}):
+        run_skill(fetch, "--dataset", "t", *extra, "-o", str(out))
+    return xr.open_zarr(out, consolidated=True)
+
+
+def test_init_range_keeps_00utc_inits_on_a_time_axis(tmp_path, mod, fetch):
+    written = _fetch_windows(
+        tmp_path,
+        mod,
+        fetch,
+        _daily_inits_forecast_ds(),
+        "--start-time",
+        "2025-01-31",
+        "--end-time",
+        "2025-02-01",
+    )
+    assert written["temperature_2m"].dims[:2] == ("time", "step")
+    # 2025-02-01T12 is not a 00 UTC init.
+    assert written["time"].values.astype("datetime64[D]").astype(str).tolist() == [
+        "2025-01-31",
+        "2025-02-01",
+    ]
+    assert load_history(tmp_path / "out.zarr")[-1]["args"]["start_time"] == ["2025-01-31"]
+
+
+def test_repeated_windows_take_disjoint_inits(tmp_path, mod, fetch):
+    written = _fetch_windows(
+        tmp_path,
+        mod,
+        fetch,
+        _daily_inits_forecast_ds(),
+        "--start-time",
+        "2025-01-01",
+        "--end-time",
+        "2025-01-31",
+        "--start-time",
+        "2026-01-01",
+        "--end-time",
+        "2026-01-31",
+    )
+    days = written["time"].values.astype("datetime64[D]").astype(str).tolist()
+    assert days == ["2025-01-30", "2025-01-31", "2026-01-15"]
+
+
+def test_select_valid_keeps_cells_valid_in_the_window_and_nans_the_rest(tmp_path, mod, fetch):
+    written = _fetch_windows(
+        tmp_path,
+        mod,
+        fetch,
+        _daily_inits_forecast_ds(),
+        "--start-time",
+        "2025-02-02",
+        "--end-time",
+        "2025-02-02",
+        "--select",
+        "valid",
+    )
+    days = written["time"].values.astype("datetime64[D]").astype(str).tolist()
+    # Valid 2025-02-02 = init 01-30 + 3 D, 01-31 + 2 D, 02-01 + 1 D.
+    assert days == ["2025-01-30", "2025-01-31", "2025-02-01"]
+    steps = (written["step"].values / np.timedelta64(1, "D")).tolist()
+    assert steps == [1, 2, 3]
+    value = written["temperature_2m"].isel(latitude=0, longitude=0).values
+    expected = np.full((3, 3), np.nan)
+    expected[0, 2], expected[1, 1], expected[2, 0] = 30, 31, 1
+    np.testing.assert_array_equal(value, expected)
+    assert "--select valid" in written["temperature_2m"].attrs["comment"]
+
+
+def test_forecast_date_and_range_together_exit_2(tmp_path, mod, fetch):
+    with pytest.raises(SystemExit) as exc:
+        _fetch_windows(
+            tmp_path,
+            mod,
+            fetch,
+            _daily_inits_forecast_ds(),
+            "--date",
+            "2025-01-31",
+            "--start-time",
+            "2025-01-31",
+            "--end-time",
+            "2025-02-01",
+        )
+    assert exc.value.code == 2
+
+
+def test_forecast_range_with_no_init_is_data_error(tmp_path, mod, fetch):
+    with pytest.raises(SystemExit) as exc:
+        _fetch_windows(
+            tmp_path,
+            mod,
+            fetch,
+            _daily_inits_forecast_ds(),
+            "--start-time",
+            "2024-06-01",
+            "--end-time",
+            "2024-06-30",
+        )
+    assert exc.value.code == 1
+
+
+def test_analysis_repeated_windows_take_each_window(tmp_path, mod, fetch):
+    times = np.arange(
+        np.datetime64("2024-12-30"), np.datetime64("2026-01-03"), np.timedelta64(1, "D")
+    ).astype("datetime64[ns]")
+    ds = xr.Dataset(
+        {
+            "precipitation_surface": (
+                ("time", "latitude", "longitude"),
+                np.ones((times.size, 2, 2)),
+                {"units": "mm day-1"},
+            )
+        },
+        coords={"time": times, "latitude": [1.0, 2.0], "longitude": [10.0, 11.0]},
+    )
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "analysis"}):
+        run_skill(
+            fetch,
+            "--dataset",
+            "a",
+            "--start-time",
+            "2025-01-01",
+            "--end-time",
+            "2025-01-02",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-05",
+            "-o",
+            str(out),
+        )
+    days = xr.open_zarr(out)["time"].values.astype("datetime64[D]").astype(str).tolist()
+    # The second window runs past the data: kept as far as it goes, not padded.
+    assert days == ["2025-01-01", "2025-01-02", "2026-01-01", "2026-01-02"]
+
+
+def test_analysis_rejects_select_valid(tmp_path, mod, fetch):
+    with patch.object(
+        mod, "_open_dataset", return_value={"ds": _imerg_like_analysis_ds(), "shape": "analysis"}
+    ):
+        with pytest.raises(SystemExit) as exc:
+            run_skill(
+                fetch,
+                "--dataset",
+                "a",
+                "--start-time",
+                "2026-01-01",
+                "--end-time",
+                "2026-01-01",
+                "--select",
+                "valid",
+                "-o",
+                str(tmp_path / "out.zarr"),
+            )
+    assert exc.value.code == 2

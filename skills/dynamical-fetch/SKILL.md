@@ -23,23 +23,28 @@ Fetches one dataset from the [dynamical.org catalog](https://dynamical.org/catal
 ```bash
 # Forecast: one 00 UTC init
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --date YYYY-MM-DD [--bbox N/W/S/E] [--max-lead 240h] -v VAR [-v VAR ...] -o OUT.zarr
+# Forecast: every 00 UTC init in a window, or every init/lead valid in it (--select valid), in one call
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--select init|valid] [--bbox N/W/S/E] [--max-lead 240h] -v VAR -o OUT.zarr
 # Analysis: inclusive date range
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--bbox N/W/S/E] -v VAR -o OUT.zarr
+# Several windows (forecast or analysis): repeat the pair, e.g. each January
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --start-time 2024-01-01 --end-time 2024-01-31 --start-time 2025-01-01 --end-time 2025-01-31 -v VAR -o OUT.zarr
 # Latest init or analysis day (no download)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest ID
 # A dataset's variables, units and pressure levels (no download)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --list-variables
 ```
 
-**Forecast ids** (use `--date`): `noaa-gefs-forecast-35-day` (31 members), `ecmwf-ifs-ens-forecast-15-day-0-25-degree` (51), `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` (101), `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` (101), `ecmwf-aifs-ens-forecast` (51), `google-weathernext2-forecast-operational-virtual` (64, inits from 2025), `google-weathernext2-forecast-historical-virtual` (64, inits 2022–2024), `noaa-gfs-forecast`, `ecmwf-aifs-single-forecast`, `dwd-icon-eu-forecast-5-day` (Europe).
+**Forecast ids** (use `--date`, or `--start-time`/`--end-time` for many inits): `noaa-gefs-forecast-35-day` (31 members), `ecmwf-ifs-ens-forecast-15-day-0-25-degree` (51), `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` (101), `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` (101), `ecmwf-aifs-ens-forecast` (51), `google-weathernext2-forecast-operational-virtual` (64, inits from 2025), `google-weathernext2-forecast-historical-virtual` (64, inits 2022–2024), `noaa-gfs-forecast`, `ecmwf-aifs-single-forecast`, `dwd-icon-eu-forecast-5-day` (Europe).
 **Analysis ids** (use `--start-time`/`--end-time`): `noaa-gfs-analysis`, `noaa-gefs-analysis`, `noaa-mrms-conus-analysis-hourly` (CONUS), `nasa-imerg-analysis-early`, `nasa-imerg-analysis-late`, `ucsb-chc-chirps-analysis-final`, `ucsb-chc-chirps-analysis-preliminary` (land, 60°S–60°N).
 HRRR ids are rejected (projected grid).
 
 ### Arguments
 - `--dataset` — catalog id from the lists above.
 - `--date` — forecast init date; selects the 00 UTC init.
+- `--start-time`, `--end-time` — a window; `--end-time` includes the whole end day (half-hourly IMERG for one day is 48 steps). Repeat the pair for several windows, one window per pair. Analyses keep the times in the windows. Forecasts take every 00 UTC init in them (or see `--select`); use this instead of one `--date` call per init.
+- `--select` — forecasts with windows: `init` (default) picks inits in the windows; `valid` picks every init and lead whose valid time (`time + step`) is in them, and leaves the other init/lead cells NaN.
 - `--max-lead` — forecasts only: keep output steps up to this one (`240h`, `10D`). Default: every step.
-- `--start-time`, `--end-time` — analysis range; `--end-time` includes the whole end day (half-hourly IMERG for one day is 48 steps).
 - `--bbox` — `N/W/S/E`, longitudes −180..180; W > E crosses the antimeridian. Omit for the full grid.
 - `--variable`, `-v` — catalog variable name; repeat for several. Aliases: `precip`/`tp`/`pr` → `precipitation_surface`; `sst` → `sea_surface_temperature`; `t2m` → `temperature_2m` (or 46-day `average_temperature_2m`); `msl` → `pressure_reduced_to_mean_sea_level`; `sp` → `pressure_surface`; `u10`/`v10`/`u100`/`v100` → `wind_u_10m`/`wind_v_10m`/`wind_u_100m`/`wind_v_100m`; `t`/`gh`/`u`/`v`/`w`/`q` → every pressure level of that field. An unknown name exits and lists `Available:`. Omitting `-v` fetches every field.
 - `--probe-latest [ID]` — print the latest init or analysis date and exit. stderr notes a forecast init whose last lead is not published yet; a sub-daily analysis's latest day is partial (stderr says so).
@@ -47,7 +52,7 @@ HRRR ids are rejected (projected grid).
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- Forecasts: `(step, [number,] latitude, longitude)` with scalar `time` = init. Analyses: `(time, latitude, longitude)`. Pressure fields add `vertical` (hPa).
+- Forecasts: `(step, [number,] latitude, longitude)` with scalar `time` = init; with windows, `(time, step, [number,] latitude, longitude)`, one `time` per init. Analyses: `(time, latitude, longitude)`. Pressure fields add `vertical` (hPa).
 - Precip in `mm day-1`, air temperature in `degree_Celsius`, other units as published. Longitude is `[-180, 180)`.
 - Requested windows or leads past what is published are written as available, with a `WARNING` on stderr; nothing is padded. No data at all exits 1.
 
@@ -74,6 +79,9 @@ More examples:
 # IMERG Late, 30 days
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset nasa-imerg-analysis-late \
   --start-time 2026-09-14 --end-time 2026-10-13 --bbox 5.5/33.5/-5/42.5 -v precip -o imerg_kenya.zarr
+# AIFS forecasts valid over one year, leads to 14 days: one call, every init that reaches the window
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-aifs-ens-forecast --select valid \
+  --start-time 2025-07-16 --end-time 2026-07-15 --bbox 0.3/129.4/-2.4/131.65 -v precip --max-lead 14D18h -o aifs_year.zarr
 # IFS-ENS 850/925 hPa temperature, stacked on vertical
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-15-day-0-25-degree \
   --date 2026-10-12 --bbox 5.5/33.5/-5/42.5 -v t -o ifs_t_kenya.zarr
