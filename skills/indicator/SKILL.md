@@ -32,7 +32,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 - Aliases: `icpac-onset` = `precip sum 3d >= 20 and not precip consecutive-below 1 7d within 21d`; `chc-onset` = `precip sum 10d > 25 and precip sum 20d > 20 after 10d`.
 
 ### Arguments
-- `--input`, `-i` — daily or weekly Zarr on `time` or `step`.
+- `--input`, `-i` — daily or weekly Zarr on `time` or `step`. A single selected step or date (a scalar `step` or `time`, e.g. week 2 only) works when `data_interval` is stamped.
 - `--output`, `-o` — output Zarr.
 - `--rule` — alias or clause string. Required.
 - `--variable`, `-v` — use this variable in every clause instead of the one written in the rule.

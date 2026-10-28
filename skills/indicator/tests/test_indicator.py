@@ -577,3 +577,40 @@ def test_parse_errors_show_examples(indicator_mod, rule, hint):
         indicator_mod.parse_rule(rule)
     assert hint in str(exc.value)
     assert "'precip > 25'" in str(exc.value)
+
+
+@pytest.mark.parametrize("rule", ["tp > 25 > 3", "precip sum 3d >= 20 >= 5"])
+def test_extra_comparator_hint_only_for_consecutive(indicator_mod, rule):
+    with pytest.raises(UsageError) as exc:
+        indicator_mod.parse_rule(rule)
+    assert "unexpected '>" in str(exc.value)
+    assert "take no comparator" not in str(exc.value)
+
+
+def _weekly_forecast():
+    ds = make_forecast(n_step=3, lats=(1.0,), lons=(10.0,), name="tp", members=4)
+    ds = ds.assign_coords(step=np.arange(3) * np.timedelta64(7, "D"))
+    ds["tp"].attrs.update(units="mm day-1", **{DATA_INTERVAL_ATTR: "7 day"})
+    ds["tp"].values[:, 1, 0, 0] = [1.0, 3.0, 4.0, 5.0]  # week 2: 7, 21, 28, 35 mm
+    return ds
+
+
+def test_single_selected_week_probability(tmp_path, indicator_fn):
+    # 'select --dim step' leaves step as a scalar coord; one week is still a valid axis.
+    src = write_zarr(_weekly_forecast().isel(step=1), tmp_path / "wk2.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "tp > 25", "--probability")
+    prob = _cell(out, "probability")
+    assert "step" not in prob.dims
+    assert prob.step.values == np.timedelta64(7, "D")
+    assert float(prob) == pytest.approx(0.5)
+
+
+def test_single_selected_week_needs_data_interval(tmp_path, indicator_fn, capsys):
+    ds = _weekly_forecast().isel(step=1)
+    del ds["tp"].attrs[DATA_INTERVAL_ATTR]
+    src = write_zarr(ds, tmp_path / "wk2.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(indicator_fn, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--rule", "tp > 25")
+    assert exc.value.code == 2
+    assert "data_interval" in capsys.readouterr().err

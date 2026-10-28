@@ -153,7 +153,7 @@ def _parse_clause(text: str, source: str) -> Clause:
             raise UsageError(
                 f"threshold {tokens[i + 1]!r} in --rule {source!r} is not a number"
             ) from exc
-        after, within = _parse_tail(tokens, i + 2, text, source)
+        after, within = _parse_tail(tokens, i + 2, text, source, "value")
         return Clause(
             negate=negate,
             variable=variable,
@@ -213,7 +213,7 @@ def _parse_clause(text: str, source: str) -> Clause:
             ) from exc
         i += 1
 
-    after, within = _parse_tail(tokens, i, text, source)
+    after, within = _parse_tail(tokens, i, text, source, agg)
     return Clause(
         negate=negate,
         variable=variable,
@@ -227,7 +227,7 @@ def _parse_clause(text: str, source: str) -> Clause:
     )
 
 
-def _parse_tail(tokens: list[str], i: int, text: str, source: str):
+def _parse_tail(tokens: list[str], i: int, text: str, source: str, agg: str):
     """Parse the optional ``after Nd`` / ``within Nd`` qualifiers from ``tokens[i:]``."""
     after = None
     within = None
@@ -235,7 +235,7 @@ def _parse_tail(tokens: list[str], i: int, text: str, source: str):
         tag = tokens[i]
         if tag not in ("after", "within"):
             hint = ""
-            if tag in _OPS:
+            if tag in _OPS and agg in _CONSEC:
                 hint = (
                     " consecutive-above/-below take no comparator: they are true when every "
                     "step in the window is above/below the daily threshold. For 'at least N "
@@ -476,8 +476,9 @@ def _probability(mask: xr.DataArray) -> xr.DataArray:
 
 
 def _axis(ds, time_dim: str | None) -> str:
+    """Axis to evaluate along: a dim, or a scalar coord left by selecting one step or date."""
     if time_dim:
-        if time_dim not in ds.dims:
+        if time_dim not in ds.dims and not (time_dim in ds.coords and ds[time_dim].ndim == 0):
             raise UsageError(f"--time-dim {time_dim!r} not in dataset dims {list(ds.dims)}")
         return time_dim
     if "time" in ds.dims and ds.sizes["time"] > 1:
@@ -486,6 +487,9 @@ def _axis(ds, time_dim: str | None) -> str:
         return "step"
     if "time" in ds.dims:
         return "time"
+    for name in ("step", "time"):
+        if name in ds.coords and ds[name].ndim == 0:
+            return name
     raise UsageError(
         "could not identify a daily time or step dim; pass --time-dim. "
         f"Available dims: {list(ds.dims)}"
@@ -545,6 +549,10 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **k
     """Apply a yes/no weather rule to each day or week of a Zarr, optionally reduced to an onset date or a probability."""
     spec = parse_rule(rule)
     dim = _axis(ds, time_dim)
+    # One selected step or date (e.g. week 2 only): evaluate it as a length-1 axis.
+    scalar_axis = dim not in ds.dims
+    if scalar_axis:
+        ds = ds.expand_dims(dim)
     step_days = _step_days(ds, dim)
     # Thresholds are in standard units: air temperature in degree_Celsius, precip
     # in mm per step (a rate in any units times the step; daily mm day-1 is unchanged).
@@ -557,6 +565,8 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **k
     out = apply_reductions(
         mask, dim, cumulative=bool(cumulative), detect=detect, probability=bool(probability)
     )
+    if scalar_axis and dim in out.dims:
+        out = out.squeeze(dim)  # back to a scalar coord, as in the input
     payload = json.dumps(spec.to_json(), default=str)
     for name in out.data_vars:
         attrs = dict(out[name].attrs)
