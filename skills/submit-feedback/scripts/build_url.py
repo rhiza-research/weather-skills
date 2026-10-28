@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.2",
 # ]
 # ///
 """Turn a title and body into a prefilled GitHub new-issue link for filing feedback."""
@@ -23,7 +23,7 @@ REPOS = (
     "weather-skills",
     "chc-skills",
     "weather-skills-plotting",
-    "weather-skills-core",
+    "weather-skills-core>=0.3.2",
 )
 DEFAULT_REPO = "weather-skills"
 

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.2",
 # ]
 # ///
 """Combine the variables of two or more Zarrs into one dataset on their shared coordinates."""
