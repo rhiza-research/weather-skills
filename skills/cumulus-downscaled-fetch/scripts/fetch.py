@@ -203,8 +203,8 @@ def fetch(
             + (f", checkpoint matching {checkpoint!r}" if checkpoint else "")
             + f" at {wanted} under az://{_ACCOUNT}/{_ROOT}/. "
             + (
-                f"That init has only: {', '.join(there)}. A different checkpoint is a "
-                "different setup: ask the user before using it alongside other inits."
+                f"That init has only: {', '.join(there)}. Pass --checkpoint matching one of "
+                "those; it is a different setup, so say so when comparing it with other inits."
                 if there
                 else "Pass --probe-latest to see the latest init with output, or try another --model."
             )
@@ -232,12 +232,22 @@ def fetch(
         raise DataError(
             f"init {init} has {len(ckpts)} checkpoints for {model_folder}"
             + (f" matching {checkpoint!r}" if checkpoint else "")
-            + f": {', '.join(ckpts)}. Pass --checkpoint with a substring that picks one. "
-            "Use the same checkpoint for every init you compare; if the inits do not "
-            "all have it, ask the user before mixing setups."
+            + f": {', '.join(ckpts)}. Pass --checkpoint with a substring that picks one."
         )
     (ckpt,) = ckpts
     print(f"Checkpoint: {ckpt}", file=sys.stderr)
+    # Comparing setups is allowed, but say when this init is not on the live one.
+    for newest in reversed(all_inits):
+        newest_ckpts = ls(f"{_ROOT}/{newest}/{model_folder}")
+        if newest_ckpts:
+            break
+    if ckpt not in newest_ckpts:
+        print(
+            f"WARNING: checkpoint {ckpt} differs from the one the latest init {newest} runs "
+            f"({', '.join(newest_ckpts)}): a different downscaling setup. Say so when "
+            "comparing this init with later ones.",
+            file=sys.stderr,
+        )
     data_dir = f"{_ROOT}/{init}/{model_folder}/{ckpt}/{target_folder}/precip_24h/data"
     print(f"Reading az://{_ACCOUNT}/{data_dir}/", file=sys.stderr)
 

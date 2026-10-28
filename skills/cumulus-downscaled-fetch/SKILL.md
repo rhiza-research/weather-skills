@@ -57,8 +57,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [MODEL]
 
 ### Notes
 - The container is private. Set `AZURE_STORAGE_SAS_TOKEN` (a read SAS with list and read, `sp=rl`) before the first call, including `--probe-latest`. A leading `?` or a full blob URL is accepted. Never print the value. When it is not set the workspace has no Cumulus access: say so and use another forecast instead of retrying.
-- The checkpoint folder name is the downscaling setup: training run, sampler steps (`n20`, `n30`), guidance strength (`cfg2`, `cfg3`) and ensemble size (`ens10`). Different setups give visibly different patterns. The setup changes between inits, and some inits have two. stderr prints `Checkpoint:` and `weather_skills_source` records it.
-- To compare or combine several inits, fetch them all with one `--checkpoint`. If some init lacks it, do not swap in another setup silently: tell the user which inits have which checkpoint and ask whether to use a different setup for those, or decline.
+- The model and checkpoint folder names are the downscaling setup; any change in them is a change in setup. The live pipeline moves to better checkpoints over time and keeps older ones running for evaluation, so some inits have several. `cfg` (guidance weighting: `cfg2`, `cfg3`) changes the patterns visibly, and `cfg2` is the live one; sampler steps (`n20`, `n30`) are close enough to compare. stderr prints `Checkpoint:`, and `weather_skills_source` records it.
+- When the checkpoint differs from the one the latest init runs, stderr warns. Comparing inits across setups is fine (it can even show the effect of a setup), but tell the user which inits used which checkpoint. For a consistent multi-init dataset, pass one `--checkpoint` for every init.
 - An init still being written can lack leads: a missing lead stays NaN (never filled), steps end at the last published lead, and stderr warns. Pass an earlier `--date` for all 46 leads.
 - For the global, coarser Cumulus forecast use `cumulus-fetch`.
 
