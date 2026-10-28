@@ -38,7 +38,7 @@ The bucket is private. Set one of, in order of precedence: `GCLOUD_SERVICE_CREDE
 
 ### Arguments
 - `--dataset` — product under each init. Default: `imerg:precip` (alias `precip`) → `tp`. `era5:surface` (alias `surface`) → `t2m`, `d2m`.
-- `--date` — init date. Default: the latest init that has `--dataset`. A missing init exits 1; nothing is substituted.
+- `--date` — init date. Default: the latest init that has `--dataset`. A missing init exits 1 and lists the nearest published inits; nothing is substituted. Pick one of those rather than trying other dates.
 - `--cycle` — init hour UTC: `00` or `12`. Default: `00` with `--date`, otherwise the newest cycle.
 - `--bbox` — `N/W/S/E` decimal degrees; negative longitudes work. Default: the full global grid.
 - `--variable`, `-v` — one field per flag; repeat for several. Default: every field in the product. Aliases: `tp`/`precip`/`pr`/`total_precipitation`, `t2m`/`2m_temperature`, `d2m`/`2m_dewpoint_temperature`. A name not in the product exits and lists `Available:`.

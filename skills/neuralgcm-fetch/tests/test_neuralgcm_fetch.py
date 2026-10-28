@@ -202,17 +202,24 @@ def test_unknown_variable_exits_2(tmp_path, fetch_mod, monkeypatch):
     assert exc.value.code == 2
 
 
-def test_missing_date_exits_1(tmp_path, fetch_mod, monkeypatch):
+def test_missing_date_exits_1(tmp_path, fetch_mod, monkeypatch, capsys):
     monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, dataset: False)
+    stamps = ["20260904T00", "20260907T00", "20260907T12", "20260911T00", "20260914T12"]
+    monkeypatch.setattr(fetch_mod, "_list_init_stamps", lambda: stamps)
     with pytest.raises(SystemExit) as exc:
         run_skill(
             fetch_mod.fetch,
             "--date",
-            "2020-01-01",
+            "2026-09-08",
             "-o",
             str(tmp_path / "unused.zarr"),
         )
     assert exc.value.code == 1
+    # One failed --date lists the inits around it, so the model need not guess again.
+    assert (
+        "Nearest published inits: 2026-09-04 00Z, 2026-09-07 00Z, 2026-09-07 12Z, "
+        "2026-09-11 00Z, 2026-09-14 12Z (5 inits from 2026-09-04 to 2026-09-14)"
+    ) in capsys.readouterr().err
 
 
 def test_filesystem_uses_credentials_json_when_set(fetch_mod, monkeypatch):
