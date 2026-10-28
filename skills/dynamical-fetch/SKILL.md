@@ -23,8 +23,8 @@ Fetches one dataset from the [dynamical.org catalog](https://dynamical.org/catal
 ```bash
 # Forecast: one 00 UTC init
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --date YYYY-MM-DD [--bbox N/W/S/E] [--max-lead 240h] -v VAR [-v VAR ...] -o OUT.zarr
-# Forecast: every 00 UTC init in a window, or every init/lead valid in it (--select valid), in one call
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--select init|valid] [--bbox N/W/S/E] [--max-lead 240h] -v VAR -o OUT.zarr
+# Forecast: every 00 UTC init in a window, in one call
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--bbox N/W/S/E] [--max-lead 240h] -v VAR -o OUT.zarr
 # Analysis: inclusive date range
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--bbox N/W/S/E] -v VAR -o OUT.zarr
 # Several windows (forecast or analysis): repeat the pair, e.g. each January
@@ -42,8 +42,7 @@ HRRR ids are rejected (projected grid).
 ### Arguments
 - `--dataset` — catalog id from the lists above.
 - `--date` — forecast init date; selects the 00 UTC init.
-- `--start-time`, `--end-time` — a window; `--end-time` includes the whole end day (half-hourly IMERG for one day is 48 steps). Repeat the pair for several windows, one window per pair. Analyses keep the times in the windows. Forecasts take every 00 UTC init in them (or see `--select`); use this instead of one `--date` call per init.
-- `--select` — forecasts with windows: `init` (default) picks inits in the windows; `valid` picks every init and lead whose valid time (`time + step`) is in them, and leaves the other init/lead cells NaN. An interval field (average, total, max or min) counts from its interval start, including when fetched with instant fields (then its own previous lead). A range of inits ending today warns when the newest init is still publishing; its missing leads stay NaN.
+- `--start-time`, `--end-time` — a window; `--end-time` includes the whole end day (half-hourly IMERG for one day is 48 steps). Repeat the pair for several windows, one window per pair. Analyses keep the times in the windows. Forecasts take every 00 UTC init in them with all their leads: like `--date`, the windows select init times, not valid times. Use this instead of one `--date` call per init. A range of inits ending today warns when the newest init is still publishing; its missing leads stay NaN.
 - `--max-lead` — forecasts only: keep output steps up to this one (`240h`, `10D`). Default: every step.
 - `--bbox` — `N/W/S/E`, longitudes −180..180; W > E crosses the antimeridian. Omit for the full grid.
 - `--variable`, `-v` — catalog variable name; repeat for several. Aliases: `precip`/`tp`/`pr` → `precipitation_surface`; `sst` → `sea_surface_temperature`; `t2m` → `temperature_2m` (or 46-day `average_temperature_2m`); `msl` → `pressure_reduced_to_mean_sea_level`; `sp` → `pressure_surface`; `u10`/`v10`/`u100`/`v100` → `wind_u_10m`/`wind_v_10m`/`wind_u_100m`/`wind_v_100m`; `t`/`gh`/`u`/`v`/`w`/`q` → every pressure level of that field. An unknown name exits and lists `Available:`. Omitting `-v` fetches every field.
@@ -79,8 +78,8 @@ More examples:
 # IMERG Late, 30 days
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset nasa-imerg-analysis-late \
   --start-time 2026-09-14 --end-time 2026-10-13 --bbox 5.5/33.5/-5/42.5 -v precip -o imerg_kenya.zarr
-# AIFS forecasts valid over one year, leads to 14 days: one call, every init that reaches the window
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-aifs-ens-forecast --select valid \
+# AIFS: a year of daily inits, leads to 14 days, in one call
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-aifs-ens-forecast \
   --start-time 2025-07-16 --end-time 2026-07-15 --bbox 0.3/129.4/-2.4/131.65 -v precip --max-lead 14D18h -o aifs_year.zarr
 # IFS-ENS 850/925 hPa temperature, stacked on vertical
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-15-day-0-25-degree \

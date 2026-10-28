@@ -269,15 +269,6 @@ def _open_dataset(state, dataset) -> dict:
     help="Window start; repeat with --end-time for several windows (each January).",
 )
 @weather_skill.argument("--end-time", action="append", help="Window end, paired with --start-time.")
-@weather_skill.argument(
-    "--select",
-    choices=("init", "valid"),
-    default="init",
-    help=(
-        "Forecasts with --start-time/--end-time: pick 00 UTC inits in the windows (init), "
-        "or every init and lead whose valid time is in them (valid)."
-    ),
-)
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v", action="append")
 @weather_skill.argument(
@@ -320,7 +311,6 @@ def fetch(
     probe_latest,
     list_variables,
     max_lead,
-    select,
     **kwargs,
 ):
     """Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
@@ -373,7 +363,6 @@ def fetch(
         return
 
     import numpy as np
-    import xarray as xr
 
     state = _open_dataset({}, dataset)
     ds = state["ds"]
@@ -390,8 +379,6 @@ def fetch(
                 f"{dataset} is a forecast dataset; pass --date for one init, or "
                 "--start-time/--end-time for a range of inits (not both)."
             )
-        if select == "valid" and not windows:
-            raise UsageError("--select valid needs --start-time/--end-time windows.")
         when = date.isoformat() if date is not None else "selected"
     else:
         if max_lead is not None:
@@ -404,8 +391,6 @@ def fetch(
             raise UsageError(
                 f"{dataset} is an analysis dataset; use --start-time/--end-time, not --date."
             )
-        if select != "init":
-            raise UsageError(f"{dataset} is an analysis dataset; --select is for forecasts.")
     spans = [
         (np.datetime64(start.isoformat()), np.datetime64(end.isoformat()) + np.timedelta64(1, "D"))
         for start, end in windows
@@ -443,16 +428,14 @@ def fetch(
                 )
             ds = ds.sel(init_time=init_target)
         else:
-            # 00 UTC inits only, as with --date. A valid-time window also takes
-            # the inits up to one longest lead before it.
-            reach = ds["lead_time"].values.max() if select == "valid" else np.timedelta64(0, "ns")
+            # 00 UTC inits only, as with --date: the windows select init times.
             midnight = inits == inits.astype("datetime64[D]")
             keep = np.zeros(inits.size, dtype=bool)
             for lo, hi in spans:
-                keep |= midnight & (inits >= lo - reach) & (inits < hi)
+                keep |= midnight & (inits >= lo) & (inits < hi)
             if not keep.any():
                 raise DataError(
-                    f"{dataset} has no 00 UTC init for {window_text} (--select {select}); "
+                    f"{dataset} has no 00 UTC init in {window_text}; "
                     f"available init range is {init_range}."
                 )
             ds = ds.isel(init_time=np.nonzero(keep)[0])
@@ -547,13 +530,11 @@ def fetch(
                         "leads are NaN (not filled).",
                         file=sys.stderr,
                     )
-    relabelled = False
     if is_forecast and ds.sizes.get("step", 0) > 1 and len(ds.data_vars) > 0:
         first = ds.isel(step=0)
         if all(bool(first[name].isnull().all()) for name in ds.data_vars):
             leads = ds["step"].values
             ds = ds.isel(step=slice(1, None)).assign_coords(step=leads[:-1])
-            relabelled = True
             # GEFS / IFS ENS go 3- to 6-hourly. Write each cell's [start, end]
             # here: stamp_data_interval would infer bounds as if steps were ends.
             if len(set(np.diff(leads))) > 1:
@@ -584,7 +565,6 @@ def fetch(
         and leads[0] > np.timedelta64(0, "ns")
     ):
         ds = ds.assign_coords(step=np.concatenate([[np.timedelta64(0, "ns")], leads[:-1]]))
-        relabelled = True
         for name in ds.data_vars:
             note = (
                 "dynamical-fetch relabelled steps to interval start: step s covers [s, next lead)."
@@ -602,32 +582,6 @@ def fetch(
                 file=sys.stderr,
             )
             ds = ds.drop_vars(empty)
-    if select == "valid":
-        # Valid time is init + step; an interval field (avg, accum, max, min)
-        # counts from its interval start. Fetched with instant fields, interval
-        # fields keep the catalog's end labels (not relabelled above), so their
-        # interval starts at the previous lead. Cells outside every window are
-        # NaN: not selected, not filled.
-        steps = ds["step"].values
-        previous = xr.DataArray(np.concatenate([steps[:1], steps[:-1]]), dims="step")
-        kept = xr.zeros_like(ds["time"] + ds["step"], dtype=bool)
-        for name in ds.data_vars:
-            end_labelled = (
-                not relabelled and ds[name].attrs.get("step_type", "instant") != "instant"
-            )
-            valid = ds["time"] + (previous if end_labelled else ds["step"])
-            inside = xr.zeros_like(kept)
-            for lo, hi in spans:
-                inside |= (valid >= lo) & (valid < hi)
-            ds[name] = ds[name].where(inside)
-            kept |= inside
-            start = "time + previous step (interval start)" if end_labelled else "time + step"
-            note = (
-                f"dynamical-fetch --select valid: init/step cells whose valid time ({start}) "
-                f"is outside {window_text} are NaN."
-            )
-            ds[name].attrs["comment"] = f"{ds[name].attrs.get('comment', '')} {note}".strip()
-        ds = ds.isel(time=kept.any("step").values, step=kept.any("time").values)
     ds = _stack_pressure_levels(ds)
 
     print(f"Fetching dynamical:{dataset} (shape={shape})", file=sys.stderr)

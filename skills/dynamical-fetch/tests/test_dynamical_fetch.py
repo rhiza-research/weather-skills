@@ -813,83 +813,6 @@ def test_repeated_windows_take_disjoint_inits(tmp_path, mod, fetch):
     assert days == ["2025-01-30", "2025-01-31", "2026-01-15"]
 
 
-def test_select_valid_keeps_cells_valid_in_the_window_and_nans_the_rest(tmp_path, mod, fetch):
-    written = _fetch_windows(
-        tmp_path,
-        mod,
-        fetch,
-        _daily_inits_forecast_ds(),
-        "--start-time",
-        "2025-02-02",
-        "--end-time",
-        "2025-02-02",
-        "--select",
-        "valid",
-    )
-    days = written["time"].values.astype("datetime64[D]").astype(str).tolist()
-    # Valid 2025-02-02 = init 01-30 + 3 D, 01-31 + 2 D, 02-01 + 1 D.
-    assert days == ["2025-01-30", "2025-01-31", "2025-02-01"]
-    steps = (written["step"].values / np.timedelta64(1, "D")).tolist()
-    assert steps == [1, 2, 3]
-    value = written["temperature_2m"].isel(latitude=0, longitude=0).values
-    expected = np.full((3, 3), np.nan)
-    expected[0, 2], expected[1, 1], expected[2, 0] = 30, 31, 1
-    np.testing.assert_array_equal(value, expected)
-    assert "--select valid" in written["temperature_2m"].attrs["comment"]
-
-
-@pytest.mark.parametrize("step_type", ["avg", "max"])
-def test_select_valid_counts_end_labelled_field_from_interval_start(
-    tmp_path, mod, fetch, step_type
-):
-    # Mixed with an instant field, an interval field (precip mean, or a max)
-    # keeps the catalog's end labels: its value at lead L covers [L - 1 D, L).
-    # Leads 0..3 D, value = lead in days.
-    leads = np.arange(4)
-    steps = (leads * np.timedelta64(1, "D")).astype("timedelta64[ns]")
-    precip = leads.astype(float)
-    precip[0] = np.nan
-    shape = (1, 4, 2, 2)
-    ds = xr.Dataset(
-        {
-            "precipitation_surface": (
-                ("init_time", "lead_time", "latitude", "longitude"),
-                precip[None, :, None, None] * np.ones(shape),
-                {"step_type": step_type, "units": "mm s-1"},
-            ),
-            "temperature_2m": (
-                ("init_time", "lead_time", "latitude", "longitude"),
-                leads.astype(float)[None, :, None, None] * np.ones(shape),
-                {"step_type": "instant", "units": "degree_Celsius"},
-            ),
-        },
-        coords={
-            "init_time": np.array(["2025-01-31"], dtype="datetime64[ns]"),
-            "lead_time": steps,
-            "latitude": [1.0, 2.0],
-            "longitude": [10.0, 11.0],
-        },
-    )
-    written = _fetch_windows(
-        tmp_path,
-        mod,
-        fetch,
-        ds,
-        "--start-time",
-        "2025-02-01",
-        "--end-time",
-        "2025-02-01",
-        "--select",
-        "valid",
-    )
-    point = written.isel(time=0, latitude=0, longitude=0)
-    lead_days = point["step"].values / np.timedelta64(1, "D")
-    # t2m at 2025-02-01 00 UTC is lead 1 D; the precip interval 02-01..02-02 ends at lead 2 D.
-    assert lead_days[point["temperature_2m"].notnull().values].tolist() == [1]
-    assert lead_days[point["precipitation_surface"].notnull().values].tolist() == [2]
-    assert "interval start" in written["precipitation_surface"].attrs["comment"]
-
-
 def test_init_range_reports_still_publishing_newest_init(tmp_path, mod, fetch, capsys):
     ds = _daily_inits_forecast_ds().isel(init_time=[0, 1])
     ds["temperature_2m"][1, 2] = np.nan
@@ -969,24 +892,3 @@ def test_analysis_repeated_windows_take_each_window(tmp_path, mod, fetch):
     days = xr.open_zarr(out)["time"].values.astype("datetime64[D]").astype(str).tolist()
     # The second window runs past the data: kept as far as it goes, not padded.
     assert days == ["2025-01-01", "2025-01-02", "2026-01-01", "2026-01-02"]
-
-
-def test_analysis_rejects_select_valid(tmp_path, mod, fetch):
-    with patch.object(
-        mod, "_open_dataset", return_value={"ds": _imerg_like_analysis_ds(), "shape": "analysis"}
-    ):
-        with pytest.raises(SystemExit) as exc:
-            run_skill(
-                fetch,
-                "--dataset",
-                "a",
-                "--start-time",
-                "2026-01-01",
-                "--end-time",
-                "2026-01-01",
-                "--select",
-                "valid",
-                "-o",
-                str(tmp_path / "out.zarr"),
-            )
-    assert exc.value.code == 2
