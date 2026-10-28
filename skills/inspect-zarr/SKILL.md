@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/inspect_zarr.py *)
 metadata:
-  version: "0.0.4"
+  version: "0.0.5"
   catalog-group: agent-tooling
 ---
 
@@ -29,7 +29,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/inspect_zarr.py -i IN.zarr [--format human|js
 - `Dimensions`: each dim and its size.
 - `Coordinates`: name, dims, dtype, units, and values. Times print as dates; forecast `step` prints as durations (`7 days`, `0 days 03:00:00`).
 - `Data variables`: name, dims, dtype, shape, units; the attrs `long_name`, `standard_name`, `cell_methods`, `aggregation_period`, `data_interval` when set; `finite N/M`, `min`, `max`, `mean`; and a sample: the first `--max-values` cells (256 with `0`) in order, NaN included, so it lines up with the coordinate values; with `--skip-nan`, the first finite values. A cut-off sample ends `(K of N cells)` (`(K of N finite cells)` with `--skip-nan`). Datetime variables get NaT counts and the date range, with no mean.
-- `json`: the same as `{"dims", "coords", "data_vars"}`. Coord entries have `values`, `truncated`, `size`; variable entries have `attrs`, `n`, `n_finite`, `n_nan`, `min`, `max`, `mean`, `sample`, `sample_truncated`. NaN statistics are `null`.
+- `Attributes`: every dataset-level attribute (e.g. `climatology_start_time`, `weather_skills_source`) except `weather_skills_history`, which the `provenance` skill reads. Omitted when there are none.
+- `json`: the same as `{"dims", "coords", "data_vars", "attrs"}`. Coord entries have `values`, `truncated`, `size`; variable entries have `attrs`, `n`, `n_finite`, `n_nan`, `min`, `max`, `mean`, `sample`, `sample_truncated`. NaN statistics are `null`.
 
 ### Notes
 - The whole input is read into memory for the statistics, so a large store is slow; output stays small. Subset a large store first if you only need part of it.
