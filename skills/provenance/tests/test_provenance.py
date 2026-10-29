@@ -1,5 +1,7 @@
 """Correctness tests for provenance."""
 
+import json
+
 import pytest
 from conftest import load_skill, make_gridded, run_skill, write_zarr
 from weather_skills_core.provenance import stamp_zarr
@@ -195,12 +197,11 @@ def _script(provenance, path, capsys):
 
 
 def test_script_unpinned_step_runs_from_dev(tmp_path, provenance, capsys):
-    # The default branch names its CLI `weather-skills`; `forecasting-skills` is on dev.
     out = _stamp_history(tmp_path / "f.zarr", [_fetch("chirps-fetch")])
 
     captured = _script(provenance, out, capsys)
 
-    assert "git+https://github.com/rhiza-research/weather-skills@dev forecasting-skills" in captured
+    assert "git+https://github.com/rhiza-research/weather-skills@dev weather-skills" in captured
 
 
 def test_script_runs_other_repo_skill_from_checkout(tmp_path, provenance, capsys):
@@ -222,7 +223,7 @@ def test_script_runs_other_repo_skill_from_checkout(tmp_path, provenance, capsys
 
     assert "_checkout() {" in captured
     assert f'uv run --script "$(_checkout {repo} bbbb)"/skills/make-map/scripts/*.py' in captured
-    assert f"{repo}@bbbb forecasting-skills" not in captured
+    assert f"{repo}@bbbb weather-skills" not in captured
 
 
 def test_script_emits_structured_args(tmp_path, provenance, capsys):
@@ -313,3 +314,52 @@ def test_reads_html_and_jpeg_figures(tmp_path, provenance, capsys):
         assert "bbox='1/2/3/4'" in captured
         assert "workers" not in captured
         assert "valid weather_skills_history" in capsys.readouterr().out
+
+
+def test_reads_gif_pdf_and_svg_figures(tmp_path, provenance, capsys):
+    from PIL import Image
+    from weather_skills_core.provenance import stamp_figure
+
+    history = [_fetch("chirps-fetch", args={"bbox": "1/2/3/4", "title": "Rain <b>—</b> & wk 1"})]
+    gif = tmp_path / "fig.gif"
+    Image.new("RGB", (200, 200)).save(gif)
+    pdf = tmp_path / "fig.pdf"
+    Image.new("RGB", (200, 200)).save(pdf)
+    svg = tmp_path / "fig.svg"
+    svg.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">'
+        '<rect width="200" height="200"/></svg>'
+    )
+    for path in (gif, pdf, svg):
+        stamp_figure(path, history)
+
+        run_skill(provenance, "-i", str(path), "--format", "json")
+        assert json.loads(capsys.readouterr().out) == history
+        run_skill(provenance, "-i", str(path), "--check")
+        assert "valid weather_skills_history" in capsys.readouterr().out
+
+
+def test_reads_geojson_and_table_histories(tmp_path, provenance, capsys):
+    from weather_skills_core.provenance import stamp_figure
+
+    history = [_fetch("chirps-fetch", args={"bbox": "1/2/3/4"})]
+    geo = tmp_path / "region.geojson"
+    geo.write_text('{"type": "FeatureCollection", "features": []}')
+    table = tmp_path / "rain.csv"
+    table.write_text("time,precip\n2026-01-01,1.0\n")
+    for path in (geo, table):
+        stamp_figure(path, history)
+        run_skill(provenance, "-i", str(path), "--check")
+        assert "valid weather_skills_history" in capsys.readouterr().out
+
+
+def test_script_reruns_resolve_region_geojson(tmp_path, provenance, capsys):
+    resolve_region = load_skill("resolve-region", "resolve").resolve_region
+    geo = tmp_path / "io.geojson"
+    run_skill(resolve_region, "Indian Ocean", "--geojson", str(geo))
+    capsys.readouterr()
+
+    captured = _script(provenance, geo, capsys)
+
+    assert "resolve-region 'Indian Ocean' --pad 0.25 --geojson io.geojson" in captured
+    assert "--code" not in captured

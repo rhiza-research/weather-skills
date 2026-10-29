@@ -26,7 +26,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py QUERY [--geojson PATH] [--pad DEG]
   - Custom box: `Indian Ocean` (also `Indian Ocean basin`, `IOB`) = `30.0/20.0/-40.0/120.0`.
   - Sub-national key: names lowercased, spaces to `_`, accents stripped, levels joined by `-`. State/province/Kenyan county is `country-admin1` (`kenya-nairobi`, `KEN-nairobi`, `USA-california`); district/sub-county is `country-admin1-admin2` or `country-admin2` (`kenya-nairobi-westlands`, `kenya-westlands`).
   - Anything else is a landmark, looked up once on OpenStreetMap's Nominatim geocoder: `Lake Victoria, Kenya`, `Mount Kenya`.
-- `--geojson` — also write the outline to this path as a one-feature GeoJSON FeatureCollection, creating its folder if needed. Default: not written.
+- `--geojson` — also write the outline to this path as a one-feature GeoJSON FeatureCollection, creating its folder if needed, with its provenance in a top-level `weather_skills_history` member. An existing file a skill did not write exits 2. Default: not written.
 - `--pad` — degrees added on each side of a landmark that is only a point (a peak, a town). Default: `0.25`.
 
 ### Output

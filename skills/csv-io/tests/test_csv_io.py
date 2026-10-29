@@ -1,5 +1,7 @@
 """Correctness tests for csv-io."""
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -37,6 +39,8 @@ def test_export_grid_puts_units_in_header(tmp_path, csv_io):
     assert len(df) == 12
     assert df["time"].iloc[0] == "2026-01-01"
     np.testing.assert_allclose(df["precip [mm d-1]"], np.arange(12))
+    sidecar = json.loads((tmp_path / "out.csv.history.json").read_text())
+    assert json.loads(sidecar["weather_skills_history"])[-1]["skill"] == "csv-io"
 
 
 def test_grid_round_trip(tmp_path, csv_io):

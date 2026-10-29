@@ -113,7 +113,7 @@ def _check(root: Path) -> int:
         if md_version is None:
             # SKILL.md has no populated `metadata.version` field. Every
             # skill in this repo is expected to carry one (it's the
-            # standards-compliant identity for skillkit / rhiza-agents),
+            # standards-compliant identity for downstream installers),
             # so missing values are a hard error.
             missing_md_version.append(
                 f"{skill}: {skill_md.relative_to(root)} has no `metadata.version` "

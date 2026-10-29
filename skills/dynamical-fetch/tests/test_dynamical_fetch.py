@@ -383,6 +383,33 @@ def test_end_labelled_lead0_dropped_and_relabelled_to_start(tmp_path, mod, fetch
     assert bounds == [[0, 3], [3, 6], [6, 12]]
 
 
+def test_instant_fields_on_uneven_leads_get_cells_from_each_step(tmp_path, mod, fetch):
+    """IFS-like t2m 3- then 6-hourly: each sample's cell starts at its own step."""
+    leads = np.array([0, 3, 6, 12, 18], dtype="timedelta64[h]").astype("timedelta64[ns]")
+    ds = xr.Dataset(
+        {
+            "temperature_2m": (
+                ("init_time", "lead_time", "latitude", "longitude"),
+                np.ones((1, 5, 2, 2)),
+            )
+        },
+        coords={
+            "init_time": [np.datetime64("2026-01-01", "ns")],
+            "lead_time": leads,
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    ds["temperature_2m"].attrs.update(units="degree_Celsius", step_type="instant")
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "forecast"}):
+        run_skill(fetch, "--dataset", "t", "--date", "2026-01-01", "-v", "t2m", "-o", str(out))
+    written = xr.open_zarr(out, consolidated=True)
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0, 3, 6, 12, 18]
+    bounds = (written["step_bounds"].values / np.timedelta64(1, "h")).tolist()
+    assert bounds == [[0, 3], [3, 6], [6, 12], [12, 18], [18, 24]]
+
+
 def _weathernext2_like_ds():
     """WeatherNext 2: y/x axes, no lead 0, 6 h precip totals in mm, t2m instant."""
     shape = (1, 2, 3, 2, 2)
@@ -432,6 +459,50 @@ def test_accum_totals_without_lead0_relabelled_to_start_as_rates(tmp_path, mod, 
     # 1.5 mm per 6 h is 6 mm day-1; the negative total is zeroed.
     assert float(precip.max()) == pytest.approx(6.0)
     assert float(precip.min()) == 0.0
+
+
+def test_accum_totals_in_an_init_window_divide_by_the_lead_spacing(tmp_path, mod, fetch):
+    """Daily inits of 6 h totals: rates use the 6 h cell, not the 1-day gap between inits."""
+    one = _weathernext2_like_ds().rename({"y": "latitude", "x": "longitude"})
+    ds = xr.concat([one, one.assign_coords(init_time=[np.datetime64("2026-01-02")])], "init_time")
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "ensemble"}):
+        run_skill(
+            fetch,
+            "--dataset",
+            "t",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "-v",
+            "precip",
+            "-o",
+            str(out),
+        )
+    precip = xr.open_zarr(out, consolidated=True)["total_precipitation_surface"]
+    assert precip.sizes["time"] == 2
+    assert precip.attrs["data_interval"] == "6 hour"
+    # 1.5 mm per 6 h is 6 mm day-1 for every init.
+    assert float(precip.max()) == pytest.approx(6.0)
+
+
+@pytest.mark.parametrize(
+    "when", [["--date", "2026-01-01"], ["--start-time", "2026-01-01", "--end-time", "2026-01-02"]]
+)
+def test_accum_totals_cut_to_one_step_keep_the_6h_cell(tmp_path, mod, fetch, when):
+    """--max-lead below the second lead leaves one step: the cell is still 6 h, not inferred."""
+    one = _weathernext2_like_ds().rename({"y": "latitude", "x": "longitude"})
+    ds = xr.concat([one, one.assign_coords(init_time=[np.datetime64("2026-01-02")])], "init_time")
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "ensemble"}):
+        run_skill(
+            fetch, "--dataset", "t", *when, "-v", "precip", "--max-lead", "0h", "-o", str(out)
+        )
+    precip = xr.open_zarr(out, consolidated=True)["total_precipitation_surface"]
+    assert precip.sizes["step"] == 1
+    assert precip.attrs["data_interval"] == "6 hour"
+    assert float(precip.max()) == pytest.approx(6.0)
 
 
 def test_accum_totals_keep_catalog_steps_beside_instant_fields(tmp_path, mod, fetch):
@@ -745,3 +816,191 @@ def test_unknown_variable_points_to_list_variables(mod):
     with pytest.raises(Exception) as exc:
         mod._resolve_variables(["list_vars_please"], ["tp"], "x")
     assert "--list-variables" in str(exc.value)
+
+
+def _daily_inits_forecast_ds():
+    """Daily 00 UTC inits (plus one 12 UTC), daily leads 1..3 D; value = init day of month."""
+    inits = np.array(
+        ["2025-01-30", "2025-01-31", "2025-02-01", "2025-02-01T12", "2026-01-15", "2026-02-10"],
+        dtype="datetime64[ns]",
+    )
+    steps = np.array([1, 2, 3], dtype="timedelta64[D]").astype("timedelta64[ns]")
+    days = inits.astype("datetime64[D]").astype(object)
+    data = np.array([d.day for d in days], dtype=float)[:, None, None, None] * np.ones((1, 3, 2, 2))
+    return xr.Dataset(
+        {"temperature_2m": (("init_time", "lead_time", "latitude", "longitude"), data)},
+        coords={
+            "init_time": inits,
+            "lead_time": steps,
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+
+
+def _fetch_windows(tmp_path, mod, fetch, ds, *extra):
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "forecast"}):
+        run_skill(fetch, "--dataset", "t", *extra, "-o", str(out))
+    return xr.open_zarr(out, consolidated=True)
+
+
+def test_init_range_keeps_00utc_inits_on_a_time_axis(tmp_path, mod, fetch):
+    written = _fetch_windows(
+        tmp_path,
+        mod,
+        fetch,
+        _daily_inits_forecast_ds(),
+        "--start-time",
+        "2025-01-31",
+        "--end-time",
+        "2025-02-01",
+    )
+    assert written["temperature_2m"].dims[:2] == ("time", "step")
+    # 2025-02-01T12 is not a 00 UTC init.
+    assert written["time"].values.astype("datetime64[D]").astype(str).tolist() == [
+        "2025-01-31",
+        "2025-02-01",
+    ]
+    assert load_history(tmp_path / "out.zarr")[-1]["args"]["start_time"] == ["2025-01-31"]
+
+
+def test_init_range_stamps_lead_spacing_not_init_spacing(tmp_path, mod, fetch):
+    """Daily inits with 6 h leads: data_interval is the 6 h step, not the 1-day init gap."""
+    ds = _daily_inits_forecast_ds().assign_coords(
+        lead_time=np.array([6, 12, 18], dtype="timedelta64[h]").astype("timedelta64[ns]")
+    )
+    written = _fetch_windows(
+        tmp_path, mod, fetch, ds, "--start-time", "2025-01-30", "--end-time", "2025-02-01"
+    )
+    assert written.sizes["time"] == 3
+    assert written["temperature_2m"].attrs["data_interval"] == "6 hour"
+
+
+def test_repeated_windows_take_disjoint_inits(tmp_path, mod, fetch):
+    written = _fetch_windows(
+        tmp_path,
+        mod,
+        fetch,
+        _daily_inits_forecast_ds(),
+        "--start-time",
+        "2025-01-01",
+        "--end-time",
+        "2025-01-31",
+        "--start-time",
+        "2026-01-01",
+        "--end-time",
+        "2026-01-31",
+    )
+    days = written["time"].values.astype("datetime64[D]").astype(str).tolist()
+    assert days == ["2025-01-30", "2025-01-31", "2026-01-15"]
+
+
+def test_init_range_reports_still_publishing_newest_init(tmp_path, mod, fetch, capsys):
+    ds = _daily_inits_forecast_ds().isel(init_time=[0, 1])
+    ds["temperature_2m"][1, 2] = np.nan
+    written = _fetch_windows(
+        tmp_path, mod, fetch, ds, "--start-time", "2025-01-30", "--end-time", "2025-01-31"
+    )
+    err = capsys.readouterr().err
+    assert "2025-01-31T00 UTC init has no data after catalog lead 48 h" in err
+    # Its last lead stays NaN; the older init keeps every lead.
+    assert written["temperature_2m"].isel(time=1, step=2).isnull().all()
+    assert written["temperature_2m"].isel(time=0).notnull().all()
+
+
+def test_forecast_date_and_range_together_exit_2(tmp_path, mod, fetch):
+    with pytest.raises(SystemExit) as exc:
+        _fetch_windows(
+            tmp_path,
+            mod,
+            fetch,
+            _daily_inits_forecast_ds(),
+            "--date",
+            "2025-01-31",
+            "--start-time",
+            "2025-01-31",
+            "--end-time",
+            "2025-02-01",
+        )
+    assert exc.value.code == 2
+
+
+def test_forecast_range_with_no_init_is_data_error(tmp_path, mod, fetch):
+    with pytest.raises(SystemExit) as exc:
+        _fetch_windows(
+            tmp_path,
+            mod,
+            fetch,
+            _daily_inits_forecast_ds(),
+            "--start-time",
+            "2024-06-01",
+            "--end-time",
+            "2024-06-30",
+        )
+    assert exc.value.code == 1
+
+
+def test_analysis_repeated_windows_take_each_window(tmp_path, mod, fetch):
+    times = np.arange(
+        np.datetime64("2024-12-30"), np.datetime64("2026-01-03"), np.timedelta64(1, "D")
+    ).astype("datetime64[ns]")
+    ds = xr.Dataset(
+        {
+            "precipitation_surface": (
+                ("time", "latitude", "longitude"),
+                np.ones((times.size, 2, 2)),
+                {"units": "mm day-1"},
+            )
+        },
+        coords={"time": times, "latitude": [1.0, 2.0], "longitude": [10.0, 11.0]},
+    )
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "analysis"}):
+        run_skill(
+            fetch,
+            "--dataset",
+            "a",
+            "--start-time",
+            "2025-01-01",
+            "--end-time",
+            "2025-01-02",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-05",
+            "-o",
+            str(out),
+        )
+    days = xr.open_zarr(out)["time"].values.astype("datetime64[D]").astype(str).tolist()
+    # The second window runs past the data: kept as far as it goes, not padded.
+    assert days == ["2025-01-01", "2025-01-02", "2026-01-01", "2026-01-02"]
+
+
+@pytest.mark.parametrize(
+    ("extra", "dims"),
+    [
+        (("--date", "2026-01-01"), ("step", "number", "latitude", "longitude")),
+        (
+            ("--start-time", "2026-01-01", "--end-time", "2026-01-02"),
+            ("time", "step", "number", "latitude", "longitude"),
+        ),
+    ],
+)
+def test_members_stored_before_leads_come_out_after_step(tmp_path, mod, fetch, extra, dims):
+    # GEFS and WeatherNext 2 store ensemble_member before lead_time.
+    data = np.ones((2, 2, 2, 2, 2))
+    ds = xr.Dataset(
+        {"tp": (("init_time", "ensemble_member", "lead_time", "latitude", "longitude"), data)},
+        coords={
+            "init_time": np.array(["2026-01-01", "2026-01-02"], dtype="datetime64[ns]"),
+            "ensemble_member": [0, 1],
+            "lead_time": np.array([1, 2], dtype="timedelta64[D]").astype("timedelta64[ns]"),
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "ensemble"}):
+        run_skill(fetch, "--dataset", "t", *extra, "-o", str(out))
+    assert xr.open_zarr(out, consolidated=True)["tp"].dims == dims

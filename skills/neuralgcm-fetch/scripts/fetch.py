@@ -5,7 +5,7 @@
 #   "gcsfs",
 # ]
 # ///
-"""Fetch a NeuralGCM subseasonal ensemble forecast for one init date as a weather-skills Zarr."""
+"""Fetch a NeuralGCM subseasonal ensemble forecast for one init date or a range of inits as a weather-skills Zarr."""
 
 from __future__ import annotations
 
@@ -309,9 +309,18 @@ def _select_variables(ds, variable):
 )
 @weather_skill.argument("--date")
 @weather_skill.argument(
+    "--start-time",
+    action="append",
+    help="Init window start; repeat with --end-time for several windows (each January).",
+)
+@weather_skill.argument(
+    "--end-time", action="append", help="Init window end, paired with --start-time."
+)
+@weather_skill.argument(
     "--cycle",
     choices=list(_CYCLES),
-    help="Init hour UTC (00 or 12). Default: 00 with --date; latest cycle when --date is omitted.",
+    help="Init hour UTC (00 or 12). Default: 00 with --date or windows; latest cycle when "
+    "neither is given.",
 )
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v", action="append")
@@ -326,8 +335,8 @@ def _select_variables(ds, variable):
         "Does not download fields. Optional IDENT selects a --dataset id."
     ),
 )
-def fetch(dataset, date, bbox, variable, cycle, probe_latest, **kwargs):
-    """Fetch a NeuralGCM subseasonal ensemble forecast for one init date as a weather-skills Zarr."""
+def fetch(dataset, date, start_time, end_time, bbox, variable, cycle, probe_latest, **kwargs):
+    """Fetch a NeuralGCM subseasonal ensemble forecast for one init date or a range of inits as a weather-skills Zarr."""
     # Opens a consolidated Zarr under
     # ``gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/<init>/<dataset>/``
     # with the credentials described in SKILL.md, maps dims onto the
@@ -346,27 +355,76 @@ def fetch(dataset, date, bbox, variable, cycle, probe_latest, **kwargs):
         return
 
     dataset = _canonical_dataset(dataset)
-    stamp = _resolve_stamp(date, cycle, dataset)
-    print(f"Resolved init: {stamp}", file=sys.stderr)
-    print(f"Opening {_store_url(stamp, dataset)}", file=sys.stderr)
-
-    ds = _open_remote(stamp, dataset)
-    ds = _prepare_dataset(ds)
-    ds = _select_variables(ds, variable)
-    if bbox is not None:
-        ds = bbox_subset(ds, bbox)
+    # One (start, end) pair per window; --end-time is an inclusive calendar day.
+    windows = list(zip(start_time or [], end_time or [], strict=True))
+    if date is not None and windows:
+        raise UsageError(
+            "pass --date for one init, or --start-time/--end-time for a range of inits (not both)."
+        )
+    if windows:
+        # The --cycle init (default 00 UTC) of each day in the windows, as with
+        # --date: the windows select init times, not valid times.
+        hour = cycle or "00"
+        published = _list_init_stamps()
+        stamps = [
+            s
+            for s in published
+            if s.endswith(f"T{hour}")
+            and any(a.isoformat() <= _stamp_to_date(s) <= b.isoformat() for a, b in windows)
+        ]
+        if not stamps:
+            window_text = ", ".join(f"{a}..{b}" for a, b in windows)
+            raise DataError(
+                f"no {hour} UTC NeuralGCM init in {window_text}; "
+                + (
+                    f"published inits run {_stamp_to_date(published[0])}.."
+                    f"{_stamp_to_date(published[-1])}."
+                    if published
+                    else "nothing is published."
+                )
+            )
+        print(f"Selected {len(stamps)} inits.", file=sys.stderr)
     else:
-        ds = ensure_normalized_longitude(ds)
+        stamps = [_resolve_stamp(date, cycle, dataset)]
+        print(f"Resolved init: {stamps[0]}", file=sys.stderr)
 
-    try:
-        ds = ds.load()
-    except Exception as exc:  # noqa: BLE001
-        raise _gcs_error(exc, f"failed to read {_store_url(stamp, dataset)}") from None
+    # One store per init: open each lazily, subset it, and load only that.
+    pieces = []
+    for stamp in stamps:
+        if windows and not _store_exists(stamp, dataset):
+            print(
+                f"WARNING: init {stamp} has no {dataset!r} store (still publishing?); skipped.",
+                file=sys.stderr,
+            )
+            continue
+        print(f"Opening {_store_url(stamp, dataset)}", file=sys.stderr)
+        ds = _open_remote(stamp, dataset)
+        ds = _prepare_dataset(ds)
+        ds = _select_variables(ds, variable)
+        if bbox is not None:
+            ds = bbox_subset(ds, bbox)
+        else:
+            ds = ensure_normalized_longitude(ds)
+
+        try:
+            pieces.append(ds.load())
+        except Exception as exc:  # noqa: BLE001
+            raise _gcs_error(exc, f"failed to read {_store_url(stamp, dataset)}") from None
+    if not pieces:
+        raise DataError(f"no {dataset!r} store for any selected init.")
+    if windows:
+        import xarray as xr
+
+        # A range of inits: a `time` axis (the init).
+        ds = xr.concat(pieces, "time", join="outer").transpose("time", "step", ...)
+    else:
+        ds = pieces[0]
     if "number" in ds.dims:
         print(f"Ensemble members: {ds.sizes['number']}", file=sys.stderr)
     ds.attrs.update(
         Conventions="CF-1.13",
-        weather_skills_source=f"neuralgcm:{dataset}:{stamp}",
+        weather_skills_source=f"neuralgcm:{dataset}:{stamps[0]}"
+        + (f"..{stamps[-1]}" if windows else ""),
     )
     stamp_cf_attrs(ds)
     stamp_precip_amounts(ds)
@@ -385,7 +443,28 @@ def fetch(dataset, date, bbox, variable, cycle, probe_latest, **kwargs):
         tp = _shift_step_origin_to_zero(ds[["tp"]])
         rest = ds.drop_vars("tp")
         ds = xr.merge([rest, tp], join="outer", compat="override") if rest.data_vars else tp
-    return stamp_data_interval(ds)
+    if windows:
+        # An init still publishing its long leads keeps them NaN (not filled);
+        # say which init is short.
+        import numpy as np
+
+        init_empty = np.ones((ds.sizes["time"], ds.sizes["step"]), dtype=bool)
+        for name in ds.data_vars:
+            other = [d for d in ds[name].dims if d not in ("time", "step")]
+            init_empty &= ds[name].isnull().all(other).transpose("time", "step").values
+        hours = ds["step"].values / np.timedelta64(1, "h")
+        for i, row in enumerate(init_empty):
+            init = str(ds["time"].values[i])[:13]
+            if row.all():
+                print(f"WARNING: NeuralGCM {init} UTC init has no data (NaN).", file=sys.stderr)
+            elif row[-1]:
+                print(
+                    f"WARNING: NeuralGCM {init} UTC init has no data after step "
+                    f"{hours[np.nonzero(~row)[0][-1]]:g} h (still publishing?); its later "
+                    "steps are NaN (not filled).",
+                    file=sys.stderr,
+                )
+    return stamp_data_interval(ds, dim="step" if "step" in ds.dims else None)
 
 
 if __name__ == "__main__":

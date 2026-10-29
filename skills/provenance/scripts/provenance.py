@@ -5,11 +5,9 @@
 #   "pillow",
 # ]
 # ///
-"""Print the processing history recorded on a Zarr or plot image as a lineage, JSON, or a script that regenerates it."""
+"""Print the processing history recorded on a Zarr, figure, GeoJSON or table as a lineage, JSON, or a script that regenerates it."""
 
-import html
 import json
-import re
 import shlex
 from pathlib import Path
 
@@ -19,13 +17,13 @@ from weather_skills_core.provenance import (
     SOURCE_ATTR,
     coerce_chain,
     parse_chain,
+    read_raw_history,
     validate_chain,
 )
 
 DEFAULT_REPO = "https://github.com/rhiza-research/weather-skills"
-DEFAULT_CLI = "forecasting-skills"
-# Ref a step runs from when it recorded no commit: the CLI above lives on dev
-# (the default branch names its CLI differently).
+DEFAULT_CLI = "weather-skills"
+# Ref a step runs from when it recorded no commit.
 DEFAULT_REF = "dev"
 # Joins whose inputs are not a repeated --input, in the order the decorator
 # records them (declaration order).
@@ -34,10 +32,23 @@ JOIN_FLAGS = {
     "standardize-anomaly": ["--input", "--climatology"],
     "point-value": ["--input", "--points"],
 }
+# Skills whose recorded args include a positional, and skills that write their
+# stamped file through a flag other than --output.
+POSITIONAL_ARGS = {"resolve-region": "code"}
+OUTPUT_FLAGS = {"resolve-region": "--geojson"}
 _EXIF_USER_COMMENT = 0x9286
-_HTML_META_RE = re.compile(
-    rf'<meta\s+name=["\']{HISTORY_ATTR}["\']\s+content=["\'](.*?)["\']\s*/?>',
-    re.IGNORECASE | re.DOTALL,
+# Other files the skills stamp; core reads them (tables from their sidecar).
+_OTHER_SUFFIXES = (
+    ".html",
+    ".htm",
+    ".gif",
+    ".pdf",
+    ".svg",
+    ".geojson",
+    ".json",
+    ".csv",
+    ".xlsx",
+    ".xlsm",
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
@@ -63,7 +74,8 @@ def _read_raw_histories(path: Path) -> tuple[dict, str | None]:
 
     A zarr keeps one store attr; a PNG keeps tEXt keys (``weather_skills_history``
     and, for older two-input plots, ``weather_skills_history_<label>``); a JPEG
-    keeps the EXIF UserComment; an HTML figure keeps a ``<meta>`` tag.
+    keeps the EXIF UserComment; every other stamped file is read by core's
+    ``read_raw_history``.
     """
     if not path.exists():
         raise UsageError(f"Error: {path} not found.", prefix=False)
@@ -100,11 +112,15 @@ def _read_raw_histories(path: Path) -> tuple[dict, str | None]:
             if (key == HISTORY_ATTR or key.startswith(f"{HISTORY_ATTR}_")) and info[key]:
                 raw[key] = info[key]
         return raw, None
-    if path.is_file() and suffix in (".html", ".htm"):
-        match = _HTML_META_RE.search(path.read_text(encoding="utf-8", errors="replace"))
-        return ({HISTORY_ATTR: html.unescape(match.group(1))} if match else {}), None
+    if path.is_file() and suffix in _OTHER_SUFFIXES:
+        try:
+            raw = read_raw_history(path)
+        except Exception as exc:  # noqa: BLE001
+            raise UsageError(f"Error: could not read {path}: {exc}", prefix=False) from None
+        return ({HISTORY_ATTR: raw} if raw else {}), None
     raise UsageError(
-        f"Error: {path} is neither a zarr directory nor a .png/.jpg/.html figure; "
+        f"Error: {path} is neither a zarr directory nor a file a skill stamps "
+        "(.png, .jpg, .gif, .html, .pdf, .svg, .geojson, .json, .csv, .xlsx); "
         "cannot inspect provenance.",
         prefix=False,
     )
@@ -235,7 +251,12 @@ def _command(step: dict, inputs: list, output: str) -> str:
     else:
         checkout = f'"$(_checkout {shlex.quote(repo)} {shlex.quote(ref)})"'
         parts = ["uv", "run", "--script", f"{checkout}/skills/{skill}/scripts/*.py"]
+    positional = POSITIONAL_ARGS.get(skill)
+    if positional in args:
+        parts.append(shlex.quote(str(args[positional])))
     for dest, value in sorted(args.items()):
+        if dest == positional:
+            continue
         flag = "--" + dest.replace("_", "-")
         if value is None or value is False:
             continue
@@ -253,7 +274,7 @@ def _command(step: dict, inputs: list, output: str) -> str:
                 parts += [flag, shlex.quote(str(item))]
     for flag, path in inputs:
         parts += [flag, shlex.quote(path)]
-    parts += ["--output", shlex.quote(output)]
+    parts += [OUTPUT_FLAGS.get(skill, "--output"), shlex.quote(output)]
     line = " ".join(parts)
     if step.get("dirty") is True:
         return (
@@ -404,7 +425,7 @@ def _render_script(data: dict) -> None:
     "-i",
     "--input",
     required=True,
-    help="Artifact to inspect: a zarr dir or a .png, .jpg, or .html figure.",
+    help="Artifact to inspect: a zarr dir, a figure, a GeoJSON, or a CSV/Excel table.",
 )
 @weather_skill.argument(
     "--format",
@@ -418,7 +439,7 @@ def _render_script(data: dict) -> None:
     help="Validate weather_skills_history schema (exit 0/1/2).",
 )
 def provenance(input, format, check, **kwargs):
-    """Print the processing history recorded on a Zarr or plot image as a lineage, JSON, or a script that regenerates it."""
+    """Print the processing history recorded on a Zarr, figure, GeoJSON or table as a lineage, JSON, or a script that regenerates it."""
     if check:
         code, report = _run_check(Path(input))
         if code == 0:
