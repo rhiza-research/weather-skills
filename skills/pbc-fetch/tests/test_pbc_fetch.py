@@ -44,7 +44,7 @@ def test_fetch_writes_zarr_and_stamps_history(tmp_path, fetch_mod, monkeypatch):
 
     monkeypatch.setattr(fetch_mod, "_list_folder_dates", lambda dataset: ["20260911", "20260918"])
     monkeypatch.setattr(fetch_mod, "_store_exists", lambda key: "20260918" in key)
-    monkeypatch.setattr(fetch_mod, "_open_remote", lambda key: remote.copy(deep=True))
+    monkeypatch.setattr(fetch_mod, "_open_remote", lambda key, dask=None: remote.copy(deep=True))
 
     run_skill(fetch_mod.fetch, "--dataset", "era5-p_pr_19", "-o", str(out))
 
@@ -77,7 +77,7 @@ def test_fetch_honors_init_date_variable_and_bbox(tmp_path, fetch_mod, monkeypat
         seen["key"] = key
         return True
 
-    def fake_open(key):
+    def fake_open(key, dask=None):
         seen["open"] = key
         return remote.copy(deep=True)
 
@@ -113,7 +113,9 @@ def test_missing_init_is_an_error_not_an_older_folder(tmp_path, fetch_mod, monke
     # It must not be read as init 2026-08-31.
     opened = []
     monkeypatch.setattr(fetch_mod, "_store_exists", lambda key: "20260918" in key)
-    monkeypatch.setattr(fetch_mod, "_open_remote", lambda key: opened.append(key) or _pbc_grid())
+    monkeypatch.setattr(
+        fetch_mod, "_open_remote", lambda key, dask=None: opened.append(key) or _pbc_grid()
+    )
 
     with pytest.raises(SystemExit) as exc:
         run_skill(
@@ -162,7 +164,7 @@ def test_missing_date(fetch_mod, monkeypatch):
 
 def test_unknown_variable(tmp_path, fetch_mod, monkeypatch, capsys):
     monkeypatch.setattr(fetch_mod, "_store_exists", lambda key: True)
-    monkeypatch.setattr(fetch_mod, "_open_remote", lambda key: _pbc_grid())
+    monkeypatch.setattr(fetch_mod, "_open_remote", lambda key, dask=None: _pbc_grid())
     with pytest.raises(SystemExit) as exc:
         run_skill(
             fetch_mod.fetch,
@@ -222,7 +224,7 @@ def _mock_windows(monkeypatch, fetch_mod, *, missing=()):
     monkeypatch.setattr(fetch_mod, "_list_folder_dates", lambda dataset: sorted(folders))
     monkeypatch.setattr(fetch_mod, "_store_exists", lambda key: not any(f in key for f in missing))
 
-    def fake_open(key):
+    def fake_open(key, dask=None):
         folder = key.split("/")[-2]
         return _pbc_grid(fill=folders[folder].day / 100)
 
@@ -308,3 +310,39 @@ def test_init_window_with_no_init_exits_1(tmp_path, fetch_mod, monkeypatch):
             str(tmp_path / "x.zarr"),
         )
     assert exc.value.code == 1
+
+
+def _need_dask(fetch):
+    pytest.importorskip("dask")
+    if "--dask" not in fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+
+
+def test_dask_range_of_inits_streams_each_store(tmp_path, fetch_mod, monkeypatch):
+    _need_dask(fetch_mod.fetch)
+    opened = []
+    monkeypatch.setattr(fetch_mod, "_list_folder_dates", lambda dataset: ["20260911", "20260918"])
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda key: True)
+
+    def fake_open(key, dask=None):
+        opened.append(dask)
+        return _pbc_grid().chunk()
+
+    monkeypatch.setattr(fetch_mod, "_open_remote", fake_open)
+    out = tmp_path / "pbc.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--dask",
+        "--dataset",
+        "era5-p_pr_19",
+        "--start-time",
+        "2026-08-01",
+        "--end-time",
+        "2026-09-30",
+        "-o",
+        str(out),
+    )
+    assert len(opened) == 2 and all(d is not None for d in opened)
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds.sizes["time"] == 2
+        np.testing.assert_allclose(ds["pr"].values, 0.2)

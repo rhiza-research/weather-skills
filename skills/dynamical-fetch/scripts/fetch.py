@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask]>=0.3.2",
 #   "dynamical-catalog==1.0.1",
 #   "pandas",
 # ]
@@ -192,7 +192,7 @@ def _promote_pressure_dim(ds):
     return ds
 
 
-def _merge_pressure_if_needed(ds, dataset, requested):
+def _merge_pressure_if_needed(ds, dataset, requested, dask=None):
     """Open `group=pressure_level` when `-v` tokens are not on the root store."""
     if not requested:
         return ds
@@ -205,7 +205,9 @@ def _merge_pressure_if_needed(ds, dataset, requested):
     import xarray as xr
 
     try:
-        pds = dynamical_catalog.open(dataset, group=_PRESSURE_GROUP, chunks=None)
+        pds = dynamical_catalog.open(
+            dataset, group=_PRESSURE_GROUP, chunks="auto" if dask else None
+        )
     except Exception:
         return ds
     return xr.merge([ds, _promote_pressure_dim(pds)], compat="override")
@@ -214,7 +216,7 @@ def _merge_pressure_if_needed(ds, dataset, requested):
 _STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
 
 
-def _open_dataset(state, dataset) -> dict:
+def _open_dataset(state, dataset, dask=None) -> dict:
     """Validate the dataset id, open it, and detect its shape, at most once per run."""
     if "ds" not in state:
         import os
@@ -230,7 +232,7 @@ def _open_dataset(state, dataset) -> dict:
             raise UsageError(
                 f"unknown dataset {dataset!r}. Available datasets:\n  " + "\n  ".join(catalog)
             )
-        ds = dynamical_catalog.open(dataset)
+        ds = dynamical_catalog.open(dataset, chunks="auto" if dask else None)
         # WeatherNext 2 names its regular lat/lon axes y/x. HRRR also has y/x,
         # but in meters with a 2-D `latitude`, so it is still rejected below.
         if {"y", "x"} <= set(ds.dims) and "latitude" not in ds.variables:
@@ -311,6 +313,7 @@ def fetch(
     probe_latest,
     list_variables,
     max_lead,
+    dask=None,
     **kwargs,
 ):
     """Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
@@ -363,13 +366,14 @@ def fetch(
         return
 
     import numpy as np
+    import xarray as xr
 
-    state = _open_dataset({}, dataset)
+    state = _open_dataset({}, dataset, dask)
     ds = state["ds"]
     shape = state["shape"]
     is_forecast = shape in ("ensemble", "forecast")
     if variable:
-        ds = _merge_pressure_if_needed(ds, dataset, variable)
+        ds = _merge_pressure_if_needed(ds, dataset, variable, dask)
 
     # One (start, end) pair per window; --end-time is an inclusive calendar day.
     windows = list(zip(start_time or [], end_time or [], strict=True))
@@ -487,16 +491,25 @@ def fetch(
     # value (not a fixed spacing) stays correct for GEFS 3 h -> 6 h leads.
     # Instant fields (t2m on GEFS, winds, pressure levels) keep lead 0.
     if is_forecast and len(ds.data_vars) > 0:
-        # Read the subset once: the NaN checks below would otherwise re-read it.
-        ds = ds.load()
+        # Without dask, read the subset once: the NaN checks below would
+        # otherwise re-read it. With dask it streams to the output instead.
+        if not dask:
+            ds = ds.load()
         # GEFS and WeatherNext 2 store members before leads; put every
         # forecast in one order. Only after the load: without dask, a lazy
         # transpose makes the read take gigabytes for a small bbox.
         ds = ds.transpose(*[d for d in ("time", "step", "number") if d in ds.dims], ...)
+        # Per-(init, lead) all-NaN flags, the only data the checks below read.
+        nan_flags = xr.Dataset(
+            {
+                name: ds[name].isnull().all([d for d in ds[name].dims if d not in ("time", "step")])
+                for name in ds.data_vars
+            }
+        ).compute()
         empty = np.ones(ds.sizes["step"], dtype=bool)
-        for name in ds.data_vars:
-            other = [d for d in ds[name].dims if d != "step"]
-            empty &= ds[name].isnull().all(other).values
+        for name in nan_flags.data_vars:
+            other = [d for d in nan_flags[name].dims if d != "step"]
+            empty &= nan_flags[name].all(other).values
         if empty.all():
             raise DataError(
                 f"{dataset} {when} init has no data for the requested variables and "
@@ -519,9 +532,8 @@ def fetch(
         # leads stay NaN (not filled); say which init is short.
         if "time" in ds.dims:
             init_empty = np.ones((ds.sizes["time"], ds.sizes["step"]), dtype=bool)
-            for name in ds.data_vars:
-                other = [d for d in ds[name].dims if d not in ("time", "step")]
-                init_empty &= ds[name].isnull().all(other).transpose("time", "step").values
+            for name in nan_flags.data_vars:
+                init_empty &= nan_flags[name].transpose("time", "step").values
             hours = ds["step"].values / np.timedelta64(1, "h")
             for i, row in enumerate(init_empty):
                 init = str(ds["time"].values[i])[:13]
@@ -536,7 +548,10 @@ def fetch(
                     )
     if is_forecast and ds.sizes.get("step", 0) > 1 and len(ds.data_vars) > 0:
         first = ds.isel(step=0)
-        if all(bool(first[name].isnull().all()) for name in ds.data_vars):
+        first_nan = xr.Dataset(
+            {name: first[name].isnull().all() for name in ds.data_vars}
+        ).compute()
+        if all(bool(first_nan[name]) for name in ds.data_vars):
             leads = ds["step"].values
             ds = ds.isel(step=slice(1, None)).assign_coords(step=leads[:-1])
             # GEFS / IFS ENS go 3- to 6-hourly. Write each cell's [start, end]
@@ -555,7 +570,7 @@ def fetch(
                 "Dropped all-NaN lead 0 and relabelled steps to interval start.",
                 file=sys.stderr,
             )
-        elif not any(bool(first[name].isnull().all()) for name in ds.data_vars):
+        elif not any(bool(first_nan[name]) for name in ds.data_vars):
             # Only instant fields: they keep the catalog labels. On uneven leads
             # give each sample the cell [s, next lead) like the relabelled
             # averages above, so a day bin holds the samples labelled in that
@@ -598,7 +613,8 @@ def fetch(
     if is_forecast and max_lead is not None:
         ds = ds.sel(step=slice(None, limit))
         # Mixed with instant fields, an end-labelled field has no value at step 0.
-        empty = [name for name in ds.data_vars if bool(ds[name].isnull().all())]
+        all_nan = xr.Dataset({name: ds[name].isnull().all() for name in ds.data_vars}).compute()
+        empty = [name for name in ds.data_vars if bool(all_nan[name])]
         if empty:
             print(
                 f"WARNING: dropped {', '.join(empty)}: no value up to --max-lead {max_lead} "

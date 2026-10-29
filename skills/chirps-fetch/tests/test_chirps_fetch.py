@@ -38,7 +38,7 @@ def _chirps_like(start, n_time=2, lats=(1.0, 2.0, 3.0), lons=(10.0, 11.0, 12.0, 
     )
 
 
-def _open_final_only(dataset_id: str):
+def _open_final_only(dataset_id: str, dask=None):
     if dataset_id == "ucsb-chc-chirps-analysis-final":
         return _chirps_like("2026-01-01", n_time=2)
     return _chirps_like("2026-01-03", n_time=0)
@@ -73,7 +73,7 @@ def test_fetch_writes_zarr_with_mocked_catalog(tmp_path, mod, fetch):
 def test_missing_days_exits_2(tmp_path, mod, fetch):
     out = tmp_path / "out.zarr"
 
-    def empty(_dataset_id: str):
+    def empty(_dataset_id: str, dask=None):
         return _chirps_like("2026-01-01", n_time=0)
 
     with patch.object(mod, "_open_catalog", side_effect=empty):
@@ -91,7 +91,7 @@ def test_missing_days_exits_2(tmp_path, mod, fetch):
 
 
 def test_probe_latest_uses_catalog_time(capsys, fetch, mod):
-    def open_catalog(dataset_id: str):
+    def open_catalog(dataset_id: str, dask=None):
         if dataset_id.endswith("preliminary"):
             return _chirps_like("2026-09-10", n_time=6)
         return _chirps_like("2026-08-01", n_time=31)
@@ -154,7 +154,7 @@ def test_empty_bbox_exits(tmp_path, mod, fetch):
 def test_prelim_fills_tail_after_final(tmp_path, mod, fetch):
     out = tmp_path / "out.zarr"
 
-    def open_catalog(dataset_id: str):
+    def open_catalog(dataset_id: str, dask=None):
         if dataset_id.endswith("preliminary"):
             return _chirps_like("2026-01-02", n_time=2, fill=2e-6)
         return _chirps_like("2026-01-01", n_time=2, fill=1e-6)
@@ -183,7 +183,7 @@ def test_prelim_fills_tail_after_final(tmp_path, mod, fetch):
 def test_interior_hole_exits_2(tmp_path, mod, fetch):
     out = tmp_path / "out.zarr"
 
-    def open_catalog(_dataset_id: str):
+    def open_catalog(_dataset_id: str, dask=None):
         ds = _chirps_like("2026-01-01", n_time=3)
         return ds.isel(time=[0, 2])
 
@@ -220,7 +220,7 @@ def test_workers_flag_still_accepted(tmp_path, mod, fetch):
 
 
 def test_probe_latest_labels_preliminary_when_final_unavailable(capsys, fetch, mod):
-    def open_catalog(dataset_id: str):
+    def open_catalog(dataset_id: str, dask=None):
         if dataset_id.endswith("preliminary"):
             return _chirps_like("2026-09-10", n_time=6)
         raise OSError("final catalog unreachable")
@@ -234,7 +234,7 @@ def test_probe_latest_labels_preliminary_when_final_unavailable(capsys, fetch, m
 
 
 def test_probe_latest_rejects_ident(capsys, fetch, mod):
-    def open_catalog(dataset_id: str):
+    def open_catalog(dataset_id: str, dask=None):
         if dataset_id.endswith("preliminary"):
             return _chirps_like("2026-09-10", n_time=6)
         return _chirps_like("2026-08-01", n_time=31)
@@ -249,7 +249,7 @@ def test_probe_latest_rejects_ident(capsys, fetch, mod):
 
 
 def test_start_before_1981_is_a_coverage_error(tmp_path, capsys, mod, fetch):
-    def open_catalog(dataset_id: str):
+    def open_catalog(dataset_id: str, dask=None):
         if dataset_id.endswith("preliminary"):
             return _chirps_like("2025-01-01", n_time=0)
         return _chirps_like("1981-01-01", n_time=5)
@@ -269,3 +269,36 @@ def test_start_before_1981_is_a_coverage_error(tmp_path, capsys, mod, fetch):
     err = capsys.readouterr().err
     assert "before CHIRPS coverage, which starts 1981-01-01" in err
     assert "server-side data gap" not in err
+
+
+def _need_dask(fetch):
+    pytest.importorskip("dask")
+    if "--dask" not in fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+
+
+def test_dask_open_is_chunked_and_output_matches(tmp_path, mod, fetch):
+    _need_dask(fetch)
+    chunks_seen = []
+
+    def open_chunked(dataset_id, dask=None):
+        chunks_seen.append(dask)
+        return _open_final_only(dataset_id).chunk()
+
+    outs = {}
+    for flag in ("--dask", None):
+        out = tmp_path / f"out{flag}.zarr"
+        with patch.object(mod, "_open_catalog", side_effect=open_chunked):
+            run_skill(
+                fetch,
+                *([flag] if flag else []),
+                "--start-time",
+                "2026-01-01",
+                "--end-time",
+                "2026-01-02",
+                "-o",
+                str(out),
+            )
+        outs[flag] = xr.open_zarr(out, consolidated=True).load()
+    assert chunks_seen[0] is not None and chunks_seen[-1] is None
+    xr.testing.assert_allclose(outs["--dask"]["precip"], outs[None]["precip"])

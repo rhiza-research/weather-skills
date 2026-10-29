@@ -371,7 +371,7 @@ def _mock_v3(monkeypatch, fetch_mod, remote, seen=None):
         seen.setdefault("exists", []).append((stamp, product.bucket, billing_project))
         return True
 
-    def fake_open(stamp, product, billing_project=None):
+    def fake_open(stamp, product, billing_project=None, dask=None):
         seen["open"] = (stamp, product.bucket, billing_project)
         return remote.copy(deep=True)
 
@@ -862,3 +862,43 @@ def test_init_window_with_no_init_exits_1(tmp_path, fetch_mod, monkeypatch):
             str(tmp_path / "x.zarr"),
         )
     assert exc.value.code == 1
+
+
+def _need_dask(fetch):
+    pytest.importorskip("dask")
+    if "--dask" not in fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+
+
+def test_dask_init_window_streams_and_reports_short_init(tmp_path, fetch_mod, monkeypatch, capsys):
+    _need_dask(fetch_mod.fetch)
+    _mock_windows(monkeypatch, fetch_mod, short={"20250201_00hr_01_preds"})
+    fake_open = fetch_mod._open_remote
+    dask_args = []
+
+    def chunked(stamp, product, billing_project=None, dask=None):
+        dask_args.append(dask)
+        return fake_open(stamp, product, billing_project, dask).chunk()
+
+    monkeypatch.setattr(fetch_mod, "_open_remote", chunked)
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--dask",
+        "--start-time",
+        "2025-01-31",
+        "--end-time",
+        "2025-02-01",
+        "-v",
+        "t2m",
+        "-o",
+        str(out),
+    )
+    assert all(d is not None for d in dask_args)
+    assert "WeatherNext 2025-02-01T00 UTC init has no data after step 12 h" in (
+        capsys.readouterr().err
+    )
+    with xr.open_zarr(out, consolidated=True) as ds:
+        np.testing.assert_allclose(
+            ds["2m_temperature"].values[:, 0, 0, 0, 0], [31 - 273.15, 1 - 273.15], rtol=1e-5
+        )

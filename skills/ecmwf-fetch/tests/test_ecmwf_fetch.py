@@ -424,7 +424,7 @@ def test_catalog_fetch_writes_tp_without_creds(tmp_path, mod, fetch):
 def test_catalog_fetch_pressure_group(tmp_path, mod, fetch):
     out = tmp_path / "out.zarr"
 
-    def open_catalog(group=None):
+    def open_catalog(group=None, dask=None):
         if group == "pressure_level":
             return _catalog_pressure_ds()
         return _catalog_surface_ds()
@@ -610,3 +610,37 @@ def test_catalog_open_failure_is_clean_error(tmp_path, mod, fetch, capsys):
             )
     assert exc.value.code == 1
     assert "dynamical.org catalog" in capsys.readouterr().err
+
+
+def _need_dask(fetch):
+    pytest.importorskip("dask")
+    if "--dask" not in fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+
+
+def test_dask_catalog_fetch_drops_empty_lead0(tmp_path, mod, fetch):
+    _need_dask(fetch)
+    out = tmp_path / "out.zarr"
+    dask_args = []
+
+    def open_catalog(group=None, dask=None):
+        dask_args.append(dask)
+        return _catalog_surface_ds().chunk()
+
+    with patch.object(mod, "_open_catalog", side_effect=open_catalog):
+        run_skill(
+            fetch,
+            "--dask",
+            "--date",
+            "2026-01-01",
+            "--bbox",
+            "3/10/0/13",
+            "-v",
+            "tp",
+            "-o",
+            str(out),
+        )
+    assert dask_args and dask_args[0] is not None
+    written = xr.open_zarr(out, consolidated=True)
+    assert written.sizes["step"] == 2  # all-NaN lead 0 dropped
+    assert written["tp"].attrs.get("units") == "mm day-1"

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask]>=0.3.2",
 #   "dynamical-catalog==1.0.1",
 # ]
 # ///
@@ -54,11 +54,11 @@ def _ensure_catalog() -> None:
         )
 
 
-def _open_catalog(dataset_id: str):
+def _open_catalog(dataset_id: str, dask=None):
     import dynamical_catalog
 
     _ensure_catalog()
-    return dynamical_catalog.open(dataset_id, chunks=None)
+    return dynamical_catalog.open(dataset_id, chunks="auto" if dask else None)
 
 
 def _present_dates(ds) -> list[date]:
@@ -120,7 +120,7 @@ def _latest_day(dataset_id: str) -> date | None:
         "Does not download fields. Takes no IDENT."
     ),
 )
-def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
+def fetch(start_time, end_time, bbox, probe_latest, dask=None, **kwargs):
     """Fetch CHIRPS daily rainfall observations from the dynamical.org catalog as a weather-skills Zarr."""
     if probe_latest is not None:
         if probe_latest:
@@ -166,7 +166,7 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
         start_time + timedelta(days=i) for i in range((end_time - start_time).days + 1)
     ]
 
-    final = _subset(_open_catalog(_FINAL_ID), start_time, end_time, bbox)
+    final = _subset(_open_catalog(_FINAL_ID, dask), start_time, end_time, bbox)
     if _VAR not in final:
         raise DataError(f"{_FINAL_ID} has no {_VAR} variable.")
     final_dates = set(_present_dates(final))
@@ -174,7 +174,7 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
 
     fill_dates: list[date] = []
     if missing:
-        prelim = _subset(_open_catalog(_PRELIM_ID), start_time, end_time, bbox)
+        prelim = _subset(_open_catalog(_PRELIM_ID, dask), start_time, end_time, bbox)
         if _VAR in prelim:
             prelim_dates = set(_present_dates(prelim))
             fill_dates = [day for day in missing if day in prelim_dates]

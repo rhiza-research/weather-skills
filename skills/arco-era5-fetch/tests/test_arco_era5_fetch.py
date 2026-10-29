@@ -68,6 +68,10 @@ def _hourly_arco_ds(n_hours, n_finite):
         coords={"time": times, "latitude": [1.0, 2.0], "longitude": [10.0, 11.0]},
     )
     ds["2m_temperature"].attrs.update(units="K", long_name="2 metre temperature")
+    # Like the real store: the last day of data is in the attrs (whole days only).
+    ds.attrs["valid_time_stop_era5t"] = str(
+        times[0] + (n_finite - 1) // 24 * np.timedelta64(1, "D")
+    )[:10]
     return ds
 
 
@@ -216,3 +220,38 @@ def test_unknown_variable_points_to_list_variables(tmp_path, mod, fetch, capsys)
             str(tmp_path / "out.zarr"),
         )
     assert "--list-variables" in capsys.readouterr().err
+
+
+def _need_dask(fetch):
+    pytest.importorskip("dask")
+    if "--dask" not in fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+
+
+def test_dask_drops_all_nan_tail_without_loading(tmp_path, mod, fetch, capsys):
+    _need_dask(fetch)
+    out = tmp_path / "out.zarr"
+    opened = []
+
+    def open_arco(state, dask=None):
+        opened.append(dask)
+        return _hourly_arco_ds(72, 48).chunk({"time": 24})
+
+    with patch.object(mod, "_open_arco", side_effect=open_arco):
+        run_skill(
+            fetch,
+            "--dask",
+            "--start-time",
+            "2026-10-06",
+            "--end-time",
+            "2026-10-08",
+            "-v",
+            "2m_temperature",
+            "-o",
+            str(out),
+        )
+    assert opened and opened[0] is not None
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds.sizes["time"] == 48
+    assert np.isfinite(ds["2m_temperature"].values).all()
+    assert "dropped 24 all-NaN trailing hour(s)" in capsys.readouterr().err

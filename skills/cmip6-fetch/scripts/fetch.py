@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask]>=0.3.2",
 #   "gcsfs",
 #   "pandas",
 # ]
@@ -98,7 +98,7 @@ def _resolve_zstore(model, experiment, variable, member, table, grid) -> tuple:
     return zstore, grids[0], str(row["version"])
 
 
-def _open_remote(state, model, experiment, variable, member, table, grid) -> dict:
+def _open_remote(state, model, experiment, variable, member, table, grid, dask=None) -> dict:
     """Resolve the catalog and open the matched store, at most once per run."""
     if "ds" not in state:
         zstore, grid_label, version = _resolve_zstore(
@@ -107,11 +107,12 @@ def _open_remote(state, model, experiment, variable, member, table, grid) -> dic
         state.update(zstore=zstore, grid_label=grid_label, version=version)
         fs = gcsfs.GCSFileSystem(token="anon")
         mapper = fs.get_mapper(zstore)
+        chunks = "auto" if dask else None
         try:
             time_coder = xr.coders.CFDatetimeCoder(use_cftime=True)
-            ds = xr.open_zarr(mapper, consolidated=True, decode_times=time_coder)
+            ds = xr.open_zarr(mapper, consolidated=True, decode_times=time_coder, chunks=chunks)
         except AttributeError:
-            ds = xr.open_zarr(mapper, consolidated=True, use_cftime=True)
+            ds = xr.open_zarr(mapper, consolidated=True, use_cftime=True, chunks=chunks)
 
         # Some stores hold their yearly files out of order (MPI-ESM1-2-HR
         # historical runs 1915-1959, then 1895-1919, ...): sort, unless two
@@ -200,6 +201,7 @@ def fetch(
     table,
     grid,
     probe_latest,
+    dask=None,
     **kwargs,
 ):
     """Fetch one CMIP6 climate-model run from the public Pangeo catalog as a weather-skills Zarr."""
@@ -207,7 +209,7 @@ def fetch(
         print("none")
         return
 
-    state = _open_remote({}, model, experiment, variable, member, table, grid)
+    state = _open_remote({}, model, experiment, variable, member, table, grid, dask)
     ds = state["ds"]
     grid_label = state["grid_label"]
     start_iso = start_time.isoformat()
