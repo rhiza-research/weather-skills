@@ -27,7 +27,7 @@ from weather_skills_core.standard_utils import apply_write_encoding, is_transien
 from weather_skills_core.units import precip_amounts_to_rates, stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.6"
+_SKILL_VERSION = "0.0.7"
 
 # NCEI's own HTTPS tree, not the noaa-ghcn-pds S3 mirror: the mirror's by_station
 # files for some first-order stations (e.g. USW00094728, NYC Central Park) stopped
@@ -316,8 +316,8 @@ def fetch(start_time, end_time, bbox, workers, variable, probe_latest, **kwargs)
 
     ds = xr.Dataset.from_dataframe(df)
     # Days no selected station reported become NaN rows so the axis is a regular
-    # daily one (aggregate-temporal --window refuses gaps). It runs from
-    # --start-time to the last reported day only: nothing past the data is added.
+    # daily one. It runs from --start-time to the last reported day only:
+    # nothing past the data is added.
     ds = ds.reindex(time=pd.date_range(start_iso, ds["time"].values.max(), freq="D"))
     ds = ds.assign_coords(
         latitude=("station_id", meta.loc[ds["station_id"].values, "latitude"].values),

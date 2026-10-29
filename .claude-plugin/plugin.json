@@ -8,7 +8,7 @@
     "url": "https://github.com/rhiza-research"
   },
   "homepage": "https://weather-skills.org",
-  "repository": "https://github.com/rhiza-research/forecasting-skills",
+  "repository": "https://github.com/rhiza-research/weather-skills",
   "license": "MIT",
   "keywords": [
     "weather",
@@ -20,5 +20,5 @@
     "zarr",
     "xarray"
   ],
-  "version": "2026.1028.4"
+  "version": "2026.1029.0"
 }

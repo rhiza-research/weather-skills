@@ -62,7 +62,7 @@ analysis.
 
 | dynamical | Envelope | Notes |
 |---|---|---|
-| `init_time` (selected to one date) | scalar `time` coord | the 00 UTC init of the resolved `--date` |
+| `init_time` | scalar `time` (one `--date`), or a `time` dim | the 00 UTC init of the resolved `--date`, or one entry per 00 UTC init in the `--start-time`/`--end-time` windows |
 | `lead_time` | `step` dim | renamed; stays `timedelta64` |
 | `ensemble_member` | `number` dim | renamed; member 0 = control |
 | `latitude` / `longitude` | `latitude` / `longitude` | unchanged (1-D) |
@@ -73,7 +73,8 @@ analysis.
 Forecast `--date` selects the **00 UTC** initialization of the resolved date
 (`init_time == <date>T00:00:00`); all supported forecast datasets publish a 00
 UTC cycle. A date with no matching init exits 1 and prints the available init
-range.
+range. `--start-time`/`--end-time` on a forecast keeps every 00 UTC init in the
+windows; no init in any window exits 1.
 
 Medium-range IFS/AIFS/GEFS stores pressure-level fields as separate 2-D
 `*_Nhpa` variables, stacked here onto `vertical`. The 46-day S2S/ER product

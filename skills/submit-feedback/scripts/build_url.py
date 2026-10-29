@@ -14,17 +14,15 @@ from urllib.parse import quote
 from weather_skills_core import DataError, UsageError, weather_skill
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.5"
+_SKILL_VERSION = "0.0.6"
 
-# Feedback goes to one of the rhiza-research skill repos: allow-listed, so the
-# caller cannot direct it elsewhere by guessing a slug.
-OWNER = "rhiza-research"
-REPOS = (
-    "weather-skills",
-    "chc-skills",
-    "weather-skills-plotting",
-    "weather-skills-core>=0.3.2",
-)
+# Feedback goes to one of the skill repos: allow-listed, so the caller cannot
+# direct it elsewhere by guessing a slug. Repo name -> its GitHub owner.
+OWNERS = {
+    "weather-skills": "rhiza-research",
+    "weather-skills-plotting": "rhiza-research",
+    "weather-skills-core": "weather-skills",
+}
 DEFAULT_REPO = "weather-skills"
 
 # The clean ceiling GitHub accepts for a prefilled new-issue URL. Above it GitHub
@@ -35,7 +33,7 @@ MAX_URL = 6800
 def build_url(title: str, body: str, repo: str = DEFAULT_REPO) -> str:
     """Assemble the prefilled new-issue URL with title and body percent-encoded."""
     return (
-        f"https://github.com/{OWNER}/{repo}/issues/new"
+        f"https://github.com/{OWNERS[repo]}/{repo}/issues/new"
         f"?title={quote(title, safe='')}&body={quote(body, safe='')}"
     )
 
@@ -51,8 +49,8 @@ def build_url(title: str, body: str, repo: str = DEFAULT_REPO) -> str:
 @weather_skill.argument(
     "--repo",
     default=DEFAULT_REPO,
-    choices=REPOS,
-    help=f"{OWNER} repository that owns the skill the report is about (default {DEFAULT_REPO}).",
+    choices=tuple(OWNERS),
+    help=f"Repository that owns the skill the report is about (default {DEFAULT_REPO}).",
 )
 def submit_feedback(title, body, body_file, repo, **kwargs):
     """Turn a title and body into a prefilled GitHub new-issue link for filing feedback."""
@@ -123,7 +121,7 @@ def submit_feedback(title, body, body_file, repo, **kwargs):
     print(
         f"Within budget: URL is {total}/{MAX_URL} chars. Give this link to the user "
         "and tell them to click it, review the prefilled issue, and press Submit "
-        f"-- it posts to {OWNER}/{repo} under their own GitHub account (GitHub login "
+        f"-- it posts to {OWNERS[repo]}/{repo} under their own GitHub account (GitHub login "
         "required).",
         file=sys.stderr,
     )

@@ -6,7 +6,7 @@
 #   "gcsfs",
 # ]
 # ///
-"""Fetch a Google WeatherNext 2 or 3 forecast for one init date as a weather-skills Zarr."""
+"""Fetch a Google WeatherNext 2 or 3 forecast for one init date or a range of inits as a weather-skills Zarr."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.6"
+_SKILL_VERSION = "0.0.7"
 
 _STORE_NAME = "predictions.zarr"
 _STAMP_RE = re.compile(r"^(\d{8})_(\d{2})hr_01_preds$")
@@ -686,12 +686,20 @@ def _trim_leads(ds, product: _Product, max_lead):
 )
 @weather_skill.argument("--date")
 @weather_skill.argument(
+    "--start-time",
+    action="append",
+    help="Init window start; repeat with --end-time for several windows (each January).",
+)
+@weather_skill.argument(
+    "--end-time", action="append", help="Init window end, paired with --start-time."
+)
+@weather_skill.argument(
     "--cycle",
     type=lambda hour: hour.zfill(2),
     choices=list(_ALL_CYCLES),
     help="Init hour UTC (6 and 06 both work). Version 2: 00/06/12/18. Version 3 adds 48h "
-    "interim inits at the other (non-00/06/12/18) hours. Default: 00 with --date; the "
-    "latest 00/06/12/18 init when --date is omitted.",
+    "interim inits at the other (non-00/06/12/18) hours. Default: 00 with --date or windows; "
+    "the latest 00/06/12/18 init when neither is given.",
 )
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v", action="append")
@@ -732,6 +740,8 @@ def _trim_leads(ds, product: _Product, max_lead):
 )
 def fetch(
     date,
+    start_time,
+    end_time,
     bbox,
     variable,
     member,
@@ -744,7 +754,7 @@ def fetch(
     probe_latest,
     **kwargs,
 ):
-    """Fetch a Google WeatherNext 2 or 3 forecast for one init date as a weather-skills Zarr."""
+    """Fetch a Google WeatherNext 2 or 3 forecast for one init date or a range of inits as a weather-skills Zarr."""
     # Opens one per-init consolidated Zarr from the chosen realtime archive with
     # Google Cloud Application Default Credentials, maps dims onto the standard
     # ensemble-forecast cube (WeatherNext 3 leads flattened to one hourly
@@ -778,42 +788,96 @@ def fetch(
         print(_stamp_to_date(stamp) if stamp else "none")
         return
 
-    stamp = _resolve_stamp(date, cycle, product, billing_project)
-    print(f"Resolved init: {stamp}", file=sys.stderr)
-    print(f"Opening {_store_url(stamp, product)}", file=sys.stderr)
+    # One (start, end) pair per window; --end-time is an inclusive calendar day.
+    windows = list(zip(start_time or [], end_time or [], strict=True))
+    if date is not None and windows:
+        raise UsageError(
+            "pass --date for one init, or --start-time/--end-time for a range of inits (not both)."
+        )
+    if windows:
+        import datetime as dt
 
-    ds = _open_remote(stamp, product, billing_project)
-    if member:
-        n = ds.sizes["sample"]
-        bad = [m for m in member if m < -n or m >= n]
-        if bad:
-            raise UsageError(f"--member {bad} out of range for {n} members (valid: {-n}..{n - 1})")
-        ds = ds.isel(sample=[m % n for m in member])
-    if product.version == "3":
-        ds = _select_v3(ds, variable, statistic)
+        # The --cycle init (default 00 UTC) of each day in the windows, as with
+        # --date: the windows select init times, not valid times. One listing
+        # per month in the windows.
+        hour = cycle or "00"
+        days = {
+            (start + dt.timedelta(days=n)).strftime("%Y%m%d")
+            for start, end in windows
+            for n in range((end - start).days + 1)
+        }
+        stamps = [
+            stamp
+            for month in sorted({day[:6] for day in days})
+            for stamp in _list_init_stamps(product, billing_project, month)
+            if stamp[:8] in days and _STAMP_RE.fullmatch(stamp).group(2) == hour
+        ]
+        if not stamps:
+            window_text = ", ".join(f"{start}..{end}" for start, end in windows)
+            raise DataError(
+                f"no {hour} UTC init in {window_text} under gs://{product.bucket}/{product.prefix}/."
+            )
+        print(f"Selected {len(stamps)} inits.", file=sys.stderr)
     else:
-        ds = _select_v2(ds, variable)
-    if max_lead is not None:
-        ds = _trim_leads(ds, product, max_lead)
+        stamps = [_resolve_stamp(date, cycle, product, billing_project)]
+        print(f"Resolved init: {stamps[0]}", file=sys.stderr)
     if not variable:
         print(
             f"Note: no --variable given; selecting all data variables. {product.size_note}",
             file=sys.stderr,
         )
-    if bbox is not None:
-        ds = bbox_subset(ds, bbox)
-    else:
-        ds = ensure_normalized_longitude(ds)
 
-    ds = _prepare_dataset(ds.load(), product)
+    # One store per init: open each lazily, subset it, and load only that.
+    pieces = []
+    for stamp in stamps:
+        if windows and not _store_exists(stamp, product, billing_project):
+            print(
+                f"WARNING: no complete store for init {stamp} (still publishing?); skipped.",
+                file=sys.stderr,
+            )
+            continue
+        print(f"Opening {_store_url(stamp, product)}", file=sys.stderr)
+        ds = _open_remote(stamp, product, billing_project)
+        if member:
+            n = ds.sizes["sample"]
+            bad = [m for m in member if m < -n or m >= n]
+            if bad:
+                raise UsageError(
+                    f"--member {bad} out of range for {n} members (valid: {-n}..{n - 1})"
+                )
+            ds = ds.isel(sample=[m % n for m in member])
+        if product.version == "3":
+            ds = _select_v3(ds, variable, statistic)
+        else:
+            ds = _select_v2(ds, variable)
+        if max_lead is not None:
+            ds = _trim_leads(ds, product, max_lead)
+        if bbox is not None:
+            ds = bbox_subset(ds, bbox)
+        else:
+            ds = ensure_normalized_longitude(ds)
+        pieces.append(_prepare_dataset(ds.load(), product))
+    if not pieces:
+        raise DataError("no complete store for any selected init.")
+    if windows:
+        import xarray as xr
+
+        # A range of inits: a `time` axis (the init); valid_time becomes (time, step).
+        ds = xr.concat(pieces, "time", join="outer", coords="different", compat="equals")
+        ds = ds.transpose("time", "step", ...)
+    else:
+        ds = pieces[0]
     if max_lead is not None:
         ds = ds.isel(step=np.flatnonzero(ds["step"].values <= max_lead))
+    label = stamps[0] + (f"..{stamps[-1]}" if windows else "")
     ds.attrs.update(
         Conventions="CF-1.13",
         title=product.title,
         institution="Google DeepMind / Google Research (WeatherNext)",
-        source=_store_url(stamp, product),
-        weather_skills_source=f"{product.source_tag}:{stamp}",
+        source=_store_url(stamps[0], product)
+        if not windows
+        else f"gs://{product.bucket}/{product.prefix}/",
+        weather_skills_source=f"{product.source_tag}:{label}",
     )
     stamp_precip_amounts(ds)
     ds = to_standard_units(ds)
@@ -842,7 +906,26 @@ def fetch(
         )
         if had_valid:
             ds = ds.assign_coords(valid_time=ds["time"] + ds["step"])
-    return stamp_data_interval(ds)
+    if windows:
+        # An init still publishing its long leads keeps them NaN (not filled);
+        # say which init is short.
+        init_empty = np.ones((ds.sizes["time"], ds.sizes["step"]), dtype=bool)
+        for name in ds.data_vars:
+            other = [d for d in ds[name].dims if d not in ("time", "step")]
+            init_empty &= ds[name].isnull().all(other).transpose("time", "step").values
+        hours = ds["step"].values / np.timedelta64(1, "h")
+        for i, row in enumerate(init_empty):
+            init = str(ds["time"].values[i])[:13]
+            if row.all():
+                print(f"WARNING: WeatherNext {init} UTC init has no data (NaN).", file=sys.stderr)
+            elif row[-1]:
+                print(
+                    f"WARNING: WeatherNext {init} UTC init has no data after step "
+                    f"{hours[np.nonzero(~row)[0][-1]]:g} h (still publishing?); its later "
+                    "steps are NaN (not filled).",
+                    file=sys.stderr,
+                )
+    return stamp_data_interval(ds, dim="step" if "step" in ds.dims else None)
 
 
 if __name__ == "__main__":
