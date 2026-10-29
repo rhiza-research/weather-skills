@@ -82,6 +82,7 @@ Needs Google Cloud credentials: `GCLOUD_SERVICE_CREDENTIALS` (key JSON), `GOOGLE
 
 ### Notes
 - `--bbox` cuts the output, not the download (chunks are global); `-v`, `--member`, `--statistic`, `--max-lead` cut the read.
+- Slow: every chunk is the whole globe, so a one-country fetch downloads as much as a global one and takes as long. Fetch only the fields, members and leads the task needs, and tell the user before a large read that it will be slow.
 - WeatherNext 3 fields sit on four grids and lead axes (Details); mixing them in one run exits 2.
 - If the request doesn't say, ask the user which version and how many members, with the size and cost from Details.
 
