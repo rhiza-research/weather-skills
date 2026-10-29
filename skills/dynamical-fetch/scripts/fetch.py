@@ -25,7 +25,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.8"
+_SKILL_VERSION = "0.0.9"
 
 # Forecast bookkeeping / CRS scalar coords dropped from the standard output.
 _DROP_COORDS = (
@@ -447,9 +447,6 @@ def fetch(
         ds = ds.rename(rename)
         # One init: scalar `time`. A range of inits: a `time` axis (the init).
         ds = ds.rename({"init_time": "time"})
-        # GEFS and WeatherNext 2 store members before leads; put every
-        # forecast in one order.
-        ds = ds.transpose(*[d for d in ("time", "step", "number") if d in ds.dims], ...)
     else:
         # Each window keeps every sub-daily step of its end day (IMERG
         # half-hourly), not just its 00:00 instant. Windows may overlap.
@@ -492,6 +489,10 @@ def fetch(
     if is_forecast and len(ds.data_vars) > 0:
         # Read the subset once: the NaN checks below would otherwise re-read it.
         ds = ds.load()
+        # GEFS and WeatherNext 2 store members before leads; put every
+        # forecast in one order. Only after the load: without dask, a lazy
+        # transpose makes the read take gigabytes for a small bbox.
+        ds = ds.transpose(*[d for d in ("time", "step", "number") if d in ds.dims], ...)
         empty = np.ones(ds.sizes["step"], dtype=bool)
         for name in ds.data_vars:
             other = [d for d in ds[name].dims if d != "step"]
