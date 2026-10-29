@@ -210,3 +210,34 @@ def test_no_match_hint_lists_options_for_the_other_facets(mod):
     msg = str(err.value)
     assert "'historical'" in msg
     assert "members for historical/pr/Amon=['r1i1p1f1']" in msg
+
+
+def _open_store(mod, ds):
+    """Run the real _open_remote against ``ds`` in place of the GCS store."""
+    with (
+        patch.object(mod, "_resolve_zstore", return_value=("gs://cmip6/x/", "gn", "v1")),
+        patch.object(mod.gcsfs, "GCSFileSystem"),
+        patch.object(mod.xr, "open_zarr", return_value=ds),
+    ):
+        return mod._open_remote({}, "M", "historical", "tas", "r1i1p1f1", "Amon", None)["ds"]
+
+
+def test_out_of_order_store_is_sorted_with_its_bounds(mod):
+    """MPI-ESM1-2-HR historical stores its yearly files out of order."""
+    ds = _monthly_state("proleptic_gregorian", 2000, [1, 2, 3, 4])["ds"]
+    ds["time"].encoding["calendar"] = "proleptic_gregorian"
+    shuffled = ds.isel(time=[2, 3, 0, 1])
+    shuffled["time"].encoding["calendar"] = "proleptic_gregorian"
+    got = _open_store(mod, shuffled)
+    assert [t.month for t in got["time"].values] == [1, 2, 3, 4]
+    assert [b.month for b in got["time_bnds"].values[:, 0]] == [1, 2, 3, 4]
+
+
+def test_repeated_time_steps_are_refused(mod):
+    from weather_skills_core import DataError
+
+    ds = _monthly_state("proleptic_gregorian", 2000, [1, 2])["ds"]
+    dup = ds.isel(time=[1, 0, 1])
+    dup["time"].encoding["calendar"] = "proleptic_gregorian"
+    with pytest.raises(DataError, match="repeats time steps"):
+        _open_store(mod, dup)

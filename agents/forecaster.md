@@ -29,16 +29,16 @@ into pipelines (fetch data → transform it) to answer meteorological questions.
 Prefer small steps over stuffing every filter into one call:
 
 - **Fetchers:** Prefer `dynamical-fetch` whenever the dynamical.org catalog has
-  the dataset (GFS, GEFS, ECMWF IFS-ENS, AIFS, ICON-EU, MRMS, GFS/GEFS analyses,
-  IMERG, CHIRPS). It is credential-free and has no API queue. **IMERG default:**
+  the dataset (GFS, GEFS, ECMWF IFS-ENS, AIFS, Google WeatherNext 2, ICON-EU, MRMS,
+  GFS/GEFS analyses, IMERG, CHIRPS). It is credential-free and has no API queue. **IMERG default:**
   `--dataset nasa-imerg-analysis-late` (or `nasa-imerg-analysis-early`),
-  `-v precipitation_surface`. Do not start with `imerg-fetch`; that is the
-  Earthdata daily Late/Final fallback only. **CHIRPS default:** `chirps-fetch`
+  `-v precipitation_surface`. Do not start with `imerg-fetch`; that is for
+  Earthdata daily IMERG Final only. **CHIRPS default:** `chirps-fetch`
   (dynamical.org final + prelim, written as `precip`). **ECMWF S2S / ER
   default:** `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`
   (`-v precipitation_surface` or `-v tp`). Use `ecmwf-fetch` only as the ECDS
   fallback (ocean / pre-2026 / unmapped fields). Use a source-specific fetcher (TAHMO, OISST,
-  ARCO-ERA5, CMIP6, Kenya archive, Cumulus AI, NeuralGCM S2S, PBC/StillLearning, …) only when
+  ARCO-ERA5, CMIP6, Cumulus AI, NeuralGCM S2S, PBC/StillLearning, …) only when
   the catalog does not carry that product. Use `neuralgcm-fetch` for the Tomorrow
   Now 2026 NeuralGCM ensemble at `gs://neuralgcm-s2s` (GCS credentials; default
   `-v tp`). Use `pbc-fetch` for quintile precip
@@ -132,13 +132,12 @@ Required names (from each skill's `metadata.openclaw.requires.env`):
 - `meteosat-fetch` — `EUMETSAT_CONSUMER_KEY`, `EUMETSAT_CONSUMER_SECRET`
 - `windborne-fetch` — `WB_CLIENT_ID`, `WB_API_KEY`
 - `3dpaws-fetch` — `CHORDS_EMAIL`, `CHORDS_API_KEY`
-- `weathernext-fetch` — `GOOGLE_APPLICATION_CREDENTIALS` (plus `GOOGLE_CLOUD_PROJECT` for the requester-pays WeatherNext 3 ensemble)
 - `cumulus-fetch` — `AZURE_STORAGE_SAS_TOKEN`
-- `neuralgcm-fetch` / `pbc-fetch` — `NEURAL_GCM_SERVICE_CREDENTIALS`
+- `neuralgcm-fetch` / `pbc-fetch` / `weathernext-fetch` — `GCLOUD_SERVICE_CREDENTIALS` (plus `GOOGLE_CLOUD_PROJECT` for the requester-pays WeatherNext 3 ensemble)
 
 `--probe-latest` still needs credentials when the probe talks to a keyed
 API (`openaq-fetch`, `tahmo-fetch`, `imerg-fetch`, `smap-fetch`, `meteosat-fetch`,
 `3dpaws-fetch`, `windborne-fetch`). ECMWF
-`--probe-latest` is calendar math only and does not. Never read, print, or echo the
+`--probe-latest` reads the public catalog and does not. Never read, print, or echo the
 values, and never open a `.env` or credential file. If a named secret is not
 available to inject, report that to the user instead of calling the skill.

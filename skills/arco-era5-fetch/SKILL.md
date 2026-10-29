@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads the public ARCO-ERA5 analysis-ready Zarr from Google Cloud (gs://gcp-public-data-arco-era5) over anonymous access; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.4"
+  version: "0.0.6"
   catalog-group: fetchers
   variables:
     - 2m_temperature
@@ -25,6 +25,8 @@ Fetches hourly 0.25° ERA5 fields from the [ARCO-ERA5](https://github.com/google
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--bbox N/W/S/E] -v VAR [-v VAR ...] -o OUT.zarr
 # Last day with data (no download)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
+# Variables, units and pressure levels (no download)
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --list-variables
 ```
 
 ### Arguments
@@ -32,6 +34,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - `--bbox` — `N/W/S/E` decimal degrees, longitudes −180..180; W > E crosses the antimeridian. Omit for the full globe.
 - `--variable`, `-v` — ARCO variable name (`2m_temperature`, `total_precipitation`, `10m_u_component_of_wind`, pressure-level `temperature`, ...); repeat for several. An unknown name exits 2 and lists `Available:`. Omitting `-v` fetches all ~270 fields.
 - `--probe-latest` — print the last day with data (`YYYY-MM-DD`) and exit. Takes an optional id that this skill ignores.
+- `--list-variables` — print each variable (name, units, long name, and whether it has pressure levels) and the level list, then exit. Use it to find a field's name before fetching; does not download fields.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output

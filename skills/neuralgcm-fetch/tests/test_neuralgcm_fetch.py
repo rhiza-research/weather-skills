@@ -202,22 +202,29 @@ def test_unknown_variable_exits_2(tmp_path, fetch_mod, monkeypatch):
     assert exc.value.code == 2
 
 
-def test_missing_date_exits_1(tmp_path, fetch_mod, monkeypatch):
+def test_missing_date_exits_1(tmp_path, fetch_mod, monkeypatch, capsys):
     monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, dataset: False)
+    stamps = ["20260904T00", "20260907T00", "20260907T12", "20260911T00", "20260914T12"]
+    monkeypatch.setattr(fetch_mod, "_list_init_stamps", lambda: stamps)
     with pytest.raises(SystemExit) as exc:
         run_skill(
             fetch_mod.fetch,
             "--date",
-            "2020-01-01",
+            "2026-09-08",
             "-o",
             str(tmp_path / "unused.zarr"),
         )
     assert exc.value.code == 1
+    # One failed --date lists the inits around it, so the model need not guess again.
+    assert (
+        "Nearest published inits: 2026-09-04 00Z, 2026-09-07 00Z, 2026-09-07 12Z, "
+        "2026-09-11 00Z, 2026-09-14 12Z (5 inits from 2026-09-04 to 2026-09-14)"
+    ) in capsys.readouterr().err
 
 
 def test_filesystem_uses_credentials_json_when_set(fetch_mod, monkeypatch):
     info = {"type": "service_account", "project_id": "sheerwater", "client_email": "x@y"}
-    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", json.dumps(info))
+    monkeypatch.setenv("GCLOUD_SERVICE_CREDENTIALS", json.dumps(info))
     seen = {}
 
     def fake_gcs_filesystem(**kwargs):
@@ -230,13 +237,13 @@ def test_filesystem_uses_credentials_json_when_set(fetch_mod, monkeypatch):
 
 
 def test_filesystem_rejects_invalid_credentials_json(fetch_mod, monkeypatch):
-    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", "{not valid json")
+    monkeypatch.setenv("GCLOUD_SERVICE_CREDENTIALS", "{not valid json")
     with pytest.raises(fetch_mod.DataError, match="not valid JSON"):
         fetch_mod._filesystem()
 
 
 def test_filesystem_falls_back_without_credentials_json(fetch_mod, monkeypatch):
-    monkeypatch.delenv("NEURAL_GCM_SERVICE_CREDENTIALS", raising=False)
+    monkeypatch.delenv("GCLOUD_SERVICE_CREDENTIALS", raising=False)
     seen = {}
 
     def fake_gcs_filesystem(**kwargs):
@@ -276,7 +283,124 @@ def test_read_failure_is_data_error(tmp_path, fetch_mod, monkeypatch, capsys):
 
 
 def test_filesystem_rejects_non_object_credentials_json(fetch_mod, monkeypatch):
-    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", '"not-a-key"')
+    monkeypatch.setenv("GCLOUD_SERVICE_CREDENTIALS", '"not-a-key"')
     monkeypatch.setattr(gcsfs, "GCSFileSystem", lambda **kwargs: pytest.fail("token passed on"))
     with pytest.raises(fetch_mod.DataError, match="JSON object"):
         fetch_mod._filesystem()
+
+
+_WINDOW_STAMPS = ["20250130T00", "20250131T00", "20250201T00", "20250201T12", "20260115T00"]
+
+
+def _mock_windows(monkeypatch, fetch_mod, *, missing=(), opened=None):
+    """Per-init stores whose tp is the init's day of month (in m per 6 h, x 1e-3)."""
+
+    def fake_open(stamp, dataset):
+        if opened is not None:
+            opened.append(stamp)
+        ds = _native_precip(fill=int(stamp[6:8]) * 1e-3)
+        init = np.datetime64(f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}T{stamp[-2:]}", "ns")
+        return ds.assign_coords(init_time=[init])
+
+    monkeypatch.setattr(fetch_mod, "_list_init_stamps", lambda: list(_WINDOW_STAMPS))
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, dataset: stamp not in missing)
+    monkeypatch.setattr(fetch_mod, "_open_remote", fake_open)
+
+
+def test_init_window_keeps_00utc_inits_on_a_time_axis(tmp_path, fetch_mod, monkeypatch):
+    opened = []
+    _mock_windows(monkeypatch, fetch_mod, opened=opened)
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch, "--start-time", "2025-01-31", "--end-time", "2025-02-01", "-o", str(out)
+    )
+    # 20250201T12 is not a 00 UTC init.
+    assert opened == ["20250131T00", "20250201T00"]
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds["tp"].dims == ("time", "step", "number", "latitude", "longitude")
+        # The 6 h lead spacing, not the 1-day gap between inits.
+        assert ds["tp"].attrs["data_interval"] == "6 hour"
+        days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+        assert days == ["2025-01-31", "2025-02-01"]
+        # Day 31 → 0.031 m / 6 h = 124 mm day-1; day 1 → 4 mm day-1.
+        np.testing.assert_allclose(ds["tp"].values[:, 0, 0, 0, 0], [124.0, 4.0], rtol=1e-5)
+    assert load_history(out)[-1]["args"]["start_time"] == ["2025-01-31"]
+
+
+def test_repeated_init_windows_take_disjoint_inits(tmp_path, fetch_mod, monkeypatch):
+    _mock_windows(monkeypatch, fetch_mod)
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--start-time",
+        "2025-01-01",
+        "--end-time",
+        "2025-01-31",
+        "--start-time",
+        "2026-01-01",
+        "--end-time",
+        "2026-01-31",
+        "-o",
+        str(out),
+    )
+    with xr.open_zarr(out, consolidated=True) as ds:
+        days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+    assert days == ["2025-01-30", "2025-01-31", "2026-01-15"]
+
+
+def test_init_window_warns_on_missing_and_short_inits(tmp_path, fetch_mod, monkeypatch, capsys):
+    _mock_windows(monkeypatch, fetch_mod, missing={"20250131T00"})
+    fake_open = fetch_mod._open_remote
+
+    def short_newest(stamp, dataset):
+        ds = fake_open(stamp, dataset)
+        if stamp == "20250201T00":
+            ds["total_precipitation_6hr"][:, :, 2:] = np.nan
+        return ds
+
+    monkeypatch.setattr(fetch_mod, "_open_remote", short_newest)
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch, "--start-time", "2025-01-30", "--end-time", "2025-02-01", "-o", str(out)
+    )
+    err = capsys.readouterr().err
+    assert "init 20250131T00 has no 'imerg:precip' store" in err
+    assert "2025-02-01T00 UTC init has no data after step 6 h" in err
+    with xr.open_zarr(out, consolidated=True) as ds:
+        days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+        assert days == ["2025-01-30", "2025-02-01"]
+        # The short init's late leads stay NaN; the other keeps every lead.
+        assert ds["tp"].isel(time=1, step=slice(2, None)).isnull().all()
+        assert ds["tp"].isel(time=0).notnull().all()
+
+
+def test_date_and_init_window_together_exit_2(tmp_path, fetch_mod, monkeypatch):
+    _mock_windows(monkeypatch, fetch_mod)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch,
+            "--date",
+            "2025-01-31",
+            "--start-time",
+            "2025-01-31",
+            "--end-time",
+            "2025-02-01",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 2
+
+
+def test_init_window_with_no_init_exits_1(tmp_path, fetch_mod, monkeypatch):
+    _mock_windows(monkeypatch, fetch_mod)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch,
+            "--start-time",
+            "2024-06-01",
+            "--end-time",
+            "2024-06-30",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 1

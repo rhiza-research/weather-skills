@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Builds a URL string only; reads no credentials, makes no network request, and writes no file.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py *)
 metadata:
-  version: "0.0.4"
+  version: "0.0.6"
   catalog-group: agent-tooling
 ---
 
@@ -23,10 +23,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py --title TITLE (--body TEXT | --b
 - `--title` — issue title. Required, not empty.
 - `--body` — issue body as markdown.
 - `--body-file` — read the body from this UTF-8 file instead. Pass exactly one of `--body`, `--body-file`.
-- `--repo` — the `rhiza-research` repo that owns the skill: `weather-skills`, `weather-skills-core`, `weather-skills-plotting`, or `chc-skills`. Default: `weather-skills`.
+- `--repo` — the repo that owns the skill: `weather-skills`, `weather-skills-core`, or `weather-skills-plotting`. Default: `weather-skills`.
 
 ### Output
-- Exit 0: the URL alone on stdout (`https://github.com/rhiza-research/<repo>/issues/new?title=…&body=…`); a length note on stderr.
+- Exit 0: the URL alone on stdout (`https://github.com/<owner>/<repo>/issues/new?title=…&body=…`; `weather-skills-core` is under `weather-skills`, the others under `rhiza-research`); a length note on stderr.
 - Exit 1: the URL would be over 6,800 characters. Nothing on stdout; stderr says roughly how many body characters to cut.
 - Exit 2: empty title or body, both or neither body source, unreadable or non-UTF-8 input, or a title too long on its own.
 

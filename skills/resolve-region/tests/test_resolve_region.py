@@ -62,6 +62,28 @@ def test_geojson_write(tmp_path, resolve_region):
     data = json.loads(geo.read_text())
     assert data["type"] == "FeatureCollection"
     assert data["features"][0]["properties"]["iso3"] == "KEN"
+    history = json.loads(data["weather_skills_history"])
+    assert history[0]["skill"] == "resolve-region"
+    assert history[0]["args"] == {"code": "KEN", "pad": 0.25}
+
+    # A rerun replaces its own output.
+    run_skill(resolve_region, "UGA", "--geojson", str(geo))
+    assert json.loads(geo.read_text())["features"][0]["properties"]["iso3"] == "UGA"
+
+
+def test_geojson_refuses_a_file_it_did_not_write(tmp_path, resolve_region):
+    geo = tmp_path / "ken.geojson"
+    geo.write_text('{"type": "FeatureCollection", "features": []}')
+    with pytest.raises(SystemExit) as exc:
+        run_skill(resolve_region, "KEN", "--geojson", str(geo))
+    assert exc.value.code == 2
+    assert json.loads(geo.read_text())["features"] == []
+
+
+def test_geojson_write_creates_parent_folder(tmp_path, resolve_region):
+    geo = tmp_path / "dairy" / "ken.geojson"
+    run_skill(resolve_region, "KEN", "--geojson", str(geo))
+    assert json.loads(geo.read_text())["type"] == "FeatureCollection"
 
 
 def test_lowercase_iso3_is_usage_error(resolve_region):

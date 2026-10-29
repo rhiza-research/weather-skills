@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import pytest
 import xarray as xr
 from conftest import (
@@ -244,6 +243,18 @@ def test_aggregate_requires_period_or_window(tmp_path, aggregate):
     assert exc.value.code == 2
 
 
+def test_window_row_count_error_names_window(tmp_path, aggregate, capsys):
+    src = write_zarr(make_gridded(n_time=7), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    with pytest.raises(SystemExit) as exc:
+        run_skill(aggregate, "-i", str(src), "-o", str(out), "--window", "7")
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "--window '7'" in err
+    assert "--period" not in err
+
+
 def _s2s_accum_forecast():
     """S2S-like steps with known cumulative tp (mm)."""
     import numpy as np
@@ -315,7 +326,7 @@ def test_irregular_weekly_totals_match_tp_differences(tmp_path, aggregate):
     )
 
 
-def test_window_refused_on_cf_bounds(tmp_path, aggregate):
+def test_window_on_cf_bounds_keeps_one_window_per_lead(tmp_path, aggregate):
     from conftest import load_skill
 
     deaccumulate = load_skill("deaccumulate", "deaccumulate").deaccumulate
@@ -324,9 +335,10 @@ def test_window_refused_on_cf_bounds(tmp_path, aggregate):
     rates = tmp_path / "rates.zarr"
     out = tmp_path / "out.zarr"
     run_skill(deaccumulate, "-i", str(src), "-o", str(rates))
-    with pytest.raises(SystemExit) as exc:
-        run_skill(aggregate, "-i", str(rates), "-o", str(out), "--window", "7")
-    assert exc.value.code == 2
+    run_skill(aggregate, "-i", str(rates), "-o", str(out), "--window", "7 day")
+    rolled = xr.open_zarr(out, consolidated=True)
+    assert rolled.sizes["step"] == xr.open_zarr(rates, consolidated=True).sizes["step"]
+    assert rolled["tp"].attrs["aggregation_period"] == "7 day"
 
 
 def test_reaggregate_weekly_to_21_day_expects_three_weeks(tmp_path, aggregate):
@@ -491,6 +503,15 @@ def test_weekly_period_on_weekly_step_keeps_values(tmp_path, aggregate):
     assert weekly["tp"].attrs.get("data_interval") == "7 day"
 
 
+def test_weekly_period_on_weekly_keeps_partial_coverage(tmp_path, aggregate):
+    """Re-running weekly on weekly output must not mark a partial week complete."""
+    weekly = _weekly(tmp_path, aggregate, 17)
+    out = tmp_path / "again.zarr"
+    run_skill(aggregate, "-i", str(weekly), "-o", str(out), "--period", "weekly")
+    again = xr.open_zarr(out, consolidated=True)
+    assert again[AGGREGATION_COVERAGE_COORD].values.tolist() == pytest.approx([1, 1, 3 / 7])
+
+
 def _tahmo_like_week():
     """3 stations x 7 days; S1 reported only 2 days (like TA00442), S2 none."""
     ds = make_point_obs(n_time=7, n_points=3, fill=4.0, start="2026-09-28")
@@ -570,33 +591,17 @@ def test_missing_row_lowers_coverage_of_its_own_week(tmp_path, aggregate, stamp_
 
 
 @pytest.mark.parametrize("stamp_interval", [True, False])
-def test_window_spans_missing_rows_as_nan(tmp_path, aggregate, stamp_interval, capsys):
-    """A missing day comes back as a NaN row; windows over it lose coverage, not width."""
+def test_window_across_missing_row_lowers_coverage(tmp_path, aggregate, stamp_interval):
+    """A rolling window over the missing day is kept, with 6/7 coverage."""
     src = write_zarr(_daily_with_gap(stamp_interval), tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
-    run_skill(aggregate, "-i", str(src), "-o", str(out), "--window", "7", "--align", "left")
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--window", "7 day")
     ds = xr.open_zarr(out, consolidated=True)
-    assert "1 missing time row(s)" in capsys.readouterr().err
-    labels = pd.DatetimeIndex(ds["time"].values)
-    assert pd.Timestamp("2026-01-05") in labels
-    coverage = ds[AGGREGATION_COVERAGE_COORD].to_series()
-    # Windows starting 2025-12-30 .. 2026-01-05 contain the gap; later ones do not.
-    assert coverage[pd.Timestamp("2026-01-01")] == pytest.approx(6 / 7)
-    assert coverage[pd.Timestamp("2026-01-06")] == pytest.approx(1.0)
-    assert float(ds["precip"].sel(time="2026-01-06").squeeze()) == pytest.approx(1.0)
-
-
-def test_window_refused_on_irregular_axis(tmp_path, aggregate):
-    times = np.array(["2026-01-01T00", "2026-01-02T00", "2026-01-03T12"], dtype="datetime64[ns]")
-    ds = xr.Dataset(
-        {"precip": (("time", "latitude", "longitude"), np.ones((3, 1, 1)))},
-        coords={"time": times, "latitude": [1.0], "longitude": [10.0]},
-    )
-    ds["precip"].attrs.update(units="mm day-1", data_interval="1 day")
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    with pytest.raises(SystemExit) as exc:
-        run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "out.zarr"), "--window", "2")
-    assert exc.value.code == 2
+    cov = ds[AGGREGATION_COVERAGE_COORD].values
+    # One window per input row, labeled at that row.
+    assert ds.sizes["time"] == 13
+    assert cov[0] == pytest.approx(6 / 7)  # 01-01 .. 01-07 lacks 01-05
+    assert cov[4] == pytest.approx(1.0)  # 01-06 .. 01-12
 
 
 def test_incomplete_bins_warn_on_stderr(tmp_path, aggregate, capsys):
@@ -836,11 +841,9 @@ def test_period_shorter_than_input_cells_is_refused(tmp_path, aggregate, make, p
     assert exc.value.code == 2
 
 
-def test_date_stride_off_the_axis_is_a_usage_error(tmp_path, aggregate, capsys):
-    """--stride month on weekly data picks dates the axis lacks: exit 2, not KeyError."""
-    ds = make_gridded(n_time=30, start="2026-01-05")
-    weeks = np.datetime64("2026-01-05", "ns") + np.arange(30) * np.timedelta64(7, "D")
-    src = write_zarr(ds.assign_coords(time=weeks), tmp_path / "in.zarr")
+def test_date_stride_with_no_dates_on_the_axis_is_a_usage_error(tmp_path, aggregate, capsys):
+    """--stride Monday on Tuesday to Thursday picks nothing: exit 2."""
+    src = write_zarr(make_gridded(n_time=3, start="2026-01-06"), tmp_path / "in.zarr")
     with pytest.raises(SystemExit) as exc:
         run_skill(
             aggregate,
@@ -849,11 +852,77 @@ def test_date_stride_off_the_axis_is_a_usage_error(tmp_path, aggregate, capsys):
             "-o",
             str(tmp_path / "out.zarr"),
             "--window",
-            "13",
-            "--align",
-            "right",
+            "2 day",
             "--stride",
-            "month",
+            "Monday",
         )
     assert exc.value.code == 2
     assert "integer --stride" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "align, values, coverage",
+    [
+        ("left", [1, 2, 3, 4, 4.5, 5], [1, 1, 1, 1, 2 / 3, 1 / 3]),
+        ("center", [0.5, 1, 2, 3, 4, 4.5], [2 / 3, 1, 1, 1, 1, 2 / 3]),
+        ("right", [0, 0.5, 1, 2, 3, 4], [1 / 3, 2 / 3, 1, 1, 1, 1]),
+    ],
+)
+def test_window_rolls_a_duration_and_keeps_partial_windows(
+    tmp_path, aggregate, align, values, coverage
+):
+    ds = make_gridded(n_time=6, lats=(1.0,), lons=(10.0,))
+    ds["precip"].values[:, 0, 0] = np.arange(6.0)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--window", "3 day", "--align", align)
+    rolled = xr.open_zarr(out, consolidated=True)
+    np.testing.assert_array_equal(rolled["time"].values, ds["time"].values)
+    np.testing.assert_allclose(rolled["precip"].values[:, 0, 0], values)
+    np.testing.assert_allclose(rolled[AGGREGATION_COVERAGE_COORD].values, coverage)
+    assert rolled["precip"].attrs["aggregation_period"] == "3 day"
+    assert rolled["precip"].attrs["data_interval"] == "1 day"
+
+
+def _two_januaries():
+    first = make_gridded(n_time=31, lats=(1.0,), lons=(10.0,), fill=0.0, start="2024-01-01")
+    second = make_gridded(n_time=31, lats=(1.0,), lons=(10.0,), fill=100.0, start="2025-01-01")
+    return xr.concat([first, second], dim="time")
+
+
+def test_window_on_stacked_januaries_never_mixes_years(tmp_path, aggregate):
+    src = write_zarr(_two_januaries(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--window", "7 day")
+    rolled = xr.open_zarr(out, consolidated=True)
+    assert set(np.unique(rolled["precip"].values)) == {0.0, 100.0}
+    # The last 6 windows of each January run into the gap.
+    assert int((rolled[AGGREGATION_COVERAGE_COORD].values < 1).sum()) == 12
+
+
+def test_window_date_stride_on_stacked_januaries(tmp_path, aggregate):
+    src = write_zarr(_two_januaries(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--window", "7 day", "--stride", "Monday")
+    labels = [str(t)[:10] for t in xr.open_zarr(out, consolidated=True)["time"].values]
+    assert labels[0] == "2024-01-01" and labels[5] == "2025-01-06"
+    assert len(labels) == 9
+
+
+def test_window_on_uneven_leads_weights_by_duration(tmp_path, aggregate):
+    """3-hourly then 6-hourly leads: a 12 hour window is 12 hours everywhere."""
+    hours = np.concatenate([np.arange(0, 24, 3), np.arange(24, 61, 6)])
+    steps = (hours * np.timedelta64(1, "h")).astype("timedelta64[ns]")
+    attrs = {"units": "mm day-1", "standard_name": "lwe_precipitation_rate"}
+    ds = xr.Dataset(
+        {"precip": ("step", np.where(hours < 24, 1.0, 4.0), attrs)}, coords={"step": steps}
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--window", "12 hour")
+    rolled = xr.open_zarr(out, consolidated=True)
+    at = {int(h): i for i, h in enumerate(rolled["step"].values / np.timedelta64(1, "h"))}
+    # [18 h, 30 h): 6 h at 1 mm/day, 6 h at 4 mm/day.
+    assert float(rolled["precip"].values[at[18]]) == pytest.approx(2.5)
+    assert float(rolled[AGGREGATION_COVERAGE_COORD].values[at[18]]) == pytest.approx(1.0)
+    assert float(rolled[AGGREGATION_COVERAGE_COORD].values[at[60]]) == pytest.approx(0.5)

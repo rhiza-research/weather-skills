@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.2",
 #   "gcsfs",
 #   "pandas",
 # ]
@@ -30,7 +30,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.6"
 
 _CATALOG_URL = "https://storage.googleapis.com/cmip6/pangeo-cmip6.csv"
 _CF_CONVENTIONS = "CF-1.13"
@@ -112,6 +112,16 @@ def _open_remote(state, model, experiment, variable, member, table, grid) -> dic
             ds = xr.open_zarr(mapper, consolidated=True, decode_times=time_coder)
         except AttributeError:
             ds = xr.open_zarr(mapper, consolidated=True, use_cftime=True)
+
+        # Some stores hold their yearly files out of order (MPI-ESM1-2-HR
+        # historical runs 1915-1959, then 1895-1919, ...): sort, unless two
+        # entries share a date, which sorting cannot resolve.
+        if not ds.indexes["time"].is_monotonic_increasing:
+            if not ds.indexes["time"].is_unique:
+                raise DataError(
+                    f"the CMIP6 store {zstore} repeats time steps; refusing to pick one."
+                )
+            ds = ds.sortby("time")
 
         source_calendar = ds["time"].encoding.get("calendar")
         if source_calendar is None:

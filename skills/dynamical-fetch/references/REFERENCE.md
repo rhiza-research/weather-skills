@@ -28,6 +28,7 @@ grid and are rejected (see below).
 | `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` | ensemble forecast | `init_time, lead_time, ensemble_member, latitude, longitude` | 101 |
 | `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | ensemble forecast | `init_time, lead_time, ensemble_member, latitude, longitude` | 101 |
 | `ecmwf-aifs-ens-forecast` | ensemble forecast | `init_time, lead_time, ensemble_member, latitude, longitude` | 51 |
+| `google-weathernext2-forecast-operational-virtual`, `google-weathernext2-forecast-historical-virtual` | ensemble forecast | `init_time, ensemble_member, lead_time, y, x` (`y`/`x` renamed to `latitude`/`longitude`) | 64 |
 | `noaa-gfs-forecast` | deterministic forecast | `init_time, lead_time, latitude, longitude` | — |
 | `ecmwf-aifs-single-forecast` | deterministic forecast | `init_time, lead_time, latitude, longitude` | — |
 | `dwd-icon-eu-forecast-5-day` | deterministic forecast | `init_time, lead_time, latitude, longitude` | — |
@@ -61,7 +62,7 @@ analysis.
 
 | dynamical | Envelope | Notes |
 |---|---|---|
-| `init_time` (selected to one date) | scalar `time` coord | the 00 UTC init of the resolved `--date` |
+| `init_time` | scalar `time` (one `--date`), or a `time` dim | the 00 UTC init of the resolved `--date`, or one entry per 00 UTC init in the `--start-time`/`--end-time` windows |
 | `lead_time` | `step` dim | renamed; stays `timedelta64` |
 | `ensemble_member` | `number` dim | renamed; member 0 = control |
 | `latitude` / `longitude` | `latitude` / `longitude` | unchanged (1-D) |
@@ -72,7 +73,8 @@ analysis.
 Forecast `--date` selects the **00 UTC** initialization of the resolved date
 (`init_time == <date>T00:00:00`); all supported forecast datasets publish a 00
 UTC cycle. A date with no matching init exits 1 and prints the available init
-range.
+range. `--start-time`/`--end-time` on a forecast keeps every 00 UTC init in the
+windows; no init in any window exits 1.
 
 Medium-range IFS/AIFS/GEFS stores pressure-level fields as separate 2-D
 `*_Nhpa` variables, stacked here onto `vertical`. The 46-day S2S/ER product
@@ -85,7 +87,7 @@ opens that group and renames the dim to `vertical`.
 | `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` | `group=pressure_level`: `temperature`, `geopotential_height`, `wind_u`, `wind_v`, `vertical_velocity`, `specific_humidity` on 10 levels |
 | `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | none (surface only: precip, 10 m wind, 6 h max/min 2 m temperature) |
 | `noaa-gefs-forecast-35-day`, `noaa-gefs-analysis` | `geopotential_height_500hpa` only |
-| `noaa-gfs-forecast`, `noaa-gfs-analysis`, `dwd-icon-eu-forecast-5-day`, IMERG, CHIRPS, MRMS | none |
+| `noaa-gfs-forecast`, `noaa-gfs-analysis`, `dwd-icon-eu-forecast-5-day`, WeatherNext 2, IMERG, CHIRPS, MRMS | none |
 
 `-v t` / `-v gh` (or the prefixes `temperature` / `geopotential_height`) expand
 to every `*_Nhpa` field of that prefix. `temperature_2m` is not included.

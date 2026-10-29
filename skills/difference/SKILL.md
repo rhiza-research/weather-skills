@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/difference.py *)
 metadata:
-  version: "0.0.5"
+  version: "0.0.7"
   catalog-group: transforms
 ---
 
@@ -47,4 +47,4 @@ Writes weekly CHIRPS rainfall anomalies over Kenya: each week minus the climatol
 
 ## Details
 
-When plotting rainfall anomalies, omit `theme.colormap` so the default diverging millimetre classes apply. A projected-change map is the same call with a scenario time-mean as A and the historical time-mean as B.
+When plotting rainfall anomalies, leave the colorscale unset so the plot's default diverging millimetre palette applies. A projected-change map is the same call with a scenario time-mean as A and the historical time-mean as B.

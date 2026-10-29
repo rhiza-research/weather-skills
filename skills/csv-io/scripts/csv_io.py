@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.2",
 #   "cftime>=1.6",
 #   "openpyxl>=3.1",
 #   "pandas>=2.2",
@@ -29,7 +29,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset, units_convertible
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.2"
+_SKILL_VERSION = "0.0.4"
 
 # CSV header (lowercased) -> canonical coordinate name.
 COLUMN_ROLES = {
@@ -1216,7 +1216,8 @@ def csv_io(
         _export(
             ds, output, variable, dropna, max_rows, na_value, date_format, sheet, pivot, timezone
         )
-        return None
+        # Returned so the decorator writes the history to <output>.history.json.
+        return output
     if output.suffix.lower() in (".csv", *EXCEL_SUFFIXES):
         raise UsageError("reading a CSV writes a Zarr; -o should not end in .csv or .xlsx")
     if pivot:

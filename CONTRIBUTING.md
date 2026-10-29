@@ -4,8 +4,8 @@
 
 `main` is the consumer-facing branch. Anything merged to `main` is considered
 published. Work collects on `dev` and is merged to `main` in bulk. Downstream
-consumers (rhiza-agents, skillkit, the demo's `uv tool install ../`, standalone
-single-file copies) read from `main`, so every merge to `main` is a release.
+consumers (skillkit, plugin installs, the demo's `uv tool install ../`,
+standalone single-file copies) read from `main`, so every merge to `main` is a release.
 
 Each `skills/<name>/SKILL.md` carries a `metadata.version` field in its YAML
 frontmatter (nested under the top-level `metadata:` key per the Agent Skills

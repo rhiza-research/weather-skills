@@ -1,14 +1,15 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.2",
 #   "adlfs",
 # ]
 # ///
-"""Fetch the Cumulus AI ensemble precipitation forecast for one init date as a weather-skills Zarr."""
+"""Fetch the Cumulus AI ensemble precipitation forecast for one init date or a range of inits as a weather-skills Zarr."""
 
 from __future__ import annotations
 
+import bisect
 import re
 import sys
 
@@ -27,7 +28,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.6"
 
 _ACCOUNT = "italynorthdata"
 _CONTAINER = "data"
@@ -52,8 +53,9 @@ def _storage_options() -> dict[str, str]:
     (raw,) = require_env(
         _SAS_ENV,
         message=(
-            f"{_SAS_ENV} must be set to a read SAS for Azure container "
-            f"{_ACCOUNT}/{_CONTAINER} (list and read: sp=rl)."
+            f"{_SAS_ENV} is not set in this workspace, so Cumulus cannot be read; retrying "
+            "will not help. Ask the workspace admin to add the Cumulus credential: a read "
+            f"SAS for Azure container {_ACCOUNT}/{_CONTAINER} (list and read: sp=rl)."
         ),
     )
     token = raw.strip().strip("'\"").split("?", 1)[-1]
@@ -100,19 +102,37 @@ def _list_stores(folder: str) -> list[str]:
 
 def _open_store(url: str, bbox, workers: int):
     """Open one init's store and load it, subset to ``bbox``."""
+    import weakref
+
     import xarray as xr
     import zarr
+    from adlfs.utils import close_service_client
+    from zarr.core.sync import sync
 
     try:
-        with (
-            zarr.config.set({"async.concurrency": workers}),
-            xr.open_zarr(url, storage_options=_storage_options(), chunks=None) as ds,
-        ):
-            return (bbox_subset(ds, bbox) if bbox is not None else ds).load()
+        with zarr.config.set({"async.concurrency": workers}):
+            # A fresh filesystem per store: the session is closed below, and
+            # fsspec's instance cache would hand that closed one to the next init.
+            store = zarr.storage.FsspecStore.from_url(
+                url,
+                storage_options={**_storage_options(), "skip_instance_cache": True},
+                read_only=True,
+            )
+            with xr.open_zarr(store, chunks=None) as ds:
+                ds = (bbox_subset(ds, bbox) if bbox is not None else ds).load()
     except (DataError, UsageError):
         raise
     except Exception as exc:  # noqa: BLE001
         raise _azure_error(exc, f"failed to open {url}") from None
+    # zarr opens adlfs asynchronously, which leaves the filesystem without an
+    # event loop, so adlfs's exit finalizer (sync(None, close_service_client, fs))
+    # raises "Loop is not running". Close the Azure session on zarr's loop
+    # instead and drop that finalizer.
+    sync(close_service_client(store.fs))
+    for finalizer in list(weakref.finalize._registry):
+        if (finalizer.peek() or (None,))[0] is store.fs:
+            finalizer.detach()
+    return ds
 
 
 def _to_standard(ds):
@@ -144,6 +164,14 @@ def _to_standard(ds):
     help=f"One of {', '.join(_DATASETS)} (default precip), or a variable folder name.",
 )
 @weather_skill.argument("--date")
+@weather_skill.argument(
+    "--start-time",
+    action="append",
+    help="Init window start; repeat with --end-time for several windows (each January).",
+)
+@weather_skill.argument(
+    "--end-time", action="append", help="Init window end, paired with --start-time."
+)
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v", action="append")
 @weather_skill.argument(
@@ -163,8 +191,8 @@ def _to_standard(ds):
         "Does not download fields. Optional IDENT selects a --dataset id."
     ),
 )
-def fetch(dataset, date, bbox, variable, probe_latest, workers, **kwargs):
-    """Fetch the Cumulus AI ensemble precipitation forecast for one init date as a weather-skills Zarr."""
+def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, workers, **kwargs):
+    """Fetch the Cumulus AI ensemble precipitation forecast for one init date or a range of inits as a weather-skills Zarr."""
     # Opens the init's Zarr store
     # ``az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr/<variable>/YYYY-MM-DD-HH.zarr``
     # with the SAS in ``AZURE_STORAGE_SAS_TOKEN``, optionally subsets by
@@ -177,7 +205,8 @@ def fetch(dataset, date, bbox, variable, probe_latest, workers, **kwargs):
     if folder not in _DATASETS.values():
         raise UsageError(
             f"unknown Cumulus dataset {name!r}. Available: {', '.join(_DATASETS)} "
-            f"(or a folder name: {', '.join(_DATASETS.values())})."
+            f"(or a folder name: {', '.join(_DATASETS.values())}). cumulus-fetch reads "
+            "only the live forecast runs; hindcast (reforecast) runs are not served here."
         )
     if workers < 1:
         raise UsageError(f"--workers must be at least 1 (got {workers}).")
@@ -194,39 +223,104 @@ def fetch(dataset, date, bbox, variable, probe_latest, workers, **kwargs):
             f"variable(s) not in this Cumulus product: {', '.join(sorted(unknown))}.\nAvailable: tp"
         )
 
+    # One (start, end) pair per window; --end-time is an inclusive calendar day.
+    windows = list(zip(start_time or [], end_time or [], strict=True))
+    if date is not None and windows:
+        raise UsageError(
+            "pass --date for one init, or --start-time/--end-time for a range of inits (not both)."
+        )
+
     # Names sort by init date then hour, so the last match is the latest init.
     stores = _list_stores(folder)
-    if date is not None:
+    published = stores
+    if windows:
+        # 00 UTC inits only: the windows select init times, not valid times.
+        stores = [
+            s
+            for s in published
+            if s.endswith("-00.zarr")
+            and any(a.isoformat() <= s[:10] <= b.isoformat() for a, b in windows)
+        ]
+        if not stores:
+            window_text = ", ".join(f"{a}..{b}" for a, b in windows)
+            raise DataError(
+                f"no 00 UTC Cumulus init in {window_text} under {prefix}; "
+                + (
+                    f"published inits run {published[0][:10]}..{published[-1][:10]}."
+                    if published
+                    else "nothing is published."
+                )
+            )
+        print(f"Selected {len(stores)} inits.", file=sys.stderr)
+    elif date is not None:
         stores = [s for s in stores if s.startswith(date.isoformat())]
     if not stores:
-        wanted = f"init {date.isoformat()}" if date else "init stores"
+        if date is None:
+            raise DataError(f"no Cumulus init stores under {prefix}.")
+        # List the published inits around the requested date so one call is enough.
+        dates = sorted({s[:10] for s in published})
+        i = bisect.bisect_left(dates, date.isoformat())
+        near = dates[max(0, i - 3) : i + 3]
         raise DataError(
-            f"no Cumulus {wanted} under {prefix}. "
-            "Omit --date to take the latest, or pass --probe-latest to see what is published."
+            f"no Cumulus init {date.isoformat()} under {prefix}. "
+            + (
+                f"Nearest published inits: {', '.join(near)} "
+                f"({len(dates)} inits from {dates[0]} to {dates[-1]}). "
+                if dates
+                else "Nothing is published. "
+            )
+            + "Omit --date to take the latest."
         )
-    store = stores[-1]
-    print(f"Opening {prefix}{store}", file=sys.stderr)
+    if not windows:
+        stores = stores[-1:]
+    # One store per init: each is opened, cut to the bbox and loaded on its own.
+    pieces = []
+    for store in stores:
+        print(f"Opening {prefix}{store}", file=sys.stderr)
+        pieces.append(_to_standard(_open_store(f"az://{_ROOT}/{folder}/{store}", bbox, workers)))
+    if windows:
+        import xarray as xr
 
-    ds = _open_store(f"az://{_ROOT}/{folder}/{store}", bbox, workers)
-    ds = _to_standard(ds)
-    # A fresh init may still be writing its long leads (all-NaN). Error when
-    # nothing is there; drop an empty tail and say so instead of writing it.
-    empty = ds["tp"].isnull().all(("number", "latitude", "longitude")).values
-    if empty.all():
-        raise DataError(
-            f"Cumulus init {store} has no data in the requested bbox (still publishing?). "
-            "Pass --date with an earlier init."
-        )
-    last = int(np.nonzero(~empty)[0][-1])
-    if last < ds.sizes["step"] - 1:
+        # A range of inits: a `time` axis (the init). An init still writing its
+        # long leads keeps them NaN (not filled); say which init is short.
+        ds = xr.concat(pieces, "time", join="outer").transpose("time", "step", ...)
+        init_empty = ds["tp"].isnull().all(("number", "latitude", "longitude")).values
+        if init_empty.all():
+            raise DataError(
+                f"no selected Cumulus init has data in the requested bbox under {prefix}."
+            )
         days = ds["step"].values / np.timedelta64(1, "D")
-        print(
-            f"WARNING: Cumulus init {store} has no data from step {days[last + 1]:g} d "
-            f"(of {days[-1]:g} d; still publishing?). Dropped the empty leads (not padded); "
-            "pass --date with an earlier init for every lead.",
-            file=sys.stderr,
-        )
-        ds = ds.isel(step=slice(0, last + 1))
+        for i, row in enumerate(init_empty):
+            init = str(ds["time"].values[i])[:10]
+            if row.all():
+                print(f"WARNING: Cumulus init {init} has no data (NaN).", file=sys.stderr)
+            elif row[-1]:
+                print(
+                    f"WARNING: Cumulus init {init} has no data from step "
+                    f"{days[np.nonzero(~row)[0][-1] + 1]:g} d (still publishing?); its later "
+                    "steps are NaN (not filled).",
+                    file=sys.stderr,
+                )
+    else:
+        ds = pieces[0]
+        # A fresh init may still be writing its long leads (all-NaN). Error when
+        # nothing is there; drop an empty tail and say so instead of writing it.
+        empty = ds["tp"].isnull().all(("number", "latitude", "longitude")).values
+        if empty.all():
+            raise DataError(
+                f"Cumulus init {store} has no data in the requested bbox (still publishing?). "
+                "Pass --date with an earlier init."
+            )
+        last = int(np.nonzero(~empty)[0][-1])
+        if last < ds.sizes["step"] - 1:
+            days = ds["step"].values / np.timedelta64(1, "D")
+            print(
+                f"WARNING: Cumulus init {store} has no data from step {days[last + 1]:g} d "
+                f"(of {days[-1]:g} d; still publishing?). Dropped the empty leads (not padded); "
+                "pass --date with an earlier init for every lead.",
+                file=sys.stderr,
+            )
+            ds = ds.isel(step=slice(0, last + 1))
     if bbox is None:
         ds = ensure_normalized_longitude(ds)
 
@@ -235,7 +329,7 @@ def fetch(dataset, date, bbox, variable, probe_latest, workers, **kwargs):
     stamp_precip_amounts(ds)
     ds = to_standard_units(ds)
     ds = precip_amounts_to_rates(ds, interval="1 day", deaccumulate=False)
-    return stamp_data_interval(ds)
+    return stamp_data_interval(ds, dim="step" if "step" in ds.dims else None)
 
 
 if __name__ == "__main__":

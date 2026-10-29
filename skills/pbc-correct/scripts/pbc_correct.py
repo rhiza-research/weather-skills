@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.2",
 #   "pandas",
 # ]
 # ///
@@ -149,7 +149,7 @@ def pbc_correct(
         raise UsageError(
             f"--obs {obs_name!r} must be {period} means labeled every day at the window "
             f"start (found {AGGREGATION_PERIOD_ATTR}={obs_period!r}); run aggregate-temporal "
-            "--window N --align left on the daily obs."
+            "--window <length> --align left on the daily obs (e.g. --window weekly)."
         )
     window = pd.Timedelta(days=float(parse_aggregation_period(period).to("day").magnitude))
 

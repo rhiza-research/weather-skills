@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.2",
 #   "gcsfs",
 # ]
 # ///
@@ -21,7 +21,7 @@ from weather_skills_core.standard_utils import bbox_subset, ensure_normalized_lo
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.7"
 
 _BUCKET = "sheerwater-datalake"
 _PREFIX = "pbc-data"
@@ -46,7 +46,7 @@ _DATASET_CHOICES = [*_DATASETS, *_ALIASES]
 
 _AUTH_MSG = (
     "cannot read gs://sheerwater-datalake/pbc-data (private GCS). Set "
-    "NEURAL_GCM_SERVICE_CREDENTIALS to the full service-account key JSON "
+    "GCLOUD_SERVICE_CREDENTIALS to the full service-account key JSON "
     "(no file needed), GOOGLE_APPLICATION_CREDENTIALS to a service-account "
     "JSON file path, or run `gcloud auth application-default login`."
 )
@@ -55,21 +55,19 @@ _FS = None
 
 
 def _gcs():
-    """Authenticated GCS filesystem: NEURAL_GCM_SERVICE_CREDENTIALS, then
+    """Authenticated GCS filesystem: GCLOUD_SERVICE_CREDENTIALS, then
     GOOGLE_APPLICATION_CREDENTIALS / Application Default Credentials.
     """
     global _FS
     if _FS is None:
         import gcsfs
 
-        creds_json = os.environ.get("NEURAL_GCM_SERVICE_CREDENTIALS")
+        creds_json = os.environ.get("GCLOUD_SERVICE_CREDENTIALS")
         if creds_json:
             try:
                 info = json.loads(creds_json)
             except json.JSONDecodeError as exc:
-                raise DataError(
-                    f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc})."
-                ) from None
+                raise DataError(f"GCLOUD_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
             try:
                 _FS = gcsfs.GCSFileSystem(token=info)
             except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
@@ -248,6 +246,14 @@ def _as_forecast(ds, *, init, dataset: str):
     ),
 )
 @weather_skill.argument("--date")
+@weather_skill.argument(
+    "--start-time",
+    action="append",
+    help="Init window start; repeat with --end-time for several windows (each January).",
+)
+@weather_skill.argument(
+    "--end-time", action="append", help="Init window end, paired with --start-time."
+)
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v", action="append")
 @weather_skill.argument(
@@ -262,7 +268,7 @@ def _as_forecast(ds, *, init, dataset: str):
         "(era5-p_pr_19, pr_26, …)."
     ),
 )
-def fetch(dataset, date, bbox, variable, probe_latest, **kwargs):
+def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, **kwargs):
     """Fetch a PBC AI Weather Quest precipitation forecast as a weather-skills Zarr."""
     # Opens a Zarr under ``gs://sheerwater-datalake/pbc-data/<dataset>/<YYYYMMDD>/``
     # with GCS Application Default Credentials. Optionally subsets by ``--bbox``
@@ -277,35 +283,83 @@ def fetch(dataset, date, bbox, variable, probe_latest, **kwargs):
         print(init.isoformat())
         return
 
-    folder, init = _resolve_folder(date, dataset)
-    key = _store_key(dataset, folder)
-    print(f"Resolved init date: {init.isoformat()}", file=sys.stderr)
-    print(f"Opening gs://{_BUCKET}/{key}", file=sys.stderr)
-
-    ds = _open_remote(key)
-    ds = _as_forecast(ds, init=init, dataset=dataset)
-
-    if variable:
-        wanted = [_VAR_ALIASES.get(v, v) for v in variable]
-        missing = [v for v in wanted if v not in ds.data_vars]
-        if missing:
-            raise UsageError(
-                f"variable(s) not in {dataset}: {', '.join(missing)}.\n"
-                f"Available: {', '.join(sorted(ds.data_vars))}"
+    # One (start, end) pair per window; --end-time is an inclusive calendar day.
+    windows = list(zip(start_time or [], end_time or [], strict=True))
+    if date is not None and windows:
+        raise UsageError(
+            "pass --date for one init, or --start-time/--end-time for a range of inits (not both)."
+        )
+    if windows:
+        # The windows select init dates (folder date - lead offset), not valid times.
+        published = _list_folder_dates(dataset)
+        picked = [
+            (folder, _init_for_folder(dataset, folder))
+            for folder in published
+            if any(a <= _init_for_folder(dataset, folder) <= b for a, b in windows)
+        ]
+        if not picked:
+            window_text = ", ".join(f"{a}..{b}" for a, b in windows)
+            raise DataError(
+                f"no {dataset!r} init in {window_text} under gs://{_BUCKET}/{_PREFIX}/{dataset}/; "
+                + (
+                    f"published inits run {_init_for_folder(dataset, published[0])}.."
+                    f"{_init_for_folder(dataset, published[-1])}."
+                    if published
+                    else "nothing is published."
+                )
             )
-        ds = ds[wanted]
-
-    if bbox is not None:
-        ds = bbox_subset(ds, bbox)
+        print(f"Selected {len(picked)} inits.", file=sys.stderr)
     else:
-        ds = ensure_normalized_longitude(ds)
+        picked = [_resolve_folder(date, dataset)]
+        print(f"Resolved init date: {picked[0][1].isoformat()}", file=sys.stderr)
 
-    ds = ds.load()
+    # One store per init: open each lazily, subset it, and load only that.
+    pieces = []
+    for folder, init in picked:
+        key = _store_key(dataset, folder)
+        if windows and not _store_exists(key):
+            print(
+                f"WARNING: init {init.isoformat()} has no {dataset!r} Zarr "
+                f"(folder {folder}; still publishing?); skipped.",
+                file=sys.stderr,
+            )
+            continue
+        print(f"Opening gs://{_BUCKET}/{key}", file=sys.stderr)
+
+        ds = _open_remote(key)
+        ds = _as_forecast(ds, init=init, dataset=dataset)
+
+        if variable:
+            wanted = [_VAR_ALIASES.get(v, v) for v in variable]
+            missing = [v for v in wanted if v not in ds.data_vars]
+            if missing:
+                raise UsageError(
+                    f"variable(s) not in {dataset}: {', '.join(missing)}.\n"
+                    f"Available: {', '.join(sorted(ds.data_vars))}"
+                )
+            ds = ds[wanted]
+
+        if bbox is not None:
+            ds = bbox_subset(ds, bbox)
+        else:
+            ds = ensure_normalized_longitude(ds)
+
+        pieces.append(ds.load())
+    if not pieces:
+        raise DataError(f"no {dataset!r} Zarr for any selected init.")
+    if windows:
+        import xarray as xr
+
+        # A range of inits: a `time` axis (the init); valid_time becomes (time, step).
+        ds = xr.concat(pieces, "time", coords="different", compat="equals")
+        ds = ds.transpose("time", "step", ...)
+    else:
+        ds = pieces[0]
     ds.attrs.update(
         Conventions="CF-1.13",
         weather_skills_source=f"sheerwater-pbc:{dataset}",
         pbc_dataset=dataset,
-        pbc_folder=folder,
+        pbc_folder=picked[0][0] + (f"..{picked[-1][0]}" if windows else ""),
     )
     stamp_cf_attrs(ds)
     return stamp_data_interval(ds, period="7 day")

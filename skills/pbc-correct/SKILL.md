@@ -24,7 +24,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/pbc_correct.py --forecast FC.zarr --hindcast 
 ### Arguments
 - `--forecast` — ensemble to correct: `number` and `step` dims and a `time` init (scalar, or a dim holding several inits), leads already rolled into windows (`aggregate-temporal --period weekly --time-dim step`).
 - `--hindcast` — past forecasts from the same model and the same windows: inits stacked on `time` (`concat --dim time`), same grid. Only hindcasts whose target window ended before a forecast's init train it.
-- `--obs` — observed window means on the same grid, labeled every day at the window start: daily obs through `aggregate-temporal --window 7 --align left` for weekly windows. Its `aggregation_period` must match the forecast's. Needs `--years` of history before the first init plus the two windows just before each init.
+- `--obs` — observed window means on the same grid, labeled every day at the window start: daily obs through `aggregate-temporal --window weekly --align left` for weekly windows. Its `aggregation_period` must match the forecast's. Needs `--years` of history before the first init plus the two windows just before each init.
 - `--step` — lead in days of the window to correct (e.g. `14` for week 3 of weekly windows from lead 0). Default: the forecast's only step.
 - `--components` — corrections to average. Default `debias,persistence,climatology`. `debias,persistence` is the published PBC. `raw` alone writes the uncorrected ensemble on the same quintiles, a single name writes that component alone.
 - `--weights` — `equal` (default, as published) averages the components. `skill` fits non-negative weights summing to 1 that minimise the blend's RPS on the training hindcasts, pooled over the region; each training hindcast is corrected from its own past, so the fit is out of sample. A component that adds nothing gets weight 0. It costs one extra correction per training hindcast.
@@ -56,7 +56,7 @@ Each is clipped to [0, 1] and made non-decreasing across edges (isotonic regress
 - Everything is held in memory: clip and coarsen to the region before fetching 20 years of hindcasts.
 
 ### Example
-After weekly-rolling an ECMWF forecast and its 20-year hindcast for Kenya, and `aggregate-temporal --window 7 --align left` on CHIRPS coarsened to the forecast grid:
+After weekly-rolling an ECMWF forecast and its 20-year hindcast for Kenya, and `aggregate-temporal --window weekly --align left` on CHIRPS coarsened to the forecast grid:
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/pbc_correct.py --forecast ecmwf_kenya_weekly.zarr \
   --hindcast ecmwf_kenya_hindcast_weekly.zarr --obs chirps_kenya_7day.zarr --step 14 -o pbc_kenya_week3.zarr

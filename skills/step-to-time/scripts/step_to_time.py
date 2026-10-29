@@ -1,15 +1,15 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.2",
 # ]
 # ///
-"""Relabel a single-init forecast by valid date: its step axis becomes a time axis of init + step."""
+"""Relabel a forecast by valid date: time = init + step, for one init or many inits at one lead."""
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.6"
 
 
 @weather_skill(
@@ -17,15 +17,63 @@ _SKILL_VERSION = "0.0.4"
     version=_SKILL_VERSION,
 )
 @weather_skill.argument(
-    "-i", "--input", type=Dataset("init_time, prediction_timedelta"), required=True
+    "-i",
+    "--input",
+    type=Dataset([("init_time", "prediction_timedelta"), ("time",)]),
+    required=True,
 )
 def step_to_time(ds, **kwargs):
-    """Relabel a single-init forecast by valid date: its step axis becomes a time axis of init + step."""
+    """Relabel a forecast by valid date: time = init + step, for one init or many inits at one lead."""
     import cftime
     import numpy as np
 
+    if "time" in ds.dims and "step" in ds.coords and ds["step"].ndim == 0:
+        # Many inits at one lead: shift each init on the time axis by that lead.
+        if ds["time"].attrs.get("standard_name", "forecast_reference_time") != (
+            "forecast_reference_time"
+        ):
+            raise UsageError(
+                "time is already on valid dates (its standard_name is not "
+                "forecast_reference_time); it holds no inits to shift"
+            )
+        init = ds["time"].values
+        lead = ds["step"].values
+        if np.isnat(lead):
+            raise UsageError("the forecast lead (scalar step coord) is missing (NaT)")
+        if init.dtype == object:
+            valid = np.array(
+                [t + lead.astype("timedelta64[us]").item() for t in init], dtype=object
+            )
+        else:
+            if np.isnat(init).any():
+                raise UsageError("a forecast init on the time axis is missing (NaT)")
+            valid = (init + lead).astype("datetime64[ns]")
+        if not all(a < b for a, b in zip(valid[:-1], valid[1:], strict=True)):
+            raise UsageError(
+                "time (inits) must be strictly increasing (no duplicates); sort it first"
+            )
+        bound_name = ds["step"].attrs.get("bounds")
+        if not (isinstance(bound_name, str) and bound_name in ds) and "step_bounds" in ds:
+            bound_name = "step_bounds"
+        drop = [v for v in ("valid_time", "time_bounds") if v in ds.variables]
+        out = ds.drop_vars(drop).assign_coords(time=("time", valid))
+        out["time"].attrs = {"standard_name": "time", "axis": "T"}
+        if isinstance(bound_name, str) and bound_name in out:
+            pairs = np.asarray(out[bound_name].values).astype("timedelta64[us]")
+            if init.dtype == object:
+                time_pairs = np.array([[t + td.item() for td in pairs] for t in init], dtype=object)
+            else:
+                time_pairs = (init[:, None] + pairs[None, :]).astype("datetime64[ns]")
+            out = out.drop_vars(bound_name).assign_coords(time_bounds=(("time", "nv"), time_pairs))
+            out["time"].attrs["bounds"] = "time_bounds"
+            out["step"].attrs.pop("bounds", None)
+        return out
     if "step" not in ds.dims or "time" in ds.dims:
-        raise UsageError("need forecast shape: scalar time coord + step dim")
+        raise UsageError(
+            "need a single-init forecast (scalar time coord + step dim) or many inits at one "
+            "lead (time dim + scalar step coord); for a cube with both time and step dims, "
+            "select one step (or one init) first"
+        )
     init = ds["time"]
     step = ds["step"]
     init_scalar = init.values.item()
