@@ -36,6 +36,9 @@ dev = [
     "pillow",
     "rasterio",
     "scipy",
+    # tests/oom: watches skill subprocess memory. No dask here: installing it
+    # would switch every in-process skill test to dask-backed inputs.
+    "psutil",
 ]
 
 [tool.uv.sources]
