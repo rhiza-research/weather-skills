@@ -27,7 +27,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.6"
+_SKILL_VERSION = "0.0.7"
 
 _STORE_NAME = "predictions.zarr"
 _STAMP_RE = re.compile(r"^(\d{8})_(\d{2})hr_01_preds$")
