@@ -16,7 +16,7 @@ Turns a pair of eastward (u) and northward (v) wind components into speed and di
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/wind_speed_direction.py -i IN.zarr -o OUT.zarr --u U --v V [--calm-speed SPEED] [--arrows SCALE [--every N]]
+uv run ${CLAUDE_SKILL_DIR}/scripts/wind_speed_direction.py -i IN.zarr -o OUT.zarr --u U --v V [--calm-speed SPEED] [--arrow-scale DEG_PER_UNIT [--arrow-step CELLS]]
 ```
 
 ### Arguments
@@ -24,8 +24,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/wind_speed_direction.py -i IN.zarr -o OUT.zar
 - `--u` — eastward wind component variable (`u10`, `u100`, or `u` on pressure levels). Required.
 - `--v` — northward wind component variable (`v10`, `v100`, or `v`). Required.
 - `--calm-speed` — speeds at or below this, in the units of u and v, count as calm. Default `1e-6`, which only absorbs rounding noise around zero; pass a larger value (such as `0.5` for `m s-1`) to treat light winds as calm. A negative value exits 2.
-- `--arrows` — also write quiver arrows, `SCALE` degrees long per unit of speed: `0.08` with `m s-1` draws a 10 m s-1 wind 0.8° long. Pick it from the map's span and the strongest speed, so the longest arrow is a few grid spacings.
-- `--every` — with `--arrows`, one arrow at every Nth grid cell in latitude and longitude, or every Nth station. Default `1`.
+- `--arrow-scale` — also write quiver arrows, this many degrees long per unit of speed: `0.08` with `m s-1` draws a 10 m s-1 wind 0.8° long. Pick it from the map's span and the strongest speed, so the longest arrow is a few grid spacings.
+- `--arrow-step` — with `--arrow-scale`, the spacing of the arrows in grid cells: `3` puts one arrow on every 3rd cell in latitude and longitude (every 3rd station for station data). Default `1`, an arrow on every cell.
 - `--output`, `-o` — output Zarr.
 
 ### Output
@@ -33,7 +33,7 @@ Three variables on the dims and coordinates of u and v; other input variables ar
 - `wind_speed` — `hypot(u, v)`, in the units of u and v. CF `standard_name` `wind_speed`.
 - `wind_from_direction` — degrees clockwise from north that the wind blows from (meteorological convention: a northerly is 0, a westerly 270). Units `degree`, CF `standard_name` `wind_from_direction`.
 - `wind_to_direction` — degrees clockwise from north that the wind blows to (`wind_from_direction` + 180). Units `degree`, CF `standard_name` `wind_to_direction`.
-- With `--arrows`: `arrow_x` (`degrees_east`) and `arrow_y` (`degrees_north`) on the input's other dims (time, step, …) plus `arrow_vertex`. Each arrow is seven vertices: tail at the cell, tip at the cell + `SCALE` × (u, v), a NaN gap, then a two-barb head (20° either side of the shaft, 0.3 of its length) and another gap, as in Plotly's quiver. Plotted as one `lines` trace, they draw every arrow; calm cells are all NaN. Attrs `arrow_scale` and `arrow_every` record the choice.
+- With `--arrow-scale`: `arrow_x` (`degrees_east`) and `arrow_y` (`degrees_north`) on the input's other dims (time, step, …) plus `arrow_vertex`. Each arrow is seven vertices: tail at the cell, tip at the cell + scale × (u, v), a NaN gap, then a two-barb head (20° either side of the shaft, 0.3 of its length) and another gap, as in Plotly's quiver. Plotted as one `lines` trace, they draw every arrow; calm cells are all NaN. Attrs `arrow_scale` and `arrow_step` record the choice.
 
 ### Notes
 - Directions lie in [0, 360). Calm cells (speed at or below `--calm-speed`) get direction NaN; their speed is kept as computed. A NaN in u or v gives NaN in all three.
@@ -49,6 +49,6 @@ Writes 10 m wind speed in `m s-1` and its from / to directions over Kenya.
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/wind_speed_direction.py -i gfs_io.zarr -o gfs_io_wind.zarr \
-  --u wind_u_10m --v wind_v_10m --arrows 0.08 --every 4
+  --u wind_u_10m --v wind_v_10m --arrow-scale 0.08 --arrow-step 4
 ```
 Also writes quiver arrows on every 4th cell, 0.08° long per m s-1, to draw over a map.

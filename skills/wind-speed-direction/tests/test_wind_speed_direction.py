@@ -150,7 +150,7 @@ def _arrows(out, k=0):
 def test_arrows_are_quiver_segments(tmp_path, wind):
     # A 5 m s-1 westerly at 10°E, a 10 m s-1 southerly at 11°E.
     out, _ = _run(
-        wind, tmp_path, _uv_gridded([5.0, 0.0], [0.0, 10.0]), "u10", "v10", "--arrows", "0.1"
+        wind, tmp_path, _uv_gridded([5.0, 0.0], [0.0, 10.0]), "u10", "v10", "--arrow-scale", "0.1"
     )
     assert out["arrow_x"].dims == ("time", "arrow_vertex") and out["arrow_x"].shape == (1, 14)
     x, y = _arrows(out, 0)
@@ -170,22 +170,24 @@ def test_arrows_are_quiver_segments(tmp_path, wind):
     assert out["arrow_x"].attrs["arrow_scale"] == "0.1 degree per m s-1"
 
 
-def test_arrows_every_nth_cell_and_calm_is_empty(tmp_path, wind):
+def test_arrow_step_spaces_arrows_and_calm_is_empty(tmp_path, wind):
     out, _ = _run(
         wind,
         tmp_path,
         _uv_gridded([5.0, 0.0, 0.0, 2.0], [0.0, 0.0, 1.0, 0.0]),
         "u10",
         "v10",
-        "--arrows",
+        "--arrow-scale",
         "0.1",
-        "--every",
+        "--arrow-step",
         "2",
     )
     assert out["arrow_x"].shape == (1, 14)  # cells 0 and 2 of 4
     x, _ = _arrows(out, 0)
     assert x[0] == 10.0
-    calm, _ = _run(wind, tmp_path / "c", _uv_gridded([0.0], [0.0]), "u10", "v10", "--arrows", "0.1")
+    calm, _ = _run(
+        wind, tmp_path / "c", _uv_gridded([0.0], [0.0]), "u10", "v10", "--arrow-scale", "0.1"
+    )
     assert np.isnan(calm["arrow_x"].values).all()
 
 
@@ -195,7 +197,7 @@ def test_arrows_at_stations(tmp_path, wind):
     ds["v10"] = ds["u10"] * 0
     for name in ("u10", "v10"):
         ds[name].attrs = {"units": "m s-1"}
-    out, _ = _run(wind, tmp_path, ds, "u10", "v10", "--arrows", "0.05")
+    out, _ = _run(wind, tmp_path, ds, "u10", "v10", "--arrow-scale", "0.05")
     assert (
         set(out["arrow_x"].dims) == {"time", "arrow_vertex"}
         and out["arrow_x"].sizes["arrow_vertex"] == 21
@@ -205,5 +207,7 @@ def test_arrows_at_stations(tmp_path, wind):
 
 
 def test_bad_arrow_options_are_refused(tmp_path, wind):
-    _usage_error(wind, tmp_path, _uv_gridded([1.0], [1.0]), "--arrows", "0")
-    _usage_error(wind, tmp_path / "e", _uv_gridded([1.0], [1.0]), "--arrows", "0.1", "--every", "0")
+    _usage_error(wind, tmp_path, _uv_gridded([1.0], [1.0]), "--arrow-scale", "0")
+    _usage_error(
+        wind, tmp_path / "e", _uv_gridded([1.0], [1.0]), "--arrow-scale", "0.1", "--arrow-step", "0"
+    )

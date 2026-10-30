@@ -31,18 +31,19 @@ HEAD_FRACTION = 0.3
     help="Speeds at or below this, in the units of u and v, count as calm (direction NaN).",
 )
 @weather_skill.argument(
-    "--arrows",
+    "--arrow-scale",
     type=float,
-    help="Also write quiver arrows, SCALE degrees long per unit of speed (0.08 for m s-1 "
+    help="Also write quiver arrows, this many degrees long per unit of speed (0.08 for m s-1 "
     "draws a 10 m s-1 wind 0.8° long): arrow_x / arrow_y, line segments to plot as lines.",
 )
 @weather_skill.argument(
-    "--every",
+    "--arrow-step",
     type=int,
     default=1,
-    help="With --arrows, one arrow at every Nth grid cell (in latitude and longitude) or station.",
+    help="With --arrow-scale, the spacing of the arrows in grid cells: 3 puts one arrow on "
+    "every 3rd cell in latitude and longitude (every 3rd station for station data).",
 )
-def wind_speed_direction(ds, u, v, calm_speed, arrows, every, **kwargs):
+def wind_speed_direction(ds, u, v, calm_speed, arrow_scale, arrow_step, **kwargs):
     """Compute wind speed and from / to directions from u and v wind components."""
     # dequantify_dataset keeps each variable's units attr (Dataset.map drops it).
     ds = dequantify_dataset(ds)
@@ -93,23 +94,26 @@ def wind_speed_direction(ds, u, v, calm_speed, arrows, every, **kwargs):
         "standard_name": "wind_to_direction",
         "long_name": "direction the wind blows to, clockwise from north",
     }
-    if arrows is None:
+    if arrow_scale is None:
         return out
-    if not arrows > 0 or every < 1:
-        raise UsageError(f"--arrows must be above 0 and --every at least 1 (got {arrows}, {every})")
+    if not arrow_scale > 0 or arrow_step < 1:
+        raise UsageError(
+            f"--arrow-scale must be above 0 and --arrow-step at least 1 "
+            f"(got {arrow_scale}, {arrow_step})"
+        )
     lat, lon = cf_dim(ds, "latitude"), cf_dim(ds, "longitude")
     if lat is None or lon is None:
-        raise UsageError("--arrows needs latitude and longitude coordinates")
+        raise UsageError("--arrow-scale needs latitude and longitude coordinates")
 
     # The arrow positions: every Nth cell of a grid, or every Nth station.
     if lat in u_da.dims and lon in u_da.dims:
-        picks = {lat: slice(None, None, every), lon: slice(None, None, every)}
+        picks = {lat: slice(None, None, arrow_step), lon: slice(None, None, arrow_step)}
         ua, va = u_da.isel(picks), v_da.isel(picks)
         ua, va = ua.stack(arrow=(lat, lon)), va.stack(arrow=(lat, lon))
     else:
         point = u_da[lon].dims[0]
-        ua = u_da.isel({point: slice(None, None, every)}).rename({point: "arrow"})
-        va = v_da.isel({point: slice(None, None, every)}).rename({point: "arrow"})
+        ua = u_da.isel({point: slice(None, None, arrow_step)}).rename({point: "arrow"})
+        va = v_da.isel({point: slice(None, None, arrow_step)}).rename({point: "arrow"})
     x0 = ua["arrow"][lon] if lon in ua["arrow"].coords else ua[lon]
     y0 = ua["arrow"][lat] if lat in ua["arrow"].coords else ua[lat]
     x0, y0 = np.asarray(x0.values, float), np.asarray(y0.values, float)
@@ -118,7 +122,7 @@ def wind_speed_direction(ds, u, v, calm_speed, arrows, every, **kwargs):
 
     # Each arrow is 7 vertices: tail, tip, gap, barb, tip, barb, gap. NaN gaps split the
     # arrows, so all of them draw as one line trace. A calm cell is all NaN.
-    dx, dy = arrows * ua.values, arrows * va.values
+    dx, dy = arrow_scale * ua.values, arrow_scale * va.values
     calm = np.hypot(ua.values, va.values) <= calm_speed
     dx, dy = np.where(calm, np.nan, dx), np.where(calm, np.nan, dy)
     tip_x, tip_y = x0 + dx, y0 + dy
@@ -154,8 +158,8 @@ def wind_speed_direction(ds, u, v, calm_speed, arrows, every, **kwargs):
         out[name].attrs = {
             "units": "degrees_east" if axis == "longitude" else "degrees_north",
             "long_name": f"quiver arrow {axis}s: tail, tip, gap, barb, tip, barb, gap per arrow",
-            "arrow_scale": f"{arrows:g} degree per {units}",
-            "arrow_every": every,
+            "arrow_scale": f"{arrow_scale:g} degree per {units}",
+            "arrow_step": arrow_step,
         }
     return out
 
