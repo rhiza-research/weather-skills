@@ -91,7 +91,7 @@ def test_fetch_writes_zarr_and_stamps_history(tmp_path, fetch_mod, monkeypatch):
     )
     monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, dataset: stamp == "20260911T12")
 
-    def fake_open(stamp, dataset):
+    def fake_open(stamp, dataset, dask=False):
         seen["stamp"] = stamp
         seen["dataset"] = dataset
         return remote.copy(deep=True)
@@ -144,7 +144,7 @@ def test_fetch_honors_date_cycle_variable_and_bbox(tmp_path, fetch_mod, monkeypa
 
     monkeypatch.setattr(fetch_mod, "_store_exists", fake_exists)
 
-    def fake_open(stamp, dataset):
+    def fake_open(stamp, dataset, dask=False):
         seen["open"] = (stamp, dataset)
         return remote.copy(deep=True)
 
@@ -295,7 +295,7 @@ _WINDOW_STAMPS = ["20250130T00", "20250131T00", "20250201T00", "20250201T12", "2
 def _mock_windows(monkeypatch, fetch_mod, *, missing=(), opened=None):
     """Per-init stores whose tp is the init's day of month (in m per 6 h, x 1e-3)."""
 
-    def fake_open(stamp, dataset):
+    def fake_open(stamp, dataset, dask=False):
         if opened is not None:
             opened.append(stamp)
         ds = _native_precip(fill=int(stamp[6:8]) * 1e-3)
@@ -352,8 +352,8 @@ def test_init_window_warns_on_missing_and_short_inits(tmp_path, fetch_mod, monke
     _mock_windows(monkeypatch, fetch_mod, missing={"20250131T00"})
     fake_open = fetch_mod._open_remote
 
-    def short_newest(stamp, dataset):
-        ds = fake_open(stamp, dataset)
+    def short_newest(stamp, dataset, dask=False):
+        ds = fake_open(stamp, dataset, dask)
         if stamp == "20250201T00":
             ds["total_precipitation_6hr"][:, :, 2:] = np.nan
         return ds
@@ -404,3 +404,42 @@ def test_init_window_with_no_init_exits_1(tmp_path, fetch_mod, monkeypatch):
             str(tmp_path / "x.zarr"),
         )
     assert exc.value.code == 1
+
+
+def _need_dask(fetch):
+    pytest.importorskip("dask")
+    if "--dask" not in fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+
+
+def test_dask_init_window_streams_and_reports_short_init(tmp_path, fetch_mod, monkeypatch, capsys):
+    _need_dask(fetch_mod.fetch)
+    _mock_windows(monkeypatch, fetch_mod, missing={"20250131T00"})
+    fake_open = fetch_mod._open_remote
+    dask_args = []
+
+    def short_newest(stamp, dataset, dask=False):
+        dask_args.append(dask)
+        ds = fake_open(stamp, dataset, dask)
+        if stamp == "20250201T00":
+            ds["total_precipitation_6hr"][:, :, 2:] = np.nan
+        return ds.chunk()
+
+    monkeypatch.setattr(fetch_mod, "_open_remote", short_newest)
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--dask",
+        "--start-time",
+        "2025-01-30",
+        "--end-time",
+        "2025-02-01",
+        "-o",
+        str(out),
+    )
+    assert all(d is not None for d in dask_args)
+    assert "2025-02-01T00 UTC init has no data after step 6 h" in capsys.readouterr().err
+    with xr.open_zarr(out, consolidated=True) as ds:
+        days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+        assert days == ["2025-01-30", "2025-02-01"]
+        assert ds["tp"].isel(time=1, step=slice(2, None)).isnull().all()

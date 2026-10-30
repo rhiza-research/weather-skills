@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "dynamical-catalog==1.0.1",
 #   "ecmwf-datastores-client==0.4.2",
 #   "requests",
@@ -343,10 +343,10 @@ def _ensure_catalog() -> None:
         )
 
 
-def _open_catalog(group: str | None = None):
+def _open_catalog(group: str | None = None, dask=False):
     import dynamical_catalog
 
-    kwargs: dict = {"chunks": None}
+    kwargs: dict = {"chunks": "auto" if dask else None}
     if group:
         kwargs["group"] = group
     try:
@@ -381,13 +381,14 @@ def _drop_empty_lead0(ds):
     lead 0.
     """
     import numpy as np
+    import xarray as xr
 
     if "lead_time" not in ds.dims or ds.sizes["lead_time"] < 2:
         return ds
     first = ds.isel(lead_time=0)
-    for name in ds.data_vars:
-        if not bool(np.asarray(first[name].isnull().all())):
-            return ds
+    first_nan = xr.Dataset({name: first[name].isnull().all() for name in ds.data_vars}).compute()
+    if not all(bool(first_nan[name]) for name in ds.data_vars):
+        return ds
     ds = ds.isel(lead_time=slice(1, None))
     steps = np.arange(ds.sizes["lead_time"]) * np.timedelta64(1, "D")
     return ds.assign_coords(lead_time=("lead_time", steps))
@@ -412,7 +413,7 @@ def _standardize_catalog(ds):
     return stamp_data_interval(out)
 
 
-def _fetch_catalog(init: dt.date, bbox, names: list[str]):
+def _fetch_catalog(init: dt.date, bbox, names: list[str], dask=False):
     import numpy as np
     import xarray as xr
 
@@ -422,10 +423,10 @@ def _fetch_catalog(init: dt.date, bbox, names: list[str]):
 
     pieces = []
     if surface:
-        ds = _open_catalog()[[_CATALOG_SURFACE[name] for name in surface]]
+        ds = _open_catalog(dask=dask)[[_CATALOG_SURFACE[name] for name in surface]]
         pieces.append(ds)
     if pressure:
-        pds = _open_catalog(group=_PRESSURE_GROUP)
+        pds = _open_catalog(group=_PRESSURE_GROUP, dask=dask)
         pds = pds[[_CATALOG_PRESSURE[name] for name in pressure]]
         if "pressure_level" in pds.dims:
             pds = pds.rename({"pressure_level": "vertical"})
@@ -737,7 +738,7 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(bbox, date, variable, probe_latest, **kwargs):
+def fetch(bbox, date, variable, probe_latest, dask=False, **kwargs):
     """Fetch an ECMWF S2S (46-day) ensemble forecast for one init date as a weather-skills Zarr."""
     if probe_latest is not None:
         found = _catalog_latest_init()
@@ -763,7 +764,7 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
             f"for area={area} date={date_iso} variables={','.join(names)}",
             file=sys.stderr,
         )
-        return _fetch_catalog(date, bbox, names)
+        return _fetch_catalog(date, bbox, names, dask)
 
     mixed = sorted(_ACCUMULATED.intersection(names))
     if "tp" in names and mixed:

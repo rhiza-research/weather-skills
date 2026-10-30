@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "gcsfs",
 # ]
 # ///
@@ -175,13 +175,13 @@ def _resolve_folder(date, dataset: str) -> tuple[str, object]:
     )
 
 
-def _open_remote(key: str):
+def _open_remote(key: str, dask=False):
     import xarray as xr
 
     path = _gcs_path(key)
     try:
         mapper = _gcs().get_mapper(path)
-        return xr.open_zarr(mapper, consolidated=True)
+        return xr.open_zarr(mapper, consolidated=True, chunks="auto" if dask else None)
     except DataError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -268,7 +268,7 @@ def _as_forecast(ds, *, init, dataset: str):
         "(era5-p_pr_19, pr_26, …)."
     ),
 )
-def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, **kwargs):
+def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, dask=False, **kwargs):
     """Fetch a PBC AI Weather Quest precipitation forecast as a weather-skills Zarr."""
     # Opens a Zarr under ``gs://sheerwater-datalake/pbc-data/<dataset>/<YYYYMMDD>/``
     # with GCS Application Default Credentials. Optionally subsets by ``--bbox``
@@ -313,7 +313,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, **k
         picked = [_resolve_folder(date, dataset)]
         print(f"Resolved init date: {picked[0][1].isoformat()}", file=sys.stderr)
 
-    # One store per init: open each lazily, subset it, and load only that.
+    # One store per init: open each lazily, subset it, and (without dask) load only that.
     pieces = []
     for folder, init in picked:
         key = _store_key(dataset, folder)
@@ -326,7 +326,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, **k
             continue
         print(f"Opening gs://{_BUCKET}/{key}", file=sys.stderr)
 
-        ds = _open_remote(key)
+        ds = _open_remote(key, dask)
         ds = _as_forecast(ds, init=init, dataset=dataset)
 
         if variable:
@@ -344,7 +344,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, **k
         else:
             ds = ensure_normalized_longitude(ds)
 
-        pieces.append(ds.load())
+        pieces.append(ds if dask else ds.load())
     if not pieces:
         raise DataError(f"no {dataset!r} Zarr for any selected init.")
     if windows:

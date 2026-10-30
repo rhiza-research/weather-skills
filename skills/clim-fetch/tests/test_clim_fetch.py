@@ -52,7 +52,12 @@ def test_missing_pair_lists_available_climatologies(tmp_path, mod, capsys):
 
 @pytest.mark.parametrize(
     "start, end",
-    [("2021-02-27", "2021-03-02"), ("2020-02-28", "2020-03-01"), ("2021-12-30", "2022-01-01")],
+    [
+        ("2021-02-27", "2021-03-02"),
+        ("2020-02-28", "2020-03-01"),
+        ("2021-12-30", "2022-01-01"),
+        ("2021-01-01", "2023-06-30"),  # many pieces, across years
+    ],
 )
 def test_each_date_gets_its_own_calendar_days_climatology(mod, start, end):
     """Match by month/day in the 1904 cycle: a non-leap Mar 1 is not 1904's Feb 29."""
@@ -168,3 +173,54 @@ def test_base_period_is_carried_through_or_reported_missing(tmp_path, mod, capsy
     else:
         assert "climatology_start_time" not in out.attrs
         assert "does not record which years" in err
+
+
+def _need_dask(fetch):
+    pytest.importorskip("dask")
+    if "--dask" not in fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+
+
+def test_dask_warns_on_empty_dates_without_loading(tmp_path, mod, capsys):
+    _need_dask(mod.fetch)
+    import numpy as np
+    import pandas as pd
+    import xarray as xr
+
+    inits = pd.date_range("1904-01-01", "1904-12-31", freq="D")
+    leads = np.array([0, 7], dtype="timedelta64[D]").astype("timedelta64[ns]")
+    values = np.ones((len(inits), 2, 2, 2), dtype="float32")
+    values[-7:, 1] = np.nan
+    source = xr.Dataset(
+        {
+            "avg": (("init_time", "prediction_timedelta", "lat", "lon"), values),
+            "std": (("init_time", "prediction_timedelta", "lat", "lon"), values),
+        },
+        coords={
+            "init_time": inits,
+            "prediction_timedelta": leads,
+            "lat": [0.0, 1.5],
+            "lon": [36.0, 37.5],
+        },
+        attrs={"variable": "precip", "units": "mm / day"},
+    ).chunk()
+    out_path = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_zarr_or_none", return_value=source):
+        run_skill(
+            mod.fetch,
+            "--dask",
+            "--dataset",
+            "ecmwf_ifs",
+            "--prediction-timedelta",
+            "7",
+            "--start-time",
+            "2025-12-30",
+            "--end-time",
+            "2026-01-09",
+            "-o",
+            str(out_path),
+        )
+    out = xr.open_zarr(out_path)
+    empty = out["precip_avg"].isnull().all(["latitude", "longitude"]).values
+    assert int(empty.sum()) == 7
+    assert "7 of 11 dates have no climatology value" in capsys.readouterr().err

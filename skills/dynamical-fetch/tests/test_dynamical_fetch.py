@@ -145,7 +145,7 @@ def test_open_dataset_falls_back_to_staging(mod, monkeypatch):
             calls["cleared"] += 1
 
         @staticmethod
-        def open(dataset):
+        def open(dataset, chunks=None):
             return _imerg_like_analysis_ds()
 
     monkeypatch.setitem(__import__("sys").modules, "dynamical_catalog", _Catalog)
@@ -438,7 +438,7 @@ def test_open_dataset_renames_regular_y_x(mod, monkeypatch):
             return ["google-weathernext2-forecast-operational-virtual"]
 
         @staticmethod
-        def open(dataset):
+        def open(dataset, chunks=None):
             return _weathernext2_like_ds()
 
     monkeypatch.setitem(__import__("sys").modules, "dynamical_catalog", _Catalog)
@@ -1004,3 +1004,47 @@ def test_members_stored_before_leads_come_out_after_step(tmp_path, mod, fetch, e
     with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "ensemble"}):
         run_skill(fetch, "--dataset", "t", *extra, "-o", str(out))
     assert xr.open_zarr(out, consolidated=True)["tp"].dims == dims
+
+
+def _need_dask(fetch):
+    pytest.importorskip("dask")
+    if "--dask" not in fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+
+
+def test_dask_forecast_checks_run_on_lazy_data(tmp_path, mod, fetch, capsys):
+    _need_dask(fetch)
+    ds = _end_labelled_forecast_ds()
+    ds["precipitation_surface"].values[:, 3] = np.nan  # lead 12 h not published yet
+    lazy = ds.chunk()
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": lazy, "shape": "forecast"}):
+        run_skill(
+            fetch,
+            "--dask",
+            "--dataset",
+            "t",
+            "--date",
+            "2026-01-01",
+            "-v",
+            "precip",
+            "-o",
+            str(out),
+        )
+    written = xr.open_zarr(out, consolidated=True)
+    assert "no data after catalog lead 6 h (of 12 h" in capsys.readouterr().err
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0, 3]
+    assert not bool(written["precipitation_surface"].isnull().any())
+    assert "interval start" in written["precipitation_surface"].attrs["comment"]
+
+
+def test_dask_init_range_reports_short_init_and_matches_in_memory(tmp_path, mod, fetch, capsys):
+    _need_dask(fetch)
+    ds = _daily_inits_forecast_ds().isel(init_time=[0, 1])
+    ds["temperature_2m"][1, 2] = np.nan
+    args = ("--start-time", "2025-01-30", "--end-time", "2025-01-31")
+    in_memory = _fetch_windows(tmp_path / "a", mod, fetch, ds, *args).load()
+    capsys.readouterr()
+    lazy = _fetch_windows(tmp_path / "b", mod, fetch, ds.chunk(), "--dask", *args).load()
+    assert "2025-01-31T00 UTC init has no data after catalog lead 48 h" in capsys.readouterr().err
+    xr.testing.assert_identical(lazy["temperature_2m"], in_memory["temperature_2m"])

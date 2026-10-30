@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "gcsfs",
 # ]
 # ///
@@ -191,13 +191,13 @@ def _resolve_stamp(date, cycle: str | None, dataset: str) -> str:
     )
 
 
-def _open_remote(stamp: str, dataset: str):
+def _open_remote(stamp: str, dataset: str, dask=False):
     import xarray as xr
 
     url = _store_url(stamp, dataset)
     try:
         fs = _filesystem()
-        return xr.open_zarr(fs.get_mapper(url), consolidated=True)
+        return xr.open_zarr(fs.get_mapper(url), consolidated=True, chunks="auto" if dask else None)
     except DataError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -335,7 +335,9 @@ def _select_variables(ds, variable):
         "Does not download fields. Optional IDENT selects a --dataset id."
     ),
 )
-def fetch(dataset, date, start_time, end_time, bbox, variable, cycle, probe_latest, **kwargs):
+def fetch(
+    dataset, date, start_time, end_time, bbox, variable, cycle, probe_latest, dask=False, **kwargs
+):
     """Fetch a NeuralGCM subseasonal ensemble forecast for one init date or a range of inits as a weather-skills Zarr."""
     # Opens a consolidated Zarr under
     # ``gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1/<init>/<dataset>/``
@@ -388,7 +390,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, cycle, probe_late
         stamps = [_resolve_stamp(date, cycle, dataset)]
         print(f"Resolved init: {stamps[0]}", file=sys.stderr)
 
-    # One store per init: open each lazily, subset it, and load only that.
+    # One store per init: open each lazily, subset it, and (without dask) load only that.
     pieces = []
     for stamp in stamps:
         if windows and not _store_exists(stamp, dataset):
@@ -398,7 +400,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, cycle, probe_late
             )
             continue
         print(f"Opening {_store_url(stamp, dataset)}", file=sys.stderr)
-        ds = _open_remote(stamp, dataset)
+        ds = _open_remote(stamp, dataset, dask)
         ds = _prepare_dataset(ds)
         ds = _select_variables(ds, variable)
         if bbox is not None:
@@ -407,7 +409,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, cycle, probe_late
             ds = ensure_normalized_longitude(ds)
 
         try:
-            pieces.append(ds.load())
+            pieces.append(ds if dask else ds.load())
         except Exception as exc:  # noqa: BLE001
             raise _gcs_error(exc, f"failed to read {_store_url(stamp, dataset)}") from None
     if not pieces:
@@ -447,11 +449,17 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, cycle, probe_late
         # An init still publishing its long leads keeps them NaN (not filled);
         # say which init is short.
         import numpy as np
+        import xarray as xr
 
+        nan_flags = xr.Dataset(
+            {
+                name: ds[name].isnull().all([d for d in ds[name].dims if d not in ("time", "step")])
+                for name in ds.data_vars
+            }
+        ).compute()
         init_empty = np.ones((ds.sizes["time"], ds.sizes["step"]), dtype=bool)
-        for name in ds.data_vars:
-            other = [d for d in ds[name].dims if d not in ("time", "step")]
-            init_empty &= ds[name].isnull().all(other).transpose("time", "step").values
+        for name in nan_flags.data_vars:
+            init_empty &= nan_flags[name].transpose("time", "step").values
         hours = ds["step"].values / np.timedelta64(1, "h")
         for i, row in enumerate(init_empty):
             init = str(ds["time"].values[i])[:13]

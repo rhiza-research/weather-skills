@@ -241,3 +241,25 @@ def test_repeated_time_steps_are_refused(mod):
     dup["time"].encoding["calendar"] = "proleptic_gregorian"
     with pytest.raises(DataError, match="repeats time steps"):
         _open_store(mod, dup)
+
+
+def _need_dask(fetch):
+    pytest.importorskip("dask")
+    if "--dask" not in fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+
+
+def test_dask_fetch_matches_in_memory(tmp_path, mod, fetch):
+    _need_dask(fetch)
+    args = ["--start-time", "2020-01-01", "--end-time", "2020-01-02", "-v", "tas"]
+    args += ["--model", "GFDL-CM4", "--experiment", "historical"]
+    outs = {}
+    for flag in ("--dask", None):
+        state = _cmip6_state()
+        if flag:
+            state["ds"] = state["ds"].chunk()
+        out = tmp_path / f"out{flag}.zarr"
+        with patch.object(mod, "_open_remote", return_value=state):
+            run_skill(fetch, *([flag] if flag else []), *args, "-o", str(out))
+        outs[flag] = xr.open_zarr(out, consolidated=True).load()
+    xr.testing.assert_allclose(outs["--dask"]["tas"], outs[None]["tas"])

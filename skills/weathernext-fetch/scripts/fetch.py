@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "pandas",
 #   "gcsfs",
 # ]
@@ -398,15 +398,15 @@ def _resolve_stamp(date, cycle: str | None, product: _Product, billing_project: 
     raise DataError(f"no predictions store under gs://{product.bucket}/{product.prefix}/.")
 
 
-def _open_remote(stamp: str, product: _Product, billing_project: str | None = None):
+def _open_remote(stamp: str, product: _Product, billing_project: str | None = None, dask=False):
     import xarray as xr
 
     url = _store_url(stamp, product)
     try:
         fs = _filesystem(product, billing_project)
-        # Lazy without dask: indexing stays lazy, so only the chunks left after the
-        # --member/--variable/--max-lead/--bbox subset are read at load().
-        return xr.open_zarr(fs.get_mapper(url), consolidated=True, chunks=None)
+        # Lazy either way: only the chunks left after the --member/--variable/
+        # --max-lead/--bbox subset are read, at load() (no dask) or at write (dask).
+        return xr.open_zarr(fs.get_mapper(url), consolidated=True, chunks="auto" if dask else None)
     except (DataError, UsageError):
         raise
     except Exception as exc:  # noqa: BLE001
@@ -752,6 +752,7 @@ def fetch(
     billing_project,
     max_lead,
     probe_latest,
+    dask=False,
     **kwargs,
 ):
     """Fetch a Google WeatherNext 2 or 3 forecast for one init date or a range of inits as a weather-skills Zarr."""
@@ -827,7 +828,7 @@ def fetch(
             file=sys.stderr,
         )
 
-    # One store per init: open each lazily, subset it, and load only that.
+    # One store per init: open each lazily, subset it, and (without dask) load only that.
     pieces = []
     for stamp in stamps:
         if windows and not _store_exists(stamp, product, billing_project):
@@ -837,7 +838,7 @@ def fetch(
             )
             continue
         print(f"Opening {_store_url(stamp, product)}", file=sys.stderr)
-        ds = _open_remote(stamp, product, billing_project)
+        ds = _open_remote(stamp, product, billing_project, dask)
         if member:
             n = ds.sizes["sample"]
             bad = [m for m in member if m < -n or m >= n]
@@ -856,7 +857,7 @@ def fetch(
             ds = bbox_subset(ds, bbox)
         else:
             ds = ensure_normalized_longitude(ds)
-        pieces.append(_prepare_dataset(ds.load(), product))
+        pieces.append(_prepare_dataset(ds if dask else ds.load(), product))
     if not pieces:
         raise DataError("no complete store for any selected init.")
     if windows:
@@ -907,12 +908,19 @@ def fetch(
         if had_valid:
             ds = ds.assign_coords(valid_time=ds["time"] + ds["step"])
     if windows:
+        import xarray as xr
+
         # An init still publishing its long leads keeps them NaN (not filled);
         # say which init is short.
+        nan_flags = xr.Dataset(
+            {
+                name: ds[name].isnull().all([d for d in ds[name].dims if d not in ("time", "step")])
+                for name in ds.data_vars
+            }
+        ).compute()
         init_empty = np.ones((ds.sizes["time"], ds.sizes["step"]), dtype=bool)
-        for name in ds.data_vars:
-            other = [d for d in ds[name].dims if d not in ("time", "step")]
-            init_empty &= ds[name].isnull().all(other).transpose("time", "step").values
+        for name in nan_flags.data_vars:
+            init_empty &= nan_flags[name].transpose("time", "step").values
         hours = ds["step"].values / np.timedelta64(1, "h")
         for i, row in enumerate(init_empty):
             init = str(ds["time"].values[i])[:13]

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "gcsfs",
 # ]
 # ///
@@ -49,13 +49,17 @@ _CURATED_STANDARD_NAME = {
 }
 
 
-def _open_arco(state):
+def _open_arco(state, dask=False):
     """Open the ARCO store lazily (metadata only), at most once per run."""
     if "ds" not in state:
         import xarray as xr
 
         try:
-            state["ds"] = xr.open_zarr(_ARCO_STORE, storage_options=_STORAGE_OPTIONS, chunks=None)
+            state["ds"] = xr.open_zarr(
+                _ARCO_STORE,
+                storage_options=_STORAGE_OPTIONS,
+                chunks="auto" if dask else None,
+            )
         except Exception as exc:  # noqa: BLE001
             raise DataError(
                 f"could not open the ARCO-ERA5 store at {_ARCO_STORE} "
@@ -156,7 +160,7 @@ def _stamp_coord_attrs(ds) -> None:
         "levels) on stdout and exit. Does not download fields."
     ),
 )
-def fetch(start_time, end_time, bbox, variable, probe_latest, list_variables, **kwargs):
+def fetch(start_time, end_time, bbox, variable, probe_latest, list_variables, dask=False, **kwargs):
     """Fetch ERA5 reanalysis from Google's public ARCO-ERA5 store as a weather-skills Zarr."""
     if list_variables:
         ds = _open_arco({})
@@ -202,7 +206,8 @@ def fetch(start_time, end_time, bbox, variable, probe_latest, list_variables, **
     start_iso = start_time.isoformat()
     end_iso = end_time.isoformat()
 
-    ds = _open_arco({})
+    ds = _open_arco({}, dask)
+    stop = ds.attrs.get("valid_time_stop_era5t") or ds.attrs.get("valid_time_stop")
 
     if variable:
         missing = [v for v in variable if v not in ds.data_vars]
@@ -281,39 +286,42 @@ def fetch(start_time, end_time, bbox, variable, probe_latest, list_variables, **
                 "This is a bug in the fetcher's CF stamping, not a data problem."
             )
 
-    try:
-        ds = ds.compute()
-    except MemoryError:
-        raise DataError(
-            "ran out of memory materializing the selection. "
-            "Narrow it with -v, --bbox, or a shorter window."
-        ) from None
-    except Exception as exc:  # noqa: BLE001
-        raise DataError(
-            f"failed while reading from the ARCO-ERA5 store ({type(exc).__name__}: {exc})."
-        ) from None
+    if not dask:
+        try:
+            ds = ds.compute()
+        except MemoryError:
+            raise DataError(
+                "ran out of memory materializing the selection. "
+                "Narrow it with -v, --bbox, or a shorter window."
+            ) from None
+        except Exception as exc:  # noqa: BLE001
+            raise DataError(
+                f"failed while reading from the ARCO-ERA5 store ({type(exc).__name__}: {exc})."
+            ) from None
 
-    # Hours past the real data end are all-NaN (pre-allocated axis). Drop that
-    # tail instead of writing empty rows; never fill.
-    finite = np.zeros(ds.sizes["time"], dtype=bool)
-    for name in ds.data_vars:
-        if "time" in ds[name].dims:
-            other = [d for d in ds[name].dims if d != "time"]
-            finite |= ds[name].notnull().any(dim=other).values
-    if not finite.any():
-        raise DataError(
-            f"ARCO-ERA5 has no data yet in {start_iso}..{end_iso} "
-            "(the store's time axis runs ahead of the data). Run --probe-latest."
-        )
-    last = int(np.flatnonzero(finite)[-1])
-    if last < ds.sizes["time"] - 1:
+    # Hours past the store's data end are all-NaN (pre-allocated axis): drop that
+    # tail instead of writing empty rows; never fill. The last day of data is in the
+    # store attrs, so no values are read. Precip is relabelled one hour earlier, so
+    # its last valid label is 22 UTC; a mix with instants still ends at 23 UTC.
+    data_end = None
+    if stop:
+        data_end = np.datetime64(stop, "D") + np.timedelta64(23, "h")
+        if accum and len(accum) == len(names):
+            data_end -= hour
+    if data_end is not None and data_end < last:
+        if data_end < first:
+            raise DataError(
+                f"ARCO-ERA5 has no data yet in {start_iso}..{end_iso} "
+                "(the store's time axis runs ahead of the data). Run --probe-latest."
+            )
+        n_dropped = int((ds["time"].values > data_end).sum())
         print(
-            f"Warning: ARCO-ERA5 data ends {str(ds['time'].values[last])[:13]}; dropped "
-            f"{ds.sizes['time'] - 1 - last} all-NaN trailing hour(s). Effective end is "
+            f"Warning: ARCO-ERA5 data ends {str(data_end)[:13]}; dropped "
+            f"{n_dropped} all-NaN trailing hour(s). Effective end is "
             "earlier than --end-time.",
             file=sys.stderr,
         )
-        ds = ds.isel(time=slice(0, last + 1))
+        ds = ds.sel(time=slice(None, data_end))
 
     apply_write_encoding(
         ds,

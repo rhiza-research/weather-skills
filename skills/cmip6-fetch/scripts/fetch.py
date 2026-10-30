@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "gcsfs",
 #   "pandas",
 # ]
@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 import cf_xarray  # noqa: F401  (fail-fast probe)
 import cf_xarray.units  # noqa: F401  (fail-fast probe; configures pint CF registry)
 import gcsfs
+import numpy as np
 import pandas as pd
 import xarray as xr
 from weather_skills_core import DataError, UsageError, weather_skill
@@ -98,7 +99,7 @@ def _resolve_zstore(model, experiment, variable, member, table, grid) -> tuple:
     return zstore, grids[0], str(row["version"])
 
 
-def _open_remote(state, model, experiment, variable, member, table, grid) -> dict:
+def _open_remote(state, model, experiment, variable, member, table, grid, dask=False) -> dict:
     """Resolve the catalog and open the matched store, at most once per run."""
     if "ds" not in state:
         zstore, grid_label, version = _resolve_zstore(
@@ -107,11 +108,12 @@ def _open_remote(state, model, experiment, variable, member, table, grid) -> dic
         state.update(zstore=zstore, grid_label=grid_label, version=version)
         fs = gcsfs.GCSFileSystem(token="anon")
         mapper = fs.get_mapper(zstore)
+        chunks = {} if dask else None
         try:
             time_coder = xr.coders.CFDatetimeCoder(use_cftime=True)
-            ds = xr.open_zarr(mapper, consolidated=True, decode_times=time_coder)
+            ds = xr.open_zarr(mapper, consolidated=True, decode_times=time_coder, chunks=chunks)
         except AttributeError:
-            ds = xr.open_zarr(mapper, consolidated=True, use_cftime=True)
+            ds = xr.open_zarr(mapper, consolidated=True, use_cftime=True, chunks=chunks)
 
         # Some stores hold their yearly files out of order (MPI-ESM1-2-HR
         # historical runs 1915-1959, then 1895-1919, ...): sort, unless two
@@ -200,6 +202,7 @@ def fetch(
     table,
     grid,
     probe_latest,
+    dask=False,
     **kwargs,
 ):
     """Fetch one CMIP6 climate-model run from the public Pangeo catalog as a weather-skills Zarr."""
@@ -207,7 +210,7 @@ def fetch(
         print("none")
         return
 
-    state = _open_remote({}, model, experiment, variable, member, table, grid)
+    state = _open_remote({}, model, experiment, variable, member, table, grid, dask)
     ds = state["ds"]
     grid_label = state["grid_label"]
     start_iso = start_time.isoformat()
@@ -248,12 +251,15 @@ def fetch(
                 "the concat skill along time."
             )
     key = ds["time"].dt.year * 10000 + ds["time"].dt.month * 100 + ds["time"].dt.day
-    ds = ds.isel(time=((key >= start_key) & (key <= end_key)).values)
-    if ds.sizes.get("time", 0) == 0:
+    inside = np.flatnonzero(((key >= start_key) & (key <= end_key)).values)
+    if inside.size == 0:
         raise DataError(
             f"{model}/{experiment}/{variable} has no data in "
             f"{start_iso}..{end_iso} (dataset time range may not cover the window)."
         )
+    # Time is sorted, so the window is one run. A slice keeps dask chunks as views;
+    # a boolean mask copies every chunk it touches.
+    ds = ds.isel(time=slice(inside[0], inside[-1] + 1))
 
     print(
         f"Fetching cmip6 {model}/{experiment}/{member}/{table}/"
