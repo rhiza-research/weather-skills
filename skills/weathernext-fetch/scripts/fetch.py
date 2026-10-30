@@ -925,6 +925,8 @@ def fetch(
                     "steps are NaN (not filled).",
                     file=sys.stderr,
                 )
+    # Latitude runs south to north in every output.
+    ds = ds.sortby("lat")
     return stamp_data_interval(ds, dim="step" if "step" in ds.dims else None)
 
 

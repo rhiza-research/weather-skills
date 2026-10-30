@@ -148,6 +148,8 @@ def fetch(start_time, end_time, bbox, **kwargs):
         weather_skills_source=f"jaxa-earth-api:{_COLLECTION}",
     )
     stamp_cf_attrs(out)
+    # Latitude runs south to north in every output.
+    out = out.sortby("latitude")
     return stamp_data_interval(out, period="1 hour")
 
 

@@ -40,7 +40,7 @@ Needs `EARTHDATA_USERNAME` and `EARTHDATA_PASSWORD` (or `EARTHDATA_TOKEN`) in th
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- Dims `(time, latitude, longitude)`, daily, on the 9 km EASE-Grid 2.0 cell centres. Latitude is descending and unevenly spaced in degrees (about 0.07° near the equator); longitude is evenly spaced.
+- Dims `(time, latitude, longitude)`, daily, on the 9 km EASE-Grid 2.0 cell centres. Latitude is ascending and unevenly spaced in degrees (about 0.07° near the equator); longitude is evenly spaced.
 - `soil_moisture` in `m3 m-3` (volume of water per volume of soil), `standard_name=volume_fraction_of_condensed_water_in_soil`, `data_interval="1 day"`. NaN marks ocean, no retrieval, values outside 0.02–0.5, and (with `--quality recommended`) lower-quality retrievals.
 - A `latitude_longitude` grid-mapping variable (WGS84); `weather_skills_source="smap"`.
 

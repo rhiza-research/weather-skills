@@ -304,6 +304,8 @@ def fetch(
     name = ds["time"].attrs.get("bounds")
     if name and native_bounds is not None:
         ds[name] = (ds[name].dims, native_bounds.sel(time=ds["time"]).values)
+    # Latitude runs south to north in every output.
+    ds = ds.sortby("latitude")
     return ds
 
 

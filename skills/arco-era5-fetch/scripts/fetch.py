@@ -323,6 +323,8 @@ def fetch(start_time, end_time, bbox, variable, probe_latest, list_variables, **
     ds = to_standard_units(ds)
     ds = precip_amounts_to_rates(ds, interval="1 hour")
     _stamp_coord_attrs(ds)  # unit conversion respells level "hPa" as "hectopascal"
+    # Latitude runs south to north in every output.
+    ds = ds.sortby("latitude")
     return stamp_data_interval(ds, period="1 hour")
 
 

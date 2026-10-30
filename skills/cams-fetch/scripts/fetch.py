@@ -491,6 +491,8 @@ def fetch(
         "source": f"{_ADS_URL} ({dataset_id})",
     }
     stamp_cf_attrs(ds)
+    # Latitude runs south to north in every output.
+    ds = ds.sortby("latitude")
     return stamp_data_interval(ds)
 
 

@@ -630,6 +630,8 @@ def fetch(
         out = stamp_data_interval(out, period=accum_interval)
     else:
         out = stamp_data_interval(out, dim="step" if is_forecast else None)
+    # Latitude runs south to north in every output.
+    out = out.sortby("latitude")
     # Period totals (WeatherNext 2 6 h precip in mm) become mm day-1 rates.
     return precip_amounts_to_rates(out, deaccumulate=False)
 

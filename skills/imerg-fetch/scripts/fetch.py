@@ -198,6 +198,8 @@ def fetch(start_time, end_time, version, bbox, probe_latest, **kwargs):
     stamp_cf_attrs(ds)
     ds = ensure_normalized_longitude(ds, lon_dim="longitude")
     ds = to_standard_units(ds, variables=["precip"])
+    # Latitude runs south to north in every output.
+    ds = ds.sortby("latitude")
     return stamp_data_interval(ds, period="1 day")
 
 

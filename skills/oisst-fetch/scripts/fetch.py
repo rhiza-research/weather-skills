@@ -382,6 +382,8 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
         fills={"sst": np.float32("nan")},
     )
     verify_cf_decode(ds)
+    # Latitude runs south to north in every output.
+    ds = ds.sortby("latitude")
     return stamp_data_interval(ds, period="1 day")
 
 

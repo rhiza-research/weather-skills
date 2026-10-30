@@ -358,6 +358,8 @@ def fetch(
     for name in (mean_name, std_name):
         expanded[name].attrs[AGGREGATION_PERIOD_ATTR] = f"{window} day"
     stamp_cf_attrs(expanded)
+    # Latitude runs south to north in every output.
+    expanded = expanded.sortby("latitude")
     return stamp_data_interval(expanded, period="1 day")
 
 

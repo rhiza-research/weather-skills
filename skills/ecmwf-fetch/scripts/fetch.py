@@ -914,6 +914,8 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
         # Materialize while GRIB files in the temp dir still exist.
         ds = ds.load()
 
+    # Latitude runs south to north in every output.
+    ds = ds.sortby("latitude")
     return ds
 
 

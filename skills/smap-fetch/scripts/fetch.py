@@ -389,6 +389,8 @@ def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs)
         time_calendar=_TIME_CALENDAR,
         fills={"soil_moisture": np.float64(np.nan)},
     )
+    # Latitude runs south to north in every output.
+    ds = ds.sortby("latitude")
     return stamp_data_interval(ds, period="1 day")
 
 

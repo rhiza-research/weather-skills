@@ -91,7 +91,8 @@ def test_rain_above_first_images_max_is_kept_and_error_codes_are_nan(tmp_path, f
     precip = xr.open_zarr(out)["precip"]
     assert precip.attrs["units"] == "mm day-1"
     assert precip.attrs["data_interval"] == "1 hour"
-    hour3 = precip.sel(time="2026-10-01T03:00").values
+    # Image rows run north to south; the output's latitude runs south to north.
+    hour3 = precip.sel(time="2026-10-01T03:00").values[::-1]
     np.testing.assert_allclose(hour3[0, 0], 50.0 * 24)  # was NaN: above the first image's max
     assert np.isnan(hour3[0, 1]) and np.isnan(hour3[1, 0])  # -4 error code, -999.9 nodata
     np.testing.assert_allclose(hour3[1, 1], 0.5 * 24)
@@ -106,7 +107,7 @@ def test_hours_labelled_from_ids_on_cell_centres(tmp_path, fetch):
         "2026-10-01T02",
         "2026-10-01T03",
     ]
-    np.testing.assert_allclose(ds.latitude.values, [0.15, 0.05])
+    np.testing.assert_allclose(ds.latitude.values, [0.05, 0.15])
     np.testing.assert_allclose(ds.longitude.values, [36.05, 36.15])
 
 
