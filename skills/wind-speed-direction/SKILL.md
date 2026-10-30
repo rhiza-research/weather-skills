@@ -16,13 +16,14 @@ Turns a pair of eastward (u) and northward (v) wind components into speed and di
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/wind_speed_direction.py -i IN.zarr -o OUT.zarr --u U --v V
+uv run ${CLAUDE_SKILL_DIR}/scripts/wind_speed_direction.py -i IN.zarr -o OUT.zarr --u U --v V [--calm-speed SPEED]
 ```
 
 ### Arguments
 - `--input`, `-i` — input Zarr, gridded or station.
 - `--u` — eastward wind component variable (`u10`, `u100`, or `u` on pressure levels). Required.
 - `--v` — northward wind component variable (`v10`, `v100`, or `v`). Required.
+- `--calm-speed` — speeds at or below this, in the units of u and v, count as calm. Default `1e-6`, which only absorbs rounding noise around zero; pass a larger value (such as `0.5` for `m s-1`) to treat light winds as calm. A negative value exits 2.
 - `--output`, `-o` — output Zarr.
 
 ### Output
@@ -32,8 +33,8 @@ Three variables on the dims and coordinates of u and v; other input variables ar
 - `wind_to_direction` — degrees clockwise from north that the wind blows to (`wind_from_direction` + 180). Units `degree`, CF `standard_name` `wind_to_direction`.
 
 ### Notes
-- Directions lie in [0, 360). Calm cells (u = v = 0) get speed 0 and direction NaN; a NaN in u or v gives NaN in all three.
-- u and v must have the same units and lie on the same grid (same dims and coordinate values). Otherwise it exits 2; convert units with unit-convert first.
+- Directions lie in [0, 360). Calm cells (speed at or below `--calm-speed`) get direction NaN; their speed is kept as computed. A NaN in u or v gives NaN in all three.
+- u and v must have the same units and the same dims (for example both on pressure levels). Otherwise it exits 2; convert units with unit-convert first.
 - Exits 2 when `--u` or `--v` is not in the dataset (the message lists what is).
 
 ### Example

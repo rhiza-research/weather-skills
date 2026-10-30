@@ -13,16 +13,16 @@ def wind():
     return load_skill("wind-speed-direction", "wind_speed_direction").wind_speed_direction
 
 
-def _run(wind, tmp_path, ds, u="u10", v="v10"):
+def _run(wind, tmp_path, ds, u="u10", v="v10", *extra):
     src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
-    run_skill(wind, "-i", str(src), "-o", str(out), "--u", u, "--v", v)
+    run_skill(wind, "-i", str(src), "-o", str(out), "--u", u, "--v", v, *extra)
     return xr.open_zarr(out, consolidated=True), out
 
 
-def _usage_error(wind, tmp_path, ds):
+def _usage_error(wind, tmp_path, ds, *extra):
     with pytest.raises(SystemExit) as exc:
-        _run(wind, tmp_path, ds)
+        _run(wind, tmp_path, ds, "u10", "v10", *extra)
     assert exc.value.code == 2
 
 
@@ -109,7 +109,7 @@ def test_unit_mismatch_is_refused(tmp_path, wind):
     _usage_error(wind, tmp_path, ds)
 
 
-def test_different_grids_are_refused(tmp_path, wind):
+def test_different_dims_are_refused(tmp_path, wind):
     ds = _uv_gridded([1.0, 2.0], [1.0, 2.0])
     ds["v10"] = ds["v10"].rename(longitude="lon_v")
     _usage_error(wind, tmp_path, ds)
@@ -117,3 +117,24 @@ def test_different_grids_are_refused(tmp_path, wind):
 
 def test_missing_variable_is_refused(tmp_path, wind):
     _usage_error(wind, tmp_path, _uv_gridded([1.0], [1.0]).drop_vars("v10"))
+
+
+def test_near_zero_is_calm_by_default(tmp_path, wind):
+    ds, _ = _run(wind, tmp_path, _uv_gridded([1e-9, 0.3], [-1e-9, 0.4]))
+    np.testing.assert_allclose(ds["wind_speed"].values.ravel(), [np.hypot(1e-9, 1e-9), 0.5])
+    assert np.isnan(ds["wind_from_direction"].values.ravel()[0])
+    assert np.isfinite(ds["wind_from_direction"].values.ravel()[1])
+
+
+def test_calm_speed_threshold(tmp_path, wind):
+    ds, _ = _run(
+        wind, tmp_path, _uv_gridded([0.3, 3.0], [0.4, 4.0]), "u10", "v10", "--calm-speed", "0.5"
+    )
+    # Speed 0.5 is at the threshold, so calm; speed is kept as computed.
+    np.testing.assert_allclose(ds["wind_speed"].values.ravel(), [0.5, 5.0])
+    assert np.isnan(ds["wind_to_direction"].values.ravel()[0])
+    assert np.isfinite(ds["wind_to_direction"].values.ravel()[1])
+
+
+def test_negative_calm_speed_is_refused(tmp_path, wind):
+    _usage_error(wind, tmp_path, _uv_gridded([1.0], [1.0]), "--calm-speed", "-1")

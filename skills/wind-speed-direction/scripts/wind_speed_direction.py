@@ -19,13 +19,21 @@ _SKILL_VERSION = "0.0.1"
 @weather_skill.argument("-i", "--input", type=Dataset("any"), required=True)
 @weather_skill.argument("--u", required=True, help="Eastward wind component variable (u10, u).")
 @weather_skill.argument("--v", required=True, help="Northward wind component variable (v10, v).")
-def wind_speed_direction(ds, u, v, **kwargs):
+@weather_skill.argument(
+    "--calm-speed",
+    type=float,
+    default=1e-6,
+    help="Speeds at or below this, in the units of u and v, count as calm (direction NaN).",
+)
+def wind_speed_direction(ds, u, v, calm_speed, **kwargs):
     """Compute wind speed and from / to directions from u and v wind components."""
     # dequantify_dataset keeps each variable's units attr (Dataset.map drops it).
     ds = dequantify_dataset(ds)
     missing = [name for name in (u, v) if name not in ds.data_vars]
     if missing:
         raise UsageError(f"{missing} not in dataset (have {list(ds.data_vars)})")
+    if not calm_speed >= 0:
+        raise UsageError(f"--calm-speed must be zero or more, got {calm_speed}")
     u_da, v_da = ds[u], ds[v]
 
     units = u_da.attrs.get("units")
@@ -36,10 +44,7 @@ def wind_speed_direction(ds, u, v, **kwargs):
             f"{u!r} is in {units!r} but {v!r} is in {v_da.attrs.get('units')!r}; "
             "convert them to one unit first"
         )
-    try:
-        u_da, v_da = xr.align(u_da, v_da, join="exact")
-    except ValueError:
-        raise UsageError(f"{u!r} and {v!r} are on different grids") from None
+    # Variables in one dataset share coordinate values, so only their dims can differ.
     if u_da.dims != v_da.dims:
         raise UsageError(f"{u!r} has dims {u_da.dims} but {v!r} has dims {v_da.dims}")
 
@@ -48,9 +53,9 @@ def wind_speed_direction(ds, u, v, **kwargs):
     # Adding 360 before the modulo keeps tiny negative angles from landing on 360.
     to_dir = (np.degrees(np.arctan2(u_da, v_da)) + 360.0) % 360.0
     from_dir = (to_dir + 180.0) % 360.0
-    # Calm cells have no direction.
-    to_dir = to_dir.where(speed > 0)
-    from_dir = from_dir.where(speed > 0)
+    # Calm cells, at or below --calm-speed, have no direction.
+    to_dir = to_dir.where(speed > calm_speed)
+    from_dir = from_dir.where(speed > calm_speed)
 
     out = xr.Dataset(
         {"wind_speed": speed, "wind_from_direction": from_dir, "wind_to_direction": to_dir},
