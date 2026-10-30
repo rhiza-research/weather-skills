@@ -491,6 +491,9 @@ def fetch(
         "source": f"{_ADS_URL} ({dataset_id})",
     }
     stamp_cf_attrs(ds)
+    # Latitude runs south to north in every output.
+    if "latitude" in ds.indexes and ds.indexes["latitude"].is_monotonic_decreasing:
+        ds = ds.isel(latitude=slice(None, None, -1))
     return stamp_data_interval(ds)
 
 

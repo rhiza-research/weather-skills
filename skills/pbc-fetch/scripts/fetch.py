@@ -362,6 +362,9 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, **k
         pbc_folder=picked[0][0] + (f"..{picked[-1][0]}" if windows else ""),
     )
     stamp_cf_attrs(ds)
+    # Latitude runs south to north in every output.
+    if "latitude" in ds.indexes and ds.indexes["latitude"].is_monotonic_decreasing:
+        ds = ds.isel(latitude=slice(None, None, -1))
     return stamp_data_interval(ds, period="7 day")
 
 

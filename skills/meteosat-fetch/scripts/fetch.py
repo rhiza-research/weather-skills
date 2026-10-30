@@ -449,6 +449,9 @@ def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, *
         sub_satellite_longitude=sub_lon,
     )
     stamp_cf_attrs(out)
+    # Latitude runs south to north in every output.
+    if "latitude" in out.indexes and out.indexes["latitude"].is_monotonic_decreasing:
+        out = out.isel(latitude=slice(None, None, -1))
     return out
 
 

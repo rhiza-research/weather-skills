@@ -382,6 +382,9 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
         fills={"sst": np.float32("nan")},
     )
     verify_cf_decode(ds)
+    # Latitude runs south to north in every output.
+    if "latitude" in ds.indexes and ds.indexes["latitude"].is_monotonic_decreasing:
+        ds = ds.isel(latitude=slice(None, None, -1))
     return stamp_data_interval(ds, period="1 day")
 
 

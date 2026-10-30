@@ -27,7 +27,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time Y
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- Dims `(time, latitude, longitude)`, hourly, 0.1° cell centres. Latitude is descending; longitude is `[-180, 180)`.
+- Dims `(time, latitude, longitude)`, hourly, 0.1° cell centres. Latitude is ascending; longitude is `[-180, 180)`.
 - `precip` in `mm day-1` (converted from `mm/hr`), `data_interval="1 hour"`. Each `time` labels the start of its hour (`02:00` covers 02:00–02:59 UTC). JAXA error codes and nodata are NaN.
 - `weather_skills_source="jaxa-earth-api:JAXA.EORC_GSMaP_standard.Gauge.v6_hourly"`.
 
