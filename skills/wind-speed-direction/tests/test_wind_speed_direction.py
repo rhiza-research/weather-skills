@@ -138,3 +138,117 @@ def test_calm_speed_threshold(tmp_path, wind):
 
 def test_negative_calm_speed_is_refused(tmp_path, wind):
     _usage_error(wind, tmp_path, _uv_gridded([1.0], [1.0]), "--calm-speed", "-1")
+
+
+def _arrows(out, k=0):
+    """Arrow k's seven vertices as (x, y) arrays."""
+    x = out["arrow_x"].values.reshape(-1, 7)[k]
+    y = out["arrow_y"].values.reshape(-1, 7)[k]
+    return x, y
+
+
+def test_arrows_are_quiver_segments(tmp_path, wind):
+    # A 5 m s-1 westerly at 10°E, a 10 m s-1 southerly at 11°E.
+    out, _ = _run(
+        wind, tmp_path, _uv_gridded([5.0, 0.0], [0.0, 10.0]), "u10", "v10", "--arrow-scale", "0.1"
+    )
+    assert out["arrow_x"].dims == ("time", "arrow_vertex") and out["arrow_x"].shape == (1, 14)
+    x, y = _arrows(out, 0)
+    # Tail at the cell, tip 0.5° east, NaN gaps after the shaft and after the head.
+    np.testing.assert_allclose([x[0], x[1], y[0], y[1]], [10.0, 10.5, 1.0, 1.0])
+    assert np.isnan(x[2]) and np.isnan(x[6])
+    # Head barbs end 0.3 of the shaft back from the tip, 20° either side of it.
+    np.testing.assert_allclose(x[4], 10.5)
+    np.testing.assert_allclose([x[3], x[5]], 10.5 - 0.15 * np.cos(np.radians(20)), rtol=1e-6)
+    np.testing.assert_allclose(
+        sorted([y[3], y[5]]),
+        [1 - 0.15 * np.sin(np.radians(20)), 1 + 0.15 * np.sin(np.radians(20))],
+        rtol=1e-6,
+    )
+    x, y = _arrows(out, 1)
+    np.testing.assert_allclose([x[0], x[1], y[0], y[1]], [11.0, 11.0, 1.0, 2.0])
+    assert out["arrow_x"].attrs["arrow_scale"] == "0.1 degree per m s-1"
+
+
+def test_arrow_step_spaces_arrows_and_calm_is_empty(tmp_path, wind):
+    out, _ = _run(
+        wind,
+        tmp_path,
+        _uv_gridded([5.0, 0.0, 0.0, 2.0], [0.0, 0.0, 1.0, 0.0]),
+        "u10",
+        "v10",
+        "--arrow-scale",
+        "0.1",
+        "--arrow-step",
+        "2",
+    )
+    assert out["arrow_x"].shape == (1, 14)  # cells 0 and 2 of 4
+    x, _ = _arrows(out, 0)
+    assert x[0] == 10.0
+    calm, _ = _run(
+        wind, tmp_path / "c", _uv_gridded([0.0], [0.0]), "u10", "v10", "--arrow-scale", "0.1"
+    )
+    assert np.isnan(calm["arrow_x"].values).all()
+
+
+def test_arrows_at_stations(tmp_path, wind):
+    ds = make_point_obs(n_time=2, n_points=3, name="u10")
+    ds["u10"].values[:] = 4.0
+    ds["v10"] = ds["u10"] * 0
+    for name in ("u10", "v10"):
+        ds[name].attrs = {"units": "m s-1"}
+    out, _ = _run(wind, tmp_path, ds, "u10", "v10", "--arrow-scale", "0.05")
+    assert (
+        set(out["arrow_x"].dims) == {"time", "arrow_vertex"}
+        and out["arrow_x"].sizes["arrow_vertex"] == 21
+    )
+    x = out["arrow_x"].isel(time=0).values.reshape(-1, 7)
+    np.testing.assert_allclose(x[:, 1] - x[:, 0], 0.2)
+
+
+def test_bad_arrow_options_are_refused(tmp_path, wind):
+    _usage_error(wind, tmp_path, _uv_gridded([1.0], [1.0]), "--arrow-scale", "0")
+    _usage_error(
+        wind, tmp_path / "e", _uv_gridded([1.0], [1.0]), "--arrow-scale", "0.1", "--arrow-step", "0"
+    )
+
+
+def test_arrow_length_is_in_arrow_spacings(tmp_path, wind):
+    # Cells 1° apart; arrows on every 2nd cell, so 2° apart. The arrows' speeds are 8 and
+    # 4 m s-1; their 95th percentile (7.8) spans 1.5 spacings, 3°.
+    ds = _uv_gridded([8.0, 0.0, 4.0, 0.0], [0.0, 0.0, 0.0, 0.0])
+    out, _ = _run(wind, tmp_path, ds, "u10", "v10", "--arrow-length", "1.5", "--arrow-step", "2")
+    scale = 3.0 / np.percentile([8.0, 4.0], 95)
+    x, _ = _arrows(out, 0)
+    np.testing.assert_allclose(x[1] - x[0], 8.0 * scale)
+    x, _ = _arrows(out, 1)
+    np.testing.assert_allclose(x[1] - x[0], 4.0 * scale)
+    assert out["arrow_x"].attrs["arrow_scale"] == f"{scale:.6g} degree per m s-1"
+    assert out["arrow_x"].attrs["arrow_length"] == 1.5
+
+
+def test_arrow_length_at_stations_uses_the_nearest_station(tmp_path, wind):
+    ds = make_point_obs(n_time=1, n_points=3, name="u10")  # stations 0.5° apart in lat and lon
+    ds["u10"].values[:] = 2.0
+    ds["v10"] = ds["u10"] * 0
+    for name in ("u10", "v10"):
+        ds[name].attrs = {"units": "m s-1"}
+    out, _ = _run(wind, tmp_path, ds, "u10", "v10", "--arrow-length", "1")
+    x = out["arrow_x"].isel(time=0).values.reshape(-1, 7)
+    np.testing.assert_allclose(x[:, 1] - x[:, 0], np.hypot(0.5, 0.5))
+
+
+def test_arrow_length_and_scale_are_one_or_the_other(tmp_path, wind):
+    _usage_error(
+        wind, tmp_path, _uv_gridded([1.0], [1.0]), "--arrow-length", "2", "--arrow-scale", "0.1"
+    )
+    calm, _ = _run(
+        wind,
+        tmp_path / "c",
+        _uv_gridded([0.0, 0.0], [0.0, 0.0]),
+        "u10",
+        "v10",
+        "--arrow-length",
+        "2",
+    )
+    assert np.isnan(calm["arrow_x"].values).all()
