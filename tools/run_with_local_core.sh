@@ -39,5 +39,10 @@ if [[ -f "$LOCK" ]]; then
   MOVED_LOCK="$(mktemp "${LOCK}.XXXXXX")"
   mv "$LOCK" "$MOVED_LOCK"
 fi
+# Keep the extras the script asks of core (e.g. weather-skills-core[dask]):
+# --with-editable replaces the header's requirement, extras included.
+EXTRAS="$(sed -n '/^# \/\/\/ script$/,/^# \/\/\/$/p' "$SCRIPT" \
+  | grep -oE 'weather-skills-core\[[^]]*\]' | head -1 | sed -E 's/.*\[(.*)\]/\1/' || true)"
+CORE_SPEC="$CORE${EXTRAS:+[$EXTRAS]}"
 # Don't exec — trap must restore the lock after uv exits.
-uv run --with-editable "$CORE" --script "$SCRIPT" "$@"
+uv run --with-editable "$CORE_SPEC" --script "$SCRIPT" "$@"
