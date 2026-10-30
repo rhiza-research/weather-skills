@@ -9,7 +9,6 @@
 import re
 import sys
 
-import numpy as np
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import cf_dim
 
@@ -19,12 +18,7 @@ _SKILL_VERSION = "0.0.5"
 
 @weather_skill(name="merge", version=_SKILL_VERSION)
 @weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=True)
-@weather_skill.argument(
-    "--by-year",
-    action="store_true",
-    help="Match values by calendar year: replace each input's time axis with a year axis first.",
-)
-def merge(ds, by_year, **kwargs):
+def merge(ds, **kwargs):
     """Combine the variables of two or more Zarrs into one dataset on their shared coordinates."""
     import pint
     import xarray as xr
@@ -42,25 +36,6 @@ def merge(ds, by_year, **kwargs):
                     "give one a new name first with edit-coords --rename OLD=NEW"
                 )
             owner[name] = i
-
-    if by_year:
-        for i, item in enumerate(dss):
-            t = cf_dim(item, "time")
-            if t is None or t not in item.dims:
-                raise UsageError(f"--by-year needs a time dim; input {i + 1} has {list(item.dims)}")
-            years = item[t].dt.year.values
-            unique, counts = np.unique(years, return_counts=True)
-            if (counts > 1).any():
-                raise UsageError(
-                    f"input {i + 1} has several values in year {int(unique[counts > 1][0])}; "
-                    "keep one value per year first (select or aggregate-temporal)"
-                )
-            # Bounds and other coords along time describe dates, not years.
-            along_time = [c for c in item.coords if c != t and t in item[c].dims]
-            item = item.reset_coords(along_time, drop=True)
-            item = item.assign_coords({t: years}).rename({t: "year"})
-            item["year"].attrs = {"long_name": "calendar year"}
-            dss[i] = item
 
     for i, item in enumerate(dss):
         for dim, index in item.indexes.items():
