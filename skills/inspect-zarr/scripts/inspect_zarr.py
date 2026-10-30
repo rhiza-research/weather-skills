@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "pandas",
 # ]
 # ///
@@ -11,6 +11,7 @@ import json
 import math
 
 import numpy as np
+import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
@@ -89,44 +90,62 @@ def _preview(vals, n):
     return [*vals[:h], "…", *vals[-t:]], True
 
 
-def _data_var(name, da, max_values, skip_nan):
-    arr = _numpy(da)
-    want = _DATA_SAMPLE_CAP if max_values == 0 else min(max_values, _DATA_SAMPLE_CAP)
-    n = int(arr.size)
-    kind = arr.dtype.kind
-    stats = {"n": n, "n_finite": None, "n_nan": None, "min": None, "max": None, "mean": None}
+def _finite(values):
+    kind = values.dtype.kind
+    if kind == "f":
+        return np.isfinite(values)
+    return ~np.isnat(values) if kind in "mM" else np.ones(values.shape, dtype=bool)
+
+
+def _sample(da, want, skip_nan):
+    """The first ``want`` values of ``da`` in C order (finite ones with ``skip_nan``).
+
+    Reads leading slabs only: enough rows for ``want`` values, then (with ``skip_nan``)
+    on to the next slab until ``want`` finite ones are found.
+    """
+    if not da.ndim:
+        da = da.expand_dims("_")
+    per_row = max(1, da.size // max(1, da.shape[0]))
+    step = max(1, (1_000_000 if skip_nan else want + per_row - 1) // per_row)
     sample = []
+    for start in range(0, da.shape[0], step):
+        flat = da.isel({da.dims[0]: slice(start, start + step)}).values.reshape(-1)
+        if skip_nan:
+            flat = flat[_finite(flat)]
+        sample.extend(_fmt(v) for v in flat[: want - len(sample)])
+        if not skip_nan or len(sample) >= want:
+            break
+    return sample
+
+
+def _data_var(name, da, max_values, skip_nan):
+    plain = da.pint.dequantify()
+    vals = plain
+    want = _DATA_SAMPLE_CAP if max_values == 0 else min(max_values, _DATA_SAMPLE_CAP)
+    n = int(vals.size)
+    kind = vals.dtype.kind
+    stats = {"n": n, "n_finite": None, "n_nan": None, "min": None, "max": None, "mean": None}
     if kind in "biufmM" and n:
-        # One pass over blocks along the first axis: no full-size copies of a
-        # large array.
-        n_finite, total, lo, hi = 0, 0.0, None, None
-        blocks = arr.reshape(arr.shape[0], -1) if arr.ndim else arr.reshape(1, 1)
-        step = max(1, 10_000_000 // max(1, blocks.shape[1]))
-        for start in range(0, blocks.shape[0], step):
-            block = blocks[start : start + step].reshape(-1)
-            if kind == "f":
-                block = block[np.isfinite(block)]
-            elif kind in "mM":
-                block = block[~np.isnat(block)]
-            if not block.size:
-                continue
-            n_finite += int(block.size)
-            lo = block.min() if lo is None else min(lo, block.min())
-            hi = block.max() if hi is None else max(hi, block.max())
-            if kind not in "mM":
-                total += float(block.sum(dtype="float64"))
-            if skip_nan and len(sample) < want:
-                sample.extend(_fmt(v) for v in block[: want - len(sample)])
+        # Count, range and total in one pass over the data, however it is chunked.
+        if kind == "f":
+            vals = vals.where(np.isfinite(vals))
+        lazy = {"n_finite": vals.count(), "lo": vals.min(skipna=True), "hi": vals.max(skipna=True)}
+        if kind not in "mM":
+            lazy["total"] = vals.sum(dtype="float64")
+        found = xr.Dataset(lazy).compute()
+        n_finite = int(found.n_finite)
         stats["n_finite"], stats["n_nan"] = n_finite, n - n_finite
         if n_finite:
-            stats["min"], stats["max"] = _jsonable(_fmt(lo)), _jsonable(_fmt(hi))
+            stats["min"] = _jsonable(_fmt(found.lo.values[()]))
+            stats["max"] = _jsonable(_fmt(found.hi.values[()]))
             if kind not in "mM":
-                stats["mean"] = _jsonable(total / n_finite)
+                stats["mean"] = _jsonable(float(found.total) / n_finite)
     if skip_nan and stats["n_finite"] is not None:
+        sample = _sample(plain, want, skip_nan=True)
         truncated = stats["n_finite"] > len(sample)
     else:
         # The first values in order, NaN included, so they line up with the coordinates.
-        sample = [_fmt(v) for v in arr.reshape(-1)[:want]]
+        sample = _sample(plain, want, skip_nan=False)
         truncated = n > len(sample)
     if truncated:
         sample.append("…")
@@ -134,7 +153,7 @@ def _data_var(name, da, max_values, skip_nan):
         "name": name,
         "dims": list(da.dims),
         "shape": [int(s) for s in da.shape],
-        "dtype": str(arr.dtype),
+        "dtype": str(da.dtype),
         "units": _units(da),
         "attrs": {k: str(da.attrs[k]) for k in _KEY_ATTRS if da.attrs.get(k) is not None},
         **stats,

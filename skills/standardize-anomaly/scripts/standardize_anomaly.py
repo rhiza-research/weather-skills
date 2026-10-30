@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 # ]
 # ///
 """Compute a standardized anomaly, (field − mean) / std, from a Zarr and its climatology."""
@@ -77,6 +77,14 @@ def standardize_anomaly(ds, climatology, variable, **kwargs):
             std = std.pint.dequantify() * scale
         elif any(u is not None for u in units):
             raise UsageError(f"{v!r}, {avg_name!r} and {std_name!r} must all carry units or none")
+
+        if field.chunks:
+            # Each input was chunked on its own; one layout keeps the arithmetic
+            # blockwise, so the write streams instead of holding both layouts' pieces.
+            avg, std = (
+                da.chunk({d: field.chunksizes[d] for d in da.dims if d in field.chunksizes})
+                for da in (avg, std)
+            )
 
         # A forecast's lead axis would otherwise align on init time, scoring
         # every lead against the init day's climatology.

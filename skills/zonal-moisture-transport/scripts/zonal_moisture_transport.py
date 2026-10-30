@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 # ]
 # ///
 """Compute eastward moisture flux (q·u) and, by default, its column integral (IVT)."""
@@ -103,15 +103,15 @@ def _pick_var(
 def _column_ivt(qu: xr.DataArray, vdim: str) -> xr.DataArray:
     """(1/g) ∫ q u dp with trapezoidal rule; pressure in Pa."""
     other = [d for d in qu.dims if d != vdim]
-    valid = qu.notnull().any(dim=other) if other else qu.notnull()
-    empty = qu[vdim].values[~valid.values]
+    valid = (qu.notnull().any(dim=other) if other else qu.notnull()).compute().values
+    empty = qu[vdim].values[~valid]
     if empty.size:
         print(
             f"WARNING: dropping {vdim} levels with no finite q*u anywhere: {empty.tolist()}; "
             "the column integral covers the remaining levels only.",
             file=sys.stderr,
         )
-    qu = qu.where(valid, drop=True)
+    qu = qu.isel({vdim: valid})
     if qu.sizes.get(vdim, 0) < 2:
         raise UsageError(
             "--integrate needs at least two finite pressure levels; "

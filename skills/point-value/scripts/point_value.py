@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "scipy",
 # ]
 # ///
@@ -110,13 +110,23 @@ def point_value(
         keep = (np.abs(glat[ilat] - plat) <= half_lat) & (np.abs(glon[ilon] - plon) <= half_lon)
     else:
         keep = np.zeros(plat.size, bool)
+        windows = []
         for p in range(plat.size):
             rows = np.flatnonzero(np.abs(glat - plat[p]) <= max_distance)
             cols = np.flatnonzero(np.abs(glon - plon[p]) <= max_distance)
             # Cells with any finite value, checked only in this point's window.
             valid = ds.isel({lat_dim: rows, lon_dim: cols}).to_array().notnull()
             valid = valid.any([d for d in valid.dims if d not in (lat_dim, lon_dim)])
-            ii, jj = np.nonzero(valid.transpose(lat_dim, lon_dim).values)
+            windows.append((rows, cols, valid.transpose(lat_dim, lon_dim)))
+        # Every window's mask in one compute (a pass over the data, not one per point).
+        masks = xr.Dataset(
+            {
+                f"w{p}": ((f"lat{p}", f"lon{p}"), valid.data)
+                for p, (_, _, valid) in enumerate(windows)
+            }
+        ).compute()
+        for p, (rows, cols, _) in enumerate(windows):
+            ii, jj = np.nonzero(masks[f"w{p}"].values)
             dist = np.hypot(glat[rows[ii]] - plat[p], glon[cols[jj]] - plon[p])
             if dist.size and dist.min() <= max_distance:
                 k = dist.argmin()

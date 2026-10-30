@@ -1,14 +1,14 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 # ]
 # ///
 """Convert a forecast variable stored as a running total since init into per-step values."""
 
 import sys
 
-import numpy as np
+import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.units import deaccumulate_along_step
 
@@ -36,7 +36,8 @@ def deaccumulate(ds, variable, **kwargs):
     # Increments are clipped at zero, so a signed or downward accumulation
     # (e.g. ECMWF evaporation or net thermal radiation) would become all zeros.
     # The relative tolerance lets GRIB packing noise around zero through.
-    if np.nanmin(da.values) < -1e-6 * np.nanmax(np.abs(da.values)):
+    extremes = xr.Dataset({"low": da.min(), "high": abs(da).max()}).compute()
+    if extremes.low < -1e-6 * extremes.high:
         raise UsageError(
             f"{variable!r} has negative values; deaccumulate clips increments at zero "
             "and supports only non-negative accumulations (precip, downward radiation)"

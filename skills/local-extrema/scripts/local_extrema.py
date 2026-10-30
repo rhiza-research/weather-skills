@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 # ]
 # ///
 """Find the local highs or lows of a gridded field and write them as station-style points."""
@@ -99,13 +99,13 @@ def local_extrema(ds, kind, radius, variable, **kwargs):
     sx, sy = max(1, kx // 4), max(1, ky // 4)
     sign = 1.0 if kind == "high" else -1.0
 
-    maps = da.values.reshape(-1, ny, nx)
+    sizes = [da.sizes[d] for d in other]
     anchors = []  # each point's grid cell, the first place it was found
     cells = {}  # anchor cell -> point index
     found = {}  # (map index, point index) -> central value
-    for k, z in enumerate(maps):
-        # Search sign * z for maxima, so a low is a high of -z.
-        z = sign * z.astype(float)
+    for k, index in enumerate(np.ndindex(*sizes)):
+        # One 2-D map at a time. Search sign * z for maxima, so a low is a high of -z.
+        z = sign * da.isel(dict(zip(other, index, strict=True))).values.astype(float)
         finite = np.isfinite(z)
         if not finite.any():
             continue
@@ -148,15 +148,20 @@ def local_extrema(ds, kind, radius, variable, **kwargs):
                 cells.setdefault((y, x), p)
             found[(k, p)] = sign * peak[y, x]
 
-    # Dense (map, point) values, points ordered by their strongest value.
-    values = np.full((len(maps), len(anchors)), np.nan)
+    # Points ordered by their strongest value, then the dense (map, point) values laid
+    # out in that order directly: the table grows with maps x points, so no copies of it.
+    strongest = np.full(len(anchors), -np.inf)
+    for (_, p), v in found.items():
+        strongest[p] = max(strongest[p], sign * v)
+    order = np.argsort(-strongest, kind="stable")
+    rank = np.empty(len(order), dtype=int)
+    rank[order] = np.arange(len(order))
+    values = np.full((*sizes, len(anchors)), np.nan)
     for (k, p), v in found.items():
-        values[k, p] = v
-    order = np.argsort(-np.nanmax(sign * values, axis=0), kind="stable")
+        values[(*np.unravel_index(k, sizes), rank[p])] = v
     iy = np.array([anchors[p][0] for p in order], dtype=int)
     ix = np.array([anchors[p][1] for p in order], dtype=int)
     letter = "H" if kind == "high" else "L"
-    values = values[:, order].reshape(*(da.sizes[d] for d in other), iy.size)
     coords = {c: da[c] for c in da.coords if not {lat_dim, lon_dim} & set(da[c].dims)}
     out = xr.DataArray(
         values,
