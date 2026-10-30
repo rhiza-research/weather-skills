@@ -113,6 +113,25 @@ def test_concat_sorts_out_of_order_inputs(tmp_path, concat):
     assert (np.diff(times) > np.timedelta64(0)).all()
 
 
+def test_concat_lines_up_latitude_in_the_other_order(tmp_path, concat):
+    """One input north to south, one south to north: the same grid."""
+    north_up = make_gridded(n_time=2, start="2026-01-01")
+    north_up["precip"][:] = north_up["latitude"].broadcast_like(north_up["precip"])
+    south_up = north_up.assign_coords(time=north_up.time + np.timedelta64(2, "D"))
+    south_up = south_up.isel(latitude=slice(None, None, -1))
+    d1 = write_zarr(north_up, tmp_path / "d1.zarr")
+    d2 = write_zarr(south_up, tmp_path / "d2.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(concat, "-i", str(d1), "-i", str(d2), "-o", str(out), "--dim", "time")
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert list(ds["latitude"].values) == [1.0, 2.0, 3.0]
+    # Each row keeps its own latitude's values after the reorder.
+    expected = np.broadcast_to(ds["latitude"].values[None, :, None], ds["precip"].shape)
+    assert np.array_equal(ds["precip"].values, expected)
+
+
 def test_concat_refuses_different_grid(tmp_path, concat):
     d1 = write_zarr(make_gridded(start="2026-01-01"), tmp_path / "d1.zarr")
     d2 = write_zarr(make_gridded(start="2026-01-03", lats=(1.0, 2.0, 4.0)), tmp_path / "d2.zarr")

@@ -112,6 +112,20 @@ def concat(ds, dim, coords, **kwargs):
         else:
             dss = [d.expand_dims(dim) for d in dss]
 
+    # The same labels in another order are one axis: put them in the first input's order.
+    for other_dim, first in dss[0].indexes.items():
+        if other_dim == dim:
+            continue
+        for i, item in enumerate(dss):
+            index = item.indexes.get(other_dim)
+            if (
+                index is not None
+                and not index.equals(first)
+                and len(index) == len(first)
+                and index.sort_values().equals(first.sort_values())
+            ):
+                dss[i] = item.sel({other_dim: first})
+
     # join="exact": every other coordinate must match. The outer join pads a
     # mismatch with NaN instead, which looks like missing data.
     # coords="different": a single-value label that differs between inputs
