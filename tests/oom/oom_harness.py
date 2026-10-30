@@ -202,6 +202,9 @@ class TransformCase:
     # by design (local-extrema's table of extrema): the graph tier then does not
     # require dask arrays at the write.
     lazy_output: bool = True
+    # Why memory still grows with the data under --dask, for a skill that is opted in
+    # but does not fully stream this case yet: the memory tiers expect it to fail.
+    grows: str = ""
 
 
 @dataclass(frozen=True)
@@ -256,8 +259,12 @@ def header_declares_dask(text: str) -> bool:
     return bool(header and _DASK_EXTRA.search(header.group(1)))
 
 
-def expect_dask(cases, skill_of=lambda c: (c.skill, c.script)):
-    """``pytest.param`` per case, strict-xfail for skills that don't declare the dask extra."""
+def expect_dask(cases, skill_of=lambda c: (c.skill, c.script), memory=False):
+    """``pytest.param`` per case, strict-xfail for skills that don't declare the dask extra.
+
+    With ``memory`` (the scaling and full-size tiers), cases marked ``grows`` are
+    strict-xfail too, so fixing one fails the run until the mark is removed.
+    """
     import pytest
 
     params = []
@@ -269,5 +276,7 @@ def expect_dask(cases, skill_of=lambda c: (c.skill, c.script)):
                 strict=True,
                 reason=f"{skill} does not install weather-skills-core[dask] yet",
             )
+        elif memory and getattr(case, "grows", ""):
+            marks = pytest.mark.xfail(strict=True, reason=f"memory grows: {case.grows}")
         params.append(pytest.param(case, id=case.id, marks=marks))
     return params

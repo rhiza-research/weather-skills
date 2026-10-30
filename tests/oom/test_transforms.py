@@ -68,7 +68,7 @@ def test_graph(case, oom, dask_in_process, tmp_path, capfd):
 
 
 @pytest.mark.scaling
-@pytest.mark.parametrize("case", expect_dask(STREAMING))
+@pytest.mark.parametrize("case", expect_dask(STREAMING, memory=True))
 def test_scaling(case, oom, tmp_path):
     """Peak memory barely moves between a small and a large input.
 
@@ -91,7 +91,7 @@ def test_scaling(case, oom, tmp_path):
 
 
 @pytest.mark.full_size
-@pytest.mark.parametrize("case", expect_dask(STREAMING))
+@pytest.mark.parametrize("case", expect_dask(STREAMING, memory=True))
 def test_full_size(case, oom, tmp_path):
     """Inputs several times the cap; the run stays under it."""
     size = int(oom.factor * oom.limit)

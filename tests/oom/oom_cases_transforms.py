@@ -158,6 +158,8 @@ CASES = [
         "downscale.py",
         inputs=(GRID, Input.of("--qq-reference", "grid", seed=1)),
         args=("--algorithm", "q-q", "--factor", "1"),
+        grows="q-q needs each cell's whole time series, but the input is stored as "
+        "time slabs of whole maps, so every slab stays alive until the last tile is done",
     ),
     # --- drop
     TransformCase(
