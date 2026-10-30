@@ -9,10 +9,15 @@
 import numpy as np
 import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.cf import cf_dim
 from weather_skills_core.units import dequantify_dataset, units_equal
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.2"
+
+# Arrow heads, as in Plotly's quiver: two barbs at 20° to the shaft, 0.3 of its length.
+HEAD_ANGLE = np.radians(20.0)
+HEAD_FRACTION = 0.3
 
 
 @weather_skill(name="wind-speed-direction", version=_SKILL_VERSION)
@@ -25,7 +30,19 @@ _SKILL_VERSION = "0.0.2"
     default=1e-6,
     help="Speeds at or below this, in the units of u and v, count as calm (direction NaN).",
 )
-def wind_speed_direction(ds, u, v, calm_speed, **kwargs):
+@weather_skill.argument(
+    "--arrows",
+    type=float,
+    help="Also write quiver arrows, SCALE degrees long per unit of speed (0.08 for m s-1 "
+    "draws a 10 m s-1 wind 0.8° long): arrow_x / arrow_y, line segments to plot as lines.",
+)
+@weather_skill.argument(
+    "--every",
+    type=int,
+    default=1,
+    help="With --arrows, one arrow at every Nth grid cell (in latitude and longitude) or station.",
+)
+def wind_speed_direction(ds, u, v, calm_speed, arrows, every, **kwargs):
     """Compute wind speed and from / to directions from u and v wind components."""
     # dequantify_dataset keeps each variable's units attr (Dataset.map drops it).
     ds = dequantify_dataset(ds)
@@ -76,6 +93,70 @@ def wind_speed_direction(ds, u, v, calm_speed, **kwargs):
         "standard_name": "wind_to_direction",
         "long_name": "direction the wind blows to, clockwise from north",
     }
+    if arrows is None:
+        return out
+    if not arrows > 0 or every < 1:
+        raise UsageError(f"--arrows must be above 0 and --every at least 1 (got {arrows}, {every})")
+    lat, lon = cf_dim(ds, "latitude"), cf_dim(ds, "longitude")
+    if lat is None or lon is None:
+        raise UsageError("--arrows needs latitude and longitude coordinates")
+
+    # The arrow positions: every Nth cell of a grid, or every Nth station.
+    if lat in u_da.dims and lon in u_da.dims:
+        picks = {lat: slice(None, None, every), lon: slice(None, None, every)}
+        ua, va = u_da.isel(picks), v_da.isel(picks)
+        ua, va = ua.stack(arrow=(lat, lon)), va.stack(arrow=(lat, lon))
+    else:
+        point = u_da[lon].dims[0]
+        ua = u_da.isel({point: slice(None, None, every)}).rename({point: "arrow"})
+        va = v_da.isel({point: slice(None, None, every)}).rename({point: "arrow"})
+    x0 = ua["arrow"][lon] if lon in ua["arrow"].coords else ua[lon]
+    y0 = ua["arrow"][lat] if lat in ua["arrow"].coords else ua[lat]
+    x0, y0 = np.asarray(x0.values, float), np.asarray(y0.values, float)
+    other = [d for d in ua.dims if d != "arrow"]
+    ua, va = ua.transpose(*other, "arrow"), va.transpose(*other, "arrow")
+
+    # Each arrow is 7 vertices: tail, tip, gap, barb, tip, barb, gap. NaN gaps split the
+    # arrows, so all of them draw as one line trace. A calm cell is all NaN.
+    dx, dy = arrows * ua.values, arrows * va.values
+    calm = np.hypot(ua.values, va.values) <= calm_speed
+    dx, dy = np.where(calm, np.nan, dx), np.where(calm, np.nan, dy)
+    tip_x, tip_y = x0 + dx, y0 + dy
+    back = np.arctan2(-dy, -dx)
+    head = HEAD_FRACTION * np.hypot(dx, dy)
+    gap = np.full(dx.shape, np.nan)
+    tail_x = np.where(calm, np.nan, np.broadcast_to(x0, dx.shape))
+    tail_y = np.where(calm, np.nan, np.broadcast_to(y0, dy.shape))
+    xs = [
+        tail_x,
+        tip_x,
+        gap,
+        tip_x + head * np.cos(back + HEAD_ANGLE),
+        tip_x,
+        tip_x + head * np.cos(back - HEAD_ANGLE),
+        gap,
+    ]
+    ys = [
+        tail_y,
+        tip_y,
+        gap,
+        tip_y + head * np.sin(back + HEAD_ANGLE),
+        tip_y,
+        tip_y + head * np.sin(back - HEAD_ANGLE),
+        gap,
+    ]
+    shape = (*dx.shape[:-1], dx.shape[-1] * 7)
+    coords = {d: ua[d] for d in other}
+    dims = (*other, "arrow_vertex")
+    for name, parts, axis in (("arrow_x", xs, "longitude"), ("arrow_y", ys, "latitude")):
+        values = np.stack(parts, axis=-1).reshape(shape)
+        out[name] = xr.DataArray(values, dims=dims, coords=coords)
+        out[name].attrs = {
+            "units": "degrees_east" if axis == "longitude" else "degrees_north",
+            "long_name": f"quiver arrow {axis}s: tail, tip, gap, barb, tip, barb, gap per arrow",
+            "arrow_scale": f"{arrows:g} degree per {units}",
+            "arrow_every": every,
+        }
     return out
 
 
