@@ -50,6 +50,11 @@ def pytest_addoption(parser):
         default=0.25,
         help="Scaling: allowed peak-memory growth as a fraction of the data growth.",
     )
+    group.addoption(
+        "--oom-slack",
+        default="128MiB",
+        help="Scaling: allowed growth on top of --oom-max-growth, for run-to-run RSS noise.",
+    )
     group.addoption("--oom-limit", default="1GiB", help="Full size: the memory cap.")
     group.addoption(
         "--oom-factor", type=float, default=3.0, help="Full size: inputs are this many x the cap."
@@ -109,6 +114,7 @@ def oom(pytestconfig) -> Settings:
         small=parse_bytes(opt("--oom-small")),
         large=parse_bytes(opt("--oom-large")),
         max_growth=opt("--oom-max-growth"),
+        slack=parse_bytes(opt("--oom-slack")),
         limit=parse_bytes(opt("--oom-limit")),
         factor=opt("--oom-factor"),
         baseline=opt("--oom-baseline"),

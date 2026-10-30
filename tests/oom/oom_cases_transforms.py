@@ -212,7 +212,8 @@ CASES = [
         "local-extrema",
         "local-extrema",
         "local_extrema.py",
-        inputs=(GRID,),
+        # Persistent blobs: on noise the extrema table grows with time squared.
+        inputs=(Input.of("-i", "grid", smooth=True),),
         args=("--kind", "high"),
         lazy_output=False,  # reads one 2-D map at a time; the extrema table is built in memory
     ),
