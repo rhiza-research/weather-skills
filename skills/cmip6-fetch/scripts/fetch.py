@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 import cf_xarray  # noqa: F401  (fail-fast probe)
 import cf_xarray.units  # noqa: F401  (fail-fast probe; configures pint CF registry)
 import gcsfs
+import numpy as np
 import pandas as pd
 import xarray as xr
 from weather_skills_core import DataError, UsageError, weather_skill
@@ -107,7 +108,7 @@ def _open_remote(state, model, experiment, variable, member, table, grid, dask=F
         state.update(zstore=zstore, grid_label=grid_label, version=version)
         fs = gcsfs.GCSFileSystem(token="anon")
         mapper = fs.get_mapper(zstore)
-        chunks = "auto" if dask else None
+        chunks = {} if dask else None
         try:
             time_coder = xr.coders.CFDatetimeCoder(use_cftime=True)
             ds = xr.open_zarr(mapper, consolidated=True, decode_times=time_coder, chunks=chunks)
@@ -250,12 +251,15 @@ def fetch(
                 "the concat skill along time."
             )
     key = ds["time"].dt.year * 10000 + ds["time"].dt.month * 100 + ds["time"].dt.day
-    ds = ds.isel(time=((key >= start_key) & (key <= end_key)).values)
-    if ds.sizes.get("time", 0) == 0:
+    inside = np.flatnonzero(((key >= start_key) & (key <= end_key)).values)
+    if inside.size == 0:
         raise DataError(
             f"{model}/{experiment}/{variable} has no data in "
             f"{start_iso}..{end_iso} (dataset time range may not cover the window)."
         )
+    # Time is sorted, so the window is one run. A slice keeps dask chunks as views;
+    # a boolean mask copies every chunk it touches.
+    ds = ds.isel(time=slice(inside[0], inside[-1] + 1))
 
     print(
         f"Fetching cmip6 {model}/{experiment}/{member}/{table}/"

@@ -52,7 +52,12 @@ def test_missing_pair_lists_available_climatologies(tmp_path, mod, capsys):
 
 @pytest.mark.parametrize(
     "start, end",
-    [("2021-02-27", "2021-03-02"), ("2020-02-28", "2020-03-01"), ("2021-12-30", "2022-01-01")],
+    [
+        ("2021-02-27", "2021-03-02"),
+        ("2020-02-28", "2020-03-01"),
+        ("2021-12-30", "2022-01-01"),
+        ("2021-01-01", "2023-06-30"),  # many pieces, across years
+    ],
 )
 def test_each_date_gets_its_own_calendar_days_climatology(mod, start, end):
     """Match by month/day in the 1904 cycle: a non-leap Mar 1 is not 1904's Feb 29."""

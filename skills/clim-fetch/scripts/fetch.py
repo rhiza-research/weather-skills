@@ -69,6 +69,7 @@ def _valid_units(units) -> bool:
 _DEFAULT_VARIABLE = "precip"
 _DEFAULT_LEAD_DAYS = 0
 _DEFAULT_WINDOW_DAYS = 1
+_PIECE_DAYS = 32  # days taken from the climatology at a time, when laying it onto a date range
 _DEFAULT_ALIGN = "left"  # matches aggregate-temporal's own --window default
 
 
@@ -82,7 +83,9 @@ def _open_zarr_or_none(key: str) -> xr.Dataset | None:
         # decode needed across zarr versions to get timedelta back. Always dask
         # chunks (this skill's header requires dask): the unit conversion runs
         # before the bbox subset and would otherwise load the whole global grid.
-        return xr.open_zarr(url, consolidated=True, decode_timedelta=True, chunks="auto")
+        # One chunk per stored chunk (125 MiB): "auto" would cut each one into pieces
+        # of --dask-chunk-size, and every piece re-reads and decodes the whole stored chunk.
+        return xr.open_zarr(url, consolidated=True, decode_timedelta=True, chunks={})
     except Exception:  # noqa: BLE001 — probing for existence, caller decides what's fatal
         return None
 
@@ -216,7 +219,13 @@ def _expand_climatology(clim: xr.Dataset, start, end) -> xr.Dataset:
 
     target_dates = pd.date_range(start, end, freq="D")
     target_doy = xr.DataArray(_doy_1904(target_dates), dims="time", coords={"time": target_dates})
-    expanded = clim.sel(day_of_year=target_doy)
+    # In pieces of a month: one take over a multi-year range would build a chunk of
+    # every day for each stored chunk, which grows with the date range.
+    pieces = [
+        clim.sel(day_of_year=target_doy.isel(time=slice(i, i + _PIECE_DAYS)))
+        for i in range(0, max(target_doy.size, 1), _PIECE_DAYS)
+    ]
+    expanded = pieces[0] if len(pieces) == 1 else xr.concat(pieces, dim="time")
     return expanded.drop_vars("day_of_year")
 
 
