@@ -44,7 +44,7 @@ def _keep_covered(da, over, expected, weight, min_coverage, others):
     """
     present = da.notnull()
     if weight is not None and set(weight.dims) <= set(over):
-        # An input interval that was itself 3/7 complete counts as 3/7 of a step.
+        # A partly complete input step counts as that fraction of a step.
         present = present * weight
     share = present.sum(over) / expected
     complete = share >= min_coverage - 1e-12
@@ -376,7 +376,7 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                         sub = sub.where(box)
                 if time_by:
                     # Checked before any other reduction, so slices missing different
-                    # days never add up to a complete group.
+                    # steps never add up to a complete group.
                     expected = next(n for _, _, _, n in parts if n is not None)
                     others = [d for d in rdims if d != "time"]
                     sub, group_share, n = _keep_covered(
@@ -476,8 +476,8 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
         )
         period = attrs.get(AGGREGATION_PERIOD_ATTR)
         if method == "sum" and over_time and isinstance(period, str):
-            # The sum covers every step it adds up: ten "1 day" amounts are a "10 day" total,
-            # daily amounts by MAM a "92 day" one (the longest group when lengths differ).
+            # A sum spans all the steps it adds: the input period times the step count
+            # (the longest group's count with --by).
             n = longest_group if time_by else int(np.prod([ds.sizes[d] for d in over_time]))
             calendar = re.fullmatch(r"\s*(\d+)\s*(month|year|dekad)s?\s*", period)
             if calendar:
