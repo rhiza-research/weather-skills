@@ -761,3 +761,24 @@ def test_quantile_keeps_scalar_coords(tmp_path, summarize_dim):
 
     ds = xr.open_zarr(out, consolidated=True)
     assert "time" in ds.coords and ds["time"].ndim == 0
+
+
+@pytest.mark.parametrize("period, total", [("1 day", "10 day"), ("1 month", "10 month")])
+def test_sum_over_steps_stamps_the_summed_span(tmp_path, summarize_dim, period, total):
+    """Ten daily amounts summed over step are a 10-day total, not a "1 day" one."""
+    import numpy as np
+    import xarray as xr
+
+    ds = xr.Dataset(
+        {"tp": (("step", "latitude", "longitude"), np.ones((10, 2, 2)))},
+        coords={
+            "step": np.arange(10) * np.timedelta64(1, "D"),
+            "latitude": [0.0, 1.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    ds["tp"].attrs.update(units="mm", aggregation_period=period)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(summarize_dim, "-i", str(src), "-o", str(out), "--dim", "step", "--method", "sum")
+    assert xr.open_zarr(out)["tp"].attrs["aggregation_period"] == total

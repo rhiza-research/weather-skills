@@ -22,6 +22,7 @@ from weather_skills_core.units import (
     AGGREGATION_COVERAGE_COORD,
     AGGREGATION_PERIOD_ATTR,
     data_interval_of,
+    format_duration,
     infer_timestep,
     parse_aggregation_period,
 )
@@ -455,6 +456,17 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
         attrs["cell_methods"] = (
             f"{attrs['cell_methods']} {step}" if attrs.get("cell_methods") else step
         )
+        period = attrs.get(AGGREGATION_PERIOD_ATTR)
+        if method == "sum" and over_time and not by and isinstance(period, str):
+            # The sum covers every step it adds up: ten "1 day" amounts are a "10 day" total.
+            n = int(np.prod([ds.sizes[d] for d in over_time]))
+            calendar = re.fullmatch(r"\s*(\d+)\s*(month|year|dekad)s?\s*", period)
+            if calendar:
+                attrs[AGGREGATION_PERIOD_ATTR] = f"{int(calendar.group(1)) * n} {calendar.group(2)}"
+            else:
+                attrs[AGGREGATION_PERIOD_ATTR] = format_duration(
+                    parse_aggregation_period(period) * n
+                )
         if method in ("std", "sum"):
             label = "Standard deviation" if method == "std" else "Sum"
             what = attrs.get("long_name") or attrs.get("standard_name") or var

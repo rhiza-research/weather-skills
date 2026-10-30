@@ -58,6 +58,7 @@ Grouped examples (`--by`) are under [Details](#grouped-examples).
 ## Details
 - Coverage (with a `--by` time label) is per input station or grid cell: its time steps with data over the steps the group's full calendar period holds at the data's step (MAM of daily data: 92). Input `aggregation_coverage` counts as that fraction. A season cut by the record's start or end is incomplete. Cells below `--min-coverage` are left out before any spatial reduction (a regional value uses complete cells only, NaN if none), counted on stderr; missing steps are never filled. A repeated time step is refused, as is a step longer than a day that runs into the next group (a week from 27 May under `MAM`): aggregate to daily or monthly steps first.
 - The statistic is appended to CF `cell_methods` (e.g. `number: standard_deviation`, `number: quantile 0.1, 0.9`, `latitude: longitude: mean`, `latitude: longitude: mean (grouped by admin_1)`). `std` and `sum` also set `long_name` (`Standard deviation of Total precipitation across number`) and drop `GRIB_name`, `short_name`, and `comment`; `standard_name` stays.
+- `--method sum` over `time` or `step` (no `--by`) stamps the summed span as `aggregation_period`: ten `1 day` amounts become a `10 day` total, so a map of it gets a 10-day color range.
 
 ### Grouped examples
 Grouped with `--by`, on labels added by `label-group` (`--level admin_1 --time year --time month --time MAM,OND`):
