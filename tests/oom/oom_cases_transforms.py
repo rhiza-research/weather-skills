@@ -158,6 +158,8 @@ CASES = [
         "downscale.py",
         inputs=(GRID, Input.of("--qq-reference", "grid", seed=1)),
         args=("--algorithm", "q-q", "--factor", "1"),
+        grows="q-q needs each cell's whole time series, but the input is stored as "
+        "time slabs of whole maps, so every slab stays alive until the last tile is done",
     ),
     # --- drop
     TransformCase(
@@ -298,6 +300,13 @@ CASES = [
         "summarize_dim.py",
         inputs=(Input.of("-i", "grid", labels=True),),
         args=("--by", "month", "--method", "max", "--min-coverage", "0"),
+    ),
+    TransformCase(
+        "summarize-dim-by-month-coverage",
+        "summarize-dim",
+        "summarize_dim.py",
+        inputs=(Input.of("-i", "grid", labels=True),),
+        args=("--by", "month", "--method", "mean"),
     ),
     # --- unit-convert
     TransformCase(

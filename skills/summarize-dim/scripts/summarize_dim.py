@@ -1,7 +1,8 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
+#   "flox",
 #   "pandas",
 # ]
 # ///
@@ -33,6 +34,34 @@ _TIME_LABELS = ("month", "year", "dayofyear", "month_group")
 _INITIALS = "JFMAMJJASOND"
 # Grid and station dims a sum must not add up (latitude, lon, station_id, ...).
 _SPATIAL_DIMS = frozenset((*names_for("lat"), *names_for("lon"), *names_for("point_id")))
+# --method -> flox function; the nan- forms skip NaNs, as the plain reductions do.
+_FLOX = {m: f"nan{m}" for m in ("sum", "mean", "std", "min", "max", "median", "quantile")}
+
+
+def _one_chunk(da, dims):
+    """``da`` with each of ``dims`` in a single chunk (dask's median and quantile need it)."""
+    return da.chunk({d: -1 for d in dims}) if da.chunks else da
+
+
+def _group(da, by, labels, func, dims, **kw):
+    """``func`` over ``dims`` for each combination of the ``by`` labels, NaN where none.
+
+    flox's map-reduce reduces each chunk to per-label partials before combining them,
+    so memory stays flat however many chunks a label spans (a month spans every year).
+    Its default for labels in memory, "cohorts", grew about a third of the data size.
+    """
+    from flox.xarray import xarray_reduce
+
+    return xarray_reduce(
+        da,
+        *by,
+        func=func,
+        dim=dims,
+        expected_groups=tuple(pd.Index(labels[b]) for b in by),
+        fill_value=np.nan,
+        keep_attrs=True,
+        **{"method": "map-reduce", **kw},
+    )
 
 
 @weather_skill(
@@ -89,6 +118,8 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
         if b not in ds.coords or b in ds.dims:
             labels = [c for c in ds.coords if c not in ds.dims]
             raise UsageError(f"--by {b!r} is not a label coord (have {labels})")
+    # Labels are small; load them once rather than on every use below.
+    ds = ds.assign_coords({b: ds[b].compute() for b in by})
     if by and lat_weighted:
         raise UsageError("--lat-weighted cannot be combined with --by")
     if (method == "quantile") != bool(quantile):
@@ -125,12 +156,9 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
     ds = ds.drop_vars(
         [c for c in ds.coords if c not in (*by, *ds.dims) and set(ds[c].dims) & set(group_dims)]
     )
-    # Groups, built once for every variable. Labels on the same dims are matched together;
-    # labels on different dims (a county and a year) combine as a product. Each group keeps
-    # only the rows/columns/times it touches, plus a mask when that box holds other cells,
-    # so no step copies more than one group.
+    # Labels on the same dims are matched together; labels on different dims (a county and
+    # a year) combine as a product.
     label_values = {}
-    groups = []
     for dset in dict.fromkeys(ds[b].dims for b in by):
         names = [b for b in by if ds[b].dims == dset]
         for b in by:
@@ -141,32 +169,11 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
             label_values[b] = values[values != ""] if values.dtype.kind in "UO" else values
             if label_values[b].size == 0:
                 raise DataError(f'--by {b!r}: every value is the empty label ""; nothing to group')
-        entries = []
-        for combo in itertools.product(*(range(label_values[b].size) for b in names)):
-            mask = np.ones([ds.sizes[d] for d in dset], dtype=bool)
-            for b, i in zip(names, combo, strict=True):
-                mask &= ds[b].values == label_values[b][i]
-            if not mask.any():
-                continue
-            index = [
-                np.nonzero(mask.any(axis=tuple(a for a in range(mask.ndim) if a != axis)))[0]
-                for axis in range(mask.ndim)
-            ]
-            box = mask[np.ix_(*index)]
-            entries.append(
-                (
-                    dict(zip(names, combo, strict=True)),
-                    dict(zip(dset, index, strict=True)),
-                    None if box.all() else xr.DataArray(box, dims=dset),
-                    None,  # expected time steps, filled in below for the time group
-                )
-            )
-        if not entries:
+        if not np.logical_and.reduce([ds[b].values != "" for b in names]).any():
             raise DataError(
                 f"--by {', '.join(names)}: no cell or step has a non-empty value of every one "
                 "of these labels at once; nothing to group"
             )
-        groups.append(entries)
 
     # Coverage: for each time group, the steps a complete record would hold. The labels are
     # rebuilt on a gap-free axis at the data's step reaching a year past both ends; a group
@@ -277,23 +284,24 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
         touched = np.isin(run, run[at]) & grouped
         if touched[0] or touched[-1]:
             raise UsageError("a --by time group lasts over a year, so its full period is unknown")
-        t = list(dict.fromkeys(ds[b].dims for b in by)).index(("time",))
-        groups[t] = [
-            (
-                labels,
-                isel,
-                box,
-                int(
-                    (
-                        touched
-                        & np.logical_and.reduce(
-                            [rebuilt[b] == label_values[b][i] for b, i in labels.items()]
-                        )
-                    ).sum()
-                ),
-            )
-            for labels, isel, box, _ in groups[t]
-        ]
+        # Steps a complete record holds for each combination of the time labels.
+        steps = np.reshape(
+            [
+                (
+                    touched
+                    & np.logical_and.reduce(
+                        [rebuilt[b] == v for b, v in zip(time_by, combo, strict=True)]
+                    )
+                ).sum()
+                for combo in itertools.product(*(label_values[b] for b in time_by))
+            ],
+            [label_values[b].size for b in time_by],
+        )
+        expected_steps = xr.DataArray(
+            np.where(steps > 0, steps, np.nan),
+            dims=time_by,
+            coords={b: label_values[b] for b in time_by},
+        )
 
     lat_dim = None
     if lat_weighted:
@@ -337,77 +345,81 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                 "separate call. Only dimensionless variables (units 1) sum over space"
             )
         if by:
-            # min_count=1 / ddof=1 as below. Combinations with no cells stay NaN.
-            kw = {"min_count": 1} if method == "sum" else {"ddof": 1} if method == "std" else {}
-            if method == "quantile":
-                kw = {"q": quantile[0]}
+            # NaNs are skipped as below: min_count=1 (an all-NaN sum is NaN), ddof=1.
+            kw = {"min_count": 1} if method == "sum" else {}
+            if method in ("std", "quantile"):
+                kw |= {"ddof": 1} if method == "std" else {"q": quantile[0]}
             kept = [d for d in da.dims if d not in rdims]
-            da = da.pint.dequantify()  # values are filled into numpy; units go back on below
-            values = None
-            dropped = 0
-            for parts in itertools.product(*groups):
-                index = {d: i for _, isel, _, _ in parts for d, i in isel.items()}
-                sub = da.isel(index)
-                for _, _, box, _ in parts:
-                    if box is not None:
-                        sub = sub.where(box)
-                if time_by:
-                    # Coverage is per input cell (station, grid cell, member):
-                    # a cell missing too many of the group's calendar steps is
-                    # left out before any spatial reduction, so cells missing
-                    # different days never add up to a complete group.
-                    present = sub.notnull()
-                    if weight is not None:
-                        present = present * xr.DataArray(weight[index["time"]], dims="time")
-                    expected = next(n for _, _, _, n in parts if n is not None)
-                    cell_share = present.sum("time") / expected
-                    complete = cell_share >= min_coverage - 1e-12
-                    dropped += int(((cell_share > 0) & ~complete).sum())
-                    sub = sub.where(complete)
-                    others = [d for d in rdims if d != "time"]
-                    # The least-covered cell that went into each value.
-                    share = cell_share.where(complete)
-                    share = share.min(others) if others else share
-                reduced = getattr(sub, method)(dim=rdims, keep_attrs=True, **kw)
-                if values is None:
-                    template = reduced
-                    shape = [da.sizes[d] for d in kept] + [label_values[b].size for b in by]
-                    values = np.full(shape, np.nan, dtype=np.result_type(reduced.dtype, np.float32))
-                    coverage = np.full(shape, np.nan)
-                where = {b: i for labels, _, _, _ in parts for b, i in labels.items()}
-                values[(..., *(where[b] for b in by))] = reduced.transpose(*kept).values
-                if time_by:
-                    coverage[(..., *(where[b] for b in by))] = share.transpose(*kept).values
-            coords = {
-                **{c: v for c, v in template.coords.items() if set(v.dims) <= set(kept)},
-                **{b: label_values[b] for b in by},
-            }
-            if dropped:
-                print(
-                    f"{var}: left out {dropped} cell-group(s) with data for less than "
-                    f"--min-coverage {min_coverage:g} of the group's calendar time steps",
-                    file=sys.stderr,
-                )
-            out[var] = xr.DataArray(values, dims=[*kept, *by], coords=coords, attrs=template.attrs)
+            others = [d for d in rdims if d != "time"]
+            other_by = [b for b in by if b not in time_by]
+            da = da.pint.dequantify()  # the result gets the units back below
+            if time_by:
+                # Coverage is per input cell (station, grid cell, member): a cell missing
+                # too many of the group's calendar steps is left out before any spatial
+                # reduction, so cells missing different days never add up to a complete group.
+                present = da.notnull()
+                if weight is not None:
+                    present = present * xr.DataArray(weight, dims="time")
+                cell_share = _group(present, time_by, label_values, "sum", ["time"])
+                cell_share = cell_share / expected_steps
+                complete = cell_share >= min_coverage - 1e-12
+                if min_coverage > 0:
+                    # Masking the data with a mask computed from that same data would hold
+                    # every chunk until the mask is done, so compute the (small) mask first.
+                    dropped = (cell_share > 0) & ~complete
+                    for b in other_by:
+                        dropped &= ds[b].isin(label_values[b])
+                    flags = xr.Dataset({"complete": complete, "dropped": dropped.sum()})
+                    flags = flags.reset_coords(drop=True).compute()
+                    complete = flags.complete
+                    if flags.dropped:
+                        print(
+                            f"{var}: left out {int(flags.dropped)} cell-group(s) with data for "
+                            f"less than --min-coverage {min_coverage:g} of the group's calendar "
+                            "time steps",
+                            file=sys.stderr,
+                        )
+                    # Each step takes its group's mask; steps in no group (-1) are not
+                    # reduced, so the mask they pick up does not matter.
+                    codes = {
+                        b: xr.DataArray(pd.Index(label_values[b]).get_indexer(ds[b]), dims="time")
+                        for b in time_by
+                    }
+                    mask = complete.drop_vars(time_by)
+                    if da.chunks:
+                        # Looked up chunk by chunk; a numpy mask would be built at full size.
+                        chunks = da.variable.chunksizes
+                        mask = mask.chunk({d: chunks.get(d, -1) for d in mask.dims})
+                        codes = {b: c.chunk(time=chunks["time"]) for b, c in codes.items()}
+                    da = da.where(mask.isel(codes))
+                # The least-covered cell that went into each value.
+                share = cell_share.where(complete)
+                if other_by:
+                    share = _group(share, other_by, label_values, "nanmin", others)
+                elif others:
+                    share = share.min(others)
+            if method in ("median", "quantile") and da.chunks:
+                # Not reducible chunk by chunk: each group is reduced whole, in one chunk.
+                da = _one_chunk(da, rdims)
+                kw["method"] = "blockwise"
+            values = _group(da, by, label_values, _FLOX[method], rdims, **kw)
+            values = values.transpose(*kept, *by)
+            out[var] = values.astype(np.result_type(values.dtype, np.float32))
             if time_by and method == "sum" and min_coverage < 1.0:
                 # Kept so the output records which sums are estimates.
+                coverage = share.transpose(*kept, *by)
                 partial = int((np.isfinite(values) & (coverage < 1.0 - 1e-12)).sum())
                 if partial:
                     print(
-                        f"WARNING: {partial} {var} sum(s) come from groups missing some time "
-                        f"steps (--min-coverage {min_coverage:g}); missing steps are not filled, "
-                        "so those sums are estimates from partial data and fall short of the "
-                        f"full-period total. See {var}_coverage in the output.",
+                        f"WARNING: {partial} {var} sum(s) come from groups missing "
+                        f"some time steps (--min-coverage {min_coverage:g}); missing steps are "
+                        "not filled, so those sums are estimates from partial data and fall "
+                        f"short of the full-period total. See {var}_coverage in the output.",
                         file=sys.stderr,
                     )
-                out[f"{var}_coverage"] = xr.DataArray(
-                    coverage,
-                    dims=[*kept, *by],
-                    coords=coords,
-                    attrs={
-                        "long_name": f"Share of each group's calendar time steps with {var} data",
-                        "units": "1",
-                    },
+                out[f"{var}_coverage"] = coverage.assign_attrs(
+                    long_name=f"Share of each group's calendar time steps with {var} data",
+                    units="1",
                 )
                 out[var].attrs["ancillary_variables"] = f"{var}_coverage"
             if units is not None:
@@ -420,7 +432,13 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
         elif method == "quantile":
             # One quantile leaves a scalar quantile coord; several add a quantile dim.
             q = quantile[0] if len(quantile) == 1 else quantile
-            out[var] = da.pint.dequantify().quantile(q, dim=rdims, keep_attrs=True)
+            out[var] = _one_chunk(da.pint.dequantify(), rdims).quantile(
+                q, dim=rdims, keep_attrs=True
+            )
+            if da.pint.units is not None:
+                out[var] = out[var].copy(data=out[var].data * da.pint.units)
+        elif method == "median":
+            out[var] = _one_chunk(da.pint.dequantify(), rdims).median(dim=rdims, keep_attrs=True)
             if da.pint.units is not None:
                 out[var] = out[var].copy(data=out[var].data * da.pint.units)
         elif method == "mean" and lat_weighted and lat_dim in rdims:
