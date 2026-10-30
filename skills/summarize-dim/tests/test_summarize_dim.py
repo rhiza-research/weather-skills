@@ -393,7 +393,7 @@ def test_by_season_blanks_incomplete_groups(tmp_path, summarize_dim, capsys):
     assert precip.sel(point_id="S0", month_group="OND").item() == 92.0
     assert np.isnan(precip.sel(month_group="MAM")).all()
     assert np.isnan(precip.sel(point_id="S1", month_group="OND").item())
-    assert "left out 3 cell-group(s)" in capsys.readouterr().err
+    assert "left out 3 slice(s)" in capsys.readouterr().err
     assert "precip_coverage" not in ds
     # A variable without the label dims passes through.
     assert ds["elevation"].values.tolist() == [10.0, 20.0]
@@ -761,3 +761,105 @@ def test_quantile_keeps_scalar_coords(tmp_path, summarize_dim):
 
     ds = xr.open_zarr(out, consolidated=True)
     assert "time" in ds.coords and ds["time"].ndim == 0
+
+
+@pytest.mark.parametrize("period, total", [("1 day", "10 day"), ("1 month", "10 month")])
+def test_sum_over_steps_stamps_the_summed_span(tmp_path, summarize_dim, period, total):
+    """Ten daily amounts summed over step are a 10-day total, not a "1 day" one."""
+    import numpy as np
+    import xarray as xr
+
+    ds = xr.Dataset(
+        {"tp": (("step", "latitude", "longitude"), np.ones((10, 2, 2)))},
+        coords={
+            "step": np.arange(10) * np.timedelta64(1, "D"),
+            "latitude": [0.0, 1.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    ds["tp"].attrs.update(units="mm", aggregation_period=period)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(summarize_dim, "-i", str(src), "-o", str(out), "--dim", "step", "--method", "sum")
+    assert xr.open_zarr(out)["tp"].attrs["aggregation_period"] == total
+
+
+def _daily_with_gap():
+    import numpy as np
+    import xarray as xr
+
+    a = np.ones((10, 2, 2))
+    a[3:6, 0, 0] = np.nan  # one cell misses 3 of the 10 days
+    ds = xr.Dataset(
+        {"tp": (("step", "latitude", "longitude"), a)},
+        coords={
+            "step": np.arange(10) * np.timedelta64(1, "D"),
+            "latitude": [0.0, 1.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    ds["tp"].attrs.update(units="mm", aggregation_period="1 day")
+    return ds
+
+
+def test_sum_over_steps_leaves_out_incomplete_cells(tmp_path, summarize_dim):
+    """At the default --min-coverage 1.0 a cell missing a day has no 10-day total."""
+    import numpy as np
+    import xarray as xr
+
+    src = write_zarr(_daily_with_gap(), tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(summarize_dim, "-i", str(src), "-o", str(out), "--dim", "step", "--method", "sum")
+    ds = xr.open_zarr(out)
+    assert np.isnan(ds["tp"].values[0, 0])
+    assert (ds["tp"].values.ravel()[1:] == 10).all()
+    assert "tp_coverage" not in ds
+
+
+def test_sum_over_steps_partial_total_with_coverage(tmp_path, summarize_dim):
+    """Below 1.0 the partial total is kept and its coverage written beside it."""
+    import xarray as xr
+
+    src = write_zarr(_daily_with_gap(), tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "step",
+        "--method",
+        "sum",
+        "--min-coverage",
+        "0.5",
+    )
+    ds = xr.open_zarr(out)
+    assert ds["tp"].values[0, 0] == 7
+    assert ds["tp_coverage"].values[0, 0] == 0.7
+    assert ds["tp_coverage"].values[1, 1] == 1.0
+    assert ds["tp"].attrs["ancillary_variables"] == "tp_coverage"
+    assert ds["tp"].attrs["aggregation_period"] == "10 day"
+
+
+def test_sum_by_season_stamps_the_season_span(tmp_path, summarize_dim):
+    """Daily "1 day" totals summed by MAM / OND are "92 day" totals."""
+    ds = _seasons()
+    ds["precip"].attrs["aggregation_period"] = "1 day"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month_group",
+        "--method",
+        "sum",
+    )
+    assert xr.open_zarr(out)["precip"].attrs["aggregation_period"] == "92 day"
