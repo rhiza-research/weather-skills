@@ -77,11 +77,7 @@ def _read(paths, units):
         # A file a skill exported is not new data: reading it back would only
         # restart its history.
         if HISTORY_ATTR in parts[-1].attrs:
-            raise UsageError(
-                f"{path.name} was exported by a weather-skills skill; use the Zarr it came "
-                "from. Reading it back restarts its history, and is not a way to change "
-                "names or units"
-            )
+            raise UsageError(f"{path.name} was exported by a skill; use the Zarr it came from")
     if len(parts) == 1:
         ds = parts[0]
     else:
