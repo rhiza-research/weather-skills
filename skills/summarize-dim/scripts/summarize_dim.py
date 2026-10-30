@@ -73,9 +73,10 @@ _SPATIAL_DIMS = frozenset((*names_for("lat"), *names_for("lon"), *names_for("poi
     "--min-coverage",
     type=float,
     help=(
-        "Least share (0-1) of its time steps a station or cell needs with data to be used: of "
-        "a group's full calendar period with a --by time label, or of the summed steps with "
-        "--method sum over time or step. Default 1.0."
+        "Leave out (NaN) a station or grid cell that has data for less than this fraction "
+        "(0-1) of the time steps being combined: each --by time group's full calendar period, "
+        "or every summed step of a --method sum over time or step. Default 1.0: no missing "
+        "steps allowed."
     ),
 )
 def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_coverage, **kwargs):

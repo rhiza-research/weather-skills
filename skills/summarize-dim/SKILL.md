@@ -28,7 +28,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i IN.zarr -o OUT.zarr (--di
 - `--quantile`, `-q` — with `--method quantile`: a quantile between 0 and 1 (repeatable: `-q 0.1 -q 0.9` for a 10–90% band). One with `--by`.
 - `--variable`, `-v` — summarize only this variable (repeatable). Default: all.
 - `--lat-weighted` — with `--method mean` and the latitude dim in `--dim`: weight each row by cos(latitude), so a regional mean reflects true area. Not available with `--by`.
-- `--min-coverage` — least share (0–1) of its time steps a station or cell needs with data to be used; the rest are left out. The steps are a group's full calendar period with a `--by` time label from `label-group` (`year`, `month`, `dayofyear`, `month_group`), or the summed steps with `--method sum` over `time` or `step`. Default `1.0`. See [Details](#details).
+- `--min-coverage` — leave out (NaN) a station or grid cell that has data for less than this fraction (0–1) of the time steps being combined: each `--by` time group's full calendar period (labels from `label-group`: `year`, `month`, `dayofyear`, `month_group`), or every summed step of a `--method sum` over `time` or `step`. Default `1.0`: no missing steps allowed. See [Details](#details).
 
 Pass `--dim`, `--by`, or both.
 
