@@ -36,6 +36,23 @@ _INITIALS = "JFMAMJJASOND"
 _SPATIAL_DIMS = frozenset((*names_for("lat"), *names_for("lon"), *names_for("point_id")))
 
 
+def _keep_covered(da, over, expected, weight, min_coverage, others):
+    """Leave out (NaN) data with less than ``min_coverage`` of its ``expected`` steps along ``over``.
+
+    Returns the kept data, the least share in each value once ``others`` are reduced too,
+    and how many slices were left out. Missing steps are never filled.
+    """
+    present = da.notnull()
+    if weight is not None and set(weight.dims) <= set(over):
+        # An input interval that was itself 3/7 complete counts as 3/7 of a step.
+        present = present * weight
+    share = present.sum(over) / expected
+    complete = share >= min_coverage - 1e-12
+    dropped = int(((share > 0) & ~complete).sum())
+    share = share.where(complete)
+    return da.where(complete), share.min(others) if others else share, dropped
+
+
 @weather_skill(
     name="summarize-dim",
     version=_SKILL_VERSION,
@@ -119,10 +136,8 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
             )
     # Read before the label coords on time are dropped below.
     seasons = ds["month_group"].values if "month_group" in ds.coords and time_by else None
-    weight = None
-    if AGGREGATION_COVERAGE_COORD in ds.coords and ds[AGGREGATION_COVERAGE_COORD].dims == ("time",):
-        # An input interval that was itself 3/7 complete counts as 3/7 of a step.
-        weight = np.nan_to_num(np.asarray(ds[AGGREGATION_COVERAGE_COORD].values, dtype=float))
+    weight = ds.coords.get(AGGREGATION_COVERAGE_COORD)
+    weight = None if weight is None else weight.fillna(0)
     # The dims a label spans collapse into one entry per label.
     group_dims = list(dict.fromkeys(d for b in by for d in ds[b].dims))
     dims = list(dict.fromkeys([*group_dims, *dims]))
@@ -343,6 +358,7 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                 "--method mean for a regional value, after summing over time in a "
                 "separate call. Only dimensionless variables (units 1) sum over space"
             )
+        share = None  # the coverage of each value, when it was checked
         if by:
             # min_count=1 / ddof=1 as below. Combinations with no cells stay NaN.
             kw = {"min_count": 1} if method == "sum" else {"ddof": 1} if method == "std" else {}
@@ -359,22 +375,14 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                     if box is not None:
                         sub = sub.where(box)
                 if time_by:
-                    # Coverage is per input cell (station, grid cell, member):
-                    # a cell missing too many of the group's calendar steps is
-                    # left out before any spatial reduction, so cells missing
-                    # different days never add up to a complete group.
-                    present = sub.notnull()
-                    if weight is not None:
-                        present = present * xr.DataArray(weight[index["time"]], dims="time")
+                    # Checked before any other reduction, so slices missing different
+                    # days never add up to a complete group.
                     expected = next(n for _, _, _, n in parts if n is not None)
-                    cell_share = present.sum("time") / expected
-                    complete = cell_share >= min_coverage - 1e-12
-                    dropped += int(((cell_share > 0) & ~complete).sum())
-                    sub = sub.where(complete)
                     others = [d for d in rdims if d != "time"]
-                    # The least-covered cell that went into each value.
-                    share = cell_share.where(complete)
-                    share = share.min(others) if others else share
+                    sub, group_share, n = _keep_covered(
+                        sub, ["time"], expected, weight, min_coverage, others
+                    )
+                    dropped += n
                 reduced = getattr(sub, method)(dim=rdims, keep_attrs=True, **kw)
                 if values is None:
                     template = reduced
@@ -384,82 +392,23 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                 where = {b: i for labels, _, _, _ in parts for b, i in labels.items()}
                 values[(..., *(where[b] for b in by))] = reduced.transpose(*kept).values
                 if time_by:
-                    coverage[(..., *(where[b] for b in by))] = share.transpose(*kept).values
+                    coverage[(..., *(where[b] for b in by))] = group_share.transpose(*kept).values
             coords = {
                 **{c: v for c, v in template.coords.items() if set(v.dims) <= set(kept)},
                 **{b: label_values[b] for b in by},
             }
-            if dropped:
-                print(
-                    f"{var}: left out {dropped} cell-group(s) with data for less than "
-                    f"--min-coverage {min_coverage:g} of the group's calendar time steps",
-                    file=sys.stderr,
-                )
             out[var] = xr.DataArray(values, dims=[*kept, *by], coords=coords, attrs=template.attrs)
-            if time_by and method == "sum" and min_coverage < 1.0:
-                # Kept so the output records which sums are estimates.
-                partial = int((np.isfinite(values) & (coverage < 1.0 - 1e-12)).sum())
-                if partial:
-                    print(
-                        f"WARNING: {partial} {var} sum(s) come from groups missing some time "
-                        f"steps (--min-coverage {min_coverage:g}); missing steps are not filled, "
-                        "so those sums are estimates from partial data and fall short of the "
-                        f"full-period total. See {var}_coverage in the output.",
-                        file=sys.stderr,
-                    )
-                out[f"{var}_coverage"] = xr.DataArray(
-                    coverage,
-                    dims=[*kept, *by],
-                    coords=coords,
-                    attrs={
-                        "long_name": f"Share of each group's calendar time steps with {var} data",
-                        "units": "1",
-                    },
-                )
-                out[var].attrs["ancillary_variables"] = f"{var}_coverage"
+            if time_by:
+                share = xr.DataArray(coverage, dims=[*kept, *by], coords=coords)
             if units is not None:
                 out[var] = out[var].copy(data=out[var].data * units)
         elif method == "sum" and over_time:
-            # Coverage per input cell, as with --by: its summed steps with data over all
-            # the steps. A cell below --min-coverage is left out; missing steps are never filled.
-            da = da.pint.dequantify()
-            present = da.notnull()
-            step_share = da.coords.get(AGGREGATION_COVERAGE_COORD)
-            if step_share is not None and set(step_share.dims) <= set(over_time):
-                # An input interval that was itself 3/7 complete counts as 3/7 of a step.
-                present = present * step_share.fillna(0)
             expected = int(np.prod([da.sizes[d] for d in over_time]))
-            cell_share = present.sum(over_time) / expected
-            complete = cell_share >= min_coverage - 1e-12
-            dropped = int(((cell_share > 0) & ~complete).sum())
-            if dropped:
-                print(
-                    f"{var}: left out {dropped} cell(s) with data for less than "
-                    f"--min-coverage {min_coverage:g} of the {expected} summed steps",
-                    file=sys.stderr,
-                )
-            out[var] = da.where(complete).sum(dim=rdims, keep_attrs=True, min_count=1)
-            if min_coverage < 1.0:
-                # Kept so the output records which sums are estimates.
-                others = [d for d in rdims if d not in over_time]
-                share = cell_share.where(complete)
-                share = share.min(others) if others else share
-                partial = int((out[var].notnull() & (share < 1.0 - 1e-12)).sum())
-                if partial:
-                    print(
-                        f"WARNING: {partial} {var} sum(s) come from cells missing some of the "
-                        f"{expected} summed steps (--min-coverage {min_coverage:g}); missing "
-                        "steps are not filled, so those sums are estimates from partial data "
-                        f"and fall short of the full-period total. See {var}_coverage.",
-                        file=sys.stderr,
-                    )
-                out[f"{var}_coverage"] = share.assign_attrs(
-                    long_name=f"Share of the summed {', '.join(over_time)} steps with {var} data",
-                    units="1",
-                )
-                out[var].attrs["ancillary_variables"] = f"{var}_coverage"
-            if units is not None:
-                out[var] = out[var].copy(data=out[var].data * units)
+            others = [d for d in rdims if d not in over_time]
+            da, share, dropped = _keep_covered(
+                da, over_time, expected, weight, min_coverage, others
+            )
+            out[var] = da.sum(dim=rdims, keep_attrs=True, min_count=1)
         elif method == "sum":
             # min_count=1: all-NaN → NaN, not 0
             out[var] = da.sum(dim=rdims, keep_attrs=True, min_count=1)
@@ -481,6 +430,28 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                 out[var] = out[var].copy(data=out[var].data * da.pint.units)
         else:
             out[var] = getattr(da, method)(dim=rdims, keep_attrs=True)
+        if share is not None:
+            if dropped:
+                print(
+                    f"{var}: left out {dropped} slice(s) with data for less than "
+                    f"--min-coverage {min_coverage:g} of their expected time steps",
+                    file=sys.stderr,
+                )
+            if method == "sum" and min_coverage < 1.0:
+                # Kept so the output records which sums are estimates.
+                partial = int((out[var].notnull() & (share < 1.0 - 1e-12)).sum())
+                if partial:
+                    print(
+                        f"WARNING: {partial} {var} sum(s) are missing some of their expected "
+                        f"time steps (--min-coverage {min_coverage:g}); missing steps are not "
+                        "filled, so those sums are estimates from partial data and fall short "
+                        f"of the full-period total. See {var}_coverage in the output.",
+                        file=sys.stderr,
+                    )
+                out[f"{var}_coverage"] = share.assign_attrs(
+                    long_name=f"Share of expected time steps with {var} data", units="1"
+                )
+                out[var].attrs["ancillary_variables"] = f"{var}_coverage"
         if method == "quantile":
             # xarray's quantile drops coords the reduction leaves alone (a forecast's
             # scalar init time); keep them, as the other statistics do.
@@ -507,9 +478,7 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
         if method == "sum" and over_time and isinstance(period, str):
             # The sum covers every step it adds up: ten "1 day" amounts are a "10 day" total,
             # daily amounts by MAM a "92 day" one (the longest group when lengths differ).
-            n = int(np.prod([ds.sizes[d] for d in over_time if not (time_by and d == "time")]))
-            if time_by:
-                n *= longest_group
+            n = longest_group if time_by else int(np.prod([ds.sizes[d] for d in over_time]))
             calendar = re.fullmatch(r"\s*(\d+)\s*(month|year|dekad)s?\s*", period)
             if calendar:
                 attrs[AGGREGATION_PERIOD_ATTR] = f"{int(calendar.group(1)) * n} {calendar.group(2)}"

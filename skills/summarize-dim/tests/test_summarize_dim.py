@@ -393,7 +393,7 @@ def test_by_season_blanks_incomplete_groups(tmp_path, summarize_dim, capsys):
     assert precip.sel(point_id="S0", month_group="OND").item() == 92.0
     assert np.isnan(precip.sel(month_group="MAM")).all()
     assert np.isnan(precip.sel(point_id="S1", month_group="OND").item())
-    assert "left out 3 cell-group(s)" in capsys.readouterr().err
+    assert "left out 3 slice(s)" in capsys.readouterr().err
     assert "precip_coverage" not in ds
     # A variable without the label dims passes through.
     assert ds["elevation"].values.tolist() == [10.0, 20.0]
