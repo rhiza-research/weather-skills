@@ -2,7 +2,7 @@
 name: cumulus-downscaled-fetch
 description: "Fetch the Cumulus AI downscaled precipitation forecast (the Aurora S2S run downscaled to 0.1° over East and West Africa, 46 daily leads; diffusion, flow-matching or UNet model; ensemble mean or 10 members) for one init date and optional region from a private Azure Blob container, as a weather-skills Zarr. Needs an Azure read token (AZURE_STORAGE_SAS_TOKEN). Use when a task needs the high-resolution Cumulus forecast over Africa."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads private NetCDF from Azure Blob italynorthdata/data/live_forecasts/downscaled_models/aurora via adlfs. Requires AZURE_STORAGE_SAS_TOKEN (a read SAS with list and read, sp=rl).
+compatibility: Requires Python 3.12 and uv. Reads private NetCDF from Azure Blob italynorthdata/data/live_forecasts/downscaled_models via adlfs. Requires AZURE_STORAGE_SAS_TOKEN (a read SAS with list and read, sp=rl).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
@@ -26,20 +26,23 @@ Fetches one Cumulus downscaled init (all leads, ensemble mean or members) and wr
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--model diffusion|flow-matching|unet] [--target era5|imerg] [--members] [--date YYYY-MM-DD] [--bbox N/W/S/E] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--source SUBFOLDER] [--model diffusion|flow-matching|unet] [--target era5|imerg] [--members] [--date YYYY-MM-DD] [--bbox N/W/S/E] -o OUT.zarr
 # Latest init date with output (no download)
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [MODEL]
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--source SUBFOLDER] --probe-latest [MODEL]
 ```
 
 ### Arguments
-- `--model` — downscaling model. Default: `diffusion`. Any other model folder name under an init also works, e.g. older runs.
+- `--source` — subfolder of `downscaled_models/` to read. Default: `aurora`. Other subfolders, such as `aurora-imerg`, hold other downscaling runs. Each subfolder has its own inits, models and checkpoints, so `--probe-latest` and the defaults are worked out per `--source`. An unknown subfolder exits 1 and lists the ones there.
+- `--model` — downscaling model. Default: `diffusion`. A short name matches the model folder whose name starts with `model_diffusion_`, `model_flow_matching_` or `model_unet_`, so it works across sources whose folder names differ. Any full model folder name under an init also works, e.g. older runs. When a short name matches several folders at one init, the skill exits 1 and lists them.
+
+  For `--source aurora`:
 
   | `--model` | Model | Output | Inits from |
   | --- | --- | --- | --- |
   | `diffusion` | diffusion UNet | ensemble mean + 10 members | 2026-10-04 |
   | `flow-matching` | flow-matching UNet | ensemble mean + 10 members | 2026-10-27 |
   | `unet` | deterministic UNet | one field | 2026-10-04 |
-- `--target` — precipitation product the model was trained to reproduce: `era5` or `imerg`. Default: `era5`.
+- `--target` — precipitation product the model was trained to reproduce: `era5` or `imerg`. Default: the only one the checkpoint has, else `era5`. A target the checkpoint lacks exits 1 and lists what it has.
 - `--members` — fetch the individual members instead of the ensemble mean. A model with one field (`unet`) exits 1.
 - `--checkpoint` — substring of the checkpoint folder. When an init has several and this is omitted, the skill keeps the one later inits carry on running and warns; if that does not settle it, it exits 1 and lists them.
 - `--date` — init date. Default: the latest init with output for `--model`. A date with no output exits 1.
@@ -53,7 +56,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [MODEL]
 - `tp` in `mm day-1`, dims `(step, latitude, longitude)`, or `(number, step, latitude, longitude)` with `--members`; scalar `time` = the 00 UTC init.
 - `step` is the start of each 24 h period: `step = 0` is `[init, init + 1 day)`, up to 46 leads. Already a rate: do not run `deaccumulate`.
 - `number` is 0–9; members are interchangeable draws (member 0 is not a control).
-- `weather_skills_source=cumulus-downscaled:<model folder>/<checkpoint>/<target folder>`, `cumulus_downscaled_member_set` (`ensemble_mean` or `members`), `data_interval` `1 day`.
+- `weather_skills_source=cumulus-downscaled:<source>/<model folder>/<checkpoint>/<target folder>`, `cumulus_downscaled_member_set` (`ensemble_mean` or `members`), `data_interval` `1 day`.
 
 ### Notes
 - The container is private. Set `AZURE_STORAGE_SAS_TOKEN` (a read SAS with list and read, `sp=rl`) before the first call, including `--probe-latest`. A leading `?` or a full blob URL is accepted. Never print the value. When it is not set the workspace has no Cumulus access: say so and use another forecast instead of retrying.
@@ -68,6 +71,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox 5.5/33.5/-5/42.5 -o cumulus_d
 ```
 Writes the latest init's diffusion ensemble-mean daily precipitation rates over Kenya for 46 days.
 
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --source aurora-imerg --model flow-matching --bbox 14/2/4/15 -o cumulus_ds_imerg_nigeria.zarr
+```
+Writes the flow-matching ensemble mean from the `aurora-imerg` run over Nigeria.
+
 ## Details
 
-Files live at `az://italynorthdata/data/live_forecasts/downscaled_models/aurora/east_africa-ghana-kenya-senegal-west_africa/<init>/<model folder>/<checkpoint>/<target folder>/precip_24h/data/`: `YYYY-MM-DD-00-LLLL.nc` holds the ensemble mean for lead `LLLL` hours (0024 to 1104), and `member_NNN/` holds the same files per member. Each file is the 24 h total ending at its lead; the skill relabels it to the period start and divides by one day to give a rate.
+Files live at `az://italynorthdata/data/live_forecasts/downscaled_models/<source>/east_africa-ghana-kenya-senegal-west_africa/<init>/<model folder>/<checkpoint>/<target folder>/precip_24h/data/`: `YYYY-MM-DD-00-LLLL.nc` holds the ensemble mean for lead `LLLL` hours (0024 to 1104), and `member_NNN/` holds the same files per member. Each file is the 24 h total ending at its lead; the skill relabels it to the period start and divides by one day to give a rate.

@@ -30,22 +30,22 @@ _SKILL_VERSION = "0.0.1"
 _ACCOUNT = "italynorthdata"
 _CONTAINER = "data"
 _SAS_ENV = "AZURE_STORAGE_SAS_TOKEN"
-# <_ROOT>/<init>/<model folder>/<checkpoint>/<target folder>/precip_24h/data/
+# <_BASE>/<source>/<_DOMAIN>/<init>/<model folder>/<checkpoint>/<target folder>/precip_24h/data/
 #   YYYY-MM-DD-00-LLLL.nc                 ensemble mean, one file per 24 h lead
 #   member_NNN/YYYY-MM-DD-00-LLLL.nc      individual members
-_ROOT = (
-    f"{_CONTAINER}/live_forecasts/downscaled_models/aurora/"
-    "east_africa-ghana-kenya-senegal-west_africa"
-)
+_BASE = f"{_CONTAINER}/live_forecasts/downscaled_models"
+_DOMAIN = "east_africa-ghana-kenya-senegal-west_africa"
 _INIT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _FILE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-(\d{4})\.nc$")
 _MEMBER_RE = re.compile(r"^member_(\d+)$")
 
-# --model name → model folder. Any other model folder name is also accepted.
+# --model name → model folder prefix. Folder names differ between sources and
+# setups, so the name is matched by prefix at each init. A full model folder
+# name is also accepted.
 _MODELS = {
-    "diffusion": "model_diffusion_unet_precip_input_output_residual_shiftedlog_calibrated_silu_selfcond_precip24h_only",
-    "flow-matching": "model_flow_matching_unet_precip_input_residual_shifted_log_precip24h_only",
-    "unet": "model_unet_precip_output_residual_fs128",
+    "diffusion": "model_diffusion_",
+    "flow-matching": "model_flow_matching_",
+    "unet": "model_unet_",
 }
 # --target name → target folder: the precipitation product the model was trained to.
 _TARGETS = {
@@ -96,15 +96,22 @@ def _azure_error(exc: Exception, what: str) -> DataError:
     version=_SKILL_VERSION,
 )
 @weather_skill.argument(
+    "--source",
+    default="aurora",
+    help="Subfolder of downscaled_models/ to read, e.g. aurora-imerg (default aurora).",
+)
+@weather_skill.argument(
     "--model",
     default="diffusion",
     help=f"One of {', '.join(_MODELS)} (default diffusion), or a model folder name.",
 )
 @weather_skill.argument(
     "--target",
-    default="era5",
     choices=list(_TARGETS),
-    help="Precipitation product the model was trained to (default era5).",
+    help=(
+        "Precipitation product the model was trained to (default: the only one "
+        "the checkpoint has, else era5)."
+    ),
 )
 @weather_skill.argument(
     "--checkpoint",
@@ -137,11 +144,21 @@ def _azure_error(exc: Exception, what: str) -> DataError:
     ),
 )
 def fetch(
-    model, target, checkpoint, members, date, bbox, variable, probe_latest, workers, **kwargs
+    source,
+    model,
+    target,
+    checkpoint,
+    members,
+    date,
+    bbox,
+    variable,
+    probe_latest,
+    workers,
+    **kwargs,
 ):
     """Fetch a Cumulus downscaled Aurora precipitation forecast for one init date as a weather-skills Zarr."""
     # Reads the per-lead NetCDF files under
-    # ``az://italynorthdata/data/live_forecasts/downscaled_models/aurora/<domain>/<init>/...``
+    # ``az://italynorthdata/data/live_forecasts/downscaled_models/<source>/<domain>/<init>/...``
     # with the SAS in ``AZURE_STORAGE_SAS_TOKEN``, optionally subsets by
     # ``--bbox``, and returns a Dataset for the decorator to write.
     import io
@@ -150,8 +167,8 @@ def fetch(
     import numpy as np
     import xarray as xr
 
-    model_folder = _MODELS.get(probe_latest or model, probe_latest or model)
-    target_folder = _TARGETS[target]
+    model = probe_latest or model
+    root = f"{_BASE}/{source.strip('/')}/{_DOMAIN}"
     if workers < 1:
         raise UsageError(f"--workers must be at least 1 (got {workers}).")
     unknown = set(variable or ()) - _TP_ALIASES
@@ -171,6 +188,23 @@ def fetch(
             raise _azure_error(exc, f"Azure listing failed for az://{_ACCOUNT}/{path}/") from None
         return sorted(p.rstrip("/").rsplit("/", 1)[-1] for p in paths)
 
+    def model_folders(init):
+        """Model folders at ``init`` that ``--model`` names (exact name or short-name prefix)."""
+        prefix = _MODELS.get(model)
+        return [m for m in ls(f"{root}/{init}") if m == model or (prefix and m.startswith(prefix))]
+
+    def checkpoints(init):
+        """(model folder, checkpoint folders) for ``--model`` at ``init``; ``(None, [])`` when absent."""
+        folders = model_folders(init)
+        if len(folders) > 1:
+            raise DataError(
+                f"init {init} under az://{_ACCOUNT}/{root}/ has {len(folders)} model folders "
+                f"for --model {model}: {', '.join(folders)}. Pass the full folder name as --model."
+            )
+        if not folders:
+            return None, []
+        return folders[0], ls(f"{root}/{init}/{folders[0]}")
+
     def read(path):
         """One lead NetCDF: the 24 h total ending at init + lead."""
         try:
@@ -181,13 +215,14 @@ def fetch(
             return ds["precip_24h"].squeeze("time", drop=True).load()
 
     # Walk back from the newest init to the first that has this model.
-    all_inits = [i for i in ls(_ROOT) if _INIT_RE.fullmatch(i)]
+    all_inits = [i for i in ls(root) if _INIT_RE.fullmatch(i)]
     inits = all_inits
     if date is not None:
         inits = [i for i in inits if i == date.isoformat()]
     init = None
     for candidate in reversed(inits):
-        ckpts = [c for c in ls(f"{_ROOT}/{candidate}/{model_folder}") if checkpoint in c]
+        model_folder, ckpts = checkpoints(candidate)
+        ckpts = [c for c in ckpts if checkpoint in c]
         if ckpts:
             init = candidate
             break
@@ -197,17 +232,26 @@ def fetch(
         return
     if init is None:
         wanted = f"init {date.isoformat()}" if date else "any init"
-        there = ls(f"{_ROOT}/{inits[0]}/{model_folder}") if date and inits else []
-        raise DataError(
-            f"no Cumulus downscaled output for model {model_folder!r}"
-            + (f", checkpoint matching {checkpoint!r}" if checkpoint else "")
-            + f" at {wanted} under az://{_ACCOUNT}/{_ROOT}/. "
-            + (
+        there = checkpoints(inits[0])[1] if date and inits else []
+        models = ls(f"{root}/{inits[0]}") if date and inits else []
+        if not all_inits:
+            hint = (
+                f"No init folders there: check --source (subfolders of az://{_ACCOUNT}/{_BASE}/: "
+                f"{', '.join(ls(_BASE))})."
+            )
+        elif there:
+            hint = (
                 f"That init has only: {', '.join(there)}. Pass --checkpoint matching one of "
                 "those; it is a different setup, so say so when comparing it with other inits."
-                if there
-                else "Pass --probe-latest to see the latest init with output, or try another --model."
             )
+        elif models:
+            hint = f"That init has model folders: {', '.join(models)}. Pass one as --model."
+        else:
+            hint = "Pass --probe-latest to see the latest init with output, or try another --model."
+        raise DataError(
+            f"no Cumulus downscaled output for model {model!r}"
+            + (f", checkpoint matching {checkpoint!r}" if checkpoint else "")
+            + f" at {wanted} under az://{_ACCOUNT}/{root}/. {hint}"
         )
     # Checkpoints at one init are different setups (sampler steps n20/n30,
     # guidance cfg2/cfg3, ensemble size) with different patterns. Without
@@ -215,7 +259,7 @@ def fetch(
     if len(ckpts) > 1 and not checkpoint:
         kept = ckpts
         for later in (i for i in all_inits if i > init):
-            later_ckpts = ls(f"{_ROOT}/{later}/{model_folder}")
+            later_ckpts = checkpoints(later)[1]
             if later_ckpts:
                 kept = [c for c in kept if c in later_ckpts]
                 if len(kept) <= 1:
@@ -238,7 +282,7 @@ def fetch(
     print(f"Checkpoint: {ckpt}", file=sys.stderr)
     # Comparing setups is allowed, but say when this init is not on the live one.
     for newest in reversed(all_inits):
-        newest_ckpts = ls(f"{_ROOT}/{newest}/{model_folder}")
+        newest_ckpts = checkpoints(newest)[1]
         if newest_ckpts:
             break
     if ckpt not in newest_ckpts:
@@ -248,7 +292,19 @@ def fetch(
             "comparing this init with later ones.",
             file=sys.stderr,
         )
-    data_dir = f"{_ROOT}/{init}/{model_folder}/{ckpt}/{target_folder}/precip_24h/data"
+    # Target folders: the precipitation products this checkpoint was trained to.
+    ckpt_dir = f"{root}/{init}/{model_folder}/{ckpt}"
+    targets = ls(ckpt_dir)
+    if target is None:
+        found = [t for t in _TARGETS if _TARGETS[t] in targets]
+        target = found[0] if len(found) == 1 else "era5"
+    target_folder = _TARGETS[target]
+    if target_folder not in targets:
+        raise DataError(
+            f"no {target} target under az://{_ACCOUNT}/{ckpt_dir}/ (it has: "
+            f"{', '.join(targets) or 'nothing'}). Pass another --target."
+        )
+    data_dir = f"{ckpt_dir}/{target_folder}/precip_24h/data"
     print(f"Reading az://{_ACCOUNT}/{data_dir}/", file=sys.stderr)
 
     member_dirs = [d for d in ls(data_dir) if _MEMBER_RE.fullmatch(d)] if members else [None]
@@ -310,7 +366,9 @@ def fetch(
     ds["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
     ds.attrs.update(
         Conventions="CF-1.13",
-        weather_skills_source=f"cumulus-downscaled:{model_folder}/{ckpt}/{target_folder}",
+        weather_skills_source=(
+            f"cumulus-downscaled:{source.strip('/')}/{model_folder}/{ckpt}/{target_folder}"
+        ),
         cumulus_downscaled_member_set="members" if members else "ensemble_mean",
     )
     stamp_cf_attrs(ds)
