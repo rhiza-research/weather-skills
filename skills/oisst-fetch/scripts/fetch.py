@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "netCDF4",
 # ]
 # ///
@@ -73,6 +73,10 @@ _READ_RETRY_SLEEPS_S = (10.0, 30.0)
 # number of days (~0.3 s/day for a Nino3.4 box, ~0.5 s/day global), so a year is
 # read as blocks of at most this many days (a global block is ~15 s and 125 MB).
 _DAYS_PER_REQUEST = 31
+# Under --dask each block is held whole (several times over) until it is written, so
+# the tasks read smaller ones: a global block is ~4 s and 33 MB, and memory stays flat
+# at a third of what 31-day blocks need.
+_DASK_DAYS_PER_REQUEST = 8
 _PRELIM_DAYS = 15
 _PRELIM_NOTE = (
     f"Note: OISST days less than {_PRELIM_DAYS} days old are preliminary and may be revised; "
@@ -219,6 +223,124 @@ def _probe_year(year: int):
     raise last_exc
 
 
+def _select_year(dy, time_slice, bbox):
+    """The window of one open year file, plus the longitude slices to read it by."""
+    src = dy[["sst"]].rename({"lat": "latitude", "lon": "longitude"})
+    src = src.sel(time=time_slice)
+    # Read contiguous slices of the native 0..360 grid and wrap after
+    # loading: an out-of-order longitude indexer (a bbox crossing 0°)
+    # makes netCDF4 send one OPeNDAP request per longitude column.
+    lon_slices = [slice(None)]
+    if bbox is not None:
+        north, west, south, east = bbox
+        src = src.sel(latitude=slice(south, north))
+        if east - west < 360:
+            w, e = west % 360, east % 360
+            lon_slices = [slice(w, e)] if w <= e else [slice(w, None), slice(None, e)]
+    return src, lon_slices
+
+
+def _load_block(src, i, days, lon_slices):
+    """Read ``days`` days from ``src`` starting at index ``i``."""
+    import xarray as xr
+
+    block = src.isel(time=slice(i, i + days))
+    return xr.concat([block.sel(longitude=s).load() for s in lon_slices], dim="longitude")
+
+
+def _with_retries(year, read, today):
+    """Run ``read()`` for one year, retrying transient NOAA PSL failures.
+
+    Returns None when the year's file is not published yet; other failures are raised
+    as friendly skill errors.
+    """
+    for attempt in range(len(_READ_RETRY_SLEEPS_S) + 1):
+        try:
+            return read()
+        except SkillError:
+            raise
+        except Exception as exc:
+            if attempt < len(_READ_RETRY_SLEEPS_S) and _is_retryable(exc):
+                wait = _READ_RETRY_SLEEPS_S[attempt]
+                print(
+                    f"OISST OPeNDAP transient error reading {year} ({exc}); "
+                    f"retrying in {wait:.0f} s",
+                    file=sys.stderr,
+                )
+                time.sleep(wait)
+                continue
+            if _is_availability_failure(exc) and year >= today.year:
+                # Not published yet: the coverage note reports the missing days.
+                return None
+            if _is_availability_failure(exc):
+                raise DataError(
+                    f"could not open the OISST file for year {year} ({exc}). The year may be "
+                    "outside the served range (1981-09 to present), or NOAA PSL's OPeNDAP server is "
+                    "unreachable — check the date range."
+                ) from exc
+            if _is_retryable(exc):
+                raise DataError(
+                    f"NOAA PSL OPeNDAP kept failing for year {year} after "
+                    f"{len(_READ_RETRY_SLEEPS_S) + 1} attempts ({exc}). The server throttles "
+                    "bursts of requests: run one oisst-fetch at a time (one call can cover "
+                    "many years) and retry in a few minutes."
+                ) from exc
+            raise UsageError(f"unexpected failure reading OISST year {year}: {exc}.") from exc
+
+
+def _read_year(year, time_slice, bbox):
+    """One year's window, read eagerly in blocks of at most ``_DAYS_PER_REQUEST`` days."""
+    import xarray as xr
+
+    # No dask chunking: chunked OPeNDAP reads were observed to write zeros.
+    with _open_year(year) as dy:
+        src, lon_slices = _select_year(dy, time_slice, bbox)
+        blocks = [
+            _load_block(src, i, _DAYS_PER_REQUEST, lon_slices)
+            for i in range(0, src.sizes["time"], _DAYS_PER_REQUEST)
+        ]
+    return xr.concat(blocks, dim="time") if len(blocks) > 1 else blocks[0]
+
+
+def _lazy_year(year, time_slice, bbox, today, exit_stack):
+    """One year's window as dask arrays: one task per block of days, run at write time."""
+    import dask
+    import dask.array as da
+    import xarray as xr
+
+    # The open file serves the tasks; they read it one at a time (xarray locks
+    # the netCDF4 backend), which also keeps to NOAA PSL's request limits.
+    dy = _open_year(year)
+    exit_stack.callback(dy.close)
+    src, lon_slices = _select_year(dy, time_slice, bbox)
+    lon = xr.concat([src["longitude"].sel(longitude=s) for s in lon_slices], dim="longitude")
+    shape = (src.sizes["latitude"], lon.size)
+
+    def read_block(i):
+        block = _with_retries(
+            year, lambda: _load_block(src, i, _DASK_DAYS_PER_REQUEST, lon_slices), today
+        )
+        if block is None:
+            raise DataError(f"the OISST file for year {year} became unavailable while reading.")
+        return block["sst"].values
+
+    starts = range(0, src.sizes["time"], _DASK_DAYS_PER_REQUEST)
+    blocks = [
+        da.from_delayed(
+            dask.delayed(read_block)(i),
+            (min(_DASK_DAYS_PER_REQUEST, src.sizes["time"] - i), *shape),
+            src["sst"].dtype,
+        )
+        for i in starts
+    ]
+    sst = da.concatenate(blocks) if blocks else da.zeros((0, *shape), dtype=src["sst"].dtype)
+    return xr.Dataset(
+        {"sst": (("time", "latitude", "longitude"), sst, src["sst"].attrs)},
+        coords={"time": src["time"], "latitude": src["latitude"], "longitude": lon},
+        attrs=src.attrs,
+    )
+
+
 @weather_skill(
     name="oisst-fetch",
     version=_SKILL_VERSION,
@@ -237,7 +359,7 @@ def _probe_year(year: int):
         "Does not download fields. Takes no IDENT."
     ),
 )
-def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
+def fetch(start_time, end_time, bbox, probe_latest, dask=False, exit_stack=None, **kwargs):
     """Fetch NOAA OISST v2.1 daily sea-surface temperature as a weather-skills Zarr."""
     today = datetime.now(UTC).date()
     if probe_latest is not None:
@@ -286,66 +408,12 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
 
     pieces = []
     for year in years:
-        piece = None
-        for attempt in range(len(_READ_RETRY_SLEEPS_S) + 1):
-            try:
-                # No dask chunking: chunked OPeNDAP reads were observed to write zeros.
-                dy = _open_year(year)
-                with dy:
-                    src = dy[["sst"]].rename({"lat": "latitude", "lon": "longitude"})
-                    src = src.sel(time=time_slice)
-                    # Read contiguous slices of the native 0..360 grid and wrap after
-                    # loading: an out-of-order longitude indexer (a bbox crossing 0°)
-                    # makes netCDF4 send one OPeNDAP request per longitude column.
-                    lon_slices = [slice(None)]
-                    if bbox is not None:
-                        north, west, south, east = bbox
-                        src = src.sel(latitude=slice(south, north))
-                        if east - west < 360:
-                            w, e = west % 360, east % 360
-                            lon_slices = (
-                                [slice(w, e)] if w <= e else [slice(w, None), slice(None, e)]
-                            )
-                    blocks = []
-                    for i in range(0, src.sizes["time"], _DAYS_PER_REQUEST):
-                        block = src.isel(time=slice(i, i + _DAYS_PER_REQUEST))
-                        blocks.append(
-                            xr.concat(
-                                [block.sel(longitude=s).load() for s in lon_slices],
-                                dim="longitude",
-                            )
-                        )
-                    piece = xr.concat(blocks, dim="time") if len(blocks) > 1 else blocks[0]
-                break
-            except SkillError:
-                raise
-            except Exception as exc:
-                if attempt < len(_READ_RETRY_SLEEPS_S) and _is_retryable(exc):
-                    wait = _READ_RETRY_SLEEPS_S[attempt]
-                    print(
-                        f"OISST OPeNDAP transient error reading {year} ({exc}); "
-                        f"retrying in {wait:.0f} s",
-                        file=sys.stderr,
-                    )
-                    time.sleep(wait)
-                    continue
-                if _is_availability_failure(exc) and year >= today.year:
-                    # Not published yet: the coverage note below reports the missing days.
-                    break
-                if _is_availability_failure(exc):
-                    raise DataError(
-                        f"could not open the OISST file for year {year} ({exc}). The year may be "
-                        "outside the served range (1981-09 to present), or NOAA PSL's OPeNDAP server is "
-                        "unreachable — check the date range."
-                    ) from exc
-                if _is_retryable(exc):
-                    raise DataError(
-                        f"NOAA PSL OPeNDAP kept failing for year {year} after "
-                        f"{len(_READ_RETRY_SLEEPS_S) + 1} attempts ({exc}). The server throttles "
-                        "bursts of requests: run one oisst-fetch at a time (one call can cover "
-                        "many years) and retry in a few minutes."
-                    ) from exc
-                raise UsageError(f"unexpected failure reading OISST year {year}: {exc}.") from exc
+        if dask:
+            piece = _with_retries(
+                year, lambda year=year: _lazy_year(year, time_slice, bbox, today, exit_stack), today
+            )
+        else:
+            piece = _with_retries(year, lambda year=year: _read_year(year, time_slice, bbox), today)
         if piece is None:
             print(f"OISST file for {year} is not published yet; skipping it.", file=sys.stderr)
             continue

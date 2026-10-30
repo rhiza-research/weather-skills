@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "cftime",
 #   "xarray",
 #   "zarr",
@@ -12,7 +12,6 @@
 #   "pyresample",
 #   "netCDF4",
 #   "h5netcdf",
-#   "dask[array]",
 # ]
 # ///
 """Fetch Meteosat SEVIRI or FCI visible and infrared scans over a bbox from the EUMETSAT Data Store."""
@@ -24,11 +23,13 @@
 # scan. Credentials: EUMETSAT_CONSUMER_KEY + EUMETSAT_CONSUMER_SECRET, or the
 # `key,secret` file eumdac writes at ~/.eumdac/credentials.
 
+import contextlib
 import math
 import os
 import shutil
 import sys
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as dt_time
@@ -165,6 +166,81 @@ def _process_scan(files, instrument, bands, bbox):
     return lat.astype("float64"), lon.astype("float64"), values, attrs
 
 
+# satpy reads the netCDF/HDF files through libraries that crash when files are opened
+# from several threads at once, so --dask processes one scan at a time (downloads overlap).
+_PROCESS_LOCK = threading.Lock()
+
+
+def _read_scan(slot, product, instrument, chunks, bands, bbox, workers, lock=None):
+    """Download one scan, process it and delete the files; see ``_process_scan``."""
+    print(f"meteosat-fetch: {slot:%Y-%m-%d %H:%M} <- {product}", file=sys.stderr)
+    # SEVIRI: the one .nat file. FCI: the BODY chunks, named ..._NNNN.nc.
+    if instrument == "seviri":
+        entries = [e for e in product.entries if e.endswith(".nat")]
+    else:
+        entries = [
+            e
+            for e in product.entries
+            if "-CHK-BODY-" in e
+            and e.endswith(".nc")
+            and int(Path(e).stem.rsplit("_", 1)[-1]) in chunks
+        ]
+    if not entries:
+        raise DataError(f"{product} has no usable files for this bbox.")
+    with tempfile.TemporaryDirectory(prefix="meteosat-fetch-") as tmp:
+        files = _download(product, entries, Path(tmp), workers)
+        with lock or contextlib.nullcontext():
+            return _process_scan(files, instrument, bands, bbox)
+
+
+def _warn_if_empty(band, fraction):
+    if fraction > 0.5:
+        print(
+            f"meteosat-fetch: warning: {band} is {fraction:.0%} missing over the bbox "
+            "(off-disk or outside the downloaded area).",
+            file=sys.stderr,
+        )
+
+
+def _lazy_scans(read_scan, products, bands, exit_stack):
+    """Each band as per-scan dask arrays: one task per scan after the first, run at write time.
+
+    The first scan is read here for the grid and attrs; every other scan must match its grid.
+    Returns ``(lat, lon, attrs, {band: [2-D array per scan]})``.
+    """
+    import dask
+    import dask.array as da
+    import numpy as np
+
+    first = list(products)[0]
+    lat, lon, values, attrs = read_scan(first, products[first])
+    missing = {b: [int(np.isnan(values[b]).sum()), values[b].size] for b in bands}
+    scans = {b: [da.from_array(values[b], chunks=-1)] for b in bands}
+
+    def read_next(slot, product):
+        lat_, lon_, values_, _ = read_scan(slot, product, lock=_PROCESS_LOCK)
+        if not (np.array_equal(lat_, lat) and np.array_equal(lon_, lon)):
+            raise DataError(f"the {slot:%Y-%m-%d %H:%M} scan is not on the first scan's grid.")
+        with _PROCESS_LOCK:
+            for b in bands:
+                missing[b][0] += int(np.isnan(values_[b]).sum())
+                missing[b][1] += values_[b].size
+        return values_
+
+    for slot, product in list(products.items())[1:]:
+        scan = dask.delayed(read_next)(slot, product)
+        for b in bands:
+            scans[b].append(da.from_delayed(scan[b], values[b].shape, values[b].dtype))
+
+    def report():  # the values are only known once the write has read every scan
+        for b in bands:
+            if missing[b][1] == values[b].size * len(products):
+                _warn_if_empty(b, missing[b][0] / missing[b][1])
+
+    exit_stack.callback(report)
+    return lat, lon, attrs, scans
+
+
 @weather_skill(name="meteosat-fetch", version=_SKILL_VERSION)
 @weather_skill.argument("--date", required=True)
 @weather_skill.argument(
@@ -229,7 +305,19 @@ def _process_scan(files, instrument, bands, bbox):
         "and exit; stderr gives its HH:MM UTC. Downloads nothing. IDENT is unused."
     ),
 )
-def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, **kwargs):
+def fetch(
+    date,
+    time,
+    bbox,
+    variable,
+    service,
+    instrument,
+    max_scans,
+    workers,
+    dask=False,
+    exit_stack=None,
+    **kwargs,
+):
     """Fetch Meteosat SEVIRI or FCI visible and infrared scans over a bbox from the EUMETSAT Data Store."""
     import eumdac
 
@@ -381,36 +469,27 @@ def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, *
             file=sys.stderr,
         )
 
-    stacks = {b: [] for b in bands}
-    scan_start = []
-    platform = set()
-    lat = lon = attrs = None
-    for slot, product in products.items():
-        print(f"meteosat-fetch: {slot:%Y-%m-%d %H:%M} <- {product}", file=sys.stderr)
-        # SEVIRI: the one .nat file. FCI: the BODY chunks, named ..._NNNN.nc.
-        if instrument == "seviri":
-            entries = [e for e in product.entries if e.endswith(".nat")]
-        else:
-            entries = [
-                e
-                for e in product.entries
-                if "-CHK-BODY-" in e
-                and e.endswith(".nc")
-                and int(Path(e).stem.rsplit("_", 1)[-1]) in chunks
-            ]
-        if not entries:
-            raise DataError(f"{product} has no usable files for this bbox.")
-        with tempfile.TemporaryDirectory(prefix="meteosat-fetch-") as tmp:
-            files = _download(product, entries, Path(tmp), workers)
-            lat, lon, values, attrs = _process_scan(files, instrument, bands, bbox)
-        for b in bands:
-            stacks[b].append(values[b])
-        scan_start.append(product.sensing_start)
-        platform.add(str(getattr(product, "satellite", "") or ""))
+    def read_scan(slot, product, lock=None):
+        return _read_scan(slot, product, instrument, chunks, bands, bbox, workers, lock)
+
+    if dask:
+        import dask.array as da
+
+        lat, lon, attrs, scans = _lazy_scans(read_scan, products, bands, exit_stack)
+        stack = da.stack
+    else:
+        scans = {b: [] for b in bands}
+        for slot, product in products.items():
+            lat, lon, values, attrs = read_scan(slot, product)
+            for b in bands:
+                scans[b].append(values[b])
+        stack = np.stack
+    scan_start = [p.sensing_start for p in products.values()]
+    platform = {str(getattr(p, "satellite", "") or "") for p in products.values()}
 
     times = pd.DatetimeIndex(list(products))
     out = xr.Dataset(
-        {b: (("time", "latitude", "longitude"), np.stack(stacks[b])) for b in bands},
+        {b: (("time", "latitude", "longitude"), stack(scans[b])) for b in bands},
         coords={
             "time": times,
             "latitude": lat,
@@ -432,13 +511,8 @@ def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, *
         wl = a.get("wavelength")
         if wl is not None:
             out[b].attrs["central_wavelength_um"] = float(wl.central)
-        empty = float(np.isnan(out[b].values).mean())
-        if empty > 0.5:
-            print(
-                f"meteosat-fetch: warning: {b} is {empty:.0%} missing over the bbox "
-                "(off-disk or outside the downloaded area).",
-                file=sys.stderr,
-            )
+        if not dask:
+            _warn_if_empty(b, float(np.isnan(out[b].values).mean()))
 
     out.attrs.update(
         Conventions="CF-1.13",

@@ -1,14 +1,16 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "pandas",
 #   "jaxa-earth",
 # ]
 # ///
 """Fetch JAXA GSMaP hourly precipitation as a weather-skills Zarr."""
 
+import copy
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
@@ -24,10 +26,11 @@ _SKILL_VERSION = "0.0.4"
 _COLLECTION = "JAXA.EORC_GSMaP_standard.Gauge.v6_hourly"
 _BAND = "PRECIP"
 _PPU = 10  # pixels per degree = 0.1 deg, GSMaP's native resolution
+_WORKERS = 8  # concurrent STAC listings, when --dask reads the days lazily
 
 
-def _fetch_day(day_str: str, bbox):
-    """One UTC day of hourly GSMaP for bbox, plus each image's UTC hour.
+def _list_day(day_str: str):
+    """One UTC day's hourly images as a jaxa-earth collection, plus each image's UTC hour.
 
     Returns ``(None, [])`` for a day JAXA has not published (or never had).
 
@@ -37,7 +40,6 @@ def _fetch_day(day_str: str, bbox):
     import pandas as pd
     from jaxa.earth import je
 
-    n, w, s, e = bbox
     dlim = [f"{day_str}T00:00:00", f"{day_str}T23:59:59"]
     try:
         coll = je.ImageCollection(collection=_COLLECTION).filter_date(dlim=dlim)
@@ -47,14 +49,46 @@ def _fetch_day(day_str: str, bbox):
         return None, []
     # STAC ids ("YYYY-MM/DD-hh/") label each returned image's UTC hour.
     hours = [pd.Timestamp(f"{i[:4]}-{i[5:7]}-{i[8:10]}T{i[11:13]}:00") for i in coll.stac_date.id]
+    return coll, hours
+
+
+def _select_band(coll, bbox):
+    """Point a listed day at ``bbox`` and the precip band (catalog lookups only, no image read)."""
+    n, w, s, e = bbox
     coll = coll.filter_resolution(ppu=_PPU).filter_bounds(bbox=[w, s, e, n]).select(band=_BAND)
     # jaxa-earth NaNs every pixel, in every image, outside the FIRST image's
     # stored [min, max] -- that image's own value range (e.g. max 54 mm/hr),
     # not a validity range -- so heavier rain in any later hour or the other
     # hemisphere tile became NaN. Drop that range; _to_dataarray masks the
     # negative error codes itself.
-    coll.stac_bounds.json[0][0]["assets"][_BAND]["je:rasters"]["dn"].pop("max", None)
-    return coll.get_images().raster, hours
+    for per_tile in coll.stac_bounds.json:
+        per_tile[0]["assets"][_BAND]["je:rasters"]["dn"].pop("max", None)
+    return coll
+
+
+def _read_day(coll, bbox):
+    """Read a listed day's images over ``bbox``; returns jaxa-earth's raster."""
+    return _select_band(coll, bbox).get_images().raster
+
+
+def _read_hour(coll, i):
+    """Read image ``i`` of a day prepared by ``_select_band``; returns jaxa-earth's raster.
+
+    jaxa-earth reads (and holds, twice over) a whole day over the bbox in one call,
+    which is gigabytes for a wide one. It reads image by image from per-image lists,
+    so a shallow copy narrowed to one entry of each list reads just that hour.
+    """
+    hour = copy.copy(coll)
+    for name, attrs in (
+        ("stac_date", ("id",)),
+        ("stac_band", ("url",)),
+        ("stac_bounds", ("json", "lon_offsets")),
+    ):
+        narrowed = copy.copy(getattr(coll, name))
+        for attr in attrs:
+            setattr(narrowed, attr, [getattr(narrowed, attr)[i]])
+        setattr(hour, name, narrowed)
+    return hour.get_images().raster
 
 
 def _to_dataarray(raster, hours):
@@ -82,6 +116,59 @@ def _to_dataarray(raster, hours):
     )
 
 
+def _lazy_days(days, bbox):
+    """Hourly precipitation as dask arrays: one task per published hour, run at write time.
+
+    The days are listed and pointed at ``bbox`` up front (STAC metadata only); the
+    images are read by the tasks. Returns ``None`` when JAXA serves no day at all.
+    """
+    import dask
+    import dask.array as da
+    import numpy as np
+    import pandas as pd
+    import xarray as xr
+
+    def prepare(day):
+        coll, hours = _list_day(day.strftime("%Y-%m-%d"))
+        return (_select_band(coll, bbox) if hours else None), hours
+
+    with ThreadPoolExecutor(_WORKERS) as pool:
+        listed = list(pool.map(prepare, days))
+    for day, (_, hours) in zip(days, listed, strict=True):
+        if not hours:
+            print(
+                f"gsmap-fetch: JAXA serves no images for {day:%Y-%m-%d}; skipped.", file=sys.stderr
+            )
+    images = [(coll, i, h) for coll, hours in listed for i, h in enumerate(hours)]
+    if not images:
+        return None
+    # The first image gives the grid; every other one must sit on it.
+    first = _to_dataarray(_read_hour(*images[0][:2]), [images[0][2]])
+
+    def same_grid_hour(coll, i, hour):
+        image = _to_dataarray(_read_hour(coll, i), [hour])
+        for dim in ("latitude", "longitude"):
+            if image[dim].shape != first[dim].shape or not np.allclose(image[dim], first[dim]):
+                raise DataError(
+                    f"the GSMaP image for {hour:%Y-%m-%d %H}:00 is not on the first one's grid."
+                )
+        return image.values
+
+    arrays = [da.from_array(first.values, chunks=-1)] + [
+        da.from_delayed(dask.delayed(same_grid_hour)(*image), first.shape, first.dtype)
+        for image in images[1:]
+    ]
+    return xr.DataArray(
+        da.concatenate(arrays),
+        dims=first.dims,
+        coords={
+            "time": pd.DatetimeIndex([h for _, _, h in images]),
+            "latitude": first["latitude"],
+            "longitude": first["longitude"],
+        },
+    )
+
+
 @weather_skill(name="gsmap-fetch", version=_SKILL_VERSION)
 @weather_skill.argument("--start-time", required=True)
 @weather_skill.argument("--end-time", required=True)
@@ -94,7 +181,7 @@ def _to_dataarray(raster, hours):
         "country or named region into this value."
     ),
 )
-def fetch(start_time, end_time, bbox, **kwargs):
+def fetch(start_time, end_time, bbox, dask=False, **kwargs):
     """Fetch JAXA GSMaP hourly precipitation as a weather-skills Zarr."""
     import pandas as pd
     import xarray as xr
@@ -119,14 +206,20 @@ def fetch(start_time, end_time, bbox, **kwargs):
     )
 
     days = pd.date_range(start_time.isoformat(), end_time.isoformat(), freq="D")
-    pieces = []
-    for day in days:
-        day_str = day.strftime("%Y-%m-%d")
-        raster, hours = _fetch_day(day_str, bbox)
-        if not hours:
-            print(f"gsmap-fetch: JAXA serves no images for {day_str}; skipped.", file=sys.stderr)
-            continue
-        pieces.append(_to_dataarray(raster, hours))
+    if dask:
+        precip = _lazy_days(days, bbox)
+        pieces = [] if precip is None else [precip]
+    else:
+        pieces = []
+        for day in days:
+            day_str = day.strftime("%Y-%m-%d")
+            coll, hours = _list_day(day_str)
+            if not hours:
+                print(
+                    f"gsmap-fetch: JAXA serves no images for {day_str}; skipped.", file=sys.stderr
+                )
+                continue
+            pieces.append(_to_dataarray(_read_day(coll, bbox), hours))
     if not pieces:
         raise DataError(
             f"JAXA serves no GSMaP images for {start_time} -> {end_time} "
@@ -140,7 +233,7 @@ def fetch(start_time, end_time, bbox, **kwargs):
         file=sys.stderr,
     )
     precip.attrs = {"units": "mm/hr"}
-    out = precip.to_dataset().load()
+    out = precip.to_dataset()
 
     out = to_standard_units(out, variables=["precip"])
     out.attrs.update(

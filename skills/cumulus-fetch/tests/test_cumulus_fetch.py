@@ -46,7 +46,7 @@ def remote(fetch_mod, monkeypatch):
     """Mock the bucket: two init stores; record what _open_store was asked for."""
     seen = {}
 
-    def fake_open(url, bbox, workers):
+    def fake_open(url, bbox, workers, exit_stack=None):
         seen.update(url=url, bbox=bbox, workers=workers)
         return _live_store()
 
@@ -246,7 +246,7 @@ _WINDOW_STORES = [
 def _mock_windows(monkeypatch, fetch_mod, opened=None, short=()):
     """Per-init stores whose tp is the init's day of month; ``short`` inits lack leads 2+."""
 
-    def fake_open(url, bbox, workers):
+    def fake_open(url, bbox, workers, exit_stack=None):
         name = url.rsplit("/", 1)[-1]
         if opened is not None:
             opened.append(name)
@@ -339,4 +339,76 @@ def test_init_window_with_no_init_exits_1(tmp_path, fetch_mod, monkeypatch):
             "-o",
             str(tmp_path / "x.zarr"),
         )
+    assert exc.value.code == 1
+
+
+def _need_dask(fetch_mod):
+    pytest.importorskip("dask")
+    if "--dask" not in fetch_mod.fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+
+
+def test_dask_keeps_stores_lazy_on_resources_and_output_matches(
+    tmp_path, fetch_mod, monkeypatch, remote
+):
+    """With --dask the stores stay lazy, their session parked on ``exit_stack`` until the write is done."""
+    _need_dask(fetch_mod)
+    stacks = []
+
+    def fake_open(url, bbox, workers, exit_stack=None):
+        stacks.append(exit_stack)
+        ds = _live_store(values=(5.0, np.nan, 2.0, np.nan))
+        return ds.chunk() if exit_stack is not None else ds
+
+    monkeypatch.setattr(fetch_mod, "_open_store", fake_open)
+    outs, results = {}, {}
+    for flag in ("--dask", None):
+        out = tmp_path / f"out{flag}.zarr"
+        results[flag] = run_skill(fetch_mod.fetch, *([flag] if flag else []), "-o", str(out))
+        outs[flag] = xr.open_zarr(out, consolidated=True).load()
+    assert stacks[0] is not None and stacks[-1] is None
+    assert results["--dask"]["tp"].chunks is not None
+    assert results[None]["tp"].chunks is None
+    # The empty tail is dropped the same way, decided by one small compute.
+    assert outs["--dask"].sizes["step"] == 3
+    xr.testing.assert_allclose(outs["--dask"]["tp"], outs[None]["tp"])
+
+
+def test_dask_init_window_matches_eager(tmp_path, fetch_mod, monkeypatch):
+    _need_dask(fetch_mod)
+    _mock_windows(monkeypatch, fetch_mod, short={"2025-01-31-00.zarr"})
+    base_open = fetch_mod._open_store
+
+    def open_chunked(url, bbox, workers, exit_stack=None):
+        ds = base_open(url, bbox, workers)
+        return ds.chunk() if exit_stack is not None else ds
+
+    monkeypatch.setattr(fetch_mod, "_open_store", open_chunked)
+    outs = {}
+    for flag in ("--dask", None):
+        out = tmp_path / f"out{flag}.zarr"
+        run_skill(
+            fetch_mod.fetch,
+            *([flag] if flag else []),
+            "--start-time",
+            "2025-01-30",
+            "--end-time",
+            "2025-01-31",
+            "-o",
+            str(out),
+        )
+        outs[flag] = xr.open_zarr(out, consolidated=True).load()
+    assert outs["--dask"].sizes["time"] == 2
+    xr.testing.assert_allclose(outs["--dask"]["tp"], outs[None]["tp"])
+
+
+def test_dask_all_empty_store_exits_1(tmp_path, fetch_mod, monkeypatch, remote):
+    _need_dask(fetch_mod)
+    monkeypatch.setattr(
+        fetch_mod,
+        "_open_store",
+        lambda *a: _live_store(values=(np.nan, np.nan)).chunk(),
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--dask", "-o", str(tmp_path / "o.zarr"))
     assert exc.value.code == 1

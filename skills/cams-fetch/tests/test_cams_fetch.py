@@ -304,3 +304,53 @@ def test_api_key_from_cdsapirc_only_for_ads(mod, monkeypatch, tmp_path):
     rc.write_text("url: https://ads.atmosphere.copernicus.eu/api\nkey: adskey\n")
     run_skill(mod.fetch, *argv)
     assert submitted.key == "adskey"
+
+
+def test_dask_decodes_gribs_lazily_from_the_temp_dir_and_output_matches(mod, monkeypatch, tmp_path):
+    """With --dask the GRIBs must outlive the skill's return: reads happen during the write."""
+    pytest.importorskip("dask")
+    if "--dask" not in mod.fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+    import dask
+    import dask.array as da
+
+    def decode(req):
+        start, end = req["date"][0].split("/")
+        days = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
+        return _cfgrib_eac4({"aod550": 0.3}, start, days)
+
+    _fake_ads(monkeypatch, mod, decode)
+    chunks_asked = []
+
+    def open_datasets(path, **kwargs):
+        chunks_asked.append(kwargs.get("chunks"))
+        ds = decode(json.loads(open(path).read()))
+        if "chunks" not in kwargs:
+            return [ds]
+
+        values = {name: ds[name].values for name in ds.data_vars}
+
+        def read(name):
+            open(path).close()  # the GRIB must still be on disk
+            return values[name]
+
+        for name in list(ds.data_vars):
+            lazy = da.from_delayed(dask.delayed(read)(name), ds[name].shape, ds[name].dtype)
+            ds[name] = (ds[name].dims, lazy)
+        return [ds]
+
+    sys.modules["cfgrib"].open_datasets = open_datasets
+    outs, results = {}, {}
+    for flag in ("--dask", None):
+        out = tmp_path / f"r{flag}.zarr"
+        results[flag] = run_skill(
+            mod.fetch, *([flag] if flag else []), "--bbox", KENYA, "--dataset", "eac4",
+            "--start-time", "2024-01-31", "--end-time", "2024-02-01", "-v", "aod550",
+            "-o", str(out),
+        )  # fmt: skip
+        outs[flag] = xr.open_zarr(out).load()
+    assert chunks_asked == ["auto", "auto", None, None]
+    assert results["--dask"]["aod550"].chunks is not None
+    assert results[None]["aod550"].chunks is None
+    assert outs["--dask"].sizes["time"] == 16
+    xr.testing.assert_allclose(outs["--dask"]["aod550"], outs[None]["aod550"])

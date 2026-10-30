@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "adlfs",
 # ]
 # ///
@@ -100,8 +100,12 @@ def _list_stores(folder: str) -> list[str]:
     return sorted(name for name in names if _STORE_RE.fullmatch(name))
 
 
-def _open_store(url: str, bbox, workers: int):
-    """Open one init's store and load it, subset to ``bbox``."""
+def _open_store(url: str, bbox, workers: int, exit_stack=None):
+    """Open one init's store, subset to ``bbox``, and load it.
+
+    With ``exit_stack`` (--dask) the data stays lazy and the Azure session stays open
+    until ``exit_stack`` closes, after the write has read it.
+    """
     import weakref
 
     import xarray as xr
@@ -109,6 +113,11 @@ def _open_store(url: str, bbox, workers: int):
     from adlfs.utils import close_service_client
     from zarr.core.sync import sync
 
+    lazy = exit_stack is not None
+    if lazy:
+        zarr.config.set(
+            {"async.concurrency": workers}
+        )  # outlives this call: the write reads under it
     try:
         with zarr.config.set({"async.concurrency": workers}):
             # A fresh filesystem per store: the session is closed below, and
@@ -118,20 +127,30 @@ def _open_store(url: str, bbox, workers: int):
                 storage_options={**_storage_options(), "skip_instance_cache": True},
                 read_only=True,
             )
-            with xr.open_zarr(store, chunks=None) as ds:
-                ds = (bbox_subset(ds, bbox) if bbox is not None else ds).load()
+            ds = xr.open_zarr(store, chunks="auto" if lazy else None)
+            if bbox is not None:
+                ds = bbox_subset(ds, bbox)
+            if not lazy:
+                ds = ds.load()
     except (DataError, UsageError):
         raise
     except Exception as exc:  # noqa: BLE001
         raise _azure_error(exc, f"failed to open {url}") from None
-    # zarr opens adlfs asynchronously, which leaves the filesystem without an
-    # event loop, so adlfs's exit finalizer (sync(None, close_service_client, fs))
-    # raises "Loop is not running". Close the Azure session on zarr's loop
-    # instead and drop that finalizer.
-    sync(close_service_client(store.fs))
-    for finalizer in list(weakref.finalize._registry):
-        if (finalizer.peek() or (None,))[0] is store.fs:
-            finalizer.detach()
+
+    def close_session():
+        # zarr opens adlfs asynchronously, which leaves the filesystem without an
+        # event loop, so adlfs's exit finalizer (sync(None, close_service_client, fs))
+        # raises "Loop is not running". Close the Azure session on zarr's loop
+        # instead and drop that finalizer.
+        sync(close_service_client(store.fs))
+        for finalizer in list(weakref.finalize._registry):
+            if (finalizer.peek() or (None,))[0] is store.fs:
+                finalizer.detach()
+
+    if lazy:
+        exit_stack.callback(close_session)
+    else:
+        close_session()
     return ds
 
 
@@ -191,7 +210,19 @@ def _to_standard(ds):
         "Does not download fields. Optional IDENT selects a --dataset id."
     ),
 )
-def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, workers, **kwargs):
+def fetch(
+    dataset,
+    date,
+    start_time,
+    end_time,
+    bbox,
+    variable,
+    probe_latest,
+    workers,
+    dask=False,
+    exit_stack=None,
+    **kwargs,
+):
     """Fetch the Cumulus AI ensemble precipitation forecast for one init date or a range of inits as a weather-skills Zarr."""
     # Opens the init's Zarr store
     # ``az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr/<variable>/YYYY-MM-DD-HH.zarr``
@@ -273,11 +304,13 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
         )
     if not windows:
         stores = stores[-1:]
-    # One store per init: each is opened, cut to the bbox and loaded on its own.
+    # One store per init: each is opened and cut to the bbox, and loaded on its own
+    # unless --dask keeps it lazy.
     pieces = []
     for store in stores:
         print(f"Opening {prefix}{store}", file=sys.stderr)
-        pieces.append(_to_standard(_open_store(f"az://{_ROOT}/{folder}/{store}", bbox, workers)))
+        url = f"az://{_ROOT}/{folder}/{store}"
+        pieces.append(_to_standard(_open_store(url, bbox, workers, exit_stack if dask else None)))
     if windows:
         import xarray as xr
 
