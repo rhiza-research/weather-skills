@@ -25,6 +25,7 @@ class Settings:
     small: int  # bytes per synthetic input, small run
     large: int  # bytes per synthetic input, large run
     max_growth: float  # allowed peak growth as a fraction of the data growth
+    slack: int  # plus this many bytes, for run-to-run RSS noise
     limit: int  # full-size cap
     factor: float  # full-size inputs = factor x limit
     baseline: bool
@@ -132,11 +133,11 @@ def scaling(s: Settings, script: Path, small: Sized, large: Sized) -> None:
     delta = bytes_l - bytes_s
     if delta < 4 * bytes_s:
         _fail(f"the large run is not much bigger than the small one; resize the case.\n{summary}")
-    allowed = s.max_growth * delta
+    allowed = s.max_growth * delta + s.slack
     if run_l.peak_rss - run_s.peak_rss > allowed:
         _fail(
-            f"memory grew by more than {s.max_growth:.0%} of the extra data "
-            f"(allowed +{fmt_bytes(allowed)}).\n{summary}"
+            f"memory grew by more than {s.max_growth:.0%} of the extra data plus "
+            f"{fmt_bytes(s.slack)} (allowed +{fmt_bytes(allowed)}).\n{summary}"
         )
     if s.baseline:
         base_s, base_l, base_bytes_s, base_bytes_l = _pair(s, script, small, large, [])
