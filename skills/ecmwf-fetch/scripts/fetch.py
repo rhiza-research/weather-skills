@@ -343,7 +343,7 @@ def _ensure_catalog() -> None:
         )
 
 
-def _open_catalog(group: str | None = None, dask=None):
+def _open_catalog(group: str | None = None, dask=False):
     import dynamical_catalog
 
     kwargs: dict = {"chunks": "auto" if dask else None}
@@ -413,7 +413,7 @@ def _standardize_catalog(ds):
     return stamp_data_interval(out)
 
 
-def _fetch_catalog(init: dt.date, bbox, names: list[str], dask=None):
+def _fetch_catalog(init: dt.date, bbox, names: list[str], dask=False):
     import numpy as np
     import xarray as xr
 
@@ -738,7 +738,7 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(bbox, date, variable, probe_latest, dask=None, **kwargs):
+def fetch(bbox, date, variable, probe_latest, dask=False, **kwargs):
     """Fetch an ECMWF S2S (46-day) ensemble forecast for one init date as a weather-skills Zarr."""
     if probe_latest is not None:
         found = _catalog_latest_init()

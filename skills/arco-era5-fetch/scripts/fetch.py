@@ -49,7 +49,7 @@ _CURATED_STANDARD_NAME = {
 }
 
 
-def _open_arco(state, dask=None):
+def _open_arco(state, dask=False):
     """Open the ARCO store lazily (metadata only), at most once per run."""
     if "ds" not in state:
         import xarray as xr
@@ -160,7 +160,7 @@ def _stamp_coord_attrs(ds) -> None:
         "levels) on stdout and exit. Does not download fields."
     ),
 )
-def fetch(start_time, end_time, bbox, variable, probe_latest, list_variables, dask=None, **kwargs):
+def fetch(start_time, end_time, bbox, variable, probe_latest, list_variables, dask=False, **kwargs):
     """Fetch ERA5 reanalysis from Google's public ARCO-ERA5 store as a weather-skills Zarr."""
     if list_variables:
         ds = _open_arco({})

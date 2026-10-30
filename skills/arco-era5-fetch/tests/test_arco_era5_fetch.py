@@ -233,7 +233,7 @@ def test_dask_drops_all_nan_tail_without_loading(tmp_path, mod, fetch, capsys):
     out = tmp_path / "out.zarr"
     opened = []
 
-    def open_arco(state, dask=None):
+    def open_arco(state, dask=False):
         opened.append(dask)
         return _hourly_arco_ds(72, 48).chunk({"time": 24})
 

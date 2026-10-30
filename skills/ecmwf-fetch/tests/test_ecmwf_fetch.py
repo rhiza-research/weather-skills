@@ -424,7 +424,7 @@ def test_catalog_fetch_writes_tp_without_creds(tmp_path, mod, fetch):
 def test_catalog_fetch_pressure_group(tmp_path, mod, fetch):
     out = tmp_path / "out.zarr"
 
-    def open_catalog(group=None, dask=None):
+    def open_catalog(group=None, dask=False):
         if group == "pressure_level":
             return _catalog_pressure_ds()
         return _catalog_surface_ds()
@@ -623,7 +623,7 @@ def test_dask_catalog_fetch_drops_empty_lead0(tmp_path, mod, fetch):
     out = tmp_path / "out.zarr"
     dask_args = []
 
-    def open_catalog(group=None, dask=None):
+    def open_catalog(group=None, dask=False):
         dask_args.append(dask)
         return _catalog_surface_ds().chunk()
 

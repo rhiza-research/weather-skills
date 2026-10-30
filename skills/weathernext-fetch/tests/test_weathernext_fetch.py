@@ -371,7 +371,7 @@ def _mock_v3(monkeypatch, fetch_mod, remote, seen=None):
         seen.setdefault("exists", []).append((stamp, product.bucket, billing_project))
         return True
 
-    def fake_open(stamp, product, billing_project=None, dask=None):
+    def fake_open(stamp, product, billing_project=None, dask=False):
         seen["open"] = (stamp, product.bucket, billing_project)
         return remote.copy(deep=True)
 
@@ -876,7 +876,7 @@ def test_dask_init_window_streams_and_reports_short_init(tmp_path, fetch_mod, mo
     fake_open = fetch_mod._open_remote
     dask_args = []
 
-    def chunked(stamp, product, billing_project=None, dask=None):
+    def chunked(stamp, product, billing_project=None, dask=False):
         dask_args.append(dask)
         return fake_open(stamp, product, billing_project, dask).chunk()
 

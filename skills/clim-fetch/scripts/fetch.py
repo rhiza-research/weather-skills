@@ -277,7 +277,7 @@ def fetch(
     window,
     align,
     bbox,
-    dask=None,
+    dask=False,
     **kwargs,
 ):
     """Fetch a precomputed daily climatology (mean and standard deviation) laid onto a date range as a weather-skills Zarr."""

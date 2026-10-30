@@ -192,7 +192,7 @@ def _promote_pressure_dim(ds):
     return ds
 
 
-def _merge_pressure_if_needed(ds, dataset, requested, dask=None):
+def _merge_pressure_if_needed(ds, dataset, requested, dask=False):
     """Open `group=pressure_level` when `-v` tokens are not on the root store."""
     if not requested:
         return ds
@@ -216,7 +216,7 @@ def _merge_pressure_if_needed(ds, dataset, requested, dask=None):
 _STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
 
 
-def _open_dataset(state, dataset, dask=None) -> dict:
+def _open_dataset(state, dataset, dask=False) -> dict:
     """Validate the dataset id, open it, and detect its shape, at most once per run."""
     if "ds" not in state:
         import os
@@ -313,7 +313,7 @@ def fetch(
     probe_latest,
     list_variables,
     max_lead,
-    dask=None,
+    dask=False,
     **kwargs,
 ):
     """Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""

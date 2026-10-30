@@ -54,7 +54,7 @@ def _ensure_catalog() -> None:
         )
 
 
-def _open_catalog(dataset_id: str, dask=None):
+def _open_catalog(dataset_id: str, dask=False):
     import dynamical_catalog
 
     _ensure_catalog()
@@ -120,7 +120,7 @@ def _latest_day(dataset_id: str) -> date | None:
         "Does not download fields. Takes no IDENT."
     ),
 )
-def fetch(start_time, end_time, bbox, probe_latest, dask=None, **kwargs):
+def fetch(start_time, end_time, bbox, probe_latest, dask=False, **kwargs):
     """Fetch CHIRPS daily rainfall observations from the dynamical.org catalog as a weather-skills Zarr."""
     if probe_latest is not None:
         if probe_latest:

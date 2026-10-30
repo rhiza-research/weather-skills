@@ -175,7 +175,7 @@ def _resolve_folder(date, dataset: str) -> tuple[str, object]:
     )
 
 
-def _open_remote(key: str, dask=None):
+def _open_remote(key: str, dask=False):
     import xarray as xr
 
     path = _gcs_path(key)
@@ -268,7 +268,7 @@ def _as_forecast(ds, *, init, dataset: str):
         "(era5-p_pr_19, pr_26, …)."
     ),
 )
-def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, dask=None, **kwargs):
+def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, dask=False, **kwargs):
     """Fetch a PBC AI Weather Quest precipitation forecast as a weather-skills Zarr."""
     # Opens a Zarr under ``gs://sheerwater-datalake/pbc-data/<dataset>/<YYYYMMDD>/``
     # with GCS Application Default Credentials. Optionally subsets by ``--bbox``

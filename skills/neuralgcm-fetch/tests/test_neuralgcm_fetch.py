@@ -91,7 +91,7 @@ def test_fetch_writes_zarr_and_stamps_history(tmp_path, fetch_mod, monkeypatch):
     )
     monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, dataset: stamp == "20260911T12")
 
-    def fake_open(stamp, dataset, dask=None):
+    def fake_open(stamp, dataset, dask=False):
         seen["stamp"] = stamp
         seen["dataset"] = dataset
         return remote.copy(deep=True)
@@ -144,7 +144,7 @@ def test_fetch_honors_date_cycle_variable_and_bbox(tmp_path, fetch_mod, monkeypa
 
     monkeypatch.setattr(fetch_mod, "_store_exists", fake_exists)
 
-    def fake_open(stamp, dataset, dask=None):
+    def fake_open(stamp, dataset, dask=False):
         seen["open"] = (stamp, dataset)
         return remote.copy(deep=True)
 
@@ -295,7 +295,7 @@ _WINDOW_STAMPS = ["20250130T00", "20250131T00", "20250201T00", "20250201T12", "2
 def _mock_windows(monkeypatch, fetch_mod, *, missing=(), opened=None):
     """Per-init stores whose tp is the init's day of month (in m per 6 h, x 1e-3)."""
 
-    def fake_open(stamp, dataset, dask=None):
+    def fake_open(stamp, dataset, dask=False):
         if opened is not None:
             opened.append(stamp)
         ds = _native_precip(fill=int(stamp[6:8]) * 1e-3)
@@ -352,7 +352,7 @@ def test_init_window_warns_on_missing_and_short_inits(tmp_path, fetch_mod, monke
     _mock_windows(monkeypatch, fetch_mod, missing={"20250131T00"})
     fake_open = fetch_mod._open_remote
 
-    def short_newest(stamp, dataset, dask=None):
+    def short_newest(stamp, dataset, dask=False):
         ds = fake_open(stamp, dataset, dask)
         if stamp == "20250201T00":
             ds["total_precipitation_6hr"][:, :, 2:] = np.nan
@@ -418,7 +418,7 @@ def test_dask_init_window_streams_and_reports_short_init(tmp_path, fetch_mod, mo
     fake_open = fetch_mod._open_remote
     dask_args = []
 
-    def short_newest(stamp, dataset, dask=None):
+    def short_newest(stamp, dataset, dask=False):
         dask_args.append(dask)
         ds = fake_open(stamp, dataset, dask)
         if stamp == "20250201T00":

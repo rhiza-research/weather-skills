@@ -191,7 +191,7 @@ def _resolve_stamp(date, cycle: str | None, dataset: str) -> str:
     )
 
 
-def _open_remote(stamp: str, dataset: str, dask=None):
+def _open_remote(stamp: str, dataset: str, dask=False):
     import xarray as xr
 
     url = _store_url(stamp, dataset)
@@ -336,7 +336,7 @@ def _select_variables(ds, variable):
     ),
 )
 def fetch(
-    dataset, date, start_time, end_time, bbox, variable, cycle, probe_latest, dask=None, **kwargs
+    dataset, date, start_time, end_time, bbox, variable, cycle, probe_latest, dask=False, **kwargs
 ):
     """Fetch a NeuralGCM subseasonal ensemble forecast for one init date or a range of inits as a weather-skills Zarr."""
     # Opens a consolidated Zarr under

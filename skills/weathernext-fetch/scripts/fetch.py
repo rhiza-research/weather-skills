@@ -398,7 +398,7 @@ def _resolve_stamp(date, cycle: str | None, product: _Product, billing_project: 
     raise DataError(f"no predictions store under gs://{product.bucket}/{product.prefix}/.")
 
 
-def _open_remote(stamp: str, product: _Product, billing_project: str | None = None, dask=None):
+def _open_remote(stamp: str, product: _Product, billing_project: str | None = None, dask=False):
     import xarray as xr
 
     url = _store_url(stamp, product)
@@ -752,7 +752,7 @@ def fetch(
     billing_project,
     max_lead,
     probe_latest,
-    dask=None,
+    dask=False,
     **kwargs,
 ):
     """Fetch a Google WeatherNext 2 or 3 forecast for one init date or a range of inits as a weather-skills Zarr."""

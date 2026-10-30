@@ -98,7 +98,7 @@ def _resolve_zstore(model, experiment, variable, member, table, grid) -> tuple:
     return zstore, grids[0], str(row["version"])
 
 
-def _open_remote(state, model, experiment, variable, member, table, grid, dask=None) -> dict:
+def _open_remote(state, model, experiment, variable, member, table, grid, dask=False) -> dict:
     """Resolve the catalog and open the matched store, at most once per run."""
     if "ds" not in state:
         zstore, grid_label, version = _resolve_zstore(
@@ -201,7 +201,7 @@ def fetch(
     table,
     grid,
     probe_latest,
-    dask=None,
+    dask=False,
     **kwargs,
 ):
     """Fetch one CMIP6 climate-model run from the public Pangeo catalog as a weather-skills Zarr."""
