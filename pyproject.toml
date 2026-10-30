@@ -43,6 +43,9 @@ dev = [
 
 [tool.uv.sources]
 skills-runner = { git = "https://github.com/tescalada/skills-runner" }
+# Dask mode is unreleased (weather-skills/weather-skills-core#26): test against its
+# branch. Drop this once core v0.4.0 is on PyPI.
+weather-skills-core = { git = "https://github.com/weather-skills/weather-skills-core", branch = "feat/dask-larger-than-memory" }
 
 [tool.pytest.ini_options]
 testpaths = ["skills"]
