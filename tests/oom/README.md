@@ -26,7 +26,7 @@ suite (`testpaths` is `skills`).
 | Tier | Runs | What passes | Speed |
 |---|---|---|---|
 | **graph** (default) | In-process, ~8 MiB synthetic input | No compute before the write returns more than a small result; the writer gets dask arrays chunked near `--dask-chunk-size` | Seconds |
-| **scaling** (default) | Subprocess, ~128 MiB then ~1 GiB | Peak RSS grows by at most 25% of the extra data (it would grow by ~100% if the skill loaded everything) | Minutes |
+| **scaling** (default) | Subprocess: a small input of at least 128 MiB and 8 stored chunks, then 5x that (at least 1 GiB) | Peak RSS grows by at most 25% of the extra data plus 128 MiB (it grows by ~100% if the skill loads everything) | Minutes |
 | **full size** (`--oom-full-size`) | Subprocess, ~3 GiB under a 1 GiB cap | The run stays under the cap | Slow |
 | **smoke** (`--oom-smoke`, alone) | Subprocess, tiny, no cap, no `--dask` | The case's arguments work against today's code | Minutes |
 
@@ -44,7 +44,10 @@ cases count. `test_coverage.py` fails if a skill has no case.
 
 - `oom_cases_transforms.py`, `oom_cases_fetchers.py`: the case tables, shared by
   every tier. Fetcher cases carry a `small_args` and a `large_args` request (and
-  optionally `full_args`), with the size arithmetic in `note`.
+  optionally `full_args`), with the size arithmetic in `note`. The small request is
+  the large one at about 1/8 (a smaller window or box, same flags), so it already fills
+  the dask pipeline: remote sources are read in whole stored chunks, and a tiny
+  request would make that fixed cost look like growth.
 - `oom_synthetic.py`: synthetic envelope Zarrs of a target size, written slab by
   slab and cached in `~/.cache/weather-skills-oom` (values rounded, so they compress).
 - `oom_harness.py`: runs a skill script through `tools/run_with_local_core.sh` in
@@ -58,8 +61,9 @@ cases count. `test_coverage.py` fails if a skill has no case.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--oom-small` / `--oom-large` | `128MiB` / `1GiB` | Scaling input sizes (the small one must already fill the dask pipeline) |
+| `--oom-small` / `--oom-large` | `128MiB` / `1GiB` | Scaling input floors; the small run is raised to 8 stored chunks so it fills the dask pipeline, and the large to 5x the small |
 | `--oom-max-growth` | `0.25` | Allowed peak growth as a fraction of the data growth |
+| `--oom-slack` | `128MiB` | Allowed on top, for run-to-run RSS noise (±100–150 MB) |
 | `--oom-limit` / `--oom-factor` | `1GiB` / `3` | Full size: cap, and inputs as a multiple of it |
 | `--oom-dask-args` | `--dask --dask-workers 2 --dask-chunk-size 4MiB` | Added to scaling and full-size runs |
 | `--oom-timeout` | `3600` | Seconds per skill run |

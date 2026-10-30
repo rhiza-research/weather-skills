@@ -150,6 +150,23 @@ def zarr_nbytes(path: Path) -> int:
         return int(sum(ds[v].nbytes for v in ds.data_vars))
 
 
+def stored_chunk_bytes(path: Path) -> int:
+    """Uncompressed size of the largest stored chunk of any data variable."""
+    import math
+
+    import xarray as xr
+
+    with xr.open_zarr(path, chunks=None) as ds:
+        return max(
+            (
+                math.prod(ds[v].encoding["chunks"]) * ds[v].dtype.itemsize
+                for v in ds.data_vars
+                if ds[v].encoding.get("chunks")
+            ),
+            default=0,
+        )
+
+
 @dataclass(frozen=True)
 class Input:
     """One synthetic input: ``flag PATH`` with a store of ``kind`` (see oom_synthetic)."""
@@ -191,9 +208,10 @@ class TransformCase:
 class FetchCase:
     """A real fetcher request at two (optionally three) sizes of the same shape.
 
-    ``small_args`` is a few MB. ``large_args`` is about 512 MiB - 1 GiB of
-    output, for the memory-scaling tier. ``full_args``, when set, is several
-    times the full-size cap (default 1 GiB) for the full-size data test.
+    ``large_args`` is about 512 MiB - 1 GiB of output, for the memory-scaling tier;
+    ``small_args`` is the same request shape at about 1/8 of that, enough to fill the
+    dask pipeline. ``full_args``, when set, is several times the full-size cap
+    (default 1 GiB) for the full-size data test.
     """
 
     id: str

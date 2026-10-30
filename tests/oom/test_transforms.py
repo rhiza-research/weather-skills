@@ -9,12 +9,14 @@ from __future__ import annotations
 import pytest
 from oom_cases_transforms import CASES, transform_argv
 from oom_graph import run_in_process
-from oom_harness import expect_dask, fmt_bytes, skill_script
+from oom_harness import expect_dask, fmt_bytes, skill_script, stored_chunk_bytes
+from oom_synthetic import synthetic_zarr
 from oom_tiers import Sized, full_size, remove_output, scaling, smoke
 
 STREAMING = [c for c in CASES if c.streams]
 
 SMOKE_BYTES = 16 * 2**20
+PIPELINE_CHUNKS = 8
 GRAPH_BYTES = 8 * 2**20
 GRAPH_CHUNK_BYTES = 2**20
 GRAPH_DASK_ARGS = ["--dask", "--dask-workers", "2", "--dask-chunk-size", "1MiB"]
@@ -68,9 +70,20 @@ def test_graph(case, oom, dask_in_process, tmp_path, capfd):
 @pytest.mark.scaling
 @pytest.mark.parametrize("case", expect_dask(STREAMING))
 def test_scaling(case, oom, tmp_path):
-    """Peak memory barely moves between a small and a large input."""
+    """Peak memory barely moves between a small and a large input.
+
+    Dask chunks are never smaller than the stored chunks, so the small run gets
+    at least ``PIPELINE_CHUNKS`` of them; with fewer, memory is still ramping up
+    there even for a skill that streams.
+    """
+    stored = max(
+        stored_chunk_bytes(synthetic_zarr(i.kind, oom.small, oom.cache, **dict(i.variant)))
+        for i in case.inputs
+    )
+    small = max(oom.small, PIPELINE_CHUNKS * stored)
+    large = max(oom.large, 5 * small)
     sized = []
-    for label, size in (("small", oom.small), ("large", oom.large)):
+    for label, size in (("small", small), ("large", large)):
         tmp = tmp_path / label
         tmp.mkdir()
         sized.append(Sized(*transform_argv(case, size, oom.cache, tmp)))
