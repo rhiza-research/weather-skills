@@ -170,3 +170,62 @@ def test_bbox_cuts_each_granule_and_reads_one_at_a_time(tmp_path, mod, fetch):
     assert ds.sizes["time"] == 2
     np.testing.assert_array_equal(ds["latitude"].values, [1.0, 2.0])
     np.testing.assert_array_equal(ds["longitude"].values, [11.0])
+
+
+def _need_dask(fetch):
+    pytest.importorskip("dask")
+    if "--dask" not in fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+
+
+def test_dask_streams_granules_and_output_matches(tmp_path, mod, fetch):
+    """With --dask each granule is a task that downloads, cuts and deletes its file at write time."""
+    _need_dask(fetch)
+    granules = []
+    for d in ("20260101", "20260102", "20260103"):
+        granule = MagicMock()
+        granule.data_links.return_value = [
+            f"https://x/3B-DAY.MS.MRG.3IMERG.{d}-S000000-E235959.nc4"
+        ]
+        granules.append(granule)
+    downloaded = []
+
+    def download(granule_list, local_path):
+        # Name the file by its granule's day: dask runs the tasks in any order.
+        day = granule_list[0].data_links()[0].split("IMERG.")[1][:8]
+        path = Path(local_path) / f"{day}.nc4"
+        path.write_bytes(b"")
+        downloaded.append(path)
+        return [str(path)]
+
+    def open_day(path, **kwargs):
+        day = int(Path(path).stem[-2:])
+        raw = _raw_daily(n_time=1, start=f"2026-01-{day:02d}")
+        return raw.assign(precipitation=raw["precipitation"] + 100 * day)
+
+    outs, results = {}, {}
+    for flag in ("--dask", None):
+        downloaded.clear()
+        out = tmp_path / f"out{flag}.zarr"
+        with (
+            patch.object(mod, "_login"),
+            patch("earthaccess.search_data", return_value=granules),
+            patch("earthaccess.download", side_effect=download),
+            patch("xarray.open_dataset", side_effect=open_day),
+        ):
+            results[flag] = run_skill(
+                fetch,
+                *([flag] if flag else []),
+                "--start-time",
+                "2026-01-01",
+                "--end-time",
+                "2026-01-03",
+                "-o",
+                str(out),
+            )
+        outs[flag] = xr.open_zarr(out, consolidated=True).load()
+        assert not any(p.exists() for p in downloaded)
+    assert results["--dask"]["precip"].chunks is not None
+    assert results[None]["precip"].chunks is None
+    assert outs["--dask"].sizes["time"] == 3
+    xr.testing.assert_allclose(outs["--dask"]["precip"], outs[None]["precip"])

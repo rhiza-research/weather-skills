@@ -65,6 +65,9 @@ def _parse_pep723_deps(src: str) -> list[str] | None:
         name = re.split(r"[<>=!~;\[\s]", d, maxsplit=1)[0].strip()
         if name:
             out.append(name)
+        # weather-skills-core[dask] installs dask for skills that import it.
+        if name == "weather-skills-core" and re.search(r"\[[^\]]*\bdask\b", d):
+            out.append("dask")
     return out
 
 

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "earthaccess",
 #   "h5netcdf",
 #   "h5py",
@@ -51,6 +51,74 @@ def _login() -> None:
     raise DataError(_AUTH_FAIL_MSG)
 
 
+def _granule_day(granule) -> date:
+    for url in granule.data_links():
+        match = _GRANULE_DATE_RE.search(url.rsplit("/", 1)[-1])
+        if match:
+            ymd = match.group(1)
+            return date(int(ymd[:4]), int(ymd[4:6]), int(ymd[6:8]))
+    raise DataError("could not parse a YYYYMMDD date from an IMERG granule file name")
+
+
+def _read_granule(granule, workdir, bbox):
+    """Download one granule, cut it to ``bbox`` and delete the file; returns the loaded day."""
+    import earthaccess
+    import xarray as xr
+
+    days = []
+    for path in earthaccess.download([granule], local_path=workdir):
+        try:
+            with xr.open_dataset(path, engine="h5netcdf") as day:
+                day = day[["precipitation"]].rename({"precipitation": "precip"})
+                day = day.rename({"lat": "latitude", "lon": "longitude"})
+                if bbox is not None:
+                    north, west, south, east = bbox
+                    day = day.sel(latitude=slice(south, north))
+                    # W > E crosses the antimeridian: two contiguous slices.
+                    lon_slices = [slice(west, east)]
+                    if west > east:
+                        lon_slices = [slice(west, None), slice(None, east)]
+                    day = xr.concat([day.sel(longitude=s) for s in lon_slices], dim="longitude")
+                days.append(day.load())
+        finally:
+            Path(path).unlink(missing_ok=True)
+    return xr.concat(days, dim="time") if len(days) > 1 else days[0]
+
+
+def _lazy_days(results, bbox, start_time, end_time, exit_stack):
+    """Daily precipitation as dask arrays: one task per granule, run at write time."""
+    import dask
+    import dask.array as da
+    import numpy as np
+    import xarray as xr
+
+    dated = sorted(((_granule_day(g), g) for g in results), key=lambda dg: dg[0])
+    dated = [(day, g) for day, g in dated if start_time <= day <= end_time]
+    if not dated:
+        raise DataError(f"no granule day falls within {start_time}..{end_time}")
+    # The tasks download here until the write has read them.
+    workdir = exit_stack.enter_context(tempfile.TemporaryDirectory(prefix="imerg-fetch-"))
+    # The first granule gives the grid and attrs; every other one must match its shape.
+    first = _read_granule(dated[0][1], workdir, bbox).transpose("time", "latitude", "longitude")
+    shape, dtype = first["precip"].shape, first["precip"].dtype
+
+    def read_day(granule):
+        values = _read_granule(granule, workdir, bbox)["precip"].transpose(
+            "time", "latitude", "longitude"
+        )
+        if values.shape != shape:
+            raise DataError(f"IMERG granule grid {values.shape} differs from the first, {shape}")
+        return values.values
+
+    arrays = [da.from_array(first["precip"].values, chunks=-1)] + [
+        da.from_delayed(dask.delayed(read_day)(g), shape, dtype) for _, g in dated[1:]
+    ]
+    return xr.Dataset(
+        {"precip": (first["precip"].dims, da.concatenate(arrays), first["precip"].attrs)},
+        coords=first.coords.assign(time=np.array([d for d, _ in dated], dtype="datetime64[ns]")),
+    )
+
+
 @weather_skill(
     name="imerg-fetch",
     version=_SKILL_VERSION,
@@ -71,7 +139,7 @@ def _login() -> None:
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(start_time, end_time, version, bbox, probe_latest, **kwargs):
+def fetch(start_time, end_time, version, bbox, probe_latest, dask=False, exit_stack=None, **kwargs):
     """Fetch NASA IMERG daily precipitation from GES DISC (Earthdata login) as a weather-skills Zarr."""
     if probe_latest is not None:
         import earthaccess
@@ -125,26 +193,16 @@ def fetch(start_time, end_time, version, bbox, probe_latest, **kwargs):
 
     requested_span = (end_time - start_time).days + 1
 
-    pieces = []
-    with tempfile.TemporaryDirectory(prefix="imerg-fetch-") as td:
-        # One granule at a time: download, cut to --bbox, delete. Holding every
-        # global file (~32 MB a day) at once filled the disk on multi-season windows.
-        for granule in results:
-            for path in earthaccess.download([granule], local_path=td):
-                with xr.open_dataset(path, engine="h5netcdf") as day:
-                    day = day[["precipitation"]].rename({"precipitation": "precip"})
-                    day = day.rename({"lat": "latitude", "lon": "longitude"})
-                    if bbox is not None:
-                        north, west, south, east = bbox
-                        day = day.sel(latitude=slice(south, north))
-                        # W > E crosses the antimeridian: two contiguous slices.
-                        lon_slices = [slice(west, east)]
-                        if west > east:
-                            lon_slices = [slice(west, None), slice(None, east)]
-                        day = xr.concat([day.sel(longitude=s) for s in lon_slices], dim="longitude")
-                    pieces.append(day.load())
-                Path(path).unlink(missing_ok=True)
-    ds = xr.concat(pieces, dim="time").sortby("time") if len(pieces) > 1 else pieces[0]
+    if dask:
+        ds = _lazy_days(results, bbox, start_time, end_time, exit_stack)
+    else:
+        pieces = []
+        with tempfile.TemporaryDirectory(prefix="imerg-fetch-") as td:
+            # One granule at a time: download, cut to --bbox, delete. Holding every
+            # global file (~32 MB a day) at once filled the disk on multi-season windows.
+            for granule in results:
+                pieces.append(_read_granule(granule, td, bbox))
+        ds = xr.concat(pieces, dim="time").sortby("time") if len(pieces) > 1 else pieces[0]
     src_units = ds["precip"].attrs.get("units")
     if src_units != "mm/day":
         raise DataError(f"unexpected IMERG precipitation units {src_units!r}; expected 'mm/day'")
@@ -182,7 +240,7 @@ def fetch(start_time, end_time, version, bbox, probe_latest, **kwargs):
         )
 
     # GES DISC daily files are (time, lon, lat); the standard order is (time, lat, lon).
-    ds = ds.transpose("time", "latitude", "longitude").load()
+    ds = ds.transpose("time", "latitude", "longitude")
     ds = ds.drop_attrs()
     ds.attrs.update(
         Conventions="CF-1.13",

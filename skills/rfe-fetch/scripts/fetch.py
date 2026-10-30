@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "rasterio",
 # ]
 # ///
@@ -53,13 +53,90 @@ def _read(url: str) -> bytes | None:
         time.sleep(2**attempt)
 
 
-def _latest_day() -> date:
+def _listed_days() -> list[date]:
+    """Every day CPC lists in the GeoTIFF folder, oldest first."""
     listing = _read(_BASE_URL)
-    days = re.findall(rb"africa_rfe\.(\d{8})\.tif\.zip", listing or b"")
-    if not days:
+    stamps = sorted(set(re.findall(rb"africa_rfe\.(\d{8})\.tif\.zip", listing or b"")))
+    if not stamps:
         raise DataError(f"no africa_rfe.YYYYMMDD.tif.zip files listed at {_BASE_URL}")
-    latest = max(days).decode()
-    return date(int(latest[:4]), int(latest[4:6]), int(latest[6:]))
+    return [date(int(s[:4]), int(s[4:6]), int(s[6:])) for s in map(bytes.decode, stamps)]
+
+
+def _latest_day() -> date:
+    return _listed_days()[-1]
+
+
+def _decode(body: bytes, day: date, bbox):
+    """One day's zipped GeoTIFF as a (time, latitude, longitude) DataArray cut to ``bbox``."""
+    import numpy as np
+    import rasterio
+    import xarray as xr
+
+    with zipfile.ZipFile(io.BytesIO(body)) as zf:
+        tif = zf.read(f"africa_rfe.{day:%Y%m%d}.tif")
+    with rasterio.MemoryFile(tif) as mem, mem.open() as src:
+        grid = src.read(1).astype("float32")
+        t = src.transform
+    # Cell centres from the file's own geotransform. Its float32 origin and
+    # spacing carry ~1e-8 noise, so round to 1e-4 degrees for clean labels.
+    lat = np.round(t.f + t.e * (np.arange(grid.shape[0]) + 0.5), 4)
+    lon = np.round(t.c + t.a * (np.arange(grid.shape[1]) + 0.5), 4)
+    da = xr.DataArray(
+        np.where(grid == _MISSING, np.nan, grid)[None],
+        dims=("time", "latitude", "longitude"),
+        coords={"time": [np.datetime64(day, "ns")], "latitude": lat, "longitude": lon},
+    ).sortby("latitude")
+    return bbox_subset(da, bbox) if bbox is not None else da
+
+
+def _lazy_days(days, bbox, window):
+    """Daily rainfall as dask arrays: one task per published day, run at write time.
+
+    Returns ``(array, missing)``; days CPC does not list are absent rows.
+    """
+    import dask
+    import dask.array as darr
+    import numpy as np
+    import xarray as xr
+
+    listed = set(_listed_days())
+    present = [d for d in days if d in listed]
+    missing = [d for d in days if d not in listed]
+    if not present:
+        return None, missing
+
+    def read(day):
+        body = _read(_url(day))
+        if body is None:
+            raise DataError(f"CPC no longer serves {_url(day)}.")
+        return _decode(body, day, bbox)
+
+    # The first day gives the grid; every other day must sit on the same one.
+    first = read(present[0])
+
+    def same_grid_day(day):
+        da = read(day)
+        for dim in ("latitude", "longitude"):
+            if not np.array_equal(da[dim], first[dim]):
+                raise DataError(
+                    f"RFE2 files in {window} are not on one grid: {day} differs from {present[0]}."
+                )
+        return da.values
+
+    arrays = [darr.from_array(first.values, chunks=-1)] + [
+        darr.from_delayed(dask.delayed(same_grid_day)(d), first.shape, first.dtype)
+        for d in present[1:]
+    ]
+    precip = xr.DataArray(
+        darr.concatenate(arrays),
+        dims=first.dims,
+        coords={
+            "time": np.array(present, dtype="datetime64[ns]"),
+            "latitude": first["latitude"],
+            "longitude": first["longitude"],
+        },
+    )
+    return precip, missing
 
 
 @weather_skill(name="rfe-fetch", version=_SKILL_VERSION)
@@ -78,14 +155,12 @@ def _latest_day() -> date:
     probe=True,
     help="Print the latest published YYYY-MM-DD on stdout and exit.",
 )
-def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
+def fetch(start_time, end_time, bbox, probe_latest, dask=False, **kwargs):
     """Fetch NOAA CPC RFE2 daily rainfall over Africa as a weather-skills Zarr."""
     if probe_latest:
         print(_latest_day().isoformat())
         return
 
-    import numpy as np
-    import rasterio
     import xarray as xr
 
     if start_time < _START:
@@ -96,30 +171,19 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
         f"rfe-fetch: fetching {len(days)} day(s) {start_time} -> {end_time} from {_BASE_URL}",
         file=sys.stderr,
     )
-    with ThreadPoolExecutor(_WORKERS) as pool:
-        bodies = list(pool.map(_read, [_url(d) for d in days]))
-
-    pieces, missing = [], []
-    for day, body in zip(days, bodies, strict=True):
-        if body is None:
-            missing.append(day)
-            continue
-        with zipfile.ZipFile(io.BytesIO(body)) as zf:
-            tif = zf.read(f"africa_rfe.{day:%Y%m%d}.tif")
-        with rasterio.MemoryFile(tif) as mem, mem.open() as src:
-            grid = src.read(1).astype("float32")
-            t = src.transform
-        # Cell centres from the file's own geotransform. Its float32 origin and
-        # spacing carry ~1e-8 noise, so round to 1e-4 degrees for clean labels.
-        lat = np.round(t.f + t.e * (np.arange(grid.shape[0]) + 0.5), 4)
-        lon = np.round(t.c + t.a * (np.arange(grid.shape[1]) + 0.5), 4)
-        da = xr.DataArray(
-            np.where(grid == _MISSING, np.nan, grid)[None],
-            dims=("time", "latitude", "longitude"),
-            coords={"time": [np.datetime64(day, "ns")], "latitude": lat, "longitude": lon},
-        ).sortby("latitude")
-        # Subset each day as it arrives so a long window never holds the full grid.
-        pieces.append(bbox_subset(da, bbox) if bbox is not None else da)
+    if dask:
+        precip, missing = _lazy_days(days, bbox, f"{start_time} -> {end_time}")
+        pieces = [] if precip is None else [precip]
+    else:
+        with ThreadPoolExecutor(_WORKERS) as pool:
+            bodies = list(pool.map(_read, [_url(d) for d in days]))
+        pieces, missing = [], []
+        for day, body in zip(days, bodies, strict=True):
+            if body is None:
+                missing.append(day)
+                continue
+            # Subset each day as it arrives so a long window never holds the full grid.
+            pieces.append(_decode(body, day, bbox))
 
     if not pieces:
         raise DataError(

@@ -258,3 +258,50 @@ def test_probe_latest_prints_the_newest_scan_day(tmp_path, fake, capsys):
     assert out.out.strip() == f"{newest:%Y-%m-%d}"
     # Floored to the 10-minute FCI cycle.
     assert f"latest scan {newest:%Y-%m-%d %H}:10 UTC" in out.err
+
+
+def test_dask_reads_each_scan_as_a_task_and_output_matches(
+    tmp_path, mod, fake, monkeypatch, capsys
+):
+    """With --dask the first scan gives the grid and every later scan is a task run at write time."""
+    pytest.importorskip("dask")
+    if "--dask" not in mod.fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+    slots = [datetime(2026, 10, 6, 12, m) for m in (0, 10, 20)]
+    starts = [s + timedelta(seconds=5) for s in slots]
+
+    # Name each scan's file by its start, so the result does not depend on task order.
+    monkeypatch.setattr(
+        mod,
+        "_download",
+        lambda product, entries, workdir, workers: [workdir / f"{product.sensing_start:%M}.nc"],
+    )
+
+    def process(files, instrument, bands, bbox):
+        minute = int(files[0].stem)
+        # The 10 and 20 minute scans are off-disk: two thirds of the band is missing.
+        fill = np.nan if minute else 270.0
+        values = {b: np.full((3, 2), fill, dtype="float32") for b in bands}
+        attrs = {b: {"units": None, "standard_name": None, "wavelength": None} for b in bands}
+        return np.array([0.75, 0.25, -0.25]), np.array([36.25, 36.75]), values, attrs
+
+    monkeypatch.setattr(mod, "_process_scan", process)
+    data_types = []
+    stamp = mod.stamp_cf_attrs
+    monkeypatch.setattr(
+        mod, "stamp_cf_attrs", lambda ds: (data_types.append(type(ds["ir_105"].data)), stamp(ds))[1]
+    )
+    outs = {}
+    for flag in ("--dask", None):
+        (tmp_path / str(flag)).mkdir()
+        fake(
+            tmp_path / str(flag), *([flag] if flag else []),
+            "--date", "2026-10-06", "--time", "12:00,12:10,12:20",
+            "--bbox", "1/36/-0.5/37", "-v", "ir_105", starts=starts,
+        )  # fmt: skip
+        outs[flag] = xr.open_zarr(tmp_path / str(flag) / "out.zarr").load()
+        assert "ir_105 is 67% missing" in capsys.readouterr().err
+    assert [t.__name__ for t in data_types] == ["Array", "ndarray"]
+    assert dict(outs["--dask"].sizes) == {"time": 3, "latitude": 3, "longitude": 2}
+    np.testing.assert_allclose(outs["--dask"]["ir_105"].values[0, 0, 0], 270.0)
+    xr.testing.assert_allclose(outs["--dask"]["ir_105"], outs[None]["ir_105"])

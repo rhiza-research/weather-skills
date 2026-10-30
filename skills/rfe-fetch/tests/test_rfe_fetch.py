@@ -169,3 +169,82 @@ def test_probe_latest_prints_newest_listed_day(capsys, fetch):
     with _fake_cpc({"20261014": b"", "20261015": b"", "20010101": b""}):
         run_skill(fetch, "--probe-latest")
     assert capsys.readouterr().out.strip() == "2026-10-15"
+
+
+def _need_dask(fetch):
+    pytest.importorskip("dask")
+    if "--dask" not in fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+
+
+def test_dask_streams_days_and_output_matches(tmp_path, fetch, capsys):
+    """With --dask each published day is a task; a day CPC does not list is still an absent row."""
+    _need_dask(fetch)
+    files = {
+        "20260101": _day_file("20260101", 2.0),
+        "20260103": _day_file("20260103", 4.0),
+        "20260104": _day_file("20260104", 5.0),
+    }
+    outs, results = {}, {}
+    for flag in ("--dask", None):
+        out = tmp_path / f"out{flag}.zarr"
+        with _fake_cpc(files):
+            results[flag] = run_skill(
+                fetch,
+                *([flag] if flag else []),
+                "--start-time",
+                "2026-01-01",
+                "--end-time",
+                "2026-01-04",
+                "--bbox",
+                "5/34/-5/42",
+                "-o",
+                str(out),
+            )
+        assert "no file for 2026-01-02" in capsys.readouterr().err
+        outs[flag] = xr.open_zarr(out).load()
+    assert results["--dask"]["precip"].chunks is not None
+    assert results[None]["precip"].chunks is None
+    assert [str(t)[:10] for t in outs["--dask"].time.values] == [
+        "2026-01-01",
+        "2026-01-03",
+        "2026-01-04",
+    ]
+    xr.testing.assert_allclose(outs["--dask"]["precip"], outs[None]["precip"])
+
+
+def test_dask_grid_change_between_days_exits_1(tmp_path, fetch, capsys):
+    _need_dask(fetch)
+    files = {
+        "20260101": _day_file("20260101", 1.0),
+        "20260102": _day_file("20260102", 1.0, west=-25.05),
+    }
+    with _fake_cpc(files), pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch,
+            "--dask",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "-o",
+            str(tmp_path / "o.zarr"),
+        )
+    assert exc.value.code == 1
+    assert "not on one grid" in capsys.readouterr().err
+
+
+def test_dask_no_published_day_exits_1(tmp_path, fetch):
+    _need_dask(fetch)
+    with _fake_cpc({}), pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch,
+            "--dask",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "-o",
+            str(tmp_path / "o.zarr"),
+        )
+    assert exc.value.code == 1

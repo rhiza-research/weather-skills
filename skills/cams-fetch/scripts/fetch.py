@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "pandas",
 #   "cftime",
 #   "ecmwf-datastores-client==0.4.2",
@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import os
 import sys
@@ -232,6 +233,8 @@ def fetch(
     variable,
     cycle,
     max_lead,
+    dask=False,
+    exit_stack=None,
     **kwargs,
 ):
     """Fetch CAMS global air-quality fields (forecast or EAC4 reanalysis) over a bbox from the Copernicus ADS."""
@@ -393,7 +396,9 @@ def fetch(
     import cfgrib
 
     pieces = []
-    with tempfile.TemporaryDirectory(prefix="cams-fetch-") as tmp:
+    # Under --dask the GRIBs stay on disk, read lazily, until the write has finished.
+    with contextlib.nullcontext(exit_stack) if dask else contextlib.ExitStack() as files:
+        tmp = files.enter_context(tempfile.TemporaryDirectory(prefix="cams-fetch-"))
         for ci, chunk in enumerate(jobs):
             fields = []
             for gi, (group, group_jobs) in enumerate(zip(groups, chunk, strict=True)):
@@ -404,7 +409,7 @@ def fetch(
                     remote.download(str(path))
                     # A GRIB can decode to several datasets (one per level type);
                     # drop the GRIB filter scalars (hybrid, surface, ...) that collide.
-                    parts = cfgrib.open_datasets(str(path))
+                    parts = cfgrib.open_datasets(str(path), **({"chunks": "auto"} if dask else {}))
                     if not parts:
                         raise DataError(f"ADS GRIB {path.name} contained no messages.")
                     parts = [
@@ -460,7 +465,7 @@ def fetch(
                 if "time" not in ds.dims:
                     ds = ds.expand_dims("time")
             # Materialize while the GRIB files in the temp dir still exist.
-            pieces.append(ds.load())
+            pieces.append(ds if dask else ds.load())
     ds = xr.concat(pieces, dim="time") if len(pieces) > 1 else pieces[0]
     ds = ds[names]
 

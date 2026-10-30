@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "earthaccess",
 #   "h5py",
 # ]
@@ -212,6 +212,73 @@ def _earthaccess_call(fn, *args, **kwargs):
         raise
 
 
+def _read_day(granule, workdir, day: date, overpass: str, quality: str, bbox):
+    """Download one day's granule, cut it to ``bbox`` and delete the file.
+
+    Returns the day's ``soil_moisture`` as a (latitude, longitude) DataArray.
+    """
+    import earthaccess
+
+    day_iso = day.isoformat()
+    try:
+        files = _earthaccess_call(earthaccess.download, [granule], local_path=workdir)
+    except SkillError:
+        raise
+    except Exception as exc:
+        raise DataError(f"failed to download the SMAP granule for {day_iso}: {exc}") from exc
+    if not files:
+        raise DataError(f"download returned no local file for the {day_iso} granule.")
+    try:
+        da = _slice_from_file(files[0], overpass, day_iso, quality == "recommended")
+        if bbox is not None:
+            da = bbox_subset(
+                da.to_dataset(name="soil_moisture"),
+                bbox,
+                lat_dim="latitude",
+                lon_dim="longitude",
+            )["soil_moisture"]
+    except RuntimeError as exc:
+        raise DataError(str(exc)) from exc
+    finally:
+        # Each global granule is ~690 MB; free the disk before the next day.
+        os.remove(files[0])
+    return da
+
+
+def _lazy_days(in_window, overpass, quality, bbox, exit_stack):
+    """Soil moisture as dask arrays: one task per day, run at write time."""
+    import dask
+    import dask.array as darr
+    import numpy as np
+    import xarray as xr
+
+    days = sorted(in_window)
+    # The tasks download here until the write has read them.
+    workdir = exit_stack.enter_context(tempfile.TemporaryDirectory(prefix="smap-fetch-"))
+
+    def read_day(day):
+        return _read_day(in_window[day], workdir, day, overpass, quality, bbox)
+
+    # The first day gives the grid; every other day must sit on the same one.
+    first = read_day(days[0])
+
+    def same_grid_day(day):
+        da = read_day(day)
+        for dim in first.dims:
+            if da[dim].shape != first[dim].shape or not np.allclose(da[dim], first[dim], atol=1e-4):
+                raise DataError(f"the SMAP granule for {day} is not on the first day's grid.")
+        return da.values[None]
+
+    arrays = [darr.from_array(first.values[None], chunks=-1)] + [
+        darr.from_delayed(dask.delayed(same_grid_day)(day), (1, *first.shape), first.dtype)
+        for day in days[1:]
+    ]
+    return xr.Dataset(
+        {"soil_moisture": (("time", *first.dims), darr.concatenate(arrays))},
+        coords={"time": np.array(days, dtype="datetime64[ns]"), **first.coords},
+    )
+
+
 def _stamp_cf(ds) -> None:
     import xarray as xr
 
@@ -278,7 +345,17 @@ def _stamp_cf(ds) -> None:
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs):
+def fetch(
+    start_time,
+    end_time,
+    bbox,
+    overpass,
+    quality,
+    probe_latest,
+    dask=False,
+    exit_stack=None,
+    **kwargs,
+):
     """Fetch NASA SMAP daily 9 km soil moisture via Earthdata as a weather-skills Zarr."""
     import earthaccess
     import numpy as np
@@ -349,36 +426,17 @@ def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs)
             file=sys.stderr,
         )
 
-    day_datasets = []
-    with tempfile.TemporaryDirectory(prefix="smap-fetch-") as td:
-        for d in present_days:
-            day_iso = d.isoformat()
-            try:
-                files = _earthaccess_call(earthaccess.download, [in_window[d]], local_path=td)
-            except SkillError:
-                raise
-            except Exception as exc:
-                raise DataError(
-                    f"failed to download the SMAP granule for {day_iso}: {exc}"
-                ) from exc
-            if not files:
-                raise DataError(f"download returned no local file for the {day_iso} granule.")
-            try:
-                da = _slice_from_file(files[0], overpass, day_iso, quality == "recommended")
-                if bbox is not None:
-                    da = bbox_subset(
-                        da.to_dataset(name="soil_moisture"),
-                        bbox,
-                        lat_dim="latitude",
-                        lon_dim="longitude",
-                    )["soil_moisture"]
-            except RuntimeError as exc:
-                raise DataError(str(exc)) from exc
-            # Each global granule is ~690 MB; free the disk before the next day.
-            os.remove(files[0])
-            day_datasets.append(da.expand_dims(time=[np.datetime64(day_iso)]).to_dataset())
-
-    ds = xr.concat(day_datasets, dim="time")
+    if dask:
+        ds = _lazy_days(in_window, overpass, quality, bbox, exit_stack)
+    else:
+        day_datasets = []
+        with tempfile.TemporaryDirectory(prefix="smap-fetch-") as td:
+            for d in present_days:
+                da = _read_day(in_window[d], td, d, overpass, quality, bbox)
+                day_datasets.append(
+                    da.expand_dims(time=[np.datetime64(d.isoformat())]).to_dataset()
+                )
+        ds = xr.concat(day_datasets, dim="time")
     _stamp_cf(ds)
     ds = ensure_normalized_longitude(ds, lon_dim="longitude")
     ds.attrs["weather_skills_source"] = "smap"

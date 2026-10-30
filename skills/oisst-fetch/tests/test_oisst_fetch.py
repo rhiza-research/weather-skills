@@ -314,3 +314,122 @@ def test_probe_latest_rejects_ident(fetch):
     with pytest.raises(SystemExit) as exc:
         run_skill(fetch, "--probe-latest", "final")
     assert exc.value.code == 2
+
+
+def _need_dask(fetch):
+    pytest.importorskip("dask")
+    if "--dask" not in fetch.parser._option_string_actions:
+        pytest.skip("installed weather-skills-core has no --dask")
+
+
+def test_dask_reads_year_blocks_as_tasks_and_output_matches(tmp_path, fetch):
+    """With --dask each block of days is a task reading the open file at write time."""
+    _need_dask(fetch)
+    from xarray.backends import BackendArray
+    from xarray.core import indexing
+
+    times = np.arange("2024-01-01", "2024-04-01", dtype="datetime64[D]").astype("datetime64[ns]")
+    lons = np.arange(0.5, 360.0, 1.0)
+    data = np.arange(times.size, dtype="float32")[:, None, None] + lons.astype("float32")
+    data = np.broadcast_to(data, (times.size, 2, lons.size))
+    keys = []
+
+    class RecordingArray(BackendArray):
+        shape, dtype = data.shape, data.dtype
+
+        def __getitem__(self, key):
+            return indexing.explicit_indexing_adapter(
+                key, self.shape, indexing.IndexingSupport.OUTER, self._raw
+            )
+
+        def _raw(self, key):
+            keys.append(key)
+            return data[key]
+
+    def remote():
+        sst = xr.Variable(
+            ("time", "lat", "lon"),
+            indexing.LazilyIndexedArray(RecordingArray()),
+            attrs={"units": "degC"},
+        )
+        coords = {"time": times, "lat": [-0.5, 0.5], "lon": lons}
+        return xr.Dataset({"sst": sst}, coords=coords)
+
+    outs, results = {}, {}
+    for flag in ("--dask", None):
+        keys.clear()
+        out = tmp_path / f"out{flag}.zarr"
+        with patch("xarray.open_dataset", side_effect=lambda *a, **k: remote()):
+            results[flag] = run_skill(
+                fetch,
+                *([flag] if flag else []),
+                "--start-time",
+                "2024-01-01",
+                "--end-time",
+                "2024-03-31",
+                "--bbox",
+                "1/-2/-1/1",
+                "-o",
+                str(out),
+            )
+        days = [len(range(*k[0].indices(times.size))) for k in keys]
+        # Two longitude slices (the box crosses 0°), each read block by block: smaller
+        # blocks under --dask, where each is held whole in memory until written.
+        assert max(days) <= (8 if flag else 31) and sum(days) == 2 * times.size
+        if flag:
+            assert max(days) == 8
+        outs[flag] = xr.open_zarr(out, consolidated=True).load()
+    assert results["--dask"]["sst"].chunks is not None
+    assert results[None]["sst"].chunks is None
+    np.testing.assert_array_equal(outs["--dask"]["longitude"].values, [-1.5, -0.5, 0.5])
+    assert outs["--dask"].sizes["time"] == times.size
+    xr.testing.assert_allclose(outs["--dask"]["sst"], outs[None]["sst"])
+
+
+def test_dask_persistent_dap_failure_exits_1_with_one_at_a_time_advice(tmp_path, capsys, fetch):
+    """A failure inside a block task, at write time, still gets the friendly message."""
+    _need_dask(fetch)
+    from xarray.backends import BackendArray
+    from xarray.core import indexing
+
+    class FailingArray(BackendArray):
+        shape, dtype = (2, 2, 2), np.dtype("float32")
+
+        def __getitem__(self, key):
+            return indexing.explicit_indexing_adapter(
+                key, self.shape, indexing.IndexingSupport.OUTER, self._raw
+            )
+
+        def _raw(self, key):
+            raise OSError("NetCDF: DAP failure")
+
+    sst = xr.Variable(
+        ("time", "lat", "lon"),
+        indexing.LazilyIndexedArray(FailingArray()),
+        attrs={"units": "degC"},
+    )
+    remote = xr.Dataset(
+        {"sst": sst},
+        coords={
+            "time": np.array(["2026-01-01", "2026-01-02"], dtype="datetime64[ns]"),
+            "lat": [0.5, 1.5],
+            "lon": [10.5, 11.5],
+        },
+    )
+    with (
+        patch("xarray.open_dataset", return_value=remote),
+        patch("time.sleep"),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_skill(
+            fetch,
+            "--dask",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "-o",
+            str(tmp_path / "out.zarr"),
+        )
+    assert exc.value.code == 1
+    assert "one oisst-fetch at a time" in capsys.readouterr().err
