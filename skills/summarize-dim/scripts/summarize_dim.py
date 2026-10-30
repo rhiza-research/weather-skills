@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "pandas",
 # ]
 # ///
@@ -33,6 +33,27 @@ _TIME_LABELS = ("month", "year", "dayofyear", "month_group")
 _INITIALS = "JFMAMJJASOND"
 # Grid and station dims a sum must not add up (latitude, lon, station_id, ...).
 _SPATIAL_DIMS = frozenset((*names_for("lat"), *names_for("lon"), *names_for("point_id")))
+
+
+def _one_chunk(da, dims):
+    """``da`` with each of ``dims`` in a single chunk (dask's median and quantile need it)."""
+    return da.chunk({d: -1 for d in dims}) if da.chunks else da
+
+
+def _stack(cells, dims, sizes, template):
+    """Join ``cells`` (index per dim -> array like ``template``) along new ``dims``.
+
+    Combinations without a cell are NaN. Stays lazy on dask-backed arrays.
+    """
+    fill = xr.full_like(template, np.nan)
+
+    def nest(index):
+        if len(index) == len(dims):
+            return cells.get(index, fill)
+        parts = [nest((*index, i)) for i in range(sizes[len(index)])]
+        return xr.concat(parts, dims[len(index)], coords="minimal", compat="override")
+
+    return nest(())
 
 
 @weather_skill(
@@ -342,9 +363,8 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
             if method == "quantile":
                 kw = {"q": quantile[0]}
             kept = [d for d in da.dims if d not in rdims]
-            da = da.pint.dequantify()  # values are filled into numpy; units go back on below
-            values = None
-            dropped = 0
+            da = da.pint.dequantify()  # the stacked result gets the units back below
+            cells, shares, dropped = {}, {}, []
             for parts in itertools.product(*groups):
                 index = {d: i for _, isel, _, _ in parts for d, i in isel.items()}
                 sub = da.isel(index)
@@ -362,46 +382,58 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                     expected = next(n for _, _, _, n in parts if n is not None)
                     cell_share = present.sum("time") / expected
                     complete = cell_share >= min_coverage - 1e-12
-                    dropped += int(((cell_share > 0) & ~complete).sum())
+                    dropped.append(((cell_share > 0) & ~complete).sum())
                     sub = sub.where(complete)
                     others = [d for d in rdims if d != "time"]
                     # The least-covered cell that went into each value.
                     share = cell_share.where(complete)
                     share = share.min(others) if others else share
-                reduced = getattr(sub, method)(dim=rdims, keep_attrs=True, **kw)
-                if values is None:
-                    template = reduced
-                    shape = [da.sizes[d] for d in kept] + [label_values[b].size for b in by]
-                    values = np.full(shape, np.nan, dtype=np.result_type(reduced.dtype, np.float32))
-                    coverage = np.full(shape, np.nan)
+                if method in ("median", "quantile"):
+                    sub = _one_chunk(sub, rdims)
                 where = {b: i for labels, _, _, _ in parts for b, i in labels.items()}
-                values[(..., *(where[b] for b in by))] = reduced.transpose(*kept).values
+                key = tuple(where[b] for b in by)
+                cells[key] = getattr(sub, method)(dim=rdims, keep_attrs=True, **kw)
                 if time_by:
-                    coverage[(..., *(where[b] for b in by))] = share.transpose(*kept).values
+                    shares[key] = share.transpose(*kept)
+            template = next(iter(cells.values()))
+            sizes = [label_values[b].size for b in by]
+            dtype = np.result_type(template.dtype, np.float32)
+            values = _stack(cells, by, sizes, template.astype(dtype)).astype(dtype)
+            values = values.transpose(*kept, *by)
             coords = {
                 **{c: v for c, v in template.coords.items() if set(v.dims) <= set(kept)},
                 **{b: label_values[b] for b in by},
             }
-            if dropped:
-                print(
-                    f"{var}: left out {dropped} cell-group(s) with data for less than "
-                    f"--min-coverage {min_coverage:g} of the group's calendar time steps",
-                    file=sys.stderr,
-                )
-            out[var] = xr.DataArray(values, dims=[*kept, *by], coords=coords, attrs=template.attrs)
+            # Small counts for the messages below, in one compute with the rest of the graph.
+            counts = {}
+            if time_by:
+                counts["dropped"] = sum(dropped)
+                coverage = _stack(shares, by, sizes, next(iter(shares.values()))).astype(float)
+                coverage = coverage.transpose(*kept, *by)
+                if method == "sum" and min_coverage < 1.0:
+                    counts["partial"] = (np.isfinite(values) & (coverage < 1.0 - 1e-12)).sum()
+                counts = xr.Dataset(counts).compute()
+                if counts.dropped:
+                    print(
+                        f"{var}: left out {int(counts.dropped)} cell-group(s) with data for less "
+                        f"than --min-coverage {min_coverage:g} of the group's calendar time steps",
+                        file=sys.stderr,
+                    )
+            out[var] = xr.DataArray(
+                values.data, dims=[*kept, *by], coords=coords, attrs=template.attrs
+            )
             if time_by and method == "sum" and min_coverage < 1.0:
                 # Kept so the output records which sums are estimates.
-                partial = int((np.isfinite(values) & (coverage < 1.0 - 1e-12)).sum())
-                if partial:
+                if counts.partial:
                     print(
-                        f"WARNING: {partial} {var} sum(s) come from groups missing some time "
-                        f"steps (--min-coverage {min_coverage:g}); missing steps are not filled, "
-                        "so those sums are estimates from partial data and fall short of the "
-                        f"full-period total. See {var}_coverage in the output.",
+                        f"WARNING: {int(counts.partial)} {var} sum(s) come from groups missing "
+                        f"some time steps (--min-coverage {min_coverage:g}); missing steps are "
+                        "not filled, so those sums are estimates from partial data and fall "
+                        f"short of the full-period total. See {var}_coverage in the output.",
                         file=sys.stderr,
                     )
                 out[f"{var}_coverage"] = xr.DataArray(
-                    coverage,
+                    coverage.data,
                     dims=[*kept, *by],
                     coords=coords,
                     attrs={
@@ -420,7 +452,13 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
         elif method == "quantile":
             # One quantile leaves a scalar quantile coord; several add a quantile dim.
             q = quantile[0] if len(quantile) == 1 else quantile
-            out[var] = da.pint.dequantify().quantile(q, dim=rdims, keep_attrs=True)
+            out[var] = _one_chunk(da.pint.dequantify(), rdims).quantile(
+                q, dim=rdims, keep_attrs=True
+            )
+            if da.pint.units is not None:
+                out[var] = out[var].copy(data=out[var].data * da.pint.units)
+        elif method == "median":
+            out[var] = _one_chunk(da.pint.dequantify(), rdims).median(dim=rdims, keep_attrs=True)
             if da.pint.units is not None:
                 out[var] = out[var].copy(data=out[var].data * da.pint.units)
         elif method == "mean" and lat_weighted and lat_dim in rdims:
