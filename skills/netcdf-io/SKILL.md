@@ -36,7 +36,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/netcdf_io.py --netcdf IN.nc [--netcdf IN2.nc 
 - Reading keeps the file's own names: `lat`/`lon`, `valid_time` or `number` work with later skills as they are. Use `edit-coords` to rename, and `drop` for leftovers like `time_bnds`.
 - Precipitation and temperature need units before later skills can use them; a file with none needs `--units`.
 - The whole dataset is loaded to write the `.nc`, so export a clipped or reduced Zarr, not a raw global fetch.
-- Provenance starts again at a read: the new Zarr's history begins with this skill, not with whatever made the `.nc`.
+- Provenance starts again at a read: the new Zarr's history begins with this skill, not with whatever made the `.nc`. A file a skill exported (it carries `weather_skills_history`) exits 2 on read: use the Zarr it came from.
 
 ### Example
 ```bash

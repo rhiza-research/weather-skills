@@ -241,3 +241,16 @@ def test_export_refuses_a_dataset_with_no_data_variables(tmp_path, netcdf_io, ca
         run_skill(netcdf_io, "-i", str(src), "-o", str(tmp_path / "out.nc"))
     assert exc.value.code == 2
     assert not (tmp_path / "out.nc").exists()
+
+
+def test_read_refuses_a_file_a_skill_exported(tmp_path, netcdf_io, capsys):
+    mid = tmp_path / "mid.zarr"
+    nc = tmp_path / "out.nc"
+    make_gridded().to_netcdf(tmp_path / "seed.nc")
+    run_skill(netcdf_io, "--netcdf", str(tmp_path / "seed.nc"), "-o", str(mid))
+    run_skill(netcdf_io, "-i", str(mid), "-o", str(nc))
+
+    with pytest.raises(SystemExit) as exc:
+        run_skill(netcdf_io, "--netcdf", str(nc), "-o", str(tmp_path / "back.zarr"))
+    assert exc.value.code == 2
+    assert "use the Zarr it came from" in capsys.readouterr().err

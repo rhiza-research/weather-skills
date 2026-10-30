@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 from conftest import load_skill, make_forecast, make_gridded, make_point_obs, run_skill, write_zarr
-from weather_skills_core.provenance import load_history
+from weather_skills_core.provenance import history_sidecar, load_history
 from weather_skills_core.units import units_equal
 
 
@@ -52,6 +52,7 @@ def test_grid_round_trip(tmp_path, csv_io):
     back = tmp_path / "back.zarr"
 
     run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    history_sidecar(csv).unlink()  # a table handed back without its history
     run_skill(csv_io, "--csv", str(csv), "-o", str(back))
 
     res = _open(back)
@@ -73,6 +74,19 @@ def test_export_dropna_skips_empty_rows(tmp_path, csv_io):
     assert len(pd.read_csv(out)) == 2
 
 
+def test_read_refuses_a_table_a_skill_exported(tmp_path, csv_io, capsys):
+    src = write_zarr(make_gridded(n_time=2), tmp_path / "in.zarr")
+    csv = tmp_path / "out.csv"
+    run_skill(csv_io, "-i", str(src), "-o", str(csv))
+
+    _exits_2(csv_io, "--csv", str(csv), "-o", str(tmp_path / "back.zarr"), "--names", "a,b,c,d")
+    assert "use the Zarr it came from" in capsys.readouterr().err
+
+    # Once edited, the table no longer matches its history and reads as new data.
+    csv.write_text(csv.read_text().replace("2026-01-02", "2026-01-03"))
+    run_skill(csv_io, "--csv", str(csv), "-o", str(tmp_path / "back.zarr"))
+
+
 def test_point_obs_round_trip_keeps_station_coords(tmp_path, csv_io):
     ds = make_point_obs(n_time=3, n_points=2)
     ds["precip"].values[:] = [[1.0, 2.0, np.nan], [4.0, 5.0, 6.0]]
@@ -82,6 +96,7 @@ def test_point_obs_round_trip_keeps_station_coords(tmp_path, csv_io):
     back = tmp_path / "back.zarr"
 
     run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back))
 
     res = _open(back)
@@ -102,6 +117,7 @@ def test_forecast_round_trip_keeps_step_and_init(tmp_path, csv_io):
 
     run_skill(csv_io, "-i", str(src), "-o", str(csv))
     assert "step [days]" in pd.read_csv(csv).columns
+    history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back))
 
     res = _open(back)
@@ -241,6 +257,7 @@ def test_station_round_trip_keeps_site_and_pressure(tmp_path, csv_io):
 
     run_skill(csv_io, "-i", str(src), "-o", str(csv))
     assert {"station_id", "site", "pressure [hPa]"} <= set(pd.read_csv(csv).columns)
+    history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back))
 
     res = _open(back)
@@ -276,6 +293,7 @@ def test_non_standard_calendar_round_trip(tmp_path, csv_io):
     run_skill(csv_io, "-i", str(src), "-o", str(csv))
     df = pd.read_csv(csv)
     assert list(df["time [360_day]"]) == ["2026-02-29", "2026-02-30", "2026-03-01"]
+    history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back))
 
     res = _open(back)
@@ -349,6 +367,7 @@ def test_na_value_and_date_format_round_trip(tmp_path, csv_io):
     df = pd.read_csv(csv)
     assert list(df["time"]) == ["01/01/2026", "02/01/2026"]
     assert df["precip [mm d-1]"].iloc[0] == -999
+    history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back), *opts)
 
     res = _open(back)
@@ -368,6 +387,7 @@ def test_pivot_round_trips_with_unpivot(tmp_path, csv_io):
     df = pd.read_csv(csv)
     assert list(df.columns) == ["latitude", "longitude", "2026-01-01", "2026-01-02", "2026-01-03"]
     assert len(df) == 4
+    history_sidecar(csv).unlink()
     run_skill(
         csv_io,
         "--csv",
@@ -393,6 +413,7 @@ def test_pivot_steps_read_back_as_leads(tmp_path, csv_io):
     back = tmp_path / "back.zarr"
 
     run_skill(csv_io, "-i", str(src), "-o", str(csv), "--pivot", "step=tp")
+    history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back), "--unpivot", "step=tp")
 
     res = _open(back)
@@ -417,6 +438,7 @@ def test_excel_round_trip(tmp_path, csv_io):
 
     run_skill(csv_io, "-i", str(src), "-o", str(xlsx), "--sheet", "rain")
     assert pd.ExcelFile(xlsx).sheet_names == ["rain"]
+    history_sidecar(xlsx).unlink()
     run_skill(csv_io, "--csv", str(xlsx), "-o", str(back), "--sheet", "rain")
 
     res = _open(back)
@@ -512,6 +534,7 @@ def test_station_pivot_round_trips_with_text_coords(tmp_path, csv_io):
     back = tmp_path / "back.zarr"
 
     run_skill(csv_io, "-i", str(src), "-o", str(csv), "--pivot", "time=precip")
+    history_sidecar(csv).unlink()
     run_skill(
         csv_io, "--csv", str(csv), "-o", str(back),
         "--unpivot", "time=precip", "--units", "precip=mm day-1",
@@ -565,6 +588,7 @@ def test_scalar_level_reads_back_as_scalar_and_re_exports(tmp_path, csv_io):
     back = tmp_path / "back.zarr"
 
     run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back))
 
     res = _open(back)
@@ -603,6 +627,7 @@ def test_time_series_round_trip(tmp_path, csv_io):
     back = tmp_path / "back.zarr"
 
     run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back))
 
     res = _open(back)
@@ -733,6 +758,7 @@ def test_timezone_round_trip_names_the_zone_in_the_header(tmp_path, csv_io):
         run_skill(csv_io, "-i", str(src), "-o", str(csv), *(["--timezone", zone] if zone else []))
         df = pd.read_csv(csv)
         assert df[f"time [{zone or 'UTC'}]"].iloc[0] == first
+        history_sidecar(csv).unlink()
         run_skill(csv_io, "--csv", str(csv), "-o", str(back))
         np.testing.assert_array_equal(_open(back)["time"].values, ds["time"].values)
 
@@ -1115,6 +1141,7 @@ def test_float32_with_nan_exports_and_round_trips(tmp_path, csv_io):
     csv = tmp_path / "out.csv"
     back = tmp_path / "back.zarr"
     run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back))
     np.testing.assert_allclose(_open(back)["precip"].values, [[[np.nan, 1.0]]])
 
@@ -1127,6 +1154,7 @@ def test_pivot_of_hourly_steps_reads_back_in_hours(tmp_path, csv_io, capsys):
     back = tmp_path / "back.zarr"
     run_skill(csv_io, "-i", str(src), "-o", str(csv), "--pivot", "step=tp")
     assert "--units step=hours" in capsys.readouterr().err
+    history_sidecar(csv).unlink()
     run_skill(
         csv_io,
         "--csv",
@@ -1163,6 +1191,7 @@ def test_sub_second_times_round_trip(tmp_path, csv_io):
     csv = tmp_path / "out.csv"
     back = tmp_path / "back.zarr"
     run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back))
     np.testing.assert_array_equal(_open(back)["time"].values, ds["time"].values)
 
@@ -1175,6 +1204,7 @@ def test_forecast_valid_time_is_left_out_and_reads_back(tmp_path, csv_io):
     back = tmp_path / "back.zarr"
     run_skill(csv_io, "-i", str(src), "-o", str(csv))
     assert "valid_time" not in pd.read_csv(csv).columns
+    history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back))
     assert _open(back)["tp"].dims == ("step", "latitude", "longitude")
 
@@ -1188,6 +1218,7 @@ def test_date_variables_round_trip(tmp_path, csv_io):
     back = tmp_path / "back.zarr"
     run_skill(csv_io, "-i", str(src), "-o", str(csv))
     assert "onset" in pd.read_csv(csv).columns
+    history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back))
     res = _open(back)
     assert res["onset"].values[0] == np.datetime64("2026-10-05")
@@ -1209,6 +1240,7 @@ def test_text_that_looks_like_a_formula_stays_text(tmp_path, csv_io):
         out = tmp_path / f"out.{ext}"
         back = tmp_path / f"back_{ext}.zarr"
         run_skill(csv_io, "-i", str(src), "-o", str(out))
+        history_sidecar(out).unlink()
         run_skill(csv_io, "--csv", str(out), "-o", str(back))
         assert list(_open(back)["name"].values) == ["=1+1"]
 
@@ -1261,6 +1293,7 @@ def test_valid_time_without_time_becomes_the_init(tmp_path, csv_io):
     csv = tmp_path / "out.csv"
     back = tmp_path / "back.zarr"
     run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back))
     assert _open(back)["time"].values == init
 
