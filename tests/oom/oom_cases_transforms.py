@@ -299,6 +299,13 @@ CASES = [
         inputs=(Input.of("-i", "grid", labels=True),),
         args=("--by", "month", "--method", "max", "--min-coverage", "0"),
     ),
+    TransformCase(
+        "summarize-dim-by-month-coverage",
+        "summarize-dim",
+        "summarize_dim.py",
+        inputs=(Input.of("-i", "grid", labels=True),),
+        args=("--by", "month", "--method", "mean"),
+    ),
     # --- unit-convert
     TransformCase(
         "unit-convert-water-density",
