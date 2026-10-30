@@ -38,7 +38,9 @@ proves the case actually exercises streaming.
 Each case is a **strict expected failure until its skill installs
 `weather-skills-core[dask]`** in its script header; from then on it must pass. So
 the suite is green while skills migrate, and opting a skill in is what makes its
-cases count. `test_coverage.py` fails if a skill has no case.
+cases count. `test_coverage.py` fails if a skill has no case. A case whose skill is
+opted in but does not stream it yet carries `grows="<why>"`: the scaling and full-size
+tiers then expect it to fail, and fail the run once it passes.
 
 ## Files
 

@@ -720,6 +720,60 @@ def test_quantile_by_label(tmp_path, summarize_dim):
     assert ds["precip"].isel(time=0).values.tolist() == [0.5, 4.0]
 
 
+def test_median_keeps_units(tmp_path, summarize_dim):
+    src = write_zarr(_members(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim, "-i", str(src), "-o", str(out), "--dim", "number", "--method", "median"
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds["precip"].values == pytest.approx(5.0)
+    assert ds["precip"].attrs["units"] == "mm day-1"
+
+
+def test_median_by_label(tmp_path, summarize_dim):
+    src = write_zarr(_labeled(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(summarize_dim, "-i", str(src), "-o", str(out), "--by", "region", "--method", "median")
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds["precip"].isel(time=0).values.tolist() == [0.5, 4.0]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"dim": ["number"], "method": "median"},
+        {"dim": ["number"], "method": "quantile", "quantile": [0.25, 0.75]},
+        {"by": ["region"], "method": "median"},
+        {"by": ["region"], "method": "quantile", "quantile": [0.3]},
+        {"by": ["region"], "dim": ["time", "number"], "method": "std"},
+    ],
+)
+def test_dask_inputs_match_numpy(summarize_dim, args):
+    """The skill returns the same values for chunked (dask) inputs, still lazy."""
+    pytest.importorskip("dask")
+    import numpy as np
+    from weather_skills_core.units import quantify_dataset
+
+    ds = _labeled(n_time=4).expand_dims(number=np.arange(5)).copy(deep=True)
+    ds["precip"].values[:] += np.arange(5)[:, None, None, None]
+    ds["precip"].attrs.update(units="mm day-1")
+    base = dict(variable=None, dim=None, by=None, quantile=None, lat_weighted=False)
+    base |= dict(min_coverage=None) | args
+    call = summarize_dim.__wrapped__
+    expected = call(ds=quantify_dataset(ds), **base)
+    chunked = quantify_dataset(ds.chunk({"time": 1, "latitude": 1, "number": 2}))
+    got = call(ds=chunked, **base)
+    assert hasattr(got["precip"].data, "chunks") or hasattr(got["precip"].data.magnitude, "chunks")
+    xr.testing.assert_allclose(
+        got["precip"].pint.dequantify(), expected["precip"].pint.dequantify()
+    )
+
+
 @pytest.mark.parametrize(
     "args",
     [

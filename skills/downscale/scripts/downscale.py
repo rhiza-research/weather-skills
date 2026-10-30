@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "xarray-regrid",
 # ]
 # ///
@@ -13,7 +13,7 @@ import sys
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import detect_spatial_dims
 from weather_skills_core.standard_utils import ensure_normalized_longitude, grid_spacing
-from weather_skills_core.units import units_equal
+from weather_skills_core.units import dequantify_dataset, units_equal
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.5"
@@ -29,6 +29,16 @@ def _target_coord(coord, new_spacing):
     vmin, vmax = float(np.min(coord)), float(np.max(coord))
     target = vmin + new_spacing * np.arange(int(np.floor((vmax - vmin) / new_spacing)) + 1)
     return target[::-1] if coord[0] > coord[-1] else target
+
+
+def _one_chunk(da, dims, tiles=()):
+    """``da`` with each of ``dims`` in a single chunk, as dask's apply_ufunc needs.
+
+    ``tiles`` are cut to the chunk size so that the whole-``dims`` chunks stay small.
+    """
+    if not da.chunks or not dims:
+        return da
+    return da.chunk({d: -1 for d in dims} | {d: "auto" for d in tiles if d in da.dims})
 
 
 def _qmap(values, model, ref):
@@ -90,6 +100,7 @@ def downscale(
     reference_grid,
     qq_reference,
     qq_model,
+    dask=False,
     **kwargs,
 ):
     """Put a gridded Zarr onto a finer or equally spaced lat/lon grid, optionally with quantile mapping."""
@@ -108,7 +119,14 @@ def downscale(
     lat_dim, lon_dim = detect_spatial_dims(ds)
     if variable:
         ds = ds[[variable]]
-    ds = ensure_normalized_longitude(ds, lon_dim)
+    # xarray-regrid can't interpolate pint quantities wrapping dask, and fails on
+    # coords chunked unlike the data (aggregation_coverage on time); coords are
+    # small, so load them.
+    ds = dequantify_dataset(ensure_normalized_longitude(ds, lon_dim))
+    ds = ds.assign_coords({c: ds[c].compute() for c in ds.coords if ds[c].chunks})
+    if dask:
+        # Interpolation reads whole maps: one chunk per map (or a few), not a tile of it.
+        ds = ds.chunk({d: -1 if d in (lat_dim, lon_dim) else "auto" for d in ds.sizes})
 
     # q-q inputs are checked before the (slow) interpolation. Each cell's sample
     # is every value along the non-spatial dims (years, days, members), pooled.
@@ -117,7 +135,8 @@ def downscale(
         for flag, path in (("--qq-reference", qq_reference), ("--qq-model", qq_model)):
             if path is None:
                 continue
-            other = xr.open_zarr(path, consolidated=False)
+            # Numpy-backed without --dask, even where dask is installed.
+            other = xr.open_zarr(path, consolidated=False, chunks="auto" if dask else None)
             missing = [v for v in ds.data_vars if v not in other.data_vars]
             if missing:
                 raise UsageError(
@@ -126,7 +145,7 @@ def downscale(
                     "the input with --variable"
                 )
             for v in ds.data_vars:
-                want = ds[v].attrs.get("units") or format(ds[v].pint.units or "", "~cf")
+                want = ds[v].attrs.get("units")
                 have = other[v].attrs.get("units")
                 if not units_equal(have, want):
                     raise UsageError(
@@ -236,6 +255,7 @@ def downscale(
             model = samples["--qq-model"]
             model = ensure_normalized_longitude(model, lon_dim)[list(out.data_vars)]
             model = model.regrid.linear(target)
+        tiles = (lat_dim, lon_dim)
         for v in out.data_vars:
             # Distinct core-dim names so the three samples never broadcast together.
             core = {
@@ -244,9 +264,13 @@ def downscale(
             }
             mapped = xr.apply_ufunc(
                 _qmap,
-                out[v].load(),
-                model[v].load().rename({d: f"_qq_model_{d}" for d in core["model"]}),
-                ref[v].load().rename({d: f"_qq_ref_{d}" for d in core["ref"]}),
+                _one_chunk(out[v], core["in"], tiles),
+                _one_chunk(model[v], core["model"], tiles).rename(
+                    {d: f"_qq_model_{d}" for d in core["model"]}
+                ),
+                _one_chunk(ref[v], core["ref"], tiles).rename(
+                    {d: f"_qq_ref_{d}" for d in core["ref"]}
+                ),
                 input_core_dims=[
                     core["in"],
                     [f"_qq_model_{d}" for d in core["model"]],
@@ -254,6 +278,7 @@ def downscale(
                 ],
                 output_core_dims=[core["in"]],
                 vectorize=True,
+                dask="parallelized",
                 output_dtypes=[float],
             )
             mapped.attrs = dict(out[v].attrs)
