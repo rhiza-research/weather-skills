@@ -96,6 +96,7 @@ def build_grid(
     offset=0.0,
     period_days=None,
     labels=False,
+    smooth=False,
 ):
     """Observations: ``(time, latitude, longitude)``, daily from ``start``.
 
@@ -104,6 +105,8 @@ def build_grid(
     aggregate-temporal had made the series (for convert-to-totals).
     ``labels`` adds label-group style coords: ``month`` along time and a
     ``region`` (west/east hemisphere) on the grid, for summarize-dim ``--by``.
+    ``smooth`` replaces the noise with a few broad blobs drifting slowly east,
+    so each map has a handful of persistent extrema, as real fields do.
     """
     lat, lon = _grid(target_bytes)
     field = lat.size * lon.size * 4
@@ -118,7 +121,10 @@ def build_grid(
     def make_slab(lo, hi):
         rng = np.random.default_rng([seed, lo])
         times = t0 + np.arange(lo, hi) * np.timedelta64(1, "D")
-        values = _values(rng, (hi - lo, lat.size, lon.size))
+        if smooth:
+            values = _blobs(np.arange(lo, hi), lat, lon, seed)
+        else:
+            values = _values(rng, (hi - lo, lat.size, lon.size))
         if offset:
             values += np.float32(offset)
         coords = {
@@ -131,6 +137,18 @@ def build_grid(
         return xr.Dataset({name: (("time", "latitude", "longitude"), values, attrs)}, coords=coords)
 
     _write_slabs(path, n_time, slab, make_slab, "time")
+
+
+def _blobs(steps, lat, lon, seed, n=6, width=15.0):
+    """``n`` Gaussian blobs per map, each drifting 1 degree east a day; rounded to 0.1."""
+    rng = np.random.default_rng(seed)
+    clat, clon0, amp = rng.uniform(-60, 60, n), rng.uniform(-180, 180, n), rng.uniform(5, 20, n)
+    out = np.zeros((steps.size, lat.size, lon.size), dtype="float32")
+    for la, lo0, a in zip(clat, clon0, amp, strict=True):
+        dlon = (lon[None, :] - lo0 - steps[:, None] + 180) % 360 - 180
+        lat_term = np.exp(-(((lat - la) / width) ** 2) / 2)
+        out += a * lat_term[None, :, None] * np.exp(-((dlon / width) ** 2) / 2)[:, None, :]
+    return np.round(out, 1)
 
 
 def _n_time(target_bytes, field):
