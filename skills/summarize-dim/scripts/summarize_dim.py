@@ -22,6 +22,7 @@ from weather_skills_core.units import (
     AGGREGATION_COVERAGE_COORD,
     AGGREGATION_PERIOD_ATTR,
     data_interval_of,
+    format_duration,
     infer_timestep,
     parse_aggregation_period,
 )
@@ -73,7 +74,8 @@ _SPATIAL_DIMS = frozenset((*names_for("lat"), *names_for("lon"), *names_for("poi
     type=float,
     help=(
         "With a --by time label: blank values whose group has data for less than this share "
-        "(0-1) of its full calendar period. Default 1.0."
+        "(0-1) of its full calendar period. With --method sum over time or step: blank cells "
+        "with data for less than this share of the summed steps. Default 1.0."
     ),
 )
 def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_coverage, **kwargs):
@@ -99,9 +101,11 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
     if by and len(quantile) > 1:
         raise UsageError("--by takes one --quantile; run once per quantile")
     time_by = [b for b in by if "time" in ds[b].dims]
-    if min_coverage is not None and not time_by:
+    time_sum = method == "sum" and not by and any(d in ("time", "step") for d in dims)
+    if min_coverage is not None and not (time_by or time_sum):
         raise UsageError(
-            f"--min-coverage needs a --by label along time ({', '.join(_TIME_LABELS)})"
+            f"--min-coverage needs a --by label along time ({', '.join(_TIME_LABELS)}) "
+            "or --method sum over time or step"
         )
     min_coverage = 1.0 if min_coverage is None else min_coverage
     if not 0.0 <= min_coverage <= 1.0:
@@ -294,6 +298,8 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
             )
             for labels, isel, box, _ in groups[t]
         ]
+        # The longest group's full calendar run, in steps: the span a sum by it covers.
+        longest_group = max(expected for _, _, _, expected in groups[t])
 
     lat_dim = None
     if lat_weighted:
@@ -324,16 +330,6 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                     f"({da.attrs.get('units', units)}) into a rate, not a total; convert the "
                     "rates to period totals first (convert-to-totals)"
                 )
-        period = da.attrs.get(AGGREGATION_PERIOD_ATTR)
-        if method == "sum" and over_time and not by and period:
-            # The total would still read as one aggregation_period (a 10-day sum stamped
-            # "1 day"); aggregate-temporal stamps the span and its coverage.
-            raise UsageError(
-                f"--method sum over {', '.join(over_time)} would add up {var!r} values that "
-                f"each cover {period!r} into a total still stamped {period!r}; for a total "
-                f"over the span, aggregate the rates over it first (aggregate-temporal "
-                f"--period '<span>' --time-dim {over_time[0]}), then convert-to-totals"
-            )
         # Adding up cells or stations of a physical quantity (mm, degC) grows with the
         # area and means nothing; dimensionless counts and flags add up to how many.
         over_space = [d for d in rdims if d in _SPATIAL_DIMS]
@@ -422,6 +418,47 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                 out[var].attrs["ancillary_variables"] = f"{var}_coverage"
             if units is not None:
                 out[var] = out[var].copy(data=out[var].data * units)
+        elif method == "sum" and over_time:
+            # Coverage per input cell, as with --by: its summed steps with data over all
+            # the steps. A cell below --min-coverage is left out; missing steps are never filled.
+            da = da.pint.dequantify()
+            present = da.notnull()
+            step_share = da.coords.get(AGGREGATION_COVERAGE_COORD)
+            if step_share is not None and set(step_share.dims) <= set(over_time):
+                # An input interval that was itself 3/7 complete counts as 3/7 of a step.
+                present = present * step_share.fillna(0)
+            expected = int(np.prod([da.sizes[d] for d in over_time]))
+            cell_share = present.sum(over_time) / expected
+            complete = cell_share >= min_coverage - 1e-12
+            dropped = int(((cell_share > 0) & ~complete).sum())
+            if dropped:
+                print(
+                    f"{var}: left out {dropped} cell(s) with data for less than "
+                    f"--min-coverage {min_coverage:g} of the {expected} summed steps",
+                    file=sys.stderr,
+                )
+            out[var] = da.where(complete).sum(dim=rdims, keep_attrs=True, min_count=1)
+            if min_coverage < 1.0:
+                # Kept so the output records which sums are estimates.
+                others = [d for d in rdims if d not in over_time]
+                share = cell_share.where(complete)
+                share = share.min(others) if others else share
+                partial = int((out[var].notnull() & (share < 1.0 - 1e-12)).sum())
+                if partial:
+                    print(
+                        f"WARNING: {partial} {var} sum(s) come from cells missing some of the "
+                        f"{expected} summed steps (--min-coverage {min_coverage:g}); missing "
+                        "steps are not filled, so those sums are estimates from partial data "
+                        f"and fall short of the full-period total. See {var}_coverage.",
+                        file=sys.stderr,
+                    )
+                out[f"{var}_coverage"] = share.assign_attrs(
+                    long_name=f"Share of the summed {', '.join(over_time)} steps with {var} data",
+                    units="1",
+                )
+                out[var].attrs["ancillary_variables"] = f"{var}_coverage"
+            if units is not None:
+                out[var] = out[var].copy(data=out[var].data * units)
         elif method == "sum":
             # min_count=1: all-NaN → NaN, not 0
             out[var] = da.sum(dim=rdims, keep_attrs=True, min_count=1)
@@ -465,6 +502,20 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
         attrs["cell_methods"] = (
             f"{attrs['cell_methods']} {step}" if attrs.get("cell_methods") else step
         )
+        period = attrs.get(AGGREGATION_PERIOD_ATTR)
+        if method == "sum" and over_time and isinstance(period, str):
+            # The sum covers every step it adds up: ten "1 day" amounts are a "10 day" total,
+            # daily amounts by MAM a "92 day" one (the longest group when lengths differ).
+            n = int(np.prod([ds.sizes[d] for d in over_time if not (time_by and d == "time")]))
+            if time_by:
+                n *= longest_group
+            calendar = re.fullmatch(r"\s*(\d+)\s*(month|year|dekad)s?\s*", period)
+            if calendar:
+                attrs[AGGREGATION_PERIOD_ATTR] = f"{int(calendar.group(1)) * n} {calendar.group(2)}"
+            else:
+                attrs[AGGREGATION_PERIOD_ATTR] = format_duration(
+                    parse_aggregation_period(period) * n
+                )
         if method in ("std", "sum"):
             label = "Standard deviation" if method == "std" else "Sum"
             what = attrs.get("long_name") or attrs.get("standard_name") or var
