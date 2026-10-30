@@ -13,6 +13,7 @@ ROOT = "data/live_forecasts/downscaled_models/aurora/east_africa-ghana-kenya-sen
 DIFF = "model_diffusion_unet_precip_input_output_residual_shiftedlog_calibrated_silu_selfcond_precip24h_only"
 UNET = "model_unet_precip_output_residual_fs128"
 ERA5 = "total_precipitation_24h_acc_era5"
+IMERG = "total_precipitation_24h_acc_imerg"
 
 
 @pytest.fixture(scope="module")
@@ -94,7 +95,9 @@ def test_fetch_latest_ensemble_mean_as_rates(tmp_path, fetch_mod, remote, capsys
         assert ds["time"].values == np.datetime64("2026-10-27", "ns")
         assert list(ds["latitude"].values) == pytest.approx([0.8, 0.9, 1.0])
         np.testing.assert_allclose(ds["tp"].values[:, 0, 0], [5.0, 5.0, 5.0])
-        assert ds.attrs["weather_skills_source"] == f"cumulus-downscaled:{DIFF}/ckpt-a/{ERA5}"
+        assert (
+            ds.attrs["weather_skills_source"] == f"cumulus-downscaled:aurora/{DIFF}/ckpt-a/{ERA5}"
+        )
         assert ds.attrs["cumulus_downscaled_member_set"] == "ensemble_mean"
     assert load_history(out)[-1]["skill"] == "cumulus-downscaled-fetch"
     # Only a short run warns.
@@ -182,6 +185,41 @@ def test_bbox_subsets(tmp_path, fetch_mod, remote):
     run_skill(fetch_mod.fetch, "--bbox", "1/36/0.85/36.05", "-o", str(out))
     with xr.open_zarr(out, consolidated=True) as ds:
         assert ds.sizes["latitude"] == 2 and ds.sizes["longitude"] == 1
+
+
+def test_source_reads_another_subfolder(tmp_path, fetch_mod, remote, capsys):
+    # Another source names its models differently and has only the imerg target.
+    root = ROOT.replace("/aurora/", "/aurora-imerg/")
+    diff = "model_diffusion_unet_precip_output_residual_other"
+    data = f"{root}/2026-10-26/{diff}/ckpt-b/{IMERG}/precip_24h/data"
+    remote["tree"].update(
+        {
+            root: ["2026-10-26"],
+            f"{root}/2026-10-26": [diff],
+            f"{root}/2026-10-26/{diff}": ["ckpt-b"],
+            f"{root}/2026-10-26/{diff}/ckpt-b": [IMERG, "notes.yml"],
+            data: ["2026-10-26-00-0024.nc"],
+        }
+    )
+    out = tmp_path / "imerg.zarr"
+    run_skill(fetch_mod.fetch, "--source", "aurora-imerg", "-o", str(out))
+    assert all(p.startswith(data) for p in remote["read"])
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds.attrs["weather_skills_source"] == (
+            f"cumulus-downscaled:aurora-imerg/{diff}/ckpt-b/{IMERG}"
+        )
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--source", "aurora-imerg", "--target", "era5", "-o", str(out))
+    assert exc.value.code == 1
+    assert "no era5 target" in capsys.readouterr().err
+
+
+def test_unknown_source_lists_subfolders(tmp_path, fetch_mod, remote, capsys):
+    remote["tree"]["data/live_forecasts/downscaled_models"] = ["aurora", "aurora-imerg"]
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--source", "nope", "-o", str(tmp_path / "unused.zarr"))
+    assert exc.value.code == 1
+    assert "aurora, aurora-imerg" in capsys.readouterr().err
 
 
 def test_missing_date_exits_1(tmp_path, fetch_mod, remote):
