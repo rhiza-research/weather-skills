@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py *)
 metadata:
-  version: "0.0.6"
+  version: "0.0.7"
   catalog-group: transforms
 ---
 
@@ -28,7 +28,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i IN.zarr -o OUT.zarr (--di
 - `--quantile`, `-q` — with `--method quantile`: a quantile between 0 and 1 (repeatable: `-q 0.1 -q 0.9` for a 10–90% band). One with `--by`.
 - `--variable`, `-v` — summarize only this variable (repeatable). Default: all.
 - `--lat-weighted` — with `--method mean` and the latitude dim in `--dim`: weight each row by cos(latitude), so a regional mean reflects true area. Not available with `--by`.
-- `--min-coverage` — with a `--by` time label from `label-group` (`year`, `month`, `dayofyear`, `month_group`): leave out each station or cell whose data covers less than this share (0–1) of a group's calendar period. Default `1.0`.
+- `--min-coverage` — coverage check when a statistic combines `time` or `step` (with a `--by` time label from `label-group`, or `--method sum`): data covering less than this fraction (0–1) of the expected steps is left out (NaN). Expected steps are each `--by` group's calendar period, or every summed step. Default `1.0`: no gaps. See [Details](#details).
 
 Pass `--dim`, `--by`, or both.
 
@@ -36,10 +36,10 @@ Pass `--dim`, `--by`, or both.
 - Each selected variable is summarized over the requested dims it has; other variables pass through unchanged. A summarized dim is removed once no variable carries it.
 - `--by L`: the dims of `L` become a dim `L` holding each label once; several `--by` give one dim each. The `""` label is left out. Other label coords on those dims are dropped; only variables carrying all of the label's dims are summarized.
 - `quantile`: one `-q` leaves a scalar `quantile` coord; several add a `quantile` dim, one entry per value, in the order given.
-- NaNs are skipped. `sum` of an all-NaN slice is NaN, not 0. `std` is the sample standard deviation (`ddof=1`), so `std` over a dim of size 1 is NaN.
+- NaNs are skipped, after the `--min-coverage` check where it applies. `sum` of an all-NaN slice is NaN, not 0. `std` is the sample standard deviation (`ddof=1`), so `std` over a dim of size 1 is NaN.
 - `units` and other attrs are kept as they are, including after `sum` (no unit change). So `sum` over `time` or `step` of a rate (e.g. `mm day-1`) is refused: convert rates to period totals first (`convert-to-totals`).
 - `sum` over grid cells or stations (`latitude`, `longitude`, `station_id`, by `--dim` or a spatial `--by` label such as `admin_1`) exits 2 unless the variable is dimensionless (units `1`, such as 0/1 flags, which sum to a count). For a regional value use `mean`; a regional total is a sum over time, then a `mean` by region in a second call.
-- `sum` with `--min-coverage` below 1: kept sums of incomplete groups are partial-data estimates; stderr warns, and `<var>_coverage` (0–1, the least-covered cell used) is written, linked by `ancillary_variables`.
+- `sum` with `--min-coverage` below 1: kept sums of incomplete groups or cells are partial-data estimates; stderr warns, and `<var>_coverage` (0–1, the least-covered cell used) is written, linked by `ancillary_variables`.
 
 ### Notes
 - Write to a new path: an `--output` equal to the input destroys the input.
@@ -56,8 +56,9 @@ Writes the ensemble spread (standard deviation across the 101 members) of the EC
 Grouped examples (`--by`) are under [Details](#grouped-examples).
 
 ## Details
-- Coverage (with a `--by` time label) is per input station or grid cell: its time steps with data over the steps the group's full calendar period holds at the data's step (MAM of daily data: 92). Input `aggregation_coverage` counts as that fraction. A season cut by the record's start or end is incomplete. Cells below `--min-coverage` are left out before any spatial reduction (a regional value uses complete cells only, NaN if none), counted on stderr; missing steps are never filled. A repeated time step is refused, as is a step longer than a day that runs into the next group (a week from 27 May under `MAM`): aggregate to daily or monthly steps first.
+- Coverage is the share of expected steps with data, counted separately at each point of the other dims. Expected steps are the `--by` group's full calendar period at the data's step (MAM of daily data: 92; a season cut by the record's start or end is incomplete), or every step of a `--method sum`. Input `aggregation_coverage` counts as that fraction of a step. Data below `--min-coverage` is left out before any further reduction (a regional value uses complete cells only, NaN if none), counted on stderr; missing steps are never filled. With `--by`, a repeated time step is refused, as is a step longer than a day that runs into the next group (a week from 27 May under `MAM`): aggregate to daily or monthly steps first.
 - The statistic is appended to CF `cell_methods` (e.g. `number: standard_deviation`, `number: quantile 0.1, 0.9`, `latitude: longitude: mean`, `latitude: longitude: mean (grouped by admin_1)`). `std` and `sum` also set `long_name` (`Standard deviation of Total precipitation across number`) and drop `GRIB_name`, `short_name`, and `comment`; `standard_name` stays.
+- `--method sum` over `time` or `step` stamps the summed span as `aggregation_period`, so a map of it gets the matching color range: ten `1 day` amounts become a `10 day` total, and daily amounts by `--by month_group` (MAM) a `92 day` one. With `--by`, the span is a group's full calendar run, the longest group's when their lengths differ (`31 day` for `--by month`); a label without `year` sums every year's run (three MAMs: `276 day`). Calendar steps keep their unit (`1 month` steps by MAM: `3 month`).
 
 ### Grouped examples
 Grouped with `--by`, on labels added by `label-group` (`--level admin_1 --time year --time month --time MAM,OND`):
