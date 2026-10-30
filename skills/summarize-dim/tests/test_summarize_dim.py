@@ -782,3 +782,62 @@ def test_sum_over_steps_stamps_the_summed_span(tmp_path, summarize_dim, period, 
     out = tmp_path / "o.zarr"
     run_skill(summarize_dim, "-i", str(src), "-o", str(out), "--dim", "step", "--method", "sum")
     assert xr.open_zarr(out)["tp"].attrs["aggregation_period"] == total
+
+
+def _daily_with_gap():
+    import numpy as np
+    import xarray as xr
+
+    a = np.ones((10, 2, 2))
+    a[3:6, 0, 0] = np.nan  # one cell misses 3 of the 10 days
+    ds = xr.Dataset(
+        {"tp": (("step", "latitude", "longitude"), a)},
+        coords={
+            "step": np.arange(10) * np.timedelta64(1, "D"),
+            "latitude": [0.0, 1.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    ds["tp"].attrs.update(units="mm", aggregation_period="1 day")
+    return ds
+
+
+def test_sum_over_steps_leaves_out_incomplete_cells(tmp_path, summarize_dim):
+    """At the default --min-coverage 1.0 a cell missing a day has no 10-day total."""
+    import numpy as np
+    import xarray as xr
+
+    src = write_zarr(_daily_with_gap(), tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(summarize_dim, "-i", str(src), "-o", str(out), "--dim", "step", "--method", "sum")
+    ds = xr.open_zarr(out)
+    assert np.isnan(ds["tp"].values[0, 0])
+    assert (ds["tp"].values.ravel()[1:] == 10).all()
+    assert "tp_coverage" not in ds
+
+
+def test_sum_over_steps_partial_total_with_coverage(tmp_path, summarize_dim):
+    """Below 1.0 the partial total is kept and its coverage written beside it."""
+    import xarray as xr
+
+    src = write_zarr(_daily_with_gap(), tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "step",
+        "--method",
+        "sum",
+        "--min-coverage",
+        "0.5",
+    )
+    ds = xr.open_zarr(out)
+    assert ds["tp"].values[0, 0] == 7
+    assert ds["tp_coverage"].values[0, 0] == 0.7
+    assert ds["tp_coverage"].values[1, 1] == 1.0
+    assert ds["tp"].attrs["ancillary_variables"] == "tp_coverage"
+    assert ds["tp"].attrs["aggregation_period"] == "10 day"
