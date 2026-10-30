@@ -25,11 +25,12 @@ from openpyxl import load_workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.utils import column_index_from_string
 from weather_skills_core import Dataset, UsageError, weather_skill
+from weather_skills_core.provenance import read_raw_history
 from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset, units_convertible
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.5"
 
 # CSV header (lowercased) -> canonical coordinate name.
 COLUMN_ROLES = {
@@ -423,6 +424,14 @@ def _read(
     """Build a standard dataset from a tidy CSV or Excel sheet."""
     if not path.is_file():
         raise UsageError(f"CSV not found: {path}")
+    # A table a skill exported (its history sidecar still matches) is not new data:
+    # reading it back would only drop the Zarr's attrs and restart its history.
+    if read_raw_history(path) is not None:
+        raise UsageError(
+            f"{path.name} was exported by a weather-skills skill; use the Zarr it came from. "
+            "Reading a table back drops its attributes and history, and is not a way to "
+            "change dims, names, units or times"
+        )
     if skip_rows < 0:
         raise UsageError(f"--skip-rows must be 0 or more; got {skip_rows}")
     suffix = path.suffix.lower()
