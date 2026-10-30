@@ -614,3 +614,19 @@ def test_single_selected_week_needs_data_interval(tmp_path, indicator_fn, capsys
         run_skill(indicator_fn, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--rule", "tp > 25")
     assert exc.value.code == 2
     assert "data_interval" in capsys.readouterr().err
+
+
+def test_chunked_evaluation_matches_whole(indicator_mod):
+    """Evaluating dask time chunks with their look-ahead gives the whole-array mask."""
+    pytest.importorskip("dask")
+    rng = np.random.default_rng(0)
+    ds = make_gridded(n_time=90, lats=(1.0, 2.0), lons=(10.0, 11.0, 12.0), name="precip")
+    ds["precip"].values[:] = np.round(rng.gamma(0.4, 6.0, ds["precip"].shape), 1)
+    ds["precip"].values[5, 0, 0] = np.nan
+    spec = indicator_mod.parse_rule("icpac-onset")
+    whole = indicator_mod.evaluate_spec(ds, spec, "time", None, 1)
+    chunked = indicator_mod.evaluate_chunked(
+        ds.chunk({"time": 20, "latitude": 1}), spec, "time", None, 1
+    )
+    assert chunked.chunks is not None
+    xr.testing.assert_equal(chunked.compute(), whole)

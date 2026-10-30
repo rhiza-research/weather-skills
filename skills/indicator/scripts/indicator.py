@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 # ]
 # ///
 """Apply a yes/no weather rule to each day or week of a Zarr, optionally reduced to an onset date or a probability."""
@@ -301,6 +301,42 @@ def evaluate_spec(
     return out.astype("float32")
 
 
+def _look_ahead(spec, step_days: int) -> int:
+    """Days past each date that ``spec`` reads (its windows, ``after`` and ``within``)."""
+    return max(
+        max(c.window, step_days) - step_days + (c.after or c.within or 0) for c in spec.clauses
+    )
+
+
+def evaluate_chunked(ds, spec, dim: str, variable_override: str | None, step_days: int):
+    """``evaluate_spec``, one in-memory block at a time when the data is dask-backed.
+
+    Each time chunk is evaluated with the look-ahead its windows need, so the mask
+    streams along ``dim`` instead of building one graph layer per shift and window.
+    """
+    names = sorted({variable_override or c.variable for c in spec.clauses})
+    arrays = [_strip_pint(ds[n]) for n in names if n in ds]
+    dims = arrays[0].dims if arrays else ()
+    if len(arrays) < len(names) or not arrays[0].chunks or any(a.dims != dims for a in arrays):
+        return evaluate_spec(ds, spec, dim, variable_override, step_days)
+    import dask.array as dask_array
+
+    def block(*blocks):
+        part = xr.Dataset({n: (dims, b) for n, b in zip(names, blocks, strict=True)})
+        mask = evaluate_spec(part, spec, dim, variable_override, step_days)
+        return mask.transpose(*dims).values
+
+    mask = dask_array.map_overlap(
+        block,
+        *(a.data for a in arrays),
+        depth={dims.index(dim): (0, _look_ahead(spec, step_days))},
+        boundary="none",
+        dtype="float32",
+        meta=np.array((), dtype="float32"),
+    )
+    return xr.DataArray(mask, dims=dims, coords=arrays[0].coords)
+
+
 def apply_reductions(
     mask: xr.DataArray,
     dim: str,
@@ -417,10 +453,11 @@ def _within(mask: xr.DataArray, dim: str, days: int) -> xr.DataArray:
     """
     if days < 1:
         raise UsageError(f"within window must be >= 1d; got {days}")
-    shifted = [mask.shift({dim: -k}) for k in range(1, days + 1)]
-    stack = xr.concat(shifted, dim="_look")
-    complete = stack.notnull().all("_look")
-    hit = (stack == 1).any("_look")
+    hit = complete = None
+    for k in range(1, days + 1):
+        ahead = mask.shift({dim: -k})
+        hit = (ahead == 1) if hit is None else hit | (ahead == 1)
+        complete = ahead.notnull() if complete is None else complete & ahead.notnull()
     return xr.where(hit, 1.0, xr.where(complete, 0.0, np.nan))
 
 
@@ -561,7 +598,7 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **k
     for name in names:
         if kind_from_units(variable_units(ds[name]) or "") == "precip":
             ds[name] = rate_to_total(ds[name], f"{step_days} day").pint.dequantify()
-    mask = evaluate_spec(ds, spec, dim, variable, step_days)
+    mask = evaluate_chunked(ds, spec, dim, variable, step_days)
     out = apply_reductions(
         mask, dim, cumulative=bool(cumulative), detect=detect, probability=bool(probability)
     )
@@ -581,9 +618,7 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **k
     print(f"indicator  {spec.source}  ({names})")
     # Forward-looking rules (windows, within/after) cannot be decided at the end
     # of the series: NaN there is "not yet known", not "no event".
-    ahead = max(
-        max(c.window, step_days) - step_days + (c.after or c.within or 0) for c in spec.clauses
-    )
+    ahead = _look_ahead(spec, step_days)
     if ahead > 0:
         import datetime as _dt
 
