@@ -73,10 +73,11 @@ _SPATIAL_DIMS = frozenset((*names_for("lat"), *names_for("lon"), *names_for("poi
     "--min-coverage",
     type=float,
     help=(
-        "Leave out (NaN) any time series with data for less than this fraction (0-1) of the "
-        "time steps being combined: each --by time group's full calendar period, or every "
-        "summed step of a --method sum over time or step. Default 1.0: no missing steps "
-        "allowed."
+        "Only when the statistic combines time or step entries: with a --by time label, or "
+        "--method sum over time or step. Each slice along time or step (other dims held fixed) "
+        "is left out (NaN) unless it has data for at least this fraction (0-1) of the entries "
+        "it should hold: the --by group's full calendar period, or every summed entry. "
+        "Default 1.0: none may be missing."
     ),
 )
 def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_coverage, **kwargs):
