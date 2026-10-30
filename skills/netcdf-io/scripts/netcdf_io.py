@@ -15,6 +15,7 @@ import numpy as np
 import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.decorator import INPUT_PATH_ATTR
+from weather_skills_core.provenance import HISTORY_ATTR
 from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset
 
@@ -73,6 +74,10 @@ def _read(paths, units):
             parts.append(xr.open_dataset(path, engine="netcdf4"))
         except (OSError, ValueError) as exc:
             raise UsageError(f"cannot read {path} as NetCDF: {exc}") from None
+        # A file a skill exported is not new data: reading it back would only
+        # restart its history.
+        if HISTORY_ATTR in parts[-1].attrs:
+            raise UsageError(f"{path.name} was exported by a skill; use the Zarr it came from")
     if len(parts) == 1:
         ds = parts[0]
     else:
