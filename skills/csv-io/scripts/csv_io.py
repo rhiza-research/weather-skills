@@ -25,7 +25,7 @@ from openpyxl import load_workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.utils import column_index_from_string
 from weather_skills_core import Dataset, UsageError, weather_skill
-from weather_skills_core.provenance import read_raw_history
+from weather_skills_core.provenance import history_sidecar
 from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset, units_convertible
 
@@ -124,18 +124,17 @@ def _parse_timezone(name):
         ) from None
 
 
-def _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet, pivot, timezone):
-    """Write ``ds`` as one tidy CSV or Excel row per coordinate combination."""
-    if na_value and len(na_value) > 1:
-        raise UsageError("export writes one missing-value code; pass --na-value once")
-    na_rep = na_value[0] if na_value else ""
+def _export(ds, output, max_rows):
+    """Write ``ds`` as one tidy CSV or Excel row per coordinate combination.
+
+    The table is a fixed mapping of the Zarr: every variable, ISO dates in UTC, empty
+    cells for missing values.
+    """
     excel = output.suffix.lower() in EXCEL_SUFFIXES
     if output.suffix.lower() == ".xlsm":
         raise UsageError("export writes .xlsx (an .xlsm needs macros Excel would refuse)")
     if output.is_dir():
         raise UsageError(f"-o {output} is a folder; give a .csv or .xlsx file name")
-    if sheet is not None and not excel:
-        raise UsageError(f"--sheet is for Excel output ({', '.join(EXCEL_SUFFIXES)})")
     # Short CF unit strings (mm, mm d-1) for the headers, not pint's long names.
     units = {}
     for v in ds.data_vars:
@@ -144,11 +143,6 @@ def _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet
         if units[v]:
             units[v] = units[v].replace("°", "deg")  # ASCII degC; Excel misreads UTF-8 °
     ds = dequantify_dataset(ds)
-    if variable:
-        missing = [v for v in variable if v not in ds.data_vars]
-        if missing:
-            raise UsageError(f"--variable not in dataset: {', '.join(missing)}")
-        ds = ds[variable]
     if not ds.data_vars:
         raise UsageError("dataset has no data variables to export")
     # A dim no variable uses (nv under time_bounds) would repeat every row.
@@ -192,24 +186,6 @@ def _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet
                 + "; rename it first with edit-coords"
             )
         seen[clean] = v
-    # A missing-value code equal to real values would turn them missing on read.
-    if na_rep:
-        try:
-            code = float(na_rep)
-        except ValueError:
-            code = None
-        clash = [
-            v
-            for v in ds.data_vars
-            if code is not None
-            and np.issubdtype(ds[v].dtype, np.number)
-            and bool((ds[v] == code).any())
-        ]
-        if clash:
-            raise UsageError(
-                f"--na-value {na_rep} is a real value of {', '.join(clash)}; pick a code "
-                "the data never takes (e.g. -9999), or leave missing cells empty"
-            )
     # At most three dims longer than 1, such as (time, latitude, longitude); a fourth
     # (step, member, level) makes a table too long to read in a spreadsheet.
     long_dims = [d for d in ds.dims if ds.sizes[d] > 1]
@@ -219,26 +195,6 @@ def _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet
             f"{', '.join(long_dims)}. Reduce it first: summarize-dim for an ensemble mean "
             "or an area mean, select for one member, lead or level, or aggregate-temporal."
         )
-    # Long table -> wide: one column per entry of a dim, cells from one variable.
-    label = value = None
-    if pivot:
-        label, sep, value = pivot.partition("=")
-        if not sep:
-            raise UsageError(f"--pivot expects NAME=VALUE, e.g. time=precip; got {pivot!r}")
-        if label not in ds.dims:
-            raise UsageError(f"--pivot: {label!r} is not a dim ({', '.join(ds.dims)})")
-        if value not in ds.data_vars:
-            raise UsageError(f"--pivot: {value!r} is not a variable ({', '.join(ds.data_vars)})")
-        if label not in ds[value].dims:
-            raise UsageError(f"--pivot: {value!r} does not vary along {label!r}")
-        if label == "station_id":
-            print(
-                "note: a table pivoted by station has no station lat/lon to read back",
-                file=sys.stderr,
-            )
-        ds = ds[[value]]
-        # Coords along the pivoted dim (valid_time on step) have no column left to sit in.
-        ds = ds.drop_vars([c for c in ds.coords if c != label and label in ds[c].dims])
     n_rows = int(np.prod([ds.sizes[d] for d in ds.dims])) if ds.dims else 1
     if n_rows > max_rows:
         raise UsageError(
@@ -255,12 +211,8 @@ def _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet
     # Dims, then other coords, then variables.
     coords = [c for c in df.columns if c not in ds.dims and c not in ds.data_vars]
     df = df[[*ds.dims, *coords, *ds.data_vars]]
-    if dropna:
-        df = df.dropna(how="all", subset=list(ds.data_vars))
-        if df.empty:
-            raise UsageError("every value is missing, so --dropna leaves no rows to write")
 
-    renames, zones, header_units = {}, {}, {}
+    renames = {}
     for name in df.columns:
         first = df[name].dropna().iloc[0] if df[name].notna().any() else None
         if name in ds.data_vars and units[name]:
@@ -273,7 +225,6 @@ def _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet
                 raise UsageError(f"{name} has fractions of a second, which a CSV cannot keep")
             midnight = all((t.hour, t.minute, t.second) == (0, 0, 0) for t in given)
             fmt = "%Y-%m-%d" if midnight else "%Y-%m-%d %H:%M:%S"
-            header_units[name] = first.calendar
             renames[name] = f"{name} [{first.calendar}]"
             df[name] = [t.strftime(fmt) if t is not None else None for t in df[name]]
         elif pd.api.types.is_datetime64_any_dtype(df[name]):
@@ -285,41 +236,16 @@ def _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet
             midnight = (given == given.dt.normalize()).all()
             # Seconds, or microseconds when there are fractions of a second.
             seconds = "%S.%f" if (given.dt.microsecond != 0).any() else "%S"
-            # --date-format is the time column's; other dates (onset) stay ISO to read back.
-            own = date_format if name == "time" else None
-            fmt = own or ("%Y-%m-%d" if midnight else f"%Y-%m-%d %H:%M:{seconds}")
-            times = df[name]
+            fmt = "%Y-%m-%d" if midnight else f"%Y-%m-%d %H:%M:{seconds}"
             if not midnight:
-                # Times of day are UTC; the header says so, or names the --timezone
-                # whose local clock the cells show.
-                zones[name] = timezone or "UTC"
-                times = times.dt.tz_localize("UTC").dt.tz_convert(_parse_timezone(zones[name]))
-                renames[name] = f"{name} [{zones[name]}]"
-            elif timezone:
-                print(f"note: {name} holds dates only, which --timezone leaves", file=sys.stderr)
-            text = times.dt.strftime(fmt)
-            if own:
-                # The text must give back the same clock times (no hours or fractions lost).
-                back = pd.to_datetime(text, format=fmt, errors="coerce")
-                wall = times.dt.tz_localize(None) if times.dt.tz is not None else times
-                if (back[wall.notna()] != wall[wall.notna()]).any():
-                    raise UsageError(
-                        f"--date-format {date_format} drops part of the {name} values (hours "
-                        f"or fractions of a second); add them, e.g. '{date_format} %H:%M'"
-                    )
-            if text.nunique() < df[name].nunique():
-                raise UsageError(
-                    f"two different {name} values would be written alike: a daylight-saving "
-                    f"change in {timezone} repeats a clock time; export in UTC or a fixed "
-                    "offset such as +01:00"
-                )
-            df[name] = text
+                # Times of day are UTC, and the header says so.
+                renames[name] = f"{name} [UTC]"
+            df[name] = df[name].dt.strftime(fmt)
         elif pd.api.types.is_timedelta64_dtype(df[name]):
             # Leads as plain numbers so a spreadsheet can read them.
             whole_days = (df[name] % pd.Timedelta(days=1) == pd.Timedelta(0)).all()
             unit, unit_name = ("D", "days") if whole_days else ("h", "hours")
             df[name] = df[name] / pd.Timedelta(1, unit)
-            header_units[name] = unit_name
             renames[name] = f"{name} [{unit_name}]"
         elif (
             name in ds.coords
@@ -346,27 +272,6 @@ def _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet
             )
             df[name] = text.mask(risky, "'" + text.astype(str))
 
-    if pivot:
-        label_col, value_col = renames.get(label, label), renames.get(value, value)
-        rows = [c for c in df.columns if c not in (label_col, value_col)]
-        order = df[label_col].unique()
-        df = df.pivot(index=rows, columns=label_col, values=value_col)[order]
-        df.columns = [str(c) for c in df.columns]
-        df = df.reset_index()
-        # Headers now hold the dim's values, so the units (or time zone) of both go nowhere.
-        hint = f"--unpivot {label}={value} --units {value}={units[value] or 'UNITS'}"
-        if label in header_units:
-            # Step units (hours, days) or a calendar (360_day) ride on --units too.
-            hint += f" --units {label}={header_units[label]}"
-        if label in zones:
-            hint += f" --timezone {zones[label]}"
-        if label != "station_id":
-            print(
-                f"note: the pivoted CSV has no units for {value} or {label}; read it back "
-                f"with {hint}",
-                file=sys.stderr,
-            )
-
     output.parent.mkdir(parents=True, exist_ok=True)
     if excel:
         if len(df) >= 1_048_576 or len(df.columns) > 16_384:
@@ -383,9 +288,9 @@ def _export(ds, output, variable, dropna, max_rows, na_value, date_format, sheet
             df[name] = text.map(
                 lambda v: ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v
             )
-        df.to_excel(output, sheet_name=sheet or "Sheet1", index=False, na_rep=na_rep)
+        df.to_excel(output, sheet_name="Sheet1", index=False)
     else:
-        df.to_csv(output, index=False, na_rep=na_rep)
+        df.to_csv(output, index=False)
     print(f"Wrote: {output} ({len(df):,} rows, {len(df.columns)} columns)", file=sys.stderr)
 
 
@@ -424,13 +329,13 @@ def _read(
     """Build a standard dataset from a tidy CSV or Excel sheet."""
     if not path.is_file():
         raise UsageError(f"CSV not found: {path}")
-    # A table a skill exported (its history sidecar still matches) is not new data:
-    # reading it back would only drop the Zarr's attrs and restart its history.
-    if read_raw_history(path) is not None:
+    # A table a skill exported, edited or not, is not new data: reading it back would
+    # restart its history and hide how its values were made.
+    if history_sidecar(path).exists():
         raise UsageError(
-            f"{path.name} was exported by a weather-skills skill; use the Zarr it came from. "
-            "Reading a table back drops its attributes and history, and is not a way to "
-            "change dims, names, units or times"
+            f"{path.name} was exported by a weather-skills skill "
+            f"({history_sidecar(path).name} is beside it); use the Zarr it came from. "
+            "Reading a table back is not a way to change values, dims, names, units or times"
         )
     if skip_rows < 0:
         raise UsageError(f"--skip-rows must be 0 or more; got {skip_rows}")
@@ -1125,10 +1030,7 @@ def _read(
 @weather_skill.argument(
     "--csv", type=Path, help="CSV or Excel (.xlsx) to read; -o names the .zarr to write."
 )
-@weather_skill.argument("--variable", "-v", action="append")
-@weather_skill.argument(
-    "--dropna", action="store_true", help="Export: skip rows where every variable is NaN."
-)
+@weather_skill.argument("--variable", "-v", action="append", help="Read: keep only these.")
 @weather_skill.argument(
     "--max-rows", type=int, default=2_000_000, help="Export: refuse larger tables (default 2M)."
 )
@@ -1138,10 +1040,10 @@ def _read(
 @weather_skill.argument(
     "--na-value",
     action="append",
-    help="Missing-value code, e.g. -999: read treats it as missing, export writes it.",
+    help="Read: missing-value code, e.g. -999.",
 )
 @weather_skill.argument(
-    "--date-format", help="strftime format of the time column, e.g. %%d/%%m/%%Y."
+    "--date-format", help="Read: strftime format of the time column, e.g. %%d/%%m/%%Y."
 )
 @weather_skill.argument(
     "--point",
@@ -1152,7 +1054,7 @@ def _read(
     action="append",
     help="Read: column to use as a dim (repeatable; overrides detection).",
 )
-@weather_skill.argument("--sheet", help="Excel sheet name. Default: the first sheet, or Sheet1.")
+@weather_skill.argument("--sheet", help="Read: Excel sheet name. Default: the first sheet.")
 @weather_skill.argument("--names", help="Read: comma-separated names replacing the header row.")
 @weather_skill.argument(
     "--skip-rows", type=int, default=0, help="Read: lines to skip above the header row."
@@ -1172,18 +1074,13 @@ def _read(
 )
 @weather_skill.argument(
     "--timezone",
-    help="Zone of times without an offset, e.g. Africa/Nairobi or +03:00 (default UTC).",
-)
-@weather_skill.argument(
-    "--pivot",
-    help="Export: NAME=VALUE; one column per entry of dim NAME, cells from variable VALUE.",
+    help="Read: zone of times without an offset, e.g. Africa/Nairobi or +03:00 (default UTC).",
 )
 def csv_io(
     ds,
     output,
     csv,
     variable,
-    dropna,
     max_rows,
     units,
     na_value,
@@ -1196,7 +1093,6 @@ def csv_io(
     replace,
     drop_column,
     unpivot,
-    pivot,
     timezone,
     drop_incomplete,
     **kwargs,
@@ -1210,7 +1106,10 @@ def csv_io(
                 f"export writes CSV or Excel; -o should end in .csv or .xlsx (got {output})"
             )
         read_only = (
+            variable,
             units,
+            na_value,
+            date_format,
             point,
             index,
             names,
@@ -1218,19 +1117,21 @@ def csv_io(
             replace,
             drop_column,
             unpivot,
+            timezone,
+            sheet,
             drop_incomplete,
         )
         if any(read_only):
-            raise UsageError("reading options (--units, --names, --unpivot, ...) are for --csv")
-        _export(
-            ds, output, variable, dropna, max_rows, na_value, date_format, sheet, pivot, timezone
-        )
+            raise UsageError(
+                "export writes the whole Zarr as it is and takes no options but --max-rows; "
+                "--variable, --date-format, --units, ... are for --csv. Shape the data with "
+                "other skills first (drop, select, edit-coords)"
+            )
+        _export(ds, output, max_rows)
         # Returned so the decorator writes the history to <output>.history.json.
         return output
     if output.suffix.lower() in (".csv", *EXCEL_SUFFIXES):
         raise UsageError("reading a CSV writes a Zarr; -o should not end in .csv or .xlsx")
-    if pivot:
-        raise UsageError("--pivot is for export (-i); reading a wide table takes --unpivot")
     out = _read(
         csv,
         units,
