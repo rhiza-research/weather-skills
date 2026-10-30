@@ -21,7 +21,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/merge.py -i A.zarr -i B.zarr [-i C.zarr ...] 
 
 ### Arguments
 - `--input`, `-i` — input Zarr; repeat for each.
-- `--by-year` — match values by calendar year instead of exact time, e.g. September IOD with October rainfall. Each input needs at most one value per year.
+- `--by-year` — match values by calendar year instead of exact time, e.g. September IOD with October rainfall. Each input needs at most one value per year. An input already on a `year` dim (summarize-dim `--by year`) is used as it is.
 - `--output`, `-o` — output Zarr.
 
 ### Output

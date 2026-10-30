@@ -59,6 +59,27 @@ def test_merge_by_year(tmp_path, merge):
     assert list(ds["precip"].values) == pytest.approx([210, 60, 45])
 
 
+def test_merge_by_year_keeps_a_year_input(tmp_path, merge):
+    """An input already on years (summarize-dim --by year) joins the others' years."""
+    nino = _series("nino34", ["2019-06-02", "2020-06-07", "2021-06-06"], [0.6, -0.3, -0.5], "K")
+    rain = xr.Dataset(
+        {"precip": (("year",), [380.0, 520.0, 610.0, 450.0])},
+        coords={"year": [2018, 2019, 2020, 2021]},
+    )
+    rain["precip"].attrs["units"] = "mm"
+    a = write_zarr(nino, tmp_path / "nino.zarr")
+    b = write_zarr(rain, tmp_path / "rain.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(merge, "-i", str(a), "-i", str(b), "-o", str(out), "--by-year")
+
+    ds = xr.open_zarr(out)
+    assert dict(ds.sizes) == {"year": 3}
+    assert list(ds["year"].values) == [2019, 2020, 2021]
+    assert list(ds["nino34"].values) == pytest.approx([0.6, -0.3, -0.5])
+    assert list(ds["precip"].values) == pytest.approx([520, 610, 450])
+
+
 def test_errors(tmp_path, merge, capsys):
     rain = write_zarr(make_gridded(), tmp_path / "rain.zarr")
     later = write_zarr(make_gridded(name="other", start="2027-01-01"), tmp_path / "later.zarr")
@@ -75,8 +96,13 @@ def test_errors(tmp_path, merge, capsys):
     offset = write_zarr(
         make_gridded(name="other", lats=(1.5, 2.5), lons=(10.5, 11.5)), tmp_path / "offset.zarr"
     )
+    fyear = xr.Dataset({"idx": (("year",), [1.0, 2.0])}, coords={"year": [2020.5, 2021.5]})
+    fyear = write_zarr(fyear, tmp_path / "fyear.zarr")
+    nodim = write_zarr(xr.Dataset({"idx": (("member",), [1.0, 2.0])}), tmp_path / "nodim.zarr")
     cases = [
         (["-i", str(rain)], "at least two inputs"),
+        (["-i", str(fyear), "-i", str(rain), "--by-year"], "whole calendar years"),
+        (["-i", str(nodim), "-i", str(rain), "--by-year"], "needs a time or year dim"),
         (["-i", str(rain), "-i", str(dup)], "repeats values along 'time'"),
         (["-i", str(fc), "-i", str(rain)], "step-to-time"),
         (["-i", str(fc), "-i", str(fc2)], "different values of 'time'"),

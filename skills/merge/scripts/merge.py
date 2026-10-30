@@ -46,8 +46,18 @@ def merge(ds, by_year, **kwargs):
     if by_year:
         for i, item in enumerate(dss):
             t = cf_dim(item, "time")
+            if (t is None or t not in item.dims) and "year" in item.dims:
+                # Already on years (summarize-dim --by year): the axis this flag would build.
+                if not np.issubdtype(item["year"].dtype, np.integer):
+                    raise UsageError(
+                        f"input {i + 1} has a 'year' dim of {item['year'].dtype} values; "
+                        "--by-year needs whole calendar years"
+                    )
+                continue
             if t is None or t not in item.dims:
-                raise UsageError(f"--by-year needs a time dim; input {i + 1} has {list(item.dims)}")
+                raise UsageError(
+                    f"--by-year needs a time or year dim; input {i + 1} has {list(item.dims)}"
+                )
             years = item[t].dt.year.values
             unique, counts = np.unique(years, return_counts=True)
             if (counts > 1).any():
