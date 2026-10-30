@@ -436,8 +436,7 @@ def fetch(bbox, date, run, variable, probe_latest, max_lead, **kwargs):
         ds = ds.load()
 
     # Latitude runs south to north in every output.
-    if "latitude" in ds.indexes and ds.indexes["latitude"].is_monotonic_decreasing:
-        ds = ds.isel(latitude=slice(None, None, -1))
+    ds = ds.sortby("latitude")
     return ds
 
 

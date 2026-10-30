@@ -51,7 +51,7 @@ analysis.
 - `latitude`: 1-D, **descending** on these GRIB-derived stores (e.g. 90 → −90 at
   0.25°). `longitude`: 1-D, **ascending**, −180 … 179.75. The bbox slice keys
   off each axis's own order, so it is correct either way. The output's latitude
-  is flipped to ascending.
+  is sorted ascending.
 - `init_time`: `datetime64`. `lead_time`: `timedelta64`. `ensemble_member`:
   `int16`, **0-indexed with member 0 as the control** — already the standard dataset's
   `number` convention.

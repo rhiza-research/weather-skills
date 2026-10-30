@@ -359,8 +359,7 @@ def fetch(
         expanded[name].attrs[AGGREGATION_PERIOD_ATTR] = f"{window} day"
     stamp_cf_attrs(expanded)
     # Latitude runs south to north in every output.
-    if "latitude" in expanded.indexes and expanded.indexes["latitude"].is_monotonic_decreasing:
-        expanded = expanded.isel(latitude=slice(None, None, -1))
+    expanded = expanded.sortby("latitude")
     return stamp_data_interval(expanded, period="1 day")
 
 

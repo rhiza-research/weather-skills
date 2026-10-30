@@ -363,8 +363,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, **k
     )
     stamp_cf_attrs(ds)
     # Latitude runs south to north in every output.
-    if "latitude" in ds.indexes and ds.indexes["latitude"].is_monotonic_decreasing:
-        ds = ds.isel(latitude=slice(None, None, -1))
+    ds = ds.sortby("latitude")
     return stamp_data_interval(ds, period="7 day")
 
 

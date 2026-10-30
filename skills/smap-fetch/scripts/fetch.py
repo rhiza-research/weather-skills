@@ -390,8 +390,7 @@ def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs)
         fills={"soil_moisture": np.float64(np.nan)},
     )
     # Latitude runs south to north in every output.
-    if "latitude" in ds.indexes and ds.indexes["latitude"].is_monotonic_decreasing:
-        ds = ds.isel(latitude=slice(None, None, -1))
+    ds = ds.sortby("latitude")
     return stamp_data_interval(ds, period="1 day")
 
 

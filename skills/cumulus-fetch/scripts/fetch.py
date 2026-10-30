@@ -330,8 +330,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
     ds = to_standard_units(ds)
     ds = precip_amounts_to_rates(ds, interval="1 day", deaccumulate=False)
     # Latitude runs south to north in every output.
-    if "latitude" in ds.indexes and ds.indexes["latitude"].is_monotonic_decreasing:
-        ds = ds.isel(latitude=slice(None, None, -1))
+    ds = ds.sortby("latitude")
     return stamp_data_interval(ds, dim="step" if "step" in ds.dims else None)
 
 
