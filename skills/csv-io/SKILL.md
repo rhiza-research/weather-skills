@@ -54,7 +54,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/csv_io.py --csv IN.csv -o OUT.zarr [--date-fo
 - Header units must be CF / UDUNITS (`mm`, `mm day-1`, `degC`, `m s-1`, `%`, `1`); `(C)`/`(F)` mean degC/degF; others exit 2 (fix them with `--units`). A note on the time format, `Date (dd/mm/yyyy)`, is ignored.
 - Nothing is filled: a station/time absent from the CSV, or an empty cell, is NaN. Duplicate rows for one station and time exit 2, and so do rows with no station, time or lat/lon (unless `--drop-incomplete`) and repeated headers, including ones differing only in case. Lat/lon pairs filling under 5 % of a grid of over 10,000 cells exit 2: scattered points need a station column.
 - Export takes at most 3 dims longer than 1, such as `(time, latitude, longitude)` or `(station_id, time)`; with a fourth (member, lead, level) it exits 2. Reduce it first with summarize-dim, select or aggregate-temporal. Dims no variable uses (a bounds dim such as `nv`) are left out. Variable names that would read back as something else (`level`, `lat`, `a [b]`, two that clean to one name) exit 2: rename them with edit-coords.
-- A CSV keeps names, units and values only; other attrs are lost, so export at the end of a pipeline. Its provenance goes in `<output>.history.json` beside it, tied to the table's hash: keep the two together, and an edited table loses its history. Reading back a table a skill exported, its history still matching, exits 2: use the Zarr it came from.
+- A CSV keeps names, units and values only; other attrs are lost, so export at the end of a pipeline. Its history goes in `<output>.history.json` beside it, with the table's hash: keep the two together. Editing the table breaks the match, and the edited table has no history.
+- A table a skill exported and nobody has edited since (its `.history.json` still matches) is not read back: it exits 2. Use the Zarr the table came from.
 
 ### Example
 ```bash
