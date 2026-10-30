@@ -29,7 +29,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/concat.py -i A.zarr -i B.zarr [-i ...] --dim 
 One dataset with `--dim` extended, sorted ascending when the inputs came out of order. Each variable is in the first input's units; later inputs in compatible units are converted (`mm hr-1` → `mm day-1`). Attrs come from the first input.
 
 ### Notes
-- Every other coordinate must match exactly: same grid, same times, same stations. Put inputs on one grid and window first.
+- Every other coordinate must match exactly: same grid, same times, same stations. Put inputs on one grid and window first. The same labels in another order (latitude north to south in one input, south to north in another) count as a match and take the first input's order.
 - These exit 2 with no output:
   - a label repeated along an existing dim (overlapping windows such as Oct 1–7 and Oct 5–10);
   - `--dim` on some inputs but not others, or `--coords` with a dim that already exists;
