@@ -77,6 +77,7 @@ credentialed or source-specific fetcher only when it does not.
 | `difference` | Subtract one dataset from another (A − B) with inner-join alignment and broadcasting — anomalies vs a baseline, scenario-minus-historical change maps |
 | `standardize-anomaly` | Standardized anomaly aka z-score: `(field − clim_avg) / clim_std` against a climatology (e.g. `clim-fetch`) — dimensionless output, errors on units mismatch. For a plain physical-unit anomaly, use `difference` instead. |
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
+| `wind-speed-direction` | Wind speed (`hypot(u, v)`) and the directions the wind blows from and to (degrees clockwise from north) from a `--u` / `--v` component pair; calm cells get NaN direction |
 | `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). |
 | `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
 
