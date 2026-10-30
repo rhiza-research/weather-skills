@@ -36,6 +36,8 @@ dev = [
     "pillow",
     "rasterio",
     "scipy",
+    # Reference implementation for the mme-fit equivalence tests only.
+    "scikit-learn",
 ]
 
 [tool.uv.sources]
