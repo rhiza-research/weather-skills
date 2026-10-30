@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "pandas",
 # ]
 # ///
@@ -175,32 +175,43 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
     field.attrs = attrs
 
     finite = field.notnull()
+    # Every number the summary needs, in one pass over the data.
+    lat = next((n for n in ("latitude", "lat") if n in field.dims), None)
+    # Left 1-D: broadcasting it first would make a full-size numpy array of it for dask.
+    weights = latitude_weights(field[lat]) if lat is not None else None
     if metric == "hits":
-        n_obs = int(obs_event.where(finite, False).sum())
-        n_hit = int(((field == 1) & finite).sum())
+        stats = {
+            "n_obs": obs_event.where(finite, False).sum(),
+            "n_hit": ((field == 1) & finite).sum(),
+        }
+    elif lat is None:
+        stats = {"n": finite.sum(), "avg": field.where(finite).mean()}
+    else:
+        stats = {
+            "n": finite.sum(),
+            "num": (field * weights).where(finite).sum(skipna=True),
+            "den": weights.where(finite).sum(skipna=True),
+        }
+    stats = xr.Dataset(stats).compute()
+    if metric == "hits":
+        n_obs, n_hit = int(stats.n_obs), int(stats.n_hit)
         summary = (
             "hit rate n/a  (0 obs events)"
             if n_obs == 0
             else f"hit rate {100 * n_hit / n_obs:.0f}%  ({n_hit}/{n_obs} obs events)"
         )
     else:
-        lat = next((n for n in ("latitude", "lat") if n in field.dims), None)
         u = f"{ureg.Unit(u_fc or u_obs):~}" if (u_fc or u_obs) else ""
         u_suffix = f" {u}" if u else ""
         value = None
         # Gridded: cos-lat weighted mean. Stations (point-value output): plain
         # mean over every station and time with both values.
-        how = "cos-lat mean" if lat is not None else f"mean of {int(finite.sum())} values"
-        if lat is None:
-            if bool(finite.any()):
-                value = float(field.where(finite).mean())
-        else:
-            weights = latitude_weights(field[lat]).broadcast_like(field)
-            if bool(finite.any()):
-                num = (field * weights).where(finite).sum(skipna=True)
-                den = weights.where(finite).sum(skipna=True)
-                if den != 0 and np.isfinite(float(den)):
-                    value = float(num / den)
+        how = "cos-lat mean" if lat is not None else f"mean of {int(stats.n)} values"
+        if stats.n > 0:
+            if lat is None:
+                value = float(stats.avg)
+            elif stats.den != 0 and np.isfinite(float(stats.den)):
+                value = float(stats.num / stats.den)
         if value is None:
             summary = f"{metric} n/a  (no finite cells)"
         elif metric == "bias":

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "cftime>=1.6",
 #   "netcdf4>=1.7",
 # ]
@@ -62,15 +62,18 @@ def _export(ds, output, variable):
     print(f"Wrote: {output} ({size_mb:,.1f} MB)", file=sys.stderr)
 
 
-def _read(paths, units):
-    """Open each NetCDF file, join them on their coordinates, and fill in --units."""
+def _read(paths, units, chunks):
+    """Open each NetCDF file, join them on their coordinates, and fill in --units.
+
+    ``chunks`` is passed to xarray: ``"auto"`` keeps the data on disk until it is used.
+    """
     for path in paths:
         if not path.is_file():
             raise UsageError(f"NetCDF not found: {path}")
     parts = []
     for path in paths:
         try:
-            parts.append(xr.open_dataset(path, engine="netcdf4"))
+            parts.append(xr.open_dataset(path, engine="netcdf4", chunks=chunks))
         except (OSError, ValueError) as exc:
             raise UsageError(f"cannot read {path} as NetCDF: {exc}") from None
     if len(parts) == 1:
@@ -137,7 +140,7 @@ def _read(paths, units):
 @weather_skill.argument(
     "--units", action="append", help="Read: VAR=UNITS for a variable without a units attr."
 )
-def netcdf_io(ds, output, netcdf, variable, units, **kwargs):
+def netcdf_io(ds, output, netcdf, variable, units, dask=False, **kwargs):
     """Export a weather-skills Zarr to a NetCDF file, or read NetCDF files into a Zarr."""
     if (ds is None) == (netcdf is None):
         raise UsageError(
@@ -152,7 +155,7 @@ def netcdf_io(ds, output, netcdf, variable, units, **kwargs):
         return None
     if output.suffix.lower() in NETCDF_SUFFIXES:
         raise UsageError("reading NetCDF writes a Zarr; -o should end in .zarr")
-    return _keep(_read(netcdf, units), variable, "NetCDF")
+    return _keep(_read(netcdf, units, "auto" if dask else None), variable, "NetCDF")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "pandas",
 # ]
 # ///
@@ -399,11 +399,17 @@ def aggregate(
         # A sample is present when every variable has some finite value at it: a
         # persistent spatial hole (land mask) is not missing, an unpublished forecast
         # lead that is NaN everywhere is.
+        # One compute for every variable, so the data is read once.
+        found = xr.Dataset(
+            {
+                name: np.isfinite(da).any([d for d in da.dims if d != dim])
+                for name, da in ds.data_vars.items()
+                if dim in da.dims
+            }
+        ).compute()
         present = np.ones(raw.size)
-        for name in ds.data_vars:
-            da = ds[name]
-            if dim in da.dims:
-                present *= np.isfinite(da).any([d for d in da.dims if d != dim]).values
+        for name in found.data_vars:
+            present *= found[name].values
         # Re-aggregating, a 3/7-complete week counts as 3/7 of a week, not a whole one.
         if bounds is None and AGGREGATION_COVERAGE_COORD in ds.coords:
             if ds[AGGREGATION_COVERAGE_COORD].dims == (dim,):
@@ -455,7 +461,9 @@ def aggregate(
                 reduced = getattr(sub, method)(dim=dim, keep_attrs=True)
             # A cell missing samples other cells have is NaN, not a mean of what it has:
             # convert-to-totals would scale that mean up to the full period.
-            chunks.append(reduced.where(count >= count.max()))
+            # The most complete cell sets the bar; computed here, a cell's chunk would
+            # otherwise wait on the whole input being read.
+            chunks.append(reduced.where(count >= count.max().compute()))
             labels.append(label)
             coverages.append(min(1.0, coverage))
         if not chunks:
