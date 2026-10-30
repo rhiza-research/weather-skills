@@ -31,19 +31,26 @@ HEAD_FRACTION = 0.3
     help="Speeds at or below this, in the units of u and v, count as calm (direction NaN).",
 )
 @weather_skill.argument(
+    "--arrow-length",
+    type=float,
+    help="Also write quiver arrows (arrow_x / arrow_y, line segments to plot as lines), sized "
+    "so a strong wind for the file (the 95th percentile of speeds) spans this many arrow "
+    "spacings; 2 is a good start.",
+)
+@weather_skill.argument(
     "--arrow-scale",
     type=float,
-    help="Also write quiver arrows, this many degrees long per unit of speed (0.08 for m s-1 "
-    "draws a 10 m s-1 wind 0.8° long): arrow_x / arrow_y, line segments to plot as lines.",
+    help="Instead of --arrow-length, a fixed arrow size in degrees per unit of speed (0.08 for "
+    "m s-1 draws a 10 m s-1 wind 0.8° long), e.g. to give several files one scale.",
 )
 @weather_skill.argument(
     "--arrow-step",
     type=int,
     default=1,
-    help="With --arrow-scale, the spacing of the arrows in grid cells: 3 puts one arrow on "
-    "every 3rd cell in latitude and longitude (every 3rd station for station data).",
+    help="The spacing of the arrows in grid cells: 3 puts one arrow on every 3rd cell in "
+    "latitude and longitude (every 3rd station for station data).",
 )
-def wind_speed_direction(ds, u, v, calm_speed, arrow_scale, arrow_step, **kwargs):
+def wind_speed_direction(ds, u, v, calm_speed, arrow_length, arrow_scale, arrow_step, **kwargs):
     """Compute wind speed and from / to directions from u and v wind components."""
     # dequantify_dataset keeps each variable's units attr (Dataset.map drops it).
     ds = dequantify_dataset(ds)
@@ -94,16 +101,19 @@ def wind_speed_direction(ds, u, v, calm_speed, arrow_scale, arrow_step, **kwargs
         "standard_name": "wind_to_direction",
         "long_name": "direction the wind blows to, clockwise from north",
     }
-    if arrow_scale is None:
+    if arrow_length is None and arrow_scale is None:
         return out
-    if not arrow_scale > 0 or arrow_step < 1:
+    if arrow_length is not None and arrow_scale is not None:
+        raise UsageError("pass --arrow-length or --arrow-scale, not both")
+    size = arrow_length if arrow_length is not None else arrow_scale
+    if not size > 0 or arrow_step < 1:
         raise UsageError(
-            f"--arrow-scale must be above 0 and --arrow-step at least 1 "
-            f"(got {arrow_scale}, {arrow_step})"
+            f"--arrow-length / --arrow-scale must be above 0 and --arrow-step at least 1 "
+            f"(got {size}, {arrow_step})"
         )
     lat, lon = cf_dim(ds, "latitude"), cf_dim(ds, "longitude")
     if lat is None or lon is None:
-        raise UsageError("--arrow-scale needs latitude and longitude coordinates")
+        raise UsageError("arrows need latitude and longitude coordinates")
 
     # The arrow positions: every Nth cell of a grid, or every Nth station.
     if lat in u_da.dims and lon in u_da.dims:
@@ -119,6 +129,32 @@ def wind_speed_direction(ds, u, v, calm_speed, arrow_scale, arrow_step, **kwargs
     x0, y0 = np.asarray(x0.values, float), np.asarray(y0.values, float)
     other = [d for d in ua.dims if d != "arrow"]
     ua, va = ua.transpose(*other, "arrow"), va.transpose(*other, "arrow")
+
+    if arrow_length is not None:
+        # The arrow spacing in degrees: the grid spacing times --arrow-step (the tighter of
+        # latitude and longitude), or for stations the median distance to the nearest one.
+        if lat in u_da.dims and lon in u_da.dims:
+            # A dim with one value (a single row of cells) has no spacing of its own.
+            steps = [
+                np.median(np.abs(np.diff(np.asarray(u_da[d].values, float))))
+                for d in (lat, lon)
+                if u_da.sizes[d] > 1
+            ]
+            if not steps:
+                raise UsageError("--arrow-length needs two or more grid cells; use --arrow-scale")
+            spacing = arrow_step * min(steps)
+        else:
+            if x0.size < 2:
+                raise UsageError("--arrow-length needs two or more stations; use --arrow-scale")
+            apart = np.hypot(x0[:, None] - x0[None, :], y0[:, None] - y0[None, :])
+            np.fill_diagonal(apart, np.inf)
+            spacing = float(np.median(apart.min(axis=1)))
+        # A strong wind for the file, the 95th percentile of the arrows' speeds over every
+        # time, step and member, spans arrow_length spacings, so every map drawn from it
+        # shares one scale; one extreme cell doesn't shrink all the other arrows.
+        speeds = np.hypot(ua.values, va.values)
+        strong = float(np.nanpercentile(speeds, 95)) if np.isfinite(speeds).any() else 0.0
+        arrow_scale = arrow_length * spacing / strong if strong > calm_speed else 0.0
 
     # Each arrow is 7 vertices: tail, tip, gap, barb, tip, barb, gap. NaN gaps split the
     # arrows, so all of them draw as one line trace. A calm cell is all NaN.
@@ -158,8 +194,9 @@ def wind_speed_direction(ds, u, v, calm_speed, arrow_scale, arrow_step, **kwargs
         out[name].attrs = {
             "units": "degrees_east" if axis == "longitude" else "degrees_north",
             "long_name": f"quiver arrow {axis}s: tail, tip, gap, barb, tip, barb, gap per arrow",
-            "arrow_scale": f"{arrow_scale:g} degree per {units}",
+            "arrow_scale": f"{arrow_scale:.6g} degree per {units}",
             "arrow_step": arrow_step,
+            **({"arrow_length": arrow_length} if arrow_length is not None else {}),
         }
     return out
 

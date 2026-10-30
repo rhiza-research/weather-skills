@@ -211,3 +211,44 @@ def test_bad_arrow_options_are_refused(tmp_path, wind):
     _usage_error(
         wind, tmp_path / "e", _uv_gridded([1.0], [1.0]), "--arrow-scale", "0.1", "--arrow-step", "0"
     )
+
+
+def test_arrow_length_is_in_arrow_spacings(tmp_path, wind):
+    # Cells 1° apart; arrows on every 2nd cell, so 2° apart. The arrows' speeds are 8 and
+    # 4 m s-1; their 95th percentile (7.8) spans 1.5 spacings, 3°.
+    ds = _uv_gridded([8.0, 0.0, 4.0, 0.0], [0.0, 0.0, 0.0, 0.0])
+    out, _ = _run(wind, tmp_path, ds, "u10", "v10", "--arrow-length", "1.5", "--arrow-step", "2")
+    scale = 3.0 / np.percentile([8.0, 4.0], 95)
+    x, _ = _arrows(out, 0)
+    np.testing.assert_allclose(x[1] - x[0], 8.0 * scale)
+    x, _ = _arrows(out, 1)
+    np.testing.assert_allclose(x[1] - x[0], 4.0 * scale)
+    assert out["arrow_x"].attrs["arrow_scale"] == f"{scale:.6g} degree per m s-1"
+    assert out["arrow_x"].attrs["arrow_length"] == 1.5
+
+
+def test_arrow_length_at_stations_uses_the_nearest_station(tmp_path, wind):
+    ds = make_point_obs(n_time=1, n_points=3, name="u10")  # stations 0.5° apart in lat and lon
+    ds["u10"].values[:] = 2.0
+    ds["v10"] = ds["u10"] * 0
+    for name in ("u10", "v10"):
+        ds[name].attrs = {"units": "m s-1"}
+    out, _ = _run(wind, tmp_path, ds, "u10", "v10", "--arrow-length", "1")
+    x = out["arrow_x"].isel(time=0).values.reshape(-1, 7)
+    np.testing.assert_allclose(x[:, 1] - x[:, 0], np.hypot(0.5, 0.5))
+
+
+def test_arrow_length_and_scale_are_one_or_the_other(tmp_path, wind):
+    _usage_error(
+        wind, tmp_path, _uv_gridded([1.0], [1.0]), "--arrow-length", "2", "--arrow-scale", "0.1"
+    )
+    calm, _ = _run(
+        wind,
+        tmp_path / "c",
+        _uv_gridded([0.0, 0.0], [0.0, 0.0]),
+        "u10",
+        "v10",
+        "--arrow-length",
+        "2",
+    )
+    assert np.isnan(calm["arrow_x"].values).all()
