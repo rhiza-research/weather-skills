@@ -87,7 +87,7 @@ dataset output.
 
 | Skill | What it does |
 |---|---|
-| `resolve-region` | Resolve a country, multi-country region, ocean box, state/province/county, or landmark to a `--bbox N/W/S/E` (and optional boundary polygon GeoJSON, or with `--units admin_1` every county of a country in one file). |
+| `resolve-region` | Resolve a country, multi-country region, ocean box, state/province/county, or landmark to a `--bbox N/W/S/E` (and optional boundary polygon GeoJSON, or with `--level admin_1` every county of a country in one file). |
 | `resolve-time` | Resolve relative calendar dates ("the last two weeks", `latest`, `now-3d`) to absolute `--start-time`/`--end-time` or `--date`. Latest published day is the fetcher's `--probe-latest`, not this skill. |
 | `inspect-zarr` | Print dims, coordinate values, and a bounded data-variable summary of a Zarr (stdout; no write). Data arrays can be huge — this skill never dumps them in full. |
 | `provenance` | Inspect `weather_skills_history` on a Zarr, figure (PNG/JPEG/GIF/HTML/PDF/SVG), GeoJSON, or CSV/Excel table (DAG lineage, JSON, or a commit-pinned reproduction script). |

@@ -16,7 +16,7 @@ Prints the bounding box of a named place, and can write its outline, or all its 
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py QUERY [--geojson PATH [--units admin_1|admin_2]] [--pad DEG]
+uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py QUERY [--geojson PATH [--level admin_1|admin_2]] [--pad DEG]
 ```
 
 ### Arguments
@@ -27,13 +27,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/resolve.py QUERY [--geojson PATH [--units adm
   - Sub-national key: names lowercased, spaces to `_`, accents stripped, levels joined by `-`. State/province/Kenyan county is `country-admin1` (`kenya-nairobi`, `KEN-nairobi`, `USA-california`); district/sub-county is `country-admin1-admin2` or `country-admin2` (`kenya-nairobi-westlands`, `kenya-westlands`).
   - Anything else is a landmark, looked up once on OpenStreetMap's Nominatim geocoder: `Lake Victoria, Kenya`, `Mount Kenya`.
 - `--geojson` — also write the outline to this path as a one-feature GeoJSON FeatureCollection, creating its folder if needed, with its provenance in a top-level `weather_skills_history` member. An existing file a skill did not write exits 2. Default: not written.
-- `--units` — with `--geojson`: write every unit at this level inside the place instead of its outline, one feature each. `admin_1` takes a country (`KEN` gives Kenya's 47 counties); `admin_2` takes a country or an admin_1 unit (`kenya-nairobi` gives Nairobi's sub-counties). Any other match, or no `--geojson`, exits 2. Default: the outline only.
+- `--level` — with `--geojson`: write every unit at this level inside the place instead of its outline, one feature each. `admin_1` takes a country (`KEN` gives Kenya's 47 counties); `admin_2` takes a country or an admin_1 unit (`kenya-nairobi` gives Nairobi's sub-counties). Any other match, or no `--geojson`, exits 2. Default: the outline only.
 - `--pad` — degrees added on each side of a landmark that is only a point (a peak, a town). Default: `0.25`.
 
 ### Output
 - stdout: one line `N/W/S/E` in decimal degrees, ready for any `--bbox` flag. West > east means the box crosses the 180° meridian (e.g. Russia, Fiji).
 - `--geojson`: feature properties `iso3`, `name`, `region_name`, `level` (`country`, `region`, `custom`, `admin_1`, `admin_2`, `nominatim`), `country`; countries add `boundary_source`; regions, custom boxes and landmarks add `bbox` (`[N, W, S, E]`).
-- `--units`: one feature per unit with the same properties as a sub-national match (`level` `admin_1` or `admin_2`, `region_name` such as `kenya-nairobi`); stderr gives the count. stdout is still the bbox of the place. `label-group --geojson PATH --property region_name` labels data by them.
+- `--level`: one feature per unit with the same properties as a sub-national match (`level` `admin_1` or `admin_2`, `region_name` such as `kenya-nairobi`); stderr gives the count. stdout is still the bbox of the place. `label-group --geojson PATH --property region_name` labels data by them.
 - stderr names what matched: `nominatim: <display name>` for landmarks, a padding note for points, a warning when a country falls back to the coarse outline.
 
 ### Notes

@@ -65,7 +65,7 @@ _AREA_TYPES = frozenset(
     help="Optional path: write the boundary polygon as GeoJSON",
 )
 @weather_skill.argument(
-    "--units",
+    "--level",
     choices=("admin_1", "admin_2"),
     help=(
         "With --geojson: write every unit at this level inside the place (a country's "
@@ -81,7 +81,7 @@ _AREA_TYPES = frozenset(
         "node, a station) so it becomes an area (default 0.25)."
     ),
 )
-def resolve_region(code, geojson, units, pad, **kwargs):
+def resolve_region(code, geojson, level, pad, **kwargs):
     """Turn a country, region, or place name into a lat/lon bounding box and optional boundary GeoJSON."""
     text = code.strip()
     if not text:
@@ -91,8 +91,8 @@ def resolve_region(code, geojson, units, pad, **kwargs):
             "a sub-national region (e.g. kenya-nairobi), "
             "or a landmark (e.g. 'Nairobi, Kenya')."
         )
-    if units and not geojson:
-        raise UsageError("--units writes GeoJSON; pass --geojson PATH too")
+    if level and not geojson:
+        raise UsageError("--level writes GeoJSON; pass --geojson PATH too")
     if geojson and not provenance.can_replace_output(Path(geojson)):
         raise UsageError(
             f"--geojson {geojson} already exists and was not written by a weather skill, "
@@ -146,29 +146,29 @@ def resolve_region(code, geojson, units, pad, **kwargs):
             }
 
     features = [match]
-    if units:
-        level = match["properties"].get("level")
-        if level == "country":
+    if level:
+        match_level = match["properties"].get("level")
+        if match_level == "country":
             iso3 = match["properties"]["iso3"]
             features = [
-                f for f in level_features(units, (n, w, s, e)) if f["properties"]["iso3"] == iso3
+                f for f in level_features(level, (n, w, s, e)) if f["properties"]["iso3"] == iso3
             ]
-        elif level == "admin_1" and units == "admin_2":
+        elif match_level == "admin_1" and level == "admin_2":
             # admin_2 keys are the admin_1 key plus the unit's own name.
             prefix = match["properties"]["region_name"] + "-"
             features = [
                 f
-                for f in level_features(units, (n, w, s, e))
+                for f in level_features(level, (n, w, s, e))
                 if f["properties"]["region_name"].startswith(prefix)
             ]
         else:
             raise UsageError(
-                f"--units {units} needs a country, or an admin_1 unit for admin_2; "
-                f"{code!r} matched a {level} area"
+                f"--level {level} needs a country, or an admin_1 unit for admin_2; "
+                f"{code!r} matched a {match_level} area"
             )
         if not features:
-            raise DataError(f"geoBoundaries has no {units} units for {code!r}")
-        print(f"{len(features)} {units} units", file=sys.stderr)
+            raise DataError(f"geoBoundaries has no {level} units for {code!r}")
+        print(f"{len(features)} {level} units", file=sys.stderr)
 
     # Write the polygon (guarded) BEFORE printing the bbox, so a failed write
     # never emits a valid-looking bbox to stdout that a caller might consume.
@@ -182,7 +182,7 @@ def resolve_region(code, geojson, units, pad, **kwargs):
         entry = provenance.build_entry(
             "resolve-region",
             _SKILL_VERSION,
-            {"code": code, "units": units, "pad": pad},
+            {"code": code, "level": level, "pad": pad},
             None,
             revision=provenance.resolve_skill_revision(__file__),
         )
