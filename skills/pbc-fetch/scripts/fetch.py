@@ -21,7 +21,7 @@ from weather_skills_core.standard_utils import bbox_subset, ensure_normalized_lo
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.7"
+_SKILL_VERSION = "0.0.8"
 
 _BUCKET = "sheerwater-datalake"
 _PREFIX = "pbc-data"

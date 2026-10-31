@@ -27,7 +27,7 @@ from weather_skills_core.standard_utils import apply_write_encoding, is_transien
 from weather_skills_core.units import precip_amounts_to_rates, stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.7"
+_SKILL_VERSION = "0.0.8"
 
 # NCEI's own HTTPS tree, not the noaa-ghcn-pds S3 mirror: the mirror's by_station
 # files for some first-order stations (e.g. USW00094728, NYC Central Park) stopped

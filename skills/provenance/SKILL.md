@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Inspects a zarr directory, a figure, a GeoJSON, or a CSV/Excel table; reads no credentials and writes nothing.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py *)
 metadata:
-  version: "0.0.6"
+  version: "0.0.7"
   catalog-group: agent-tooling
 ---
 

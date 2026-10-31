@@ -19,7 +19,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset, ureg
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.5"
 
 # Standard gravity (m s-2). Column integral (1/g) ∫ q u dp then has units kg m-1 s-1.
 G = 9.80665
