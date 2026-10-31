@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core>=0.3.3",
 #   "pandas",
 #   "cftime",
 #   "ecmwf-datastores-client==0.4.2",
@@ -40,7 +40,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.4"
 
 # The ADS API base URL is a fixed, public endpoint, not a secret.
 _ADS_URL = "https://ads.atmosphere.copernicus.eu/api"

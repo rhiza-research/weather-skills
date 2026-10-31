@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core>=0.3.3",
 #   "netcdf4",
 #   "pandas",
 #   "requests",
@@ -25,7 +25,7 @@ from weather_skills_core.standard_utils import bbox_subset, require_env
 from weather_skills_core.units import convert_dataarray, stamp_data_interval, to_standard_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.4"
 
 _HOST = "https://api.windbornesystems.com"
 _WM6 = f"{_HOST}/forecasts/v1/wm-6"

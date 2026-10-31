@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core>=0.3.3",
 #   # >=0.3.34 for the IFS Cycle 50r1 (2026-05-12) date-aware oper/scda
 #   # stream fix in Client.patch_stream — older pins misroute 06/18Z runs.
 #   "ecmwf-opendata==0.3.34",
@@ -34,7 +34,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.5"
+_SKILL_VERSION = "0.0.6"
 
 # HRES steps
 _FULL_RUN_STEPS = list(range(0, 144 + 1, 3)) + list(range(150, 360 + 1, 6))

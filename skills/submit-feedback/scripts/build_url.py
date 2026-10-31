@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core>=0.3.3",
 # ]
 # ///
 """Turn a title and body into a prefilled GitHub new-issue link for filing feedback."""
@@ -14,7 +14,7 @@ from urllib.parse import quote
 from weather_skills_core import DataError, UsageError, weather_skill
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.6"
+_SKILL_VERSION = "0.0.7"
 
 # Feedback goes to one of the skill repos: allow-listed, so the caller cannot
 # direct it elsewhere by guessing a slug. Repo name -> its GitHub owner.

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core>=0.3.3",
 #   "gcsfs",
 #   "pandas",
 # ]
@@ -30,7 +30,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.6"
+_SKILL_VERSION = "0.0.7"
 
 _CATALOG_URL = "https://storage.googleapis.com/cmip6/pangeo-cmip6.csv"
 _CF_CONVENTIONS = "CF-1.13"
