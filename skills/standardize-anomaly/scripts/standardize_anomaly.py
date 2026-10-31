@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core>=0.3.3",
 # ]
 # ///
 """Compute a standardized anomaly, (field − mean) / std, from a Zarr and its climatology."""

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core>=0.3.3",
 # ]
 # ///
 """Relabel a forecast by valid date: time = init + step, for one init or many inits at one lead."""
