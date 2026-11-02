@@ -31,9 +31,6 @@ _SKILL_VERSION = "0.0.7"
 
 _SHORT_NAME = "SPL3SMP_E"
 _FILL = -9999.0
-_M09_ROWS = 1624
-_M09_COLS = 3856
-_M09_CELL_M = 9008.055210146
 _GRANULE_DATE_RE = re.compile(r"_(\d{8})_")
 _SM_STANDARD_NAME = "volume_fraction_of_condensed_water_in_soil"
 _SM_UNITS = "m3 m-3"
@@ -62,31 +59,32 @@ def _granule_date(granule) -> date:
     raise ValueError("could not parse a YYYYMMDD date from the granule file name")
 
 
-def _ease2_m09_axes() -> tuple:
-    """Cell-centre latitudes and longitudes of the global EASE-Grid 2.0 9 km grid.
-
-    Granules store latitude/longitude only where a retrieval exists, so rows and
-    columns the overpass missed carry fill. The grid itself is fixed: a
-    cylindrical equal-area projection on WGS84 with true scale at 30 deg, inverted
-    here with Snyder (1987) eq. 3-18.
-    """
+def _reduce_geolocation(lat2d, lon2d, day_iso: str) -> tuple:
+    """Reduce 2-D EASE-Grid lat/lon to 1-D vectors; fail if not row/col-constant."""
     import numpy as np
 
-    a = 6378137.0
-    e = 0.0818191908426215
-    e2 = e * e
-    k0 = np.cos(np.radians(30.0)) / np.sqrt(1.0 - e2 * np.sin(np.radians(30.0)) ** 2)
-    qp = 1.0 - (1.0 - e2) / (2.0 * e) * np.log((1.0 - e) / (1.0 + e))
-
-    y = (_M09_ROWS / 2 - np.arange(_M09_ROWS) - 0.5) * _M09_CELL_M
-    beta = np.arcsin(2.0 * y * k0 / (a * qp))
-    lat = beta + (
-        (e2 / 3 + 31 * e2**2 / 180 + 517 * e2**3 / 5040) * np.sin(2 * beta)
-        + (23 * e2**2 / 360 + 251 * e2**3 / 3780) * np.sin(4 * beta)
-        + (761 * e2**3 / 45360) * np.sin(6 * beta)
-    )
-    lon = -180.0 + (np.arange(_M09_COLS) + 0.5) * 360.0 / _M09_COLS
-    return np.degrees(lat), lon
+    with np.errstate(invalid="ignore"):
+        lat_row_spread = np.nanmax(lat2d, axis=1) - np.nanmin(lat2d, axis=1)
+        lon_col_spread = np.nanmax(lon2d, axis=0) - np.nanmin(lon2d, axis=0)
+    tol = 1e-3
+    max_lat_spread = float(np.nanmax(lat_row_spread)) if lat_row_spread.size else 0.0
+    max_lon_spread = float(np.nanmax(lon_col_spread)) if lon_col_spread.size else 0.0
+    if max_lat_spread > tol or max_lon_spread > tol:
+        raise RuntimeError(
+            f"granule for {day_iso} is not row-constant-lat / col-constant-lon "
+            f"within {tol} deg (max per-row lat spread {max_lat_spread:.5f}, max "
+            f"per-col lon spread {max_lon_spread:.5f}); cannot reduce the 2-D "
+            "EASE-Grid geolocation to 1-D coordinate vectors without distorting it."
+        )
+    lat1d = np.nanmean(lat2d, axis=1)
+    lon1d = np.nanmean(lon2d, axis=0)
+    if not (np.isfinite(lat1d).all() and np.isfinite(lon1d).all()):
+        raise RuntimeError(
+            f"granule for {day_iso} has an all-fill geolocation row/column; "
+            "the reduced 1-D latitude/longitude contains non-finite values and "
+            "cannot be used as coordinate vectors."
+        )
+    return lat1d, lon1d
 
 
 def _slice_from_file(path: str, group: str, day_iso: str, recommended_only: bool):
@@ -163,21 +161,12 @@ def _slice_from_file(path: str, group: str, day_iso: str, recommended_only: bool
     lon2d = np.where(lon2d == _FILL, np.nan, lon2d)
     if np.isnan(lat2d).all() or np.isnan(lon2d).all():
         return None
-    if sm.shape != (_M09_ROWS, _M09_COLS):
-        raise RuntimeError(
-            f"granule for {day_iso} has a {sm.shape} grid; expected the global "
-            f"EASE-Grid 2.0 9 km grid ({_M09_ROWS}, {_M09_COLS})."
-        )
-    lat1d, lon1d = _ease2_m09_axes()
-    tol = 1e-3
-    max_lat_diff = float(np.nanmax(np.abs(lat2d - lat1d[:, None])))
-    max_lon_diff = float(np.nanmax(np.abs(lon2d - lon1d[None, :])))
-    if max_lat_diff > tol or max_lon_diff > tol:
-        raise RuntimeError(
-            f"granule for {day_iso} geolocation departs from the EASE-Grid 2.0 9 km "
-            f"cell centres by up to {max_lat_diff:.5f} deg latitude and "
-            f"{max_lon_diff:.5f} deg longitude (tolerance {tol} deg)."
-        )
+    # Geolocation is fill wherever the overpass made no retrieval; rows and
+    # columns it missed entirely have no coordinate and no data, so drop them.
+    rows = ~np.isnan(lat2d).all(axis=1)
+    cols = ~np.isnan(lon2d).all(axis=0)
+    sm, lat2d, lon2d = sm[rows][:, cols], lat2d[rows][:, cols], lon2d[rows][:, cols]
+    lat1d, lon1d = _reduce_geolocation(lat2d, lon2d, day_iso)
 
     return xr.DataArray(
         sm,
@@ -386,22 +375,23 @@ def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs)
                 raise DataError(f"download returned no local file for the {day_iso} granule.")
             try:
                 da = _slice_from_file(files[0], overpass, day_iso, quality == "recommended")
-                if da is None:
-                    os.remove(files[0])
-                    empty_days.append(day_iso)
-                    continue
-                if bbox is not None:
+            except RuntimeError as exc:
+                raise DataError(str(exc)) from exc
+            # Each global granule is ~690 MB; free the disk before the next day.
+            os.remove(files[0])
+            if da is not None and bbox is not None:
+                try:
                     da = bbox_subset(
                         da.to_dataset(name="soil_moisture"),
                         bbox,
                         lat_dim="latitude",
                         lon_dim="longitude",
                     )["soil_moisture"]
-            except RuntimeError as exc:
-                raise DataError(str(exc)) from exc
-            # Each global granule is ~690 MB; free the disk before the next day.
-            os.remove(files[0])
-            if da.isnull().all():
+                except DataError:
+                    # The overpass missed the whole box: none of its rows or
+                    # columns survive. A malformed bbox raises UsageError instead.
+                    da = None
+            if da is None or da.isnull().all():
                 empty_days.append(day_iso)
                 continue
             day_datasets.append(da.expand_dims(time=[np.datetime64(day_iso)]).to_dataset())
