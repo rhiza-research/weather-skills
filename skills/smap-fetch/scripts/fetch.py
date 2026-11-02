@@ -27,7 +27,7 @@ from weather_skills_core.standard_utils import (
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.6"
+_SKILL_VERSION = "0.0.7"
 
 _SHORT_NAME = "SPL3SMP_E"
 _FILL = -9999.0
@@ -92,6 +92,8 @@ def _slice_from_file(path: str, group: str, day_iso: str, recommended_only: bool
 
     Fill, out-of-valid-range and (with ``recommended_only``) retrievals whose
     ``retrieval_qual_flag`` bit 0 is set (not recommended) become NaN.
+    Returns None when the overpass has no retrievals at all (every geolocation
+    cell is fill), since such a granule carries no grid to read.
     """
     import h5py
     import numpy as np
@@ -157,6 +159,8 @@ def _slice_from_file(path: str, group: str, day_iso: str, recommended_only: bool
     sm = np.where(bad, np.nan, sm)
     lat2d = np.where(lat2d == _FILL, np.nan, lat2d)
     lon2d = np.where(lon2d == _FILL, np.nan, lon2d)
+    if np.isnan(lat2d).all() or np.isnan(lon2d).all():
+        return None
     lat1d, lon1d = _reduce_geolocation(lat2d, lon2d, day_iso)
 
     return xr.DataArray(
@@ -350,6 +354,7 @@ def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs)
         )
 
     day_datasets = []
+    empty_days = []
     with tempfile.TemporaryDirectory(prefix="smap-fetch-") as td:
         for d in present_days:
             day_iso = d.isoformat()
@@ -365,6 +370,10 @@ def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs)
                 raise DataError(f"download returned no local file for the {day_iso} granule.")
             try:
                 da = _slice_from_file(files[0], overpass, day_iso, quality == "recommended")
+                if da is None:
+                    os.remove(files[0])
+                    empty_days.append(day_iso)
+                    continue
                 if bbox is not None:
                     da = bbox_subset(
                         da.to_dataset(name="soil_moisture"),
@@ -377,6 +386,19 @@ def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs)
             # Each global granule is ~690 MB; free the disk before the next day.
             os.remove(files[0])
             day_datasets.append(da.expand_dims(time=[np.datetime64(day_iso)]).to_dataset())
+
+    if empty_days:
+        print(
+            f"WARNING: {len(empty_days)} day(s) have a granule but no {overpass} "
+            f"retrievals anywhere (every geolocation cell is fill): "
+            f"{', '.join(empty_days)}; writing the other day(s) only.",
+            file=sys.stderr,
+        )
+    if not day_datasets:
+        raise DataError(
+            f"no {overpass} retrievals in any granule within {start_iso}..{end_iso}; "
+            "try the other --overpass."
+        )
 
     ds = xr.concat(day_datasets, dim="time")
     _stamp_cf(ds)
