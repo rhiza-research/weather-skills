@@ -50,12 +50,27 @@ class _FakeH5File(dict):
         return False
 
 
-def _fake_h5py(group, suffix, units=b"cm**3/cm**3", empty=False):
-    """A minimal stand-in for h5py exposing one SPL3SMP_E retrieval group."""
-    sm = np.array([[0.10, 0.20, -9999.0], [0.30, 0.60, 0.40]], dtype="float32")
-    qual = np.array([[0, 1, 65534], [0, 0, 8]], dtype="uint16")
-    lat = np.array([[1.0, 1.0, -9999.0], [0.5, 0.5, 0.5]], dtype="float32")
-    lon = np.array([[10.0, 11.0, -9999.0], [10.0, 11.0, 12.0]], dtype="float32")
+# Cell centres of the first EASE-Grid 2.0 9 km rows and columns, as stored in
+# real SPL3SMP_E granules.
+_ROW_LATS = [84.65642, 83.95421]
+_COL_LONS = [-179.95332, -179.85995, -179.7666]
+
+
+def _fake_h5py(group, suffix, units=b"cm**3/cm**3", empty=False, lat_shift=0.0):
+    """A minimal stand-in for h5py exposing one global SPL3SMP_E retrieval group.
+
+    Only a 2x3 block in the grid's top-left corner holds retrievals; every other
+    row and column is fill, as in a granule whose overpass covered part of the globe.
+    """
+    sm = np.full((1624, 3856), -9999.0, dtype="float32")
+    qual = np.full((1624, 3856), 65534, dtype="uint16")
+    lat = np.full((1624, 3856), -9999.0, dtype="float32")
+    lon = np.full((1624, 3856), -9999.0, dtype="float32")
+    sm[:2, :3] = [[0.10, 0.20, -9999.0], [0.30, 0.60, 0.40]]
+    qual[:2, :3] = [[0, 1, 65534], [0, 0, 8]]
+    lat[:2, :3] = np.array(_ROW_LATS)[:, None] + lat_shift
+    lon[:2, :3] = _COL_LONS
+    lat[0, 2] = lon[0, 2] = -9999.0
     if empty:
         # An overpass with no retrievals anywhere: every cell is fill.
         sm[:] = lat[:] = lon[:] = -9999.0
@@ -76,15 +91,33 @@ def test_pm_overpass_reads_pm_suffixed_datasets(mod):
     # Real PM granules name their datasets soil_moisture_pm / latitude_pm / ...
     with patch.dict(sys.modules, {"h5py": _fake_h5py("PM", "_pm")}):
         da = mod._slice_from_file("x.h5", "PM", "2024-06-01", True)
-    assert da.shape == (2, 3)
-    np.testing.assert_allclose(da["latitude"], [1.0, 0.5])
-    np.testing.assert_allclose(da["longitude"], [10.0, 11.0, 12.0])
+    assert da.shape == (1624, 3856)
+    np.testing.assert_allclose(da["latitude"][:2], _ROW_LATS, atol=1e-4)
+    np.testing.assert_allclose(da["longitude"][:3], _COL_LONS, atol=1e-4)
+
+
+def test_partial_swath_keeps_the_full_grid(mod):
+    # Rows and columns the overpass missed have fill geolocation; they still get
+    # their grid coordinates, with NaN soil moisture.
+    with patch.dict(sys.modules, {"h5py": _fake_h5py("PM", "_pm")}):
+        da = mod._slice_from_file("x.h5", "PM", "2026-10-31", True)
+    assert np.isfinite(da["latitude"]).all() and np.isfinite(da["longitude"]).all()
+    assert (np.diff(da["latitude"]) < 0).all() and (np.diff(da["longitude"]) > 0).all()
+    np.testing.assert_allclose(da["latitude"][[811, 812]], [0.03530541, -0.03530541], atol=1e-6)
+    np.testing.assert_allclose(da["longitude"][-1], 179.95332, atol=1e-4)
+    assert np.isnan(da.values[2:, :]).all() and np.isnan(da.values[:, 3:]).all()
+
+
+def test_geolocation_off_the_ease2_grid_is_rejected(mod):
+    with patch.dict(sys.modules, {"h5py": _fake_h5py("AM", "", lat_shift=0.01)}):
+        with pytest.raises(RuntimeError, match="departs from the EASE-Grid 2.0"):
+            mod._slice_from_file("x.h5", "AM", "2024-06-01", True)
 
 
 def test_fill_out_of_range_and_quality_masking(mod):
     with patch.dict(sys.modules, {"h5py": _fake_h5py("AM", "")}):
-        rec = mod._slice_from_file("x.h5", "AM", "2024-06-01", True).values
-        allq = mod._slice_from_file("x.h5", "AM", "2024-06-01", False).values
+        rec = mod._slice_from_file("x.h5", "AM", "2024-06-01", True).values[:2, :3]
+        allq = mod._slice_from_file("x.h5", "AM", "2024-06-01", False).values[:2, :3]
     # -9999 fill and 0.60 (> valid_max 0.5) are NaN, never 0 or kept.
     np.testing.assert_allclose(allq, [[0.10, 0.20, np.nan], [0.30, np.nan, 0.40]], rtol=1e-6)
     # recommended also drops the bit-0 (not recommended) retrieval at 0.20.
@@ -158,7 +191,7 @@ def test_fetch_skips_days_with_no_retrievals(tmp_path, mod, fetch, capsys):
     out = tmp_path / "out.zarr"
 
     granules = []
-    for day in ("20260101", "20260102", "20260103"):
+    for day in ("20260101", "20260102", "20260103", "20260104"):
         granule = MagicMock()
         granule.data_links.return_value = [f"https://example/SPL3SMP_E_{day}_001.h5"]
         granules.append(granule)
@@ -171,8 +204,9 @@ def test_fetch_skips_days_with_no_retrievals(tmp_path, mod, fetch, capsys):
     def fake_slice_from_file(_path, _group, day_iso, _recommended_only):
         if day_iso == "2026-01-02":
             return None
+        values = np.full((2, 2), np.nan) if day_iso == "2026-01-03" else [[0.2, 0.3], [0.4, 0.5]]
         return xr.DataArray(
-            np.array([[0.2, 0.3], [0.4, 0.5]]),
+            np.array(values),
             dims=("latitude", "longitude"),
             coords={"latitude": [1.0, 2.0], "longitude": [10.0, 11.0]},
             name="soil_moisture",
@@ -189,13 +223,14 @@ def test_fetch_skips_days_with_no_retrievals(tmp_path, mod, fetch, capsys):
             "--start-time",
             "2026-01-01",
             "--end-time",
-            "2026-01-03",
+            "2026-01-04",
             "-o",
             str(out),
         )
 
+    # 01-02 has no retrievals anywhere; 01-03 has none inside the requested area.
     ds = xr.open_zarr(out, consolidated=True)
     np.testing.assert_array_equal(
-        ds["time"].values, np.array(["2026-01-01", "2026-01-03"], dtype="datetime64[ns]")
+        ds["time"].values, np.array(["2026-01-01", "2026-01-04"], dtype="datetime64[ns]")
     )
-    assert "no AM retrievals anywhere" in capsys.readouterr().err
+    assert "2 day(s) have a granule but no usable AM retrievals" in capsys.readouterr().err
