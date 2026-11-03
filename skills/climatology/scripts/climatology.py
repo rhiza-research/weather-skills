@@ -7,16 +7,19 @@
 #   "xarray",
 # ]
 # ///
-"""Compute a daily climatology (mean, standard deviation, sample count per calendar day) from a multi-year daily Zarr.
+"""Compute a daily climatology (mean, standard deviation, quantiles, sample count per calendar day) from a multi-year daily Zarr.
 
 Each date maps to its month and day in the 1904 leap-year cycle (366 slots, Feb 29
 only from leap years). One pass over the 366 slots sums values, squares and counts
 over every year; an optional --window pools neighbouring slots (circular across the
-year end) before the mean and the sample standard deviation are taken. The result is
-laid onto --start-time/--end-time like clim-fetch, so it is a drop-in replacement.
+year end) before the mean and the sample standard deviation are taken. Quantiles are
+taken over the same pooled values, and --pool-members adds the ensemble members to
+the samples. The result is laid onto --start-time/--end-time like clim-fetch, so it
+is a drop-in replacement.
 """
 
 import sys
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -53,10 +56,32 @@ def _slot_1904(times) -> np.ndarray:
     default=1,
     help="Odd number of calendar days pooled around each day (default: 1, no pooling).",
 )
-def climatology(ds, start_time, end_time, variable, window, **kwargs):
+@weather_skill.argument(
+    "--quantiles",
+    help="Comma-separated quantiles between 0 and 1 (e.g. 0.333,0.667), written as V_qNN.",
+)
+@weather_skill.argument(
+    "--pool-members",
+    action="store_true",
+    help="Treat ensemble members (number) as extra samples: one climatology for all members.",
+)
+@weather_skill.argument(
+    "--min-fraction",
+    type=float,
+    default=0.0,
+    help="Leave a cell NaN when fewer than this fraction of its possible values exist (default: 0).",
+)
+def climatology(
+    ds, start_time, end_time, variable, window, quantiles, pool_members, min_fraction, **kwargs
+):
     """Compute a daily climatology from a multi-year daily Zarr, laid onto a date range."""
     if window < 1 or window % 2 == 0:
         raise UsageError(f"--window must be a positive odd number of days; got {window}")
+    if not 0 <= min_fraction <= 1:
+        raise UsageError(f"--min-fraction must be between 0 and 1; got {min_fraction}")
+    qs = [float(q) for q in quantiles.split(",")] if quantiles else []
+    if any(not 0 < q < 1 for q in qs):
+        raise UsageError(f"--quantiles must be between 0 and 1 (exclusive); got {quantiles}")
     time_dim = detect_time_dim(ds)
     times = pd.DatetimeIndex(ds[time_dim].values)
     # Dates may be sparse (weekly forecast inits), never closer than a day.
@@ -80,9 +105,15 @@ def climatology(ds, start_time, end_time, variable, window, **kwargs):
     for name in names:
         if name not in ds.data_vars or time_dim not in ds[name].dims:
             raise UsageError(f"--variable {name!r} is not a data variable along {time_dim!r}")
+        if pool_members and "number" not in ds[name].dims:
+            raise UsageError(f"--pool-members: {name!r} has no ensemble member dim 'number'")
+        # On a forecast archive the period describes the lead window in step
+        # (e.g. weekly totals), not the spacing of the init dates in time.
         period = ds[name].attrs.get(AGGREGATION_PERIOD_ATTR)
-        if period is not None and parse_aggregation_period(period) != parse_aggregation_period(
-            "1 day"
+        if (
+            "step" not in ds[name].dims
+            and period is not None
+            and parse_aggregation_period(period) != parse_aggregation_period("1 day")
         ):
             raise UsageError(
                 f"{name!r} holds {period} values; a daily climatology needs daily values. "
@@ -97,33 +128,52 @@ def climatology(ds, start_time, end_time, variable, window, **kwargs):
     ds = dequantify_dataset(ds[names])
     out = xr.Dataset()
     for name in names:
-        da = ds[name].transpose(time_dim, ...)
+        # Samples per date: the members when pooled, otherwise one.
+        if pool_members:
+            da = ds[name].transpose(time_dim, "number", ...)
+        else:
+            da = ds[name].transpose(time_dim, ...).expand_dims("_sample", axis=1)
         units = da.attrs.get("units")
         values = np.asarray(da.values)
-        rest_shape = values.shape[1:]
-        values = values.reshape(len(times), -1)
+        rest_shape = values.shape[2:]
+        values = values.reshape(len(times), values.shape[1], -1)
+        n_cells = values.shape[2]
 
-        # Per-slot sums of values, squares and finite counts over every year.
-        total = np.zeros((366, values.shape[1]))
-        squares = np.zeros((366, values.shape[1]))
-        count = np.zeros((366, values.shape[1]))
+        # Per-slot sums of values, squares, finite counts and possible counts over every year.
+        total = np.zeros((366, n_cells))
+        squares = np.zeros((366, n_cells))
+        count = np.zeros((366, n_cells))
+        possible = np.zeros((366, 1))
         for k in range(366):
-            rows = values[slots == k].astype(np.float64)
+            rows = values[slots == k].reshape(-1, n_cells).astype(np.float64)
             total[k] = np.nansum(rows, axis=0)
             squares[k] = np.nansum(rows**2, axis=0)
             count[k] = np.isfinite(rows).sum(axis=0)
+            possible[k] = len(rows)
 
         # Pool the --window slots around each day, wrapping across the year end.
         total = sum(np.roll(total, shift, axis=0) for shift in range(-half, half + 1))
         squares = sum(np.roll(squares, shift, axis=0) for shift in range(-half, half + 1))
         count = sum(np.roll(count, shift, axis=0) for shift in range(-half, half + 1))
+        possible = sum(np.roll(possible, shift, axis=0) for shift in range(-half, half + 1))
+        enough = (count > 0) & (count >= min_fraction * possible)
 
         with np.errstate(invalid="ignore", divide="ignore"):
-            mean = np.where(count > 0, total / count, np.nan)
+            mean = np.where(enough, total / count, np.nan)
             variance = (squares - count * mean**2) / (count - 1)
-            std = np.where(count > 1, np.sqrt(np.clip(variance, 0, None)), np.nan)
+            std = np.where(enough & (count > 1), np.sqrt(np.clip(variance, 0, None)), np.nan)
 
-        template = da.isel({time_dim: 0}, drop=True)
+        # Quantiles need the pooled values themselves, so only the slots in the output.
+        quant = np.full((366, len(qs), n_cells), np.nan)
+        for k in np.unique(target_slots) if qs else []:
+            in_window = np.isin(slots, (k + np.arange(-half, half + 1)) % 366)
+            rows = values[in_window].reshape(-1, n_cells).astype(np.float64)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN cells stay NaN
+                quant[k] = np.nanquantile(rows, qs, axis=0)
+        quant = np.where(enough[:, None, :], quant, np.nan)
+
+        template = da.isel({time_dim: 0, da.dims[1]: 0}, drop=True)
         dims = (time_dim, *template.dims)
         coords = {**template.coords, time_dim: target}
         shape = (len(target), *rest_shape)
@@ -140,6 +190,14 @@ def climatology(ds, start_time, end_time, variable, window, **kwargs):
             coords=coords,
             attrs={**attrs, "units": units},
         )
+        for i, q in enumerate(qs):
+            label = f"{q * 100:02g}".replace(".", "p")
+            out[f"{name}_q{label}"] = xr.DataArray(
+                quant[target_slots, i].reshape(shape),
+                dims=dims,
+                coords=coords,
+                attrs={**attrs, "units": units, "quantile": q},
+            )
         # A coordinate, like aggregate-temporal's coverage: as a data variable
         # its name ("precip_count") would read as a precip field downstream.
         out = out.assign_coords(
@@ -168,6 +226,8 @@ def climatology(ds, start_time, end_time, variable, window, **kwargs):
         climatology_start_time=times[0].strftime("%Y-%m-%d"),
         climatology_end_time=times[-1].strftime("%Y-%m-%d"),
         climatology_window_days=window,
+        climatology_pooled_members=int(pool_members),
+        climatology_min_fraction=min_fraction,
     )
     stamp_cf_attrs(out)
     return stamp_data_interval(out, period="1 day")

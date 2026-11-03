@@ -188,3 +188,122 @@ def test_single_year_is_refused(tmp_path, mod, capsys):
             "2026-01-02",
         )
     assert "at least two years" in capsys.readouterr().err
+
+
+def _members(tmp_path, attrs):
+    """Two-member archive of daily inits, 2019-2021: member 0 is the year minus 2019, member 1 is 10 more."""
+    inits = pd.date_range("2019-01-01", "2021-12-31", freq="D")
+    values = np.empty((len(inits), 2, 1, 1, 1))
+    values[:, 0] = (inits.year - 2019).to_numpy()[:, None, None, None]
+    values[:, 1] = values[:, 0] + 10
+    ds = xr.Dataset(
+        {"precip": (("time", "number", "step", "latitude", "longitude"), values)},
+        coords={
+            "time": inits,
+            "number": [0, 1],
+            "step": np.array([7], dtype="timedelta64[D]").astype("timedelta64[ns]"),
+            "latitude": [0.0],
+            "longitude": [36.0],
+        },
+    )
+    ds["precip"].attrs.update(attrs)
+    ds.to_zarr(tmp_path / "members.zarr", mode="w")
+    return tmp_path / "members.zarr"
+
+
+def test_quantiles_are_taken_over_the_pooled_values(tmp_path, mod):
+    times = pd.date_range("2019-01-01", "2021-12-31", freq="D")
+    ds = make_gridded(n_time=len(times), lats=(0.0,), lons=(36.0,), start="2019-01-01")
+    ds["precip"].values[:] = times.day_of_year.to_numpy()[:, None, None] % 3  # 0, 1, 2 in turn
+    ds["precip"].values[times.year == 2021] += 100
+    ds.to_zarr(tmp_path / "in.zarr", mode="w")
+    out = _run(
+        mod,
+        tmp_path,
+        tmp_path / "in.zarr",
+        "--start-time",
+        "2026-06-10",
+        "--end-time",
+        "2026-06-10",
+        "--window",
+        "3",
+        "--quantiles",
+        "0.05,0.5,0.333",
+    )
+    pooled = np.concatenate(
+        [
+            ds["precip"].sel(time=f"{y}-06-{d:02d}").values.ravel()
+            for y in (2019, 2020, 2021)
+            for d in (9, 10, 11)
+        ]
+    )
+    assert out["precip_q05"].item() == pytest.approx(np.quantile(pooled, 0.05))
+    assert out["precip_q50"].item() == pytest.approx(np.quantile(pooled, 0.5))
+    assert out["precip_q33p3"].item() == pytest.approx(np.quantile(pooled, 0.333))
+    assert out["precip_q33p3"].attrs["quantile"] == pytest.approx(0.333)
+    assert out["precip_q50"].attrs["units"] == "mm day-1"
+
+
+def test_pool_members_treats_members_as_samples(tmp_path, mod):
+    out = _run(
+        mod,
+        tmp_path,
+        _members(tmp_path, {"units": "mm day-1", "aggregation_period": "1 day"}),
+        "--start-time",
+        "2026-06-10",
+        "--end-time",
+        "2026-06-10",
+        "--pool-members",
+        "--quantiles",
+        "0.5",
+    )
+    assert "number" not in out["precip_avg"].dims
+    assert out["precip_avg"].item() == pytest.approx(6.0)  # mean of 0, 1, 2, 10, 11, 12
+    assert out["precip_q50"].item() == pytest.approx(6.0)
+    assert out["precip_count"].item() == 6
+    assert out.attrs["climatology_pooled_members"] == 1
+
+
+def test_min_fraction_masks_cells_with_too_few_values(tmp_path, mod):
+    times = pd.date_range("2019-01-01", "2021-12-31", freq="D")
+    ds = make_gridded(n_time=len(times), lats=(0.0, 0.1), lons=(36.0,), start="2019-01-01")
+    ds["precip"].values[:] = 5.0
+    ds["precip"].values[times.year != 2020, 1] = np.nan  # second cell: one year of three
+    ds.to_zarr(tmp_path / "gappy.zarr", mode="w")
+    args = ["--start-time", "2026-06-01", "--end-time", "2026-06-01", "--quantiles", "0.5"]
+    out = _run(mod, tmp_path, tmp_path / "gappy.zarr", *args, "--min-fraction", "0.5")
+    assert out["precip_avg"].values[0, :, 0] == pytest.approx([5.0, np.nan], nan_ok=True)
+    assert np.isnan(out["precip_q50"].values[0, 1, 0])
+    assert out["precip_count"].values[0, :, 0].tolist() == [3, 1]  # counts are never masked
+    out = _run(mod, tmp_path, tmp_path / "gappy.zarr", *args, "--min-fraction", "0.3")
+    assert out["precip_avg"].values[0, :, 0] == pytest.approx([5.0, 5.0])
+
+
+def test_multi_day_lead_windows_are_accepted_on_forecast_archives(tmp_path, mod):
+    """aggregation_period on a step dim is the lead window, not the init spacing."""
+    out = _run(
+        mod,
+        tmp_path,
+        _members(tmp_path, {"units": "mm", "aggregation_period": "7 day"}),
+        "--start-time",
+        "2026-06-10",
+        "--end-time",
+        "2026-06-10",
+    )
+    assert out["precip_avg"].sel(number=1).values.ravel() == pytest.approx([11.0])
+    assert out["precip_avg"].attrs["aggregation_period"] == "7 day"
+
+
+def test_pool_members_needs_a_member_dim(tmp_path, mod, capsys):
+    with pytest.raises(SystemExit):
+        _run(
+            mod,
+            tmp_path,
+            _record(tmp_path),
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "--pool-members",
+        )
+    assert "no ensemble member dim" in capsys.readouterr().err
