@@ -34,20 +34,23 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/online_ensemble.py --forecast FC.zarr --obs O
 ### Output
 - The forecast variable: the weighted sum of the experts for each round, in the forecast's units. NaN where any expert is NaN.
 - `weight(time, model)` — each expert's weight for each round, summing to 1. The weights for the newest rounds use only obs already available when those forecasts were issued.
-- `expert_rmse(time, model)` and `ensemble_rmse(time)` — each round's RMSE over its cells, cos-latitude weighted on grids. NaN on rounds without obs.
-- Stdout prints the mean RMSE of the ensemble and each expert over the scored rounds, the mean regret (ensemble mean RMSE minus the best single expert's; negative means the blend beat every expert), and the newest round's weights. The same text is stamped as `online_ensemble_summary`.
+- `expert_rmse(time, model)` and `ensemble_rmse(time)` — each round's RMSE over its cells, cos-latitude weighted on grids. NaN on rounds without obs, and for an expert in rounds it sits out.
+- Stdout prints the mean RMSE of the ensemble and each expert over the scored rounds, the mean regret (the blend's RMSE minus the best expert's, averaged over the rounds that expert took part in; negative means the blend beat every expert), and the newest round's weights. The same text is stamped as `online_ensemble_summary`.
 
 ### Notes
 - Stack experts first. For each model: `aggregate-temporal --time-dim step` to the round's window (e.g. `--period daily`), `select --dim step` the same lead, `step-to-time`, and `summarize-dim --dim number --method mean` when the models have different member counts. Then `coarsen` them onto one grid and `concat --dim model --coords a,b,c`. A forecast `step` dim exits 2.
 - `concat` may sort the `model` labels, so read weights by label, not by input order.
 - Rounds are counted by position along `time`, so space them evenly.
-- The loss of a round is the RMSE over the cells where the obs and every expert are finite. An expert with no data in a round exits 2.
+- The loss of a round is the RMSE over the cells where the obs and every expert in that round are finite.
+- An expert with no data in a round (all NaN) sits that round out: it gets weight 0 there, and the blend uses the other experts' weights scaled up to sum to 1. A round with no expert at all exits 2.
+- While an expert sits out it is scored as the blend of the others, so it gains or loses no ground (the sleeping-experts rule). For `dorm` and `dormplus` the others' weights are then exactly those of a run without it.
+- An expert joins in its first round with data, at the mean weight of the experts already in. From then on it learns like the others. stderr notes each join. An expert with no data yet is noted and joins once it has data, so models can be stacked before their archives start: `concat` the models and leave the rounds before a model's archive starts all NaN.
 - Rounds after the last obs are forecast but not scored: the last `delay` rounds are the live forecast. Obs missing for a round before the last scored round exits 2, since the learner can never get that round's feedback.
-- Ensemble `number` is averaged first. Obs are converted to the forecast's units; incompatible units exit 2.
+- Ensemble `number` is averaged first; a NaN member leaves that cell NaN for that expert. Obs are converted to the forecast's units; incompatible units exit 2.
 - Weights start uniform and stay uniform until the first feedback arrives, `delay` rounds in.
 
 ### Resuming from a state file
-- The state file holds everything the learner needs to continue: its internal state, the rounds still waiting on obs and the weights they were given, and the gradients the hint is built from. A resumed run gives exactly the weights one run over the whole record would.
+- The state file holds everything the learner needs to continue: its internal state, the rounds still waiting on obs and the weights they were given, the gradients the hint is built from, and which experts have joined. A resumed run gives exactly the weights one run over the whole record would.
 - `--forecast` must include the rounds the state is still waiting on (the last `delay` rounds of the earlier run) and the new rounds after them. Passing the whole archive again is fine: rounds the earlier run already finished are skipped, with a note on stderr. A waiting round missing from `--forecast` exits 2.
 - `--obs` needs the obs for the waiting rounds and the new ones, as in a single run.
 - The new rounds must follow on from the earlier run at the same spacing, since `--delay` counts rounds across runs.

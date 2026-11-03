@@ -221,3 +221,65 @@ def test_state_needs_waiting_rounds(tmp_path, ensemble_fn):
     with pytest.raises(SystemExit) as exc:
         _run(ensemble_fn, later, obs, tmp_path / "b.zarr", "--delay", "3", "--state-in", str(state))
     assert exc.value.code == 2
+
+
+def _late_good(tmp_path, join=10):
+    """The good expert has no forecasts before round `join`."""
+    fc, obs = _inputs(tmp_path)
+    ds = xr.open_zarr(fc, consolidated=True).load()
+    ds["precip"].loc[{"model": "good"}] = (
+        ds["precip"].sel(model="good").where(ds["time"] >= ds["time"][join])
+    )
+    return write_zarr(ds, tmp_path / "fc_late.zarr"), obs
+
+
+@pytest.mark.parametrize("learner", ["dormplus", "dorm", "adahedged", "dub"])
+def test_expert_joins_when_it_comes_online(tmp_path, ensemble_fn, learner):
+    fc, obs = _late_good(tmp_path)
+    ds = _run(ensemble_fn, fc, obs, tmp_path / "out.zarr", "--delay", "3", "--learner", learner)
+
+    w = ds["weight"]
+    np.testing.assert_allclose(w.sum("model"), 1.0)
+    np.testing.assert_array_equal(w.sel(model="good").isel(time=slice(0, 10)), 0.0)
+    # It joins near the mean weight of the experts already in, not at zero or all.
+    assert 0.15 < float(w.sel(model="good").isel(time=10)) < 0.6
+    assert str(w.isel(time=-1).idxmax("model").values) == "good"
+    assert np.isfinite(ds["precip"]).all()
+    assert np.isnan(ds["expert_rmse"].sel(model="good").isel(time=slice(0, 10))).all()
+    assert np.isfinite(ds["expert_rmse"].sel(model="good").isel(time=slice(10, None))).all()
+
+
+@pytest.mark.parametrize("learner", ["dormplus", "dorm"])
+@pytest.mark.parametrize("hint", ["recent_g", "mean_g", "none"])
+def test_weights_before_join_ignore_the_absent_expert(tmp_path, ensemble_fn, learner, hint):
+    """Until it joins, regret matching weighs the others as if it were not in the stack."""
+    fc, obs = _late_good(tmp_path)
+    opts = ("--delay", "3", "--learner", learner, "--hint", hint)
+    ds = _run(ensemble_fn, fc, obs, tmp_path / "out.zarr", *opts)
+
+    two = xr.open_zarr(fc, consolidated=True).sel(model=["biased", "noisy"])
+    fc_two = write_zarr(two, tmp_path / "fc_two.zarr")
+    alone = _run(ensemble_fn, fc_two, obs, tmp_path / "two.zarr", *opts)
+    np.testing.assert_allclose(
+        ds["weight"].sel(model=["biased", "noisy"]).isel(time=slice(0, 10)),
+        alone["weight"].isel(time=slice(0, 10)),
+        atol=1e-12,
+    )
+
+
+@pytest.mark.parametrize("learner", ["dormplus", "dorm", "adahedged", "dub"])
+@pytest.mark.parametrize("split", [8, 12])
+def test_resume_across_a_join(tmp_path, ensemble_fn, learner, split):
+    fc, obs = _late_good(tmp_path)
+    opts = ("--delay", "3", "--learner", learner)
+    full = _run(ensemble_fn, fc, obs, tmp_path / "full.zarr", *opts)
+
+    first = write_zarr(
+        xr.open_zarr(fc, consolidated=True).isel(time=slice(0, split)), tmp_path / "first.zarr"
+    )
+    state = tmp_path / "state.json"
+    _run(ensemble_fn, first, obs, tmp_path / "a.zarr", *opts, "--state-out", str(state))
+    ds = _run(ensemble_fn, fc, obs, tmp_path / "b.zarr", *opts, "--state-in", str(state))
+    np.testing.assert_allclose(
+        ds["weight"].values, full["weight"].isel(time=slice(split - 3, None)).values, atol=1e-12
+    )

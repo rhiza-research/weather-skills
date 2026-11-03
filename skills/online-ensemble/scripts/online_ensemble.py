@@ -204,15 +204,16 @@ def online_ensemble(
         )
 
     labels = np.datetime_as_string(times, unit="D") if times.dtype.kind == "M" else times
-    for t in range(n_round):
-        missing = [m for i, m in enumerate(models) if not np.isfinite(X[t, :, i]).any()]
-        if missing:
-            raise UsageError(
-                f"--forecast has no data for {missing} at {labels[t]}; every expert needs a "
-                "forecast for every round."
-            )
-    # Cells scored in each round: obs and every expert finite.
-    valid = np.isfinite(X).all(axis=2) & np.isfinite(Y)
+    # An expert with no data in a round sits that round out.
+    present = np.isfinite(X).any(axis=1)
+    empty_rounds = [str(labels[t]) for t in range(n_round) if not present[t].any()]
+    if empty_rounds:
+        raise UsageError(f"--forecast has no expert with data for rounds {empty_rounds}.")
+    never = [m for i, m in enumerate(models) if not present[:, i].any()]
+    if never:
+        print(f"Note: {never} have no data yet; they join when they do.", file=sys.stderr)
+    # Cells scored in each round: obs and every expert in that round finite.
+    valid = (np.isfinite(X) | ~present[:, None, :]).all(axis=2) & np.isfinite(Y)
     scored = valid.any(axis=1)
     if not scored.any():
         raise UsageError(
@@ -228,21 +229,38 @@ def online_ensemble(
             "from --forecast or supply their obs."
         )
 
-    def rmse(w, Xc, yc, ac):
-        return float(np.sqrt(np.sum(ac * (Xc @ w - yc) ** 2)))
+    def round_weights(w, on):
+        """The play w spread over the experts in the round: the others' share is dropped."""
+        if w[on].sum() > 0:
+            return w[on] / w[on].sum()
+        return np.full(on.sum(), 1 / on.sum())
 
-    def rmse_grad(w, Xc, yc, ac):
-        err = Xc @ w - yc
+    def rmse(w, Xc, yc, ac, on):
+        return float(np.sqrt(np.sum(ac * (Xc @ round_weights(w, on) - yc) ** 2)))
+
+    def rmse_grad(w, Xc, yc, ac, on):
+        wp = round_weights(w, on)
+        err = Xc @ wp - yc
         loss = np.sqrt(np.sum(ac * err**2))
+        g = np.zeros(n_model)
         if np.isclose(loss, 0.0):
-            return np.zeros(n_model)
-        return Xc.T @ (ac * err) / loss
+            return g
+        g[on] = Xc.T @ (ac * err) / loss
+        # An expert sitting the round out is scored as the blend of those in it, so it
+        # gains or loses no regret (sleeping experts).
+        g[~on] = wp @ g[on]
+        return g
 
     # Loss of each scored round as a function of the play w, as poold expects.
     losses = {}
     for t in np.flatnonzero(scored):
-        cells = valid[t]
-        args = {"Xc": X[t, cells], "yc": Y[t, cells], "ac": area[cells] / area[cells].sum()}
+        cells, on = valid[t], present[t]
+        args = {
+            "Xc": X[t][np.ix_(cells, on)],
+            "yc": Y[t, cells],
+            "ac": area[cells] / area[cells].sum(),
+            "on": on,
+        }
         losses[round_no[t]] = {
             "fun": lambda w, a=args: rmse(w, **a),
             "grad": lambda w, a=args: rmse_grad(w, **a),
@@ -272,15 +290,36 @@ def online_ensemble(
         g_last = np.array(state["hint_grads"]["last"])
         g_sum = np.array(state["hint_grads"]["sum"])
         g_n = state["hint_grads"]["count"]
+        joined = [models.index(m) for m in state["joined"]]
+    else:
+        joined = []
     # DORM and DORM+ play in regret space, so their hints are regrets; AdaHedgeD and
     # DUB take gradient hints.
     regret_hint = learner in ("dorm", "dormplus")
     with warnings.catch_warnings():
         # AdaHedgeD divides by a zero hint error when a hint is exact.
         warnings.simplefilter("ignore", RuntimeWarning)
-        for t in round_no:
+        local = {t: j for j, t in enumerate(round_no)}
+        for j, t in enumerate(round_no):
             if t < ol.t:
                 continue  # played in an earlier run
+            # An expert's first round: start it at the mean weight of those already in,
+            # by setting its learner state to their mean.
+            new = [i for i in np.flatnonzero(present[j]) if i not in joined]
+            if joined and new:
+                if learner == "dormplus":
+                    ol.p[new] = ol.p[joined].mean()
+                elif learner == "dorm":
+                    ol.regret[new] = np.maximum(0.0, ol.regret[joined]).mean()
+                elif np.isclose(ol.lam, 0.0):
+                    ol.theta[new] = ol.theta[joined].min()
+                else:
+                    th = ol.theta[joined]
+                    ol.theta[new] = th.min() - ol.lam * np.log(
+                        np.mean(np.exp(-(th - th.min()) / ol.lam))
+                    )
+                print(f"Note: {[models[i] for i in new]} join at {labels[j]}.", file=sys.stderr)
+            joined += [int(i) for i in new]
             os_times = sorted(ol.get_outstanding())
             losses_fb = [(s, losses[s]) for s in os_times if s + delay <= t and s in losses]
             ol.record_losses(losses_fb)
@@ -294,20 +333,26 @@ def online_ensemble(
                 g_tilde = g_last if hint == "recent_g" else g_sum / g_n
                 h_vec = np.zeros(n_model)
                 for s in pending:
+                    # Experts sitting round s out are hinted as the blend, as in its loss.
+                    on, w_s = present[local[s]], ol.get_play(s)
+                    g_s = g_tilde.copy()
+                    g_s[~on] = round_weights(w_s, on) @ g_tilde[on]
                     if regret_hint:
-                        h_vec += loss_regret(g_tilde, ol.get_play(s), ol.groups)
+                        h_vec += loss_regret(g_s, w_s, ol.groups)
                     else:
-                        h_vec += g_tilde
+                        h_vec += g_s
                 h = {"grad": lambda w, h_vec=h_vec: h_vec}
             ol.update_and_play(losses_fb, hint=h)
 
-    weights = np.array([ol.history.play_history[t] for t in round_no])
+    weights = np.zeros((n_round, n_model))
+    for j, t in enumerate(round_no):
+        weights[j, present[j]] = round_weights(ol.history.play_history[t], present[j])
     expert_rmse = np.full((n_round, n_model), np.nan)
     ensemble_rmse = np.full(n_round, np.nan)
     for t in np.flatnonzero(scored):
         loss = losses[round_no[t]]
         ensemble_rmse[t] = loss["fun"](weights[t])
-        for i in range(n_model):
+        for i in np.flatnonzero(present[t]):
             expert_rmse[t, i] = loss["fun"](np.eye(n_model)[i])
 
     if state_out:
@@ -323,6 +368,7 @@ def online_ensemble(
             "hint": hint,
             "delay": delay,
             "models": models,
+            "joined": [models[i] for i in joined],
             "last_round": keys[-1],
             "waiting": {label[s]: s for s in waiting},
             "hint_grads": {"last": g_last.tolist(), "sum": g_sum.tolist(), "count": g_n},
@@ -363,7 +409,9 @@ def online_ensemble(
         coords={"time": fc["time"], model_dim: fc[model_dim]},
         attrs={"long_name": "Online ensemble weight", "units": "1"},
     )
-    ens = (fc * weight).sum(model_dim, skipna=False)
+    # Experts sitting a round out carry zero weight there; their NaNs must not blank it.
+    in_round = xr.DataArray(present, dims=("time", model_dim), coords=weight.coords)
+    ens = (fc.where(in_round, 0.0) * weight).sum(model_dim, skipna=False)
     ens.attrs = dict(forecast[fc_name].attrs)
     units = fc.attrs.get("units")
     if units:
@@ -389,9 +437,12 @@ def online_ensemble(
     )
 
     u = f" {units}" if units else ""
-    mean_expert = np.nanmean(expert_rmse, axis=0)
-    # Mean per scored round, so it reads against the mean RMSEs.
-    regret = np.nanmean(ensemble_rmse) - mean_expert.min()
+    with warnings.catch_warnings():
+        # An expert with no scored rounds yet has no mean (NaN).
+        warnings.simplefilter("ignore", RuntimeWarning)
+        mean_expert = np.nanmean(expert_rmse, axis=0)
+        # Mean per scored round, against each expert over the rounds it took part in.
+        regret = np.nanmin(np.nanmean(ensemble_rmse[:, None] - expert_rmse, axis=0))
     summary = (
         f"{learner} + {hint} hint, delay {delay}: {n_round} rounds, {int(scored.sum())} scored. "
         f"Mean RMSE ensemble {np.nanmean(ensemble_rmse):.3g}{u}, "
