@@ -137,8 +137,8 @@ def test_max_lead_0_keeps_a_step_dim(mod, monkeypatch, tmp_path):
     assert xr.open_zarr(out).sizes["step"] == 1
 
 
-def test_max_lead_fetches_one_more_step_for_tp(mod, monkeypatch, tmp_path):
-    # tp turns into rates over [step, next step) and drops its last step, so
+def test_max_lead_fetches_one_more_step_for_precip(mod, monkeypatch, tmp_path):
+    # precip turns into rates over [step, next step) and drops its last step, so
     # --max-lead 0 must still return the 0-3 h rate.
     requests = []
     _fake_opendata(monkeypatch, lambda source, request, target: requests.append(request))
@@ -165,9 +165,20 @@ def test_max_lead_fetches_one_more_step_for_tp(mod, monkeypatch, tmp_path):
         str(out),
     )
     assert requests[0]["step"] == [0, 3]
+    assert requests[0]["param"] == ["tp"]
     import xarray as xr
 
-    assert xr.open_zarr(out).sizes["step"] == 1
+    written = xr.open_zarr(out)
+    assert written.sizes["step"] == 1
+    assert list(written.data_vars) == ["precip"]
+    assert written["precip"].attrs["units"] == "mm day-1"
+
+
+def test_resolve_variables_precip_names(mod):
+    assert mod._resolve_variables(None) == ["precip"]
+    for name in ("precip", "tp", "precipitation"):
+        assert mod._resolve_variables([name]) == ["precip"]
+    assert list(mod.VARIABLES)[0] == "precip"
 
 
 def test_max_lead_parsing(mod):

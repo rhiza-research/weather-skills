@@ -88,8 +88,11 @@ def test_unknown_variable_exits_2(tmp_path, fetch):
 
 
 def test_resolve_variables_default_and_aliases(mod):
-    assert mod._resolve_variables(None) == ["tp"]
-    assert mod._resolve_variables(["t2m", "tp", "t2m"]) == ["t2m", "tp"]
+    assert mod._resolve_variables(None) == ["precip"]
+    assert mod._resolve_variables(["t2m", "precip", "t2m"]) == ["t2m", "precip"]
+    assert mod._resolve_variables(["tp"]) == ["precip"]
+    assert mod._resolve_variables(["precipitation"]) == ["precip"]
+    assert mod._resolve_variables(["total_precipitation"]) == ["precip"]
     assert mod._resolve_variables(["2_m_temperature"]) == ["t2m"]
     assert mod._resolve_variables(["sst"]) == ["sst"]
     assert mod._resolve_variables(["wtmp"]) == ["sst"]
@@ -99,18 +102,18 @@ def test_resolve_variables_default_and_aliases(mod):
 
 
 def test_resolve_variables_space_comma_and_repeated_flags(mod):
-    """One call can take `-v tp t2m`, `-v tp -v t2m`, or `-v tp,t2m`."""
-    assert mod._resolve_variables([["tp", "t2m"]]) == ["tp", "t2m"]
-    assert mod._resolve_variables([["tp"], ["t2m"]]) == ["tp", "t2m"]
-    assert mod._resolve_variables(["tp,t2m"]) == ["tp", "t2m"]
-    assert mod._resolve_variables([["tp,t2m", "sst"]]) == ["tp", "t2m", "sst"]
+    """One call can take `-v precip t2m`, `-v precip -v t2m`, or `-v precip,t2m`."""
+    assert mod._resolve_variables([["precip", "t2m"]]) == ["precip", "t2m"]
+    assert mod._resolve_variables([["precip"], ["t2m"]]) == ["precip", "t2m"]
+    assert mod._resolve_variables(["precip,t2m"]) == ["precip", "t2m"]
+    assert mod._resolve_variables([["tp,t2m", "sst"]]) == ["precip", "t2m", "sst"]
 
 
 def test_parser_accepts_space_separated_variables(fetch):
     args = fetch.parser.parse_args(
-        ["--date", "2026-01-01", "--bbox", "3/10/0/13", "-v", "tp", "t2m", "-o", "out.zarr"]
+        ["--date", "2026-01-01", "--bbox", "3/10/0/13", "-v", "precip", "t2m", "-o", "out.zarr"]
     )
-    assert args.variable == [["tp", "t2m"]]
+    assert args.variable == [["precip", "t2m"]]
     args = fetch.parser.parse_args(
         [
             "--date",
@@ -118,19 +121,19 @@ def test_parser_accepts_space_separated_variables(fetch):
             "--bbox",
             "3/10/0/13",
             "-v",
-            "tp",
+            "precip",
             "-v",
             "t2m",
             "-o",
             "out.zarr",
         ]
     )
-    assert args.variable == [["tp"], ["t2m"]]
+    assert args.variable == [["precip"], ["t2m"]]
 
 
 def test_variables_most_used_first(mod):
     names = list(mod.VARIABLES)
-    assert names[:3] == ["tp", "t2m", "sst"]
+    assert names[:3] == ["precip", "t2m", "sst"]
     assert "skt" in names
     assert "ocu" in names
     assert "gh" in names
@@ -198,17 +201,17 @@ def test_build_request_potential_vorticity(mod):
 
 
 def test_group_pressure_separate_from_surface(mod):
-    groups = dict(mod._group_for_request(["tp", "t", "q"]))
+    groups = dict(mod._group_for_request(["precip", "t", "q"]))
     assert len(groups) == 3
 
 
 def test_group_same_family_stays_one_request(mod):
-    groups = dict(mod._group_for_request(["t2m", "sst", "tp"]))
+    groups = dict(mod._group_for_request(["t2m", "sst", "precip"]))
     assert len(groups) == 2
     daily = next(names for key, names in groups.items() if key[0] == "daily")
     instant = next(names for key, names in groups.items() if key[0] == "instant")
     assert daily == ["t2m", "sst"]
-    assert instant == ["tp"]
+    assert instant == ["precip"]
 
 
 def test_build_request_multiple_daily_variables(mod):
@@ -248,11 +251,11 @@ def test_split_wrapped_area(mod):
     assert wrapped == [[3.0, 170.0, 0.0, 180.0], [3.0, -180.0, 0.0, -170.0]]
 
 
-def test_standardize_mixed_tp_and_t2m(mod):
+def test_standardize_mixed_precip_and_t2m(mod):
     steps = np.array([np.timedelta64(d, "D") for d in (0, 1, 2)])
     ds = xr.Dataset(
         {
-            "tp": (("step", "latitude"), np.array([[0.0, 0.0], [2.0, 2.0], [5.0, 5.0]])),
+            "precip": (("step", "latitude"), np.array([[0.0, 0.0], [2.0, 2.0], [5.0, 5.0]])),
             "t2m": (
                 ("step", "latitude"),
                 np.array([[280.0, 281.0], [282.0, 283.0], [284.0, 285.0]]),
@@ -264,7 +267,7 @@ def test_standardize_mixed_tp_and_t2m(mod):
             "latitude": [1.0, 2.0],
         },
     )
-    ds["tp"].attrs.update(units="kg m-2")
+    ds["precip"].attrs.update(units="kg m-2")
     ds["t2m"].attrs.update(units="K")
     out = mod._standardize(ds)
     assert out.sizes["step"] == 2
@@ -272,8 +275,8 @@ def test_standardize_mixed_tp_and_t2m(mod):
         np.asarray(out["step"].values).astype("timedelta64[D]"),
         np.array([0, 1], dtype="timedelta64[D]"),
     )
-    assert out["tp"].attrs["units"] == "mm day-1"
-    np.testing.assert_allclose(out["tp"].values, [[2.0, 2.0], [3.0, 3.0]])
+    assert out["precip"].attrs["units"] == "mm day-1"
+    np.testing.assert_allclose(out["precip"].values, [[2.0, 2.0], [3.0, 3.0]])
     assert out["t2m"].attrs["units"] == "degree_Celsius"
     np.testing.assert_allclose(
         out["t2m"].values,
@@ -368,10 +371,10 @@ def _catalog_pressure_ds(*, n_lead=3):
 
 
 def test_catalog_covers_mapped_fields_from_2026(mod):
-    assert mod._catalog_covers(date(2026, 1, 1), ["tp", "t2m", "t"])
-    assert not mod._catalog_covers(date(2025, 12, 31), ["tp"])
+    assert mod._catalog_covers(date(2026, 1, 1), ["precip", "t2m", "t"])
+    assert not mod._catalog_covers(date(2025, 12, 31), ["precip"])
     assert not mod._catalog_covers(date(2026, 1, 1), ["pv"])
-    assert not mod._catalog_covers(date(2026, 1, 1), ["tp", "mx2t6"])
+    assert not mod._catalog_covers(date(2026, 1, 1), ["precip", "mx2t6"])
 
 
 def test_drop_empty_lead0_shifts_when_all_nan(mod):
@@ -390,7 +393,7 @@ def test_drop_empty_lead0_keeps_instant_fields(mod):
     assert out.sizes["lead_time"] == 3
 
 
-def test_catalog_fetch_writes_tp_without_creds(tmp_path, mod, fetch):
+def test_catalog_fetch_writes_precip_without_creds(tmp_path, mod, fetch):
     out = tmp_path / "out.zarr"
     env = {
         k: v
@@ -412,10 +415,10 @@ def test_catalog_fetch_writes_tp_without_creds(tmp_path, mod, fetch):
 
     assert Path(out).exists()
     written = xr.open_zarr(out, consolidated=True)
-    assert "tp" in written
+    assert "precip" in written
     assert "precipitation_surface" not in written
     assert written.attrs.get("weather_skills_source") == "ecmwf-s2s"
-    assert written["tp"].attrs.get("units") == "mm day-1"
+    assert written["precip"].attrs.get("units") == "mm day-1"
     assert written.sizes["step"] == 2
     assert "number" in written.dims
     assert load_history(out)[-1]["skill"] == "ecmwf-fetch"
@@ -533,13 +536,14 @@ def _run_ecds(fetch, out, *variables, date_iso="2025-06-02"):
     return xr.open_zarr(out, consolidated=True)
 
 
-def test_ecds_tp_and_daily_mean_share_step_labels(tmp_path, fetch, fake_ecds):
-    """Day-0 t2m mean and day-0 tp rate both sit at step 0 (not shifted a day)."""
-    ds = _run_ecds(fetch, tmp_path / "o.zarr", "tp", "t2m")
+def test_ecds_precip_and_daily_mean_share_step_labels(tmp_path, fetch, fake_ecds):
+    """Day-0 t2m mean and day-0 precip rate both sit at step 0 (not shifted a day)."""
+    ds = _run_ecds(fetch, tmp_path / "o.zarr", "precip", "t2m")
     steps = np.asarray(ds["step"].values).astype("timedelta64[h]").astype(int)
     assert steps.tolist() == [0, 24, 48, 72]
     point = ds.isel(latitude=0, longitude=0).sel(number=0)
-    np.testing.assert_allclose(point["tp"].values, [2.0, 3.0, 4.0, 5.0])
+    np.testing.assert_allclose(point["precip"].values, [2.0, 3.0, 4.0, 5.0])
+    assert "tp" not in ds
     np.testing.assert_allclose(point["t2m"].values, 280.0 + np.arange(4) - 273.15, rtol=1e-5)
     assert ds.sizes["number"] == 3
 
@@ -558,7 +562,7 @@ def test_ecds_control_only_field_keeps_number_dim(tmp_path, fetch, fake_ecds):
 
 
 def test_ecds_control_only_field_with_ensemble_field_is_nan_for_members(tmp_path, fetch, fake_ecds):
-    ds = _run_ecds(fetch, tmp_path / "o.zarr", "tp", "t")
+    ds = _run_ecds(fetch, tmp_path / "o.zarr", "precip", "t")
     assert ds["t"].dims[0] == "number"
     t = ds["t"].isel(latitude=0, longitude=0, step=0, vertical=0)
     assert np.isfinite(t.sel(number=0).values)
@@ -568,14 +572,14 @@ def test_ecds_control_only_field_with_ensemble_field_is_nan_for_members(tmp_path
 def test_ecds_download_failure_is_clean_error(tmp_path, fetch, fake_ecds, capsys):
     fake_ecds["error"] = ConnectionError("connection reset")
     with pytest.raises(SystemExit) as exc:
-        _run_ecds(fetch, tmp_path / "o.zarr", "tp")
+        _run_ecds(fetch, tmp_path / "o.zarr", "precip")
     assert exc.value.code == 1
     assert "ECDS download failed" in capsys.readouterr().err
 
 
-def test_ecds_refuses_tp_with_other_accumulated_fields(tmp_path, fetch, fake_ecds):
+def test_ecds_refuses_precip_with_other_accumulated_fields(tmp_path, fetch, fake_ecds):
     with pytest.raises(SystemExit) as exc:
-        _run_ecds(fetch, tmp_path / "o.zarr", "tp", "cp")
+        _run_ecds(fetch, tmp_path / "o.zarr", "precip", "cp")
     assert exc.value.code == 2
 
 
