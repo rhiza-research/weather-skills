@@ -23,8 +23,8 @@ from weather_skills_core.units import dequantify_dataset, variable_units
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
 
-_LEARNERS = ("dormplus", "dorm", "adahedged", "dub")
-_HINTS = ("recent_g", "mean_g", "none")
+_LEARNERS = ("adahedged", "dub", "dormplus", "dorm")
+_HINTS = ("none", "mean_g", "recent_g")
 
 
 @weather_skill(
@@ -48,14 +48,14 @@ _HINTS = ("recent_g", "mean_g", "none")
 @weather_skill.argument(
     "--learner",
     choices=list(_LEARNERS),
-    default="dormplus",
-    help="Online learning algorithm: dormplus, dorm, adahedged, or dub.",
+    default="adahedged",
+    help="Online learning algorithm: adahedged, dub, dormplus, or dorm.",
 )
 @weather_skill.argument(
     "--hint",
     choices=list(_HINTS),
-    default="recent_g",
-    help="Optimistic hint for the rounds still waiting on obs: recent_g, mean_g, or none.",
+    default="none",
+    help="Optimistic hint for the rounds still waiting on obs: none, mean_g, or recent_g.",
 )
 @weather_skill.argument(
     "--state-in",

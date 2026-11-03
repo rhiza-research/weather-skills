@@ -1,6 +1,6 @@
 ---
 name: online-ensemble
-description: "Combine several expert forecasts (models) into one weighted ensemble whose weights are learned round by round from past errors, using PoolD's online learning under delayed observations (DORM+, DORM, AdaHedgeD, DUB) with optimistic hints. Writes the ensemble forecast, the weight of each model for each round, and each round's RMSE. Use to blend forecasts issued on a regular schedule, such as weekly subseasonal forecasts, when a forecast's obs only arrive several rounds after it is issued."
+description: "Combine several expert forecasts (models) into one weighted ensemble whose weights are learned round by round from past errors, using PoolD's online learning under delayed observations (AdaHedgeD, DUB, DORM+, DORM), optionally with optimistic hints. Writes the ensemble forecast, the weight of each model for each round, and each round's RMSE. Use to blend forecasts issued on a regular schedule, such as weekly subseasonal forecasts, when a forecast's obs only arrive several rounds after it is issued."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/online_ensemble.py *)
@@ -16,15 +16,15 @@ Treats each forecast time as one round. For each round it picks expert weights f
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/online_ensemble.py --forecast FC.zarr --obs OBS.zarr --delay D [--learner dormplus|dorm|adahedged|dub] [--hint recent_g|mean_g|none] [-v NAME] [--model-dim model] [--state-in STATE.json] [--state-out STATE.json] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/online_ensemble.py --forecast FC.zarr --obs OBS.zarr --delay D [--learner adahedged|dub|dormplus|dorm] [--hint none|mean_g|recent_g] [-v NAME] [--model-dim model] [--state-in STATE.json] [--state-out STATE.json] -o OUT.zarr
 ```
 
 ### Arguments
 - `--forecast` — the expert forecasts stacked along a model dim, with a `time` axis of target (valid) dates, one per round, strictly increasing.
 - `--obs` — observations on the forecast's grid (or the same stations), labeled with the same target dates.
 - `--delay` — rounds between issuing a forecast and having all of its obs, at least 1. For forecasts issued every `S` days for a window that starts `L` days after issue and lasts `W` days, `delay = ceil((L + W + latency) / S)`, where latency is how long the obs take to publish. Weekly week-3–4 forecasts (`L` 14, `W` 14, `S` 7) take 4; daily inits scored on day 5 (`L` 5, `W` 1, `S` 1) take 6, or 7 with obs that publish the next day (IMERG Late).
-- `--learner` — `dormplus` (DORM+, delayed optimistic regret matching+), `dorm`, `adahedged` (AdaHedgeD), or `dub` (AdaHedgeD with the delayed upper-bound step size). Default: `dormplus`. DORM+ weights move quickly and can put all weight on one model for a round; AdaHedgeD moves more smoothly. `dub` learns slowest.
-- `--hint` — guess at the losses still waiting on obs: `recent_g` (the most recent observed loss gradient), `mean_g` (the mean of all observed gradients), or `none`. Default: `recent_g`.
+- `--learner` — `adahedged` (AdaHedgeD), `dub` (AdaHedgeD with the delayed upper-bound step size), `dormplus` (DORM+, delayed optimistic regret matching+), or `dorm`. Default: `adahedged`. AdaHedgeD stays near equal weights while the experts are about as good as each other, and moves to an expert that is clearly better. `dub` stays near equal weights much longer. DORM and DORM+ move fastest and can put all the weight on one expert after a lucky round.
+- `--hint` — guess at the losses still waiting on obs: `none`, `mean_g` (the mean of all observed loss gradients), or `recent_g` (the most recent one, counted once per waiting round). Default: `none`. With a long `--delay`, `recent_g` lets one round's result swing the weights.
 - `--variable`, `-v` — variable name in both inputs. Default: each input's first usable variable (names may differ).
 - `--model-dim` — dim of `--forecast` holding the experts. Default: `model`.
 - `--state-in` — a state file from an earlier run's `--state-out`. The run resumes the learner where that run stopped, instead of starting again from uniform weights.
@@ -63,7 +63,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/online_ensemble.py --forecast FC.zarr --obs O
 uv run ${CLAUDE_SKILL_DIR}/scripts/online_ensemble.py --forecast wk34_models_kenya.zarr \
   --obs chirps_wk34_kenya_on_models.zarr -v precip --delay 4 -o wk34_online_ensemble.zarr
 ```
-Learns DORM+ weights for weekly week-3–4 rainfall forecasts from three models over Kenya, scored against CHIRPS, and writes the blended forecast with each week's weights.
+Learns AdaHedgeD weights for weekly week-3–4 rainfall forecasts from three models over Kenya, scored against CHIRPS, and writes the blended forecast with each week's weights.
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/online_ensemble.py --forecast wk34_models_kenya_new.zarr \
   --obs chirps_wk34_kenya_on_models.zarr -v precip --delay 4 \

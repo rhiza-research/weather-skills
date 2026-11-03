@@ -74,7 +74,7 @@ def test_ensemble_is_weighted_sum(tmp_path, ensemble_fn):
     expected = (experts * ds["weight"]).sum("model")
     np.testing.assert_allclose(ds["precip"].values, expected.values, rtol=1e-6)
     assert ds["precip"].attrs["units"] == "mm day-1"
-    assert ds["precip"].attrs["ensemble_method"] == "poold dormplus, hint recent_g, delay 2"
+    assert ds["precip"].attrs["ensemble_method"] == "poold adahedged, hint none, delay 2"
     assert "Weights for 2026-02-03" in ds.attrs["online_ensemble_summary"]
     assert load_history(tmp_path / "out.zarr")[-1]["skill"] == "online-ensemble"
 
