@@ -449,8 +449,6 @@ def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, *
         sub_satellite_longitude=sub_lon,
     )
     stamp_cf_attrs(out)
-    # Latitude runs south to north in every output.
-    out = out.sortby("latitude")
     return out
 
 

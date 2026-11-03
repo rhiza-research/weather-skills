@@ -435,8 +435,6 @@ def fetch(bbox, date, run, variable, probe_latest, max_lead, **kwargs):
         ds = _standardize(ds)
         ds = ds.load()
 
-    # Latitude runs south to north in every output.
-    ds = ds.sortby("latitude")
     return ds
 
 
