@@ -1,11 +1,12 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.4",
 #   # >=0.3.34 for the IFS Cycle 50r1 (2026-05-12) date-aware oper/scda
 #   # stream fix in Client.patch_stream — older pins misroute 06/18Z runs.
 #   "ecmwf-opendata==0.3.34",
 #   "cfgrib",
+#   "pandas",
 #   # eccodeslib carries the native libeccodes that cfgrib loads on macOS/Linux;
 #   # eccodes drops this as a transitive dep via PyPI metadata (ecmwf/eccodes-python#150),
 #   # so it is declared directly. Windows bundles the library in eccodes itself.
@@ -33,11 +34,15 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.9"
 
 # HRES steps
 _FULL_RUN_STEPS = list(range(0, 144 + 1, 3)) + list(range(150, 360 + 1, 6))
 _SHORT_CUTOFF_STEPS = list(range(0, 144 + 1, 3))
+
+# data.ecmwf.int keeps only the inits of the last 4 days (today included);
+# older inits are only on the AWS mirror (from 2023).
+_ECMWF_DAYS_KEPT = 4
 
 # Every Open Data level from 1000 to 50 hPa. 10 hPa exists only since IFS
 # Cycle 50r1 (2026-05-12), so it is not requested: older inits would fail.
@@ -83,10 +88,10 @@ class _Var(NamedTuple):
 
 # Most-used first, then the rest of the HRES ("oper") single-level and
 # pressure-level fields carried by ECMWF Open Data. `-v` / Zarr tokens mirror
-# the cfgrib short names used by ecmwf-fetch (t2m, not 2t) where a field also
-# exists in that skill, so downstream code can treat them the same way.
+# the names used by ecmwf-fetch (t2m, not 2t; rainfall as precip) where a field
+# also exists in that skill, so downstream code can treat them the same way.
 VARIABLES: dict[str, _Var] = {
-    "tp": _Var("tp"),
+    "precip": _Var("tp"),
     "t2m": _Var("2t"),
     "d2m": _Var("2d"),
     "msl": _Var("msl"),
@@ -109,11 +114,13 @@ VARIABLES: dict[str, _Var] = {
     "q": _Var("q", "pl", PRESSURE_LEVELS),
     "r": _Var("r", "pl", PRESSURE_LEVELS),
 }
-DEFAULT_VARIABLES = ["tp"]
+DEFAULT_VARIABLES = ["precip"]
 
 # cfgrib decodes Open Data GRIB2 with these short names; map back onto the
 # canonical `-v` tokens above (mirrors ecmwf-fetch's GRIB alias table).
 _GRIB_EXTRAS = {
+    "tp": "precip",
+    "precipitation": "precip",
     "2t": "t2m",
     "2d": "d2m",
     "10u": "u10",
@@ -155,8 +162,27 @@ def _resolve_variables(raw: list[str] | None) -> list[str]:
     return resolved
 
 
-def _steps_for(run_hour: int) -> list[int]:
-    return _SHORT_CUTOFF_STEPS if run_hour in (6, 18) else _FULL_RUN_STEPS
+def _steps_for(run_hour: int, max_lead_h: float | None = None) -> list[int]:
+    steps = _SHORT_CUTOFF_STEPS if run_hour in (6, 18) else _FULL_RUN_STEPS
+    if max_lead_h is None:
+        return steps
+    return [s for s in steps if s <= max_lead_h]
+
+
+def _parse_max_lead(value: str) -> float:
+    """Hours from ``24``, ``24h`` or ``10D`` (bare numbers are hours)."""
+    import pandas as pd
+
+    text = value.strip()
+    try:
+        hours = float(text) if text.replace(".", "", 1).isdigit() else None
+        if hours is None:
+            hours = pd.Timedelta(text) / pd.Timedelta(hours=1)
+    except ValueError:
+        raise UsageError(f"--max-lead {value!r} is not a lead time (24, 24h, 10D)") from None
+    if hours < 0:
+        raise UsageError("--max-lead must not be negative")
+    return hours
 
 
 def _group_for_request(names: list[str]) -> list[tuple[tuple, list[str]]]:
@@ -169,7 +195,12 @@ def _group_for_request(names: list[str]) -> list[tuple[tuple, list[str]]]:
 
 
 def _build_request(
-    date_iso: str, run_hour: int, group_vars: list[str], level_type: str, levels: tuple[str, ...]
+    date_iso: str,
+    run_hour: int,
+    group_vars: list[str],
+    level_type: str,
+    levels: tuple[str, ...],
+    steps: list[int],
 ) -> dict:
     req: dict = {
         "date": dt.date.fromisoformat(date_iso),
@@ -181,7 +212,7 @@ def _build_request(
         # remapped back to "scda" by Client.retrieve()'s index-file path for
         # some 06/18Z requests — let the client infer it instead.
         "type": "fc",
-        "step": _steps_for(run_hour),
+        "step": steps,
         "levtype": level_type,
         "param": [VARIABLES[name].param for name in group_vars],
     }
@@ -259,8 +290,8 @@ def _to_celsius(da):
 def _standardize(ds):
     """CF attrs + standard units."""
     stamp_cf_attrs(ds)
-    if "tp" in ds.data_vars:
-        ds["tp"].attrs["long_name"] = "Total precipitation"
+    if "precip" in ds.data_vars:
+        ds["precip"].attrs["long_name"] = "Total precipitation"
     ds = to_standard_units(ds)
     for name in _KELVIN_TEMPS:
         if name in ds.data_vars:
@@ -291,9 +322,9 @@ def _standardize(ds):
     "-v",
     action="append",
     help=(
-        "HRES field to retrieve (repeatable). Most used first: tp, t2m, msl, "
-        "u10, v10. Pressure-level: t, gh, u, v, q, r. Default tp. Names mirror "
-        "ecmwf-fetch's cfgrib short names where the field also exists there."
+        "HRES field to retrieve (repeatable). Most used first: precip (also tp), "
+        "t2m, msl, u10, v10. Pressure-level: t, gh, u, v, q, r. Default precip. "
+        "Names mirror ecmwf-fetch's where the field also exists there."
     ),
 )
 @weather_skill.argument(
@@ -307,7 +338,14 @@ def _standardize(ds):
         "exit; stderr names the latest run hour. Does not download fields."
     ),
 )
-def fetch(bbox, date, run, variable, probe_latest, **kwargs):
+@weather_skill.argument(
+    "--max-lead",
+    help=(
+        "Keep steps up to this lead (24, 24h, 10D; bare numbers are hours); 0 is the "
+        "analysis time only. Default: every published step (15 days for 00/12)."
+    ),
+)
+def fetch(bbox, date, run, variable, probe_latest, max_lead, **kwargs):
     """Fetch a deterministic ECMWF HRES forecast from ECMWF Open Data as a weather-skills Zarr."""
     if probe_latest is not None:
         from ecmwf.opendata import Client
@@ -334,6 +372,12 @@ def fetch(bbox, date, run, variable, probe_latest, **kwargs):
 
     date_iso = date.isoformat()
     names = _resolve_variables(variable)
+    max_lead_h = None if max_lead is None else _parse_max_lead(max_lead)
+    steps = _steps_for(run, max_lead_h)
+    if max_lead_h is not None and "precip" in names:
+        # precip becomes rates over [step, next step) and loses its last step, so one
+        # more step is fetched to keep every step up to --max-lead.
+        steps += [s for s in _steps_for(run) if s > max_lead_h][:1]
     groups = _group_for_request(names)
 
     import xarray as xr
@@ -341,7 +385,7 @@ def fetch(bbox, date, run, variable, probe_latest, **kwargs):
 
     print(
         f"Fetching ECMWF HRES for bbox={list(bbox)} date={date_iso} run={run:02d}Z "
-        f"variables={','.join(names)}",
+        f"variables={','.join(names)} steps={steps[0]}..{steps[-1]}h ({len(steps)})",
         file=sys.stderr,
     )
 
@@ -349,24 +393,39 @@ def fetch(bbox, date, run, variable, probe_latest, **kwargs):
         tmp = Path(tmpdir)
         parts = []
         for i, ((level_type, levels), group_vars) in enumerate(groups):
-            req = _build_request(date_iso, run, group_vars, level_type, levels)
+            req = _build_request(date_iso, run, group_vars, level_type, levels, steps)
             grib = tmp / f"hres_{i}.grib2"
             print(f"Retrieving {', '.join(group_vars)} ({level_type})...", file=sys.stderr)
-            # data.ecmwf.int keeps only the last ~4 days of inits; the AWS
-            # mirror holds the archive (from 2023). Try ECMWF first (fastest
-            # for fresh runs), then AWS.
+            # Recent inits try ECMWF first (fastest), then AWS; older inits go
+            # straight to AWS since ECMWF no longer has them. Each source gets
+            # one attempt: under load both answer "503 Slow Down", and waiting
+            # it out leaves the user waiting for nothing.
+            oldest_on_ecmwf = dt.datetime.now(dt.UTC).date() - dt.timedelta(
+                days=_ECMWF_DAYS_KEPT - 1
+            )
+            sources = ("ecmwf", "aws") if date >= oldest_on_ecmwf else ("aws",)
             errors = []
-            for source in ("ecmwf", "aws"):
+            for source in sources:
                 try:
-                    Client(source=source).retrieve(request=req, target=str(grib))
+                    client = Client(source=source, maximum_retries=1)
+                    client.retrieve(request=req, target=str(grib))
                     break
                 except Exception as exc:  # noqa: BLE001
                     errors.append(f"{source}: {exc}")
             else:
+                if any("503" in e or "SlowDown" in e for e in errors):
+                    hint = (
+                        "The server is rate-limiting requests (503 Slow Down): fetch one "
+                        "init at a time and try again in a few minutes."
+                    )
+                else:
+                    hint = (
+                        "The init may not be published yet (recent inits lag ~6-9h; try "
+                        "--probe-latest) or this is a transport problem."
+                    )
                 raise DataError(
                     f"ECMWF Open Data retrieval failed for init {date_iso} {run:02d}Z "
-                    f"({'; '.join(errors)}). The init may not be published yet (recent "
-                    "inits lag ~6-9h; try --probe-latest) or this is a transport problem."
+                    f"({'; '.join(errors)}). {hint}"
                 )
             ds = _promote_vertical(_open_grib(grib))
             parts.append(_rename_to_short(ds, group_vars))
@@ -374,6 +433,9 @@ def fetch(bbox, date, run, variable, probe_latest, **kwargs):
         ds = parts[0] if len(parts) == 1 else xr.merge(parts, join="outer", compat="override")
         ds = ds[names]
         ds = bbox_subset(ds, list(bbox), lat_dim="latitude", lon_dim="longitude")
+        if "step" not in ds.dims:
+            # cfgrib keeps a lone step (--max-lead 0) as a scalar coordinate.
+            ds = ds.expand_dims("step")
         # Read one step at a time: cfgrib materializes the full global field for
         # every step/level it is asked for before slicing to the bbox, so one
         # whole-cube read of a pressure-level field needs several GB.

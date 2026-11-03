@@ -14,7 +14,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CORE="${WEATHER_SKILLS_CORE:-$ROOT/../weather-skills-core}"
 if [[ ! -d "$CORE" ]]; then
   echo "weather-skills-core not found at $CORE" >&2
-  echo "Clone it as a sibling of forecasting-skills, or set WEATHER_SKILLS_CORE." >&2
+  echo "Clone it as a sibling of weather-skills, or set WEATHER_SKILLS_CORE." >&2
   exit 1
 fi
 if [[ $# -lt 1 ]]; then

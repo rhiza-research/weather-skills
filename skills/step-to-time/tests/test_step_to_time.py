@@ -140,3 +140,157 @@ def test_noleap_init_crosses_month_end(tmp_path, step_to_time):
     run_skill(step_to_time, "-i", str(src), "-o", str(out))
     times = xr.open_zarr(out, consolidated=True, use_cftime=True)["time"].values
     assert [(t.month, t.day) for t in times] == [(2, 27), (2, 28), (3, 1)]
+
+
+def _inits_at_one_lead(inits, lead_days):
+    return xr.Dataset(
+        {"tp": (("time", "number"), np.ones((len(inits), 2)), {"units": "mm day-1"})},
+        coords={
+            "time": np.asarray(inits, dtype="datetime64[ns]"),
+            "step": np.timedelta64(lead_days, "D").astype("timedelta64[ns]"),
+            "number": [0, 1],
+        },
+    )
+
+
+def test_many_inits_at_one_lead_shift_to_valid_dates(tmp_path, step_to_time):
+    ds = _inits_at_one_lead(["2025-07-02", "2025-07-03", "2025-07-05"], 13)
+    ds = ds.assign_coords(
+        step_bounds=("nv", np.array([13, 14], dtype="timedelta64[D]").astype("timedelta64[ns]"))
+    )
+    ds["step"].attrs["bounds"] = "step_bounds"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(step_to_time, "-i", str(src), "-o", str(out))
+
+    result = xr.open_zarr(out, consolidated=True)
+    assert result["time"].values.astype("datetime64[D]").astype(str).tolist() == [
+        "2025-07-15",
+        "2025-07-16",
+        "2025-07-18",
+    ]
+    assert result["step"].values == np.timedelta64(13, "D")
+    assert result["time"].attrs.get("bounds") == "time_bounds"
+    bounds = result["time_bounds"].values.astype("datetime64[D]").astype(str)
+    assert bounds[0].tolist() == ["2025-07-15", "2025-07-16"]
+    assert np.array_equal(result["tp"].values, ds["tp"].values)
+
+
+def test_many_inits_and_many_leads_exits(tmp_path, step_to_time):
+    ds = _inits_at_one_lead(["2025-07-02", "2025-07-03"], 13)
+    ds = ds.drop_vars("step").expand_dims(step=[np.timedelta64(13, "D").astype("timedelta64[ns]")])
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(step_to_time, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
+
+
+def test_many_inits_rerun_on_own_output_exits(tmp_path, step_to_time):
+    ds = _inits_at_one_lead(["2025-07-02", "2025-07-03"], 13)
+    ds["time"].attrs["standard_name"] = "forecast_reference_time"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    once = tmp_path / "once.zarr"
+    run_skill(step_to_time, "-i", str(src), "-o", str(once))
+    assert xr.open_zarr(once)["time"].attrs["standard_name"] == "time"
+    with pytest.raises(SystemExit) as exc:
+        run_skill(step_to_time, "-i", str(once), "-o", str(tmp_path / "twice.zarr"))
+    assert exc.value.code == 2
+
+
+def test_many_inits_keep_values_attrs_and_time_of_day(tmp_path, step_to_time):
+    ds = _inits_at_one_lead(["2025-07-02T12", "2025-07-03T12"], 2)
+    ds["tp"].values = np.arange(4.0).reshape(2, 2)
+    ds["tp"].attrs["data_interval"] = "1 day"
+    ds = ds.assign_coords(
+        valid_time=("time", ds["time"].values),
+        time_bounds=(("time", "nv"), np.stack([ds["time"].values] * 2, axis=1)),
+    )
+    ds["time"].attrs["bounds"] = "time_bounds"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(step_to_time, "-i", str(src), "-o", str(out))
+
+    result = xr.open_zarr(out, consolidated=True)
+    assert result["time"].values.astype(str).tolist() == [
+        "2025-07-04T12:00:00.000000000",
+        "2025-07-05T12:00:00.000000000",
+    ]
+    assert np.array_equal(result["tp"].values, np.arange(4.0).reshape(2, 2))
+    assert result["tp"].attrs["data_interval"] == "1 day"
+    assert "valid_time" not in result.variables
+    assert "time_bounds" not in result.variables
+    assert "bounds" not in result["time"].attrs
+
+
+def test_many_inits_on_stations(tmp_path, step_to_time):
+    ds = xr.Dataset(
+        {"tp": (("time", "station"), np.ones((2, 3)), {"units": "mm day-1"})},
+        coords={
+            "time": np.array(["2025-07-02", "2025-07-03"], dtype="datetime64[ns]"),
+            "step": np.timedelta64(1, "D").astype("timedelta64[ns]"),
+            "station": ["a", "b", "c"],
+            "lat": ("station", [0.0, 1.0, 2.0]),
+            "lon": ("station", [30.0, 31.0, 32.0]),
+        },
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(step_to_time, "-i", str(src), "-o", str(out))
+    result = xr.open_zarr(out, consolidated=True)
+    assert result["time"].values.astype("datetime64[D]").astype(str).tolist() == [
+        "2025-07-03",
+        "2025-07-04",
+    ]
+    assert result["lat"].dims == ("station",)
+
+
+def test_many_noleap_inits_cross_month_end(tmp_path, step_to_time):
+    import cftime
+
+    inits = [cftime.DatetimeNoLeap(2028, 2, d) for d in (26, 27, 28)]
+    ds = xr.Dataset(
+        {"tp": (("time",), np.ones(3), {"units": "mm day-1"})},
+        coords={
+            "time": np.array(inits, dtype=object),
+            "step": np.timedelta64(2, "D").astype("timedelta64[ns]"),
+        },
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(step_to_time, "-i", str(src), "-o", str(out))
+    coder = xr.coders.CFDatetimeCoder(use_cftime=True)
+    times = xr.open_zarr(out, consolidated=True, decode_times=coder)["time"].values
+    assert [(t.month, t.day) for t in times] == [(2, 28), (3, 1), (3, 2)]
+
+
+@pytest.mark.parametrize(
+    "inits",
+    [
+        ["2025-07-03", "2025-07-02"],  # unsorted
+        ["2025-07-02", "2025-07-02"],  # duplicate init
+        ["2025-07-02", "NaT"],  # missing init
+    ],
+)
+def test_many_inits_refuse_bad_init_axis(tmp_path, step_to_time, inits):
+    src = write_zarr(_inits_at_one_lead(inits, 13), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(step_to_time, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
+
+
+def test_time_axis_without_step_exits(tmp_path, step_to_time):
+    ds = _inits_at_one_lead(["2025-07-02", "2025-07-03"], 13).drop_vars("step")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(step_to_time, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
+
+
+def test_many_inits_missing_lead_exits(tmp_path, step_to_time):
+    ds = _inits_at_one_lead(["2025-07-02"], 13).assign_coords(step=np.timedelta64("NaT", "ns"))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(step_to_time, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2

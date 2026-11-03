@@ -4,7 +4,7 @@
 # never reads or outputs the contents of .env or any credential file.
 set -e
 
-claude plugin marketplace add rhiza-research/forecasting-skills
+claude plugin marketplace add rhiza-research/weather-skills
 claude plugin install rhiza-forecasting@weather-skills
 
 cat <<'EOF'

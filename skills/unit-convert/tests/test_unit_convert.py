@@ -187,6 +187,29 @@ def test_unit_convert_temperatures_and_anomalies(tmp_path, unit_convert):
     assert _run_exit_code(unit_convert, *args, "--to-units", "degC") == 2
 
 
+def test_unit_convert_difference_to_absolute_names_difference_targets(
+    tmp_path, unit_convert, capsys
+):
+    ds = make_gridded(name="t2m", fill=1.5)
+    ds["t2m"].attrs = {"units": "delta_degC"}
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    args = ("-i", str(src), "-o", str(tmp_path / "out.zarr"), "--to-units", "degree_Celsius")
+    assert _run_exit_code(unit_convert, *args) == 2
+    assert "temperature difference" in capsys.readouterr().err
+
+    run_skill(unit_convert, "-i", str(src), "-o", str(tmp_path / "k.zarr"), "--to-units", "K")
+    assert float(xr.open_zarr(tmp_path / "k.zarr")["t2m"].max()) == pytest.approx(1.5)
+
+
+@pytest.mark.parametrize("target", ["mm/(3 day)", "mm / (92 day)"])
+def test_unit_convert_scaled_target_points_to_totals(tmp_path, unit_convert, capsys, target):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    args = ("-i", str(src), "-o", str(tmp_path / "out.zarr"), "--to-units", target)
+    assert _run_exit_code(unit_convert, *args) == 2
+    err = capsys.readouterr().err
+    assert "cannot contain a number" in err and "convert-to-totals" in err
+
+
 def test_unit_convert_mass_amount_to_depth(tmp_path, unit_convert):
     ds = make_gridded(name="tp", fill=5.0).astype("float32")
     ds["tp"].attrs = {"units": "kg m-2", "standard_name": "precipitation_amount"}

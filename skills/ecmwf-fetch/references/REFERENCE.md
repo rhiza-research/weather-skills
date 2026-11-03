@@ -12,11 +12,12 @@ remaining steps so `step=0` is the first 24 h. Pressure fields carry all
 101 members on 10 levels (1000–10 hPa); `q` is NaN above 200 hPa.
 
 The catalog stores SST as `sea_surface_temperature` (not `sst`). This skill
-accepts `-v sst` / `wtmp` and writes the S2S short name `sst`.
+accepts `-v sst` / `wtmp` and writes the S2S short name `sst`. Catalog
+`precipitation_surface` is written as `precip`.
 
 | `-v` | Catalog field |
 |---|---|
-| `tp` | `precipitation_surface` |
+| `precip` | `precipitation_surface` |
 | `t2m` | `average_temperature_2m` |
 | `sst` | `sea_surface_temperature` |
 | `d2m` | `average_dew_point_temperature_2m` |
@@ -60,7 +61,7 @@ Both the control and perturbed retrievals target the `s2s-forecasts` collection 
 
 `forecast_type=perturbed_forecast` returns all 100 ensemble members in one retrieval — there is no per-member subsetting field on this collection.
 
-`-v` uses cfgrib short names. Instant/accumulated fields share the integer
+`-v` uses cfgrib short names, except rainfall, which is written as `precip`. Instant/accumulated fields share the integer
 `leadtime_hour` list above. Daily-mean fields are a separate ECDS request
 whose `leadtime_hour` values are 24-hour windows aligned to those leads
 (`0` → `0_24`, `24` → `0_24`, `48` → `24_48`, …); the skill labels each
@@ -71,7 +72,7 @@ and level 320 K. Those vertical fields are control-forecast only.
 
 | `-v` | ECDS `variable` | Family |
 |---|---|---|
-| `tp` | `total_precipitation` | instant |
+| `precip` | `total_precipitation` | instant (`tp`, `precipitation` accepted) |
 | `t2m` | `2_m_temperature` | daily |
 | `sst` | `sea_surface_temperature` | daily (`wtmp` accepted) |
 | `d2m` | `2_m_dewpoint_temperature` | daily |

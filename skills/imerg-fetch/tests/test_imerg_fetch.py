@@ -45,7 +45,7 @@ def _run(mod, fetch, out, raw, results=None, *args):
             "earthaccess.search_data", return_value=[MagicMock()] if results is None else results
         ),
         patch("earthaccess.download", return_value=["/tmp/fake.nc4"]),
-        patch("xarray.open_mfdataset", return_value=raw),
+        patch("xarray.open_dataset", return_value=raw),
     ):
         run_skill(
             fetch,
@@ -134,3 +134,39 @@ def test_login_without_credentials_raises_data_error(mod, tmp_path):
     with patch.dict(os.environ, env, clear=True):
         with pytest.raises(DataError, match="Earthdata authentication failed"):
             mod._login()
+
+
+def test_bbox_cuts_each_granule_and_reads_one_at_a_time(tmp_path, mod, fetch):
+    """Each day is downloaded, cut to --bbox and deleted before the next one."""
+    days = [_raw_daily(n_time=1, start=d) for d in ("2026-01-01", "2026-01-02")]
+    calls = []
+
+    def download(granules, local_path):
+        calls.append(len(granules))
+        path = Path(local_path) / f"day{len(calls)}.nc4"
+        path.write_bytes(b"")
+        return [str(path)]
+
+    out = tmp_path / "out.zarr"
+    with (
+        patch.object(mod, "_login"),
+        patch("earthaccess.search_data", return_value=[MagicMock(), MagicMock()]),
+        patch("earthaccess.download", side_effect=download),
+        patch("xarray.open_dataset", side_effect=days),
+    ):
+        run_skill(
+            fetch,
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "--bbox",
+            "2.5/10.5/0.5/11.5",
+            "-o",
+            str(out),
+        )
+    assert calls == [1, 1]
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds.sizes["time"] == 2
+    np.testing.assert_array_equal(ds["latitude"].values, [1.0, 2.0])
+    np.testing.assert_array_equal(ds["longitude"].values, [11.0])

@@ -92,22 +92,22 @@ def test_fetch_writes_zarr_and_stamps_history(tmp_path, fetch_mod, monkeypatch):
     assert seen["stamp"] == "20260925_06hr_01_preds"
     assert Path(out).exists()
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert "tp" in ds.data_vars
+        assert "precip" in ds.data_vars
         assert "total_precipitation_6hr" not in ds.data_vars
         assert {"number", "step", "lat", "lon"} <= set(ds.sizes)
-        assert ds["tp"].attrs["units"] == "mm day-1"
-        assert ds["tp"].attrs.get("data_interval")
-        # tp moves to period start (0..18 h); t2m keeps its native leads (6..24 h).
+        assert ds["precip"].attrs["units"] == "mm day-1"
+        assert ds["precip"].attrs.get("data_interval")
+        # precip moves to period start (0..18 h); t2m keeps its native leads (6..24 h).
         assert _lead_hours(ds) == [0, 6, 12, 18, 24]
         # 0.001 m / 6h = 4 mm day-1; no period after the last lead.
         np.testing.assert_allclose(
-            ds["tp"].values[0, :, 0, 0], [4.0, 4.0, 4.0, 4.0, np.nan], rtol=1e-5
+            ds["precip"].values[0, :, 0, 0], [4.0, 4.0, 4.0, 4.0, np.nan], rtol=1e-5
         )
         assert ds["2m_temperature"].attrs["units"] == "degree_Celsius"
         assert np.isnan(ds["2m_temperature"].values[0, 0, 0, 0])
         np.testing.assert_allclose(np.nanmean(ds["2m_temperature"].values), 6.85, atol=0.01)
         assert "weathernext:20260925_06hr_01_preds" in ds.attrs.get("weather_skills_source", "")
-        assert "aggregation_period" not in ds["tp"].attrs
+        assert "aggregation_period" not in ds["precip"].attrs
         assert ds["valid_time"].dims == ("step",)
     history = load_history(out)
     assert history[-1]["skill"] == "weathernext-fetch"
@@ -267,8 +267,8 @@ def test_missing_date_exits_1(tmp_path, fetch_mod, monkeypatch):
     assert exc.value.code == 1
 
 
-def test_t2m_keeps_native_lead_and_tp_moves_to_period_start(tmp_path, fetch_mod, monkeypatch):
-    """t2m is instantaneous at init + step; tp is a 6 h total labelled at its end."""
+def test_t2m_keeps_native_lead_and_precip_moves_to_period_start(tmp_path, fetch_mod, monkeypatch):
+    """t2m is instantaneous at init + step; precip is a 6 h total labelled at its end."""
     remote = _native_predictions(members=1)
     hours = np.array([6.0, 12.0, 18.0, 24.0], dtype="float32")
     remote["2m_temperature"].values[:] = (273.15 + hours)[None, :, None, None]  # degC == lead
@@ -279,15 +279,15 @@ def test_t2m_keeps_native_lead_and_tp_moves_to_period_start(tmp_path, fetch_mod,
     run_skill(fetch_mod.fetch, "--date", "2026-09-25", "-v", "tp", "-v", "t2m", "-o", str(out))
 
     ds = xr.open_zarr(out, consolidated=True).isel(number=0, lat=0, lon=0)
-    t2m = next(v for v in ds.data_vars if v != "tp")
+    t2m = next(v for v in ds.data_vars if v != "precip")
     lead_h = ds["step"].values / np.timedelta64(1, "h")
     np.testing.assert_allclose(lead_h, [0, 6, 12, 18, 24])
     # t2m sits on its own valid time: the 6 h value at step 6 h, nothing at 0.
     np.testing.assert_allclose(ds[t2m].values, [np.nan, 6, 12, 18, 24], rtol=1e-5)
     np.testing.assert_array_equal(ds["valid_time"].values, ds["time"].values + ds["step"].values)
-    # tp's 0-6 h total is labelled at the period start, nothing after the last period.
-    assert np.isnan(ds["tp"].values[-1]) and not np.isnan(ds["tp"].values[0])
-    assert ds["tp"].values[0] < ds["tp"].values[1]
+    # precip's 0-6 h total is labelled at the period start, nothing after the last period.
+    assert np.isnan(ds["precip"].values[-1]) and not np.isnan(ds["precip"].values[0])
+    assert ds["precip"].values[0] < ds["precip"].values[1]
 
 
 def test_t2m_alone_keeps_native_leads(tmp_path, fetch_mod, monkeypatch):
@@ -298,6 +298,19 @@ def test_t2m_alone_keeps_native_leads(tmp_path, fetch_mod, monkeypatch):
     run_skill(fetch_mod.fetch, "--date", "2026-09-25", "-v", "t2m", "-o", str(out))
     lead_h = xr.open_zarr(out, consolidated=True)["step"].values / np.timedelta64(1, "h")
     np.testing.assert_allclose(lead_h, [6, 12, 18, 24])
+
+
+def test_fetch_writes_lat_south_to_north(tmp_path, fetch_mod, monkeypatch):
+    remote = _native_predictions(members=1).isel(lat=slice(None, None, -1))
+    remote["2m_temperature"].values[..., 0, :] = 300.0  # the northern row, first in the store
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, *args: True)
+    monkeypatch.setattr(fetch_mod, "_open_remote", lambda *args, **kwargs: remote.copy(deep=True))
+    out = tmp_path / "t2m.zarr"
+    run_skill(fetch_mod.fetch, "--date", "2026-09-25", "-v", "t2m", "-o", str(out))
+    written = xr.open_zarr(out, consolidated=True)
+    np.testing.assert_allclose(written["lat"].values, [0.0, 2.0])
+    t2m = written["2m_temperature"].isel(number=0, step=0)
+    np.testing.assert_allclose(t2m.sel(lat=2.0).values, 26.85, atol=0.01)
 
 
 # --- WeatherNext 3 -----------------------------------------------------------
@@ -388,23 +401,23 @@ def test_v3_ensemble_flattens_hourly_leads(tmp_path, fetch_mod, monkeypatch):
         "--version", "3",
         "--date", "2026-10-02",
         "--billing-project", "my-proj",
-        "-v", "tp", "-v", "t2m",
+        "-v", "precip", "-v", "t2m",
         "-o", str(out),
     )  # fmt: skip
 
     assert seen["open"] == ("20261002_00hr_01_preds", "weathernext3_spatial", "my-proj")
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert set(ds.data_vars) == {"tp", "2m_temperature"}
+        assert set(ds.data_vars) == {"precip", "2m_temperature"}
         assert {"number", "step", "lat", "lon"} == set(ds.sizes)
-        # tp moves to period start (0..11 h); t2m keeps its native leads (1..12 h).
+        # precip moves to period start (0..11 h); t2m keeps its native leads (1..12 h).
         assert _lead_hours(ds) == list(range(13))
         valid = ds["valid_time"].values
         assert valid[0] == np.datetime64("2026-10-02T00:00:00", "ns")
         assert valid[-1] == np.datetime64("2026-10-02T12:00:00", "ns")
-        assert ds["tp"].attrs["units"] == "mm day-1"
+        assert ds["precip"].attrs["units"] == "mm day-1"
         # 0.001 m / 1h = 24 mm day-1; no period after the last lead.
-        np.testing.assert_allclose(ds["tp"].values[0, :-1, 0, 0], 24.0, rtol=1e-5)
-        assert np.isnan(ds["tp"].values[0, -1, 0, 0])
+        np.testing.assert_allclose(ds["precip"].values[0, :-1, 0, 0], 24.0, rtol=1e-5)
+        assert np.isnan(ds["precip"].values[0, -1, 0, 0])
         assert np.isnan(ds["2m_temperature"].values[0, 0, 0, 0])
         assert ds["2m_temperature"].attrs["units"] == "degree_Celsius"
         assert ds.attrs["weather_skills_source"] == "weathernext3:20261002_00hr_01_preds"
@@ -434,7 +447,7 @@ def test_v3_default_variables_are_01deg_surface(tmp_path, fetch_mod, monkeypatch
         "-o", str(out),
     )  # fmt: skip
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert set(ds.data_vars) == {"tp", "2m_temperature", "mean_sea_level_pressure"}
+        assert set(ds.data_vars) == {"precip", "2m_temperature", "mean_sea_level_pressure"}
         assert list(ds["number"].values) == [1]
 
 
@@ -448,23 +461,23 @@ def test_v3_statistics(tmp_path, fetch_mod, monkeypatch):
         "--version", "3",
         "--product", "statistics",
         "--date", "2026-10-02",
-        "-v", "tp", "-v", "t2m",
+        "-v", "precip", "-v", "t2m",
         "--statistic", "mean", "--statistic", "p90",
         "-o", str(out),
     )  # fmt: skip
     assert seen["open"] == ("20261002_00hr_01_preds", "weathernext3_statistics_spatial", None)
     with xr.open_zarr(out, consolidated=True) as ds:
         assert set(ds.data_vars) == {
-            "tp_mean",
-            "tp_p90",
+            "precip_mean",
+            "precip_p90",
             "2m_temperature_mean",
             "2m_temperature_p90",
         }
         assert "number" not in ds.dims
         assert _lead_hours(ds) == [0, 1, 2, 3]
-        np.testing.assert_allclose(ds["tp_mean"].values[:-1], 48.0, rtol=1e-5)
-        assert np.isnan(ds["tp_mean"].values[-1]).all()
-        assert ds["tp_p90"].attrs["units"] == "mm day-1"
+        np.testing.assert_allclose(ds["precip_mean"].values[:-1], 48.0, rtol=1e-5)
+        assert np.isnan(ds["precip_mean"].values[-1]).all()
+        assert ds["precip_p90"].attrs["units"] == "mm day-1"
         assert ds["2m_temperature_p90"].attrs["units"] == "degree_Celsius"
         assert "90th percentile" in ds["2m_temperature_p90"].attrs["long_name"]
         assert ds.attrs["weather_skills_source"].startswith("weathernext3-statistics:")
@@ -557,11 +570,19 @@ def test_v3_reads_store_without_dask(tmp_path, fetch_mod, monkeypatch):
 @pytest.mark.parametrize(
     ("argv", "expected"),
     [
-        (["-v", "tp_p90"], {"tp_p90"}),
-        (["-v", "total_precipitation_1hr_p90"], {"tp_p90"}),
-        (["-v", "tp_p90", "-v", "t2m_mean"], {"tp_p90", "2m_temperature_mean"}),
-        (["-v", "tp_p90", "-v", "tp"], {"tp_mean", "tp_p10", "tp_p50", "tp_p90"}),
-        (["-v", "tp_p90", "-v", "t2m", "--statistic", "p90"], {"tp_p90", "2m_temperature_p90"}),
+        (["-v", "precip_p90"], {"precip_p90"}),
+        (["-v", "tp_p90"], {"precip_p90"}),
+        (["-v", "precipitation"], {"precip_mean", "precip_p10", "precip_p50", "precip_p90"}),
+        (["-v", "total_precipitation_1hr_p90"], {"precip_p90"}),
+        (["-v", "precip_p90", "-v", "t2m_mean"], {"precip_p90", "2m_temperature_mean"}),
+        (
+            ["-v", "precip_p90", "-v", "precip"],
+            {"precip_mean", "precip_p10", "precip_p50", "precip_p90"},
+        ),
+        (
+            ["-v", "precip_p90", "-v", "t2m", "--statistic", "p90"],
+            {"precip_p90", "2m_temperature_p90"},
+        ),
     ],
 )
 def test_v3_variable_naming_a_statistic_keeps_only_it(
@@ -582,9 +603,9 @@ def test_v3_variable_naming_a_statistic_keeps_only_it(
 @pytest.mark.parametrize(
     "argv",
     [
-        ["--product", "statistics", "-v", "tp_p90", "--statistic", "mean"],  # conflict
-        ["--product", "statistics", "-v", "tp_p25"],  # statistic not in the store
-        ["--billing-project", "p", "-v", "tp_p90"],  # ensemble has no statistics
+        ["--product", "statistics", "-v", "precip_p90", "--statistic", "mean"],  # conflict
+        ["--product", "statistics", "-v", "precip_p25"],  # statistic not in the store
+        ["--billing-project", "p", "-v", "precip_p90"],  # ensemble has no statistics
     ],
 )
 def test_v3_bad_statistic_variable_exits_2(tmp_path, fetch_mod, monkeypatch, argv):
@@ -599,7 +620,7 @@ def test_v3_bad_statistic_variable_exits_2(tmp_path, fetch_mod, monkeypatch, arg
 
 
 def test_v3_solar_radiation_moves_to_period_start_in_j_m2(tmp_path, fetch_mod, monkeypatch):
-    """ssrd is a 1 h total ending at init + step, like tp: relabelled to its start."""
+    """ssrd is a 1 h total ending at init + step, like precip: relabelled to its start."""
     remote = _native_v3_ensemble(members=1)
     dims = remote["temperature_2m"].dims
     remote["surface_solar_radiation_downwards_1hr"] = (
@@ -647,7 +668,7 @@ def test_max_lead_and_cycle_accept_both_spellings(tmp_path, fetch_mod, monkeypat
 
 
 def test_precip_fields_stay_float32(tmp_path, fetch_mod, monkeypatch):
-    # v3 ensemble: tp plus the IMERG-calibrated and experimental precip fields.
+    # v3 ensemble: precip plus the IMERG-calibrated and experimental precip fields.
     remote = _native_v3_ensemble()
     for native in ("imerg_tp_1hr", "experimental_tp_1hr"):
         remote[native] = remote["total_precipitation_1hr"]
@@ -655,26 +676,26 @@ def test_precip_fields_stay_float32(tmp_path, fetch_mod, monkeypatch):
     out = tmp_path / "wn3.zarr"
     run_skill(
         fetch_mod.fetch, "--version", "3", "--date", "2026-10-02", "--billing-project", "p",
-        "-v", "tp", "-v", "imerg_tp", "-v", "experimental_tp", "-v", "t2m", "-o", str(out),
+        "-v", "precip", "-v", "imerg_precip", "-v", "experimental_precip", "-v", "t2m", "-o", str(out),
     )  # fmt: skip
     with xr.open_zarr(out, consolidated=True) as ds:
         assert {n: str(ds[n].dtype) for n in ds.data_vars} == {
-            "tp": "float32",
-            "imerg_tp": "float32",
-            "experimental_tp": "float32",
+            "precip": "float32",
+            "imerg_precip": "float32",
+            "experimental_precip": "float32",
             "2m_temperature": "float32",
         }
-        np.testing.assert_allclose(ds["imerg_tp"].values[0, :-1, 0, 0], 24.0, rtol=1e-5)
+        np.testing.assert_allclose(ds["imerg_precip"].values[0, :-1, 0, 0], 24.0, rtol=1e-5)
 
     # v3 statistics: per-statistic precip names.
     _mock_v3(monkeypatch, fetch_mod, _native_v3_statistics())
     out = tmp_path / "wn3_stats.zarr"
     run_skill(
         fetch_mod.fetch, "--version", "3", "--product", "statistics", "--date", "2026-10-02",
-        "-v", "tp", "--statistic", "mean", "--statistic", "p90", "-o", str(out),
+        "-v", "precip", "--statistic", "mean", "--statistic", "p90", "-o", str(out),
     )  # fmt: skip
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert ds["tp_mean"].dtype == np.float32 and ds["tp_p90"].dtype == np.float32
+        assert ds["precip_mean"].dtype == np.float32 and ds["precip_p90"].dtype == np.float32
 
 
 def test_filesystem_uses_credentials_json(fetch_mod, monkeypatch):
@@ -715,3 +736,150 @@ def test_filesystem_falls_back_without_credentials_json(fetch_mod, monkeypatch):
     monkeypatch.setattr(gcsfs, "GCSFileSystem", fake_gcs_filesystem)
     assert fetch_mod._filesystem(fetch_mod._resolve_product("2", None)) == "fake-fs"
     assert seen == {}
+
+
+_WINDOW_STAMPS = [
+    "20250130_00hr_01_preds",
+    "20250131_00hr_01_preds",
+    "20250201_00hr_01_preds",
+    "20250201_12hr_01_preds",
+    "20260115_00hr_01_preds",
+]
+
+
+def _mock_windows(monkeypatch, fetch_mod, *, missing=(), short=(), listed=None):
+    """Per-init v2 stores whose t2m is the init's day of month (K); ``short`` lacks leads 2+."""
+
+    def fake_list(product, billing_project=None, day=None):
+        if listed is not None:
+            listed.append(day)
+        return [s for s in _WINDOW_STAMPS if s.startswith(day or "")]
+
+    def fake_open(stamp, *args):
+        ds = _native_predictions(t2m_fill=float(stamp[6:8]))
+        init = np.datetime64(f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}T{stamp[9:11]}", "ns")
+        lead = ds["time"].values.astype("timedelta64[ns]")
+        ds = ds.assign_coords(init_time=init, datetime=("time", init + lead))
+        if stamp in short:
+            ds["2m_temperature"][:, 2:] = np.nan
+            ds["total_precipitation_6hr"][:, 2:] = np.nan
+        return ds
+
+    monkeypatch.setattr(fetch_mod, "_list_init_stamps", fake_list)
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, *args: stamp not in missing)
+    monkeypatch.setattr(fetch_mod, "_open_remote", fake_open)
+
+
+def test_init_window_keeps_00utc_inits_on_a_time_axis(tmp_path, fetch_mod, monkeypatch):
+    listed = []
+    _mock_windows(monkeypatch, fetch_mod, listed=listed)
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--start-time",
+        "2025-01-31",
+        "--end-time",
+        "2025-02-01",
+        "-v",
+        "t2m",
+        "-o",
+        str(out),
+    )
+    # One listing per month in the window.
+    assert listed == ["202501", "202502"]
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds["2m_temperature"].dims == ("time", "step", "number", "lat", "lon")
+        # 20250201_12hr is not a 00 UTC init.
+        days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+        assert days == ["2025-01-31", "2025-02-01"]
+        assert ds["valid_time"].dims == ("time", "step")
+        # The 6 h lead spacing, not the 1-day gap between inits.
+        assert ds["2m_temperature"].attrs["data_interval"] == "6 hour"
+        np.testing.assert_allclose(
+            ds["2m_temperature"].values[:, 0, 0, 0, 0], [31 - 273.15, 1 - 273.15], rtol=1e-5
+        )
+    assert load_history(out)[-1]["args"]["start_time"] == ["2025-01-31"]
+
+
+def test_repeated_init_windows_take_disjoint_inits(tmp_path, fetch_mod, monkeypatch):
+    _mock_windows(monkeypatch, fetch_mod)
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--start-time",
+        "2025-01-01",
+        "--end-time",
+        "2025-01-31",
+        "--start-time",
+        "2026-01-01",
+        "--end-time",
+        "2026-01-31",
+        "-v",
+        "precip",
+        "-o",
+        str(out),
+    )
+    with xr.open_zarr(out, consolidated=True) as ds:
+        days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+    assert days == ["2025-01-30", "2025-01-31", "2026-01-15"]
+
+
+def test_init_window_warns_on_missing_and_short_inits(tmp_path, fetch_mod, monkeypatch, capsys):
+    _mock_windows(
+        monkeypatch,
+        fetch_mod,
+        missing={"20250131_00hr_01_preds"},
+        short={"20250201_00hr_01_preds"},
+    )
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--start-time",
+        "2025-01-30",
+        "--end-time",
+        "2025-02-01",
+        "-v",
+        "t2m",
+        "-o",
+        str(out),
+    )
+    err = capsys.readouterr().err
+    assert "no complete store for init 20250131_00hr_01_preds" in err
+    assert "2025-02-01T00 UTC init has no data after step 12 h" in err
+    with xr.open_zarr(out, consolidated=True) as ds:
+        days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+        assert days == ["2025-01-30", "2025-02-01"]
+        assert ds["2m_temperature"].isel(time=1, step=slice(2, None)).isnull().all()
+        assert ds["2m_temperature"].isel(time=0).notnull().all()
+
+
+def test_date_and_init_window_together_exit_2(tmp_path, fetch_mod, monkeypatch):
+    _mock_windows(monkeypatch, fetch_mod)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch,
+            "--date",
+            "2025-01-31",
+            "--start-time",
+            "2025-01-31",
+            "--end-time",
+            "2025-02-01",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 2
+
+
+def test_init_window_with_no_init_exits_1(tmp_path, fetch_mod, monkeypatch):
+    _mock_windows(monkeypatch, fetch_mod)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch,
+            "--start-time",
+            "2024-06-01",
+            "--end-time",
+            "2024-06-30",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 1

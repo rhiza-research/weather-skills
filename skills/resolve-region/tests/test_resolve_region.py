@@ -62,6 +62,28 @@ def test_geojson_write(tmp_path, resolve_region):
     data = json.loads(geo.read_text())
     assert data["type"] == "FeatureCollection"
     assert data["features"][0]["properties"]["iso3"] == "KEN"
+    history = json.loads(data["weather_skills_history"])
+    assert history[0]["skill"] == "resolve-region"
+    assert history[0]["args"] == {"code": "KEN", "level": None, "pad": 0.25}
+
+    # A rerun replaces its own output.
+    run_skill(resolve_region, "UGA", "--geojson", str(geo))
+    assert json.loads(geo.read_text())["features"][0]["properties"]["iso3"] == "UGA"
+
+
+def test_geojson_refuses_a_file_it_did_not_write(tmp_path, resolve_region):
+    geo = tmp_path / "ken.geojson"
+    geo.write_text('{"type": "FeatureCollection", "features": []}')
+    with pytest.raises(SystemExit) as exc:
+        run_skill(resolve_region, "KEN", "--geojson", str(geo))
+    assert exc.value.code == 2
+    assert json.loads(geo.read_text())["features"] == []
+
+
+def test_geojson_write_creates_parent_folder(tmp_path, resolve_region):
+    geo = tmp_path / "dairy" / "ken.geojson"
+    run_skill(resolve_region, "KEN", "--geojson", str(geo))
+    assert json.loads(geo.read_text())["type"] == "FeatureCollection"
 
 
 def test_lowercase_iso3_is_usage_error(resolve_region):
@@ -111,6 +133,43 @@ def test_county_geojson_write(tmp_path, resolve_mod, monkeypatch):
     assert props["level"] == "admin_1"
     assert props["region_name"] == "kenya-nairobi"
     assert props["name"] == "Nairobi"
+
+
+def test_level_writes_every_county(tmp_path, resolve_mod, monkeypatch):
+    from weather_skills_core.region import _admin_collection
+
+    kiambu = json.loads(json.dumps(_NAIROBI["features"][0]))
+    kiambu["properties"]["shapeName"] = "Kiambu"
+    two = {"type": "FeatureCollection", "features": [_NAIROBI["features"][0], kiambu]}
+    # Every country's layer is the same two units; only Kenya's are kept.
+    monkeypatch.setattr("weather_skills_core.region._load_admin_geojson", lambda iso3, level: two)
+    _admin_collection.cache_clear()
+
+    geo = tmp_path / "counties.geojson"
+    run_skill(resolve_mod.resolve_region, "KEN", "--level", "admin_1", "--geojson", str(geo))
+
+    data = json.loads(geo.read_text())
+    props = [f["properties"] for f in data["features"]]
+    assert [p["region_name"] for p in props] == ["kenya-nairobi", "kenya-kiambu"]
+    assert {p["iso3"] for p in props} == {"KEN"}
+    assert {p["level"] for p in props} == {"admin_1"}
+    history = json.loads(data["weather_skills_history"])
+    assert history[0]["args"] == {"code": "KEN", "level": "admin_1", "pad": 0.25}
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("KEN", "--level", "admin_1"),
+        ("East Africa", "--level", "admin_1", "--geojson", "x.geojson"),
+    ],
+)
+def test_level_usage_errors(tmp_path, monkeypatch, resolve_region, argv):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        run_skill(resolve_region, *argv)
+    assert exc.value.code == 2
+    assert not (tmp_path / "x.geojson").exists()
 
 
 _MOUNT_KENYA_HIT = [

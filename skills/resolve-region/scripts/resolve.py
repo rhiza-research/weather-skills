@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.2.0",
+#   "weather-skills-core>=0.3.4",
 #   "shapely>=2.1",
 # ]
 # ///
@@ -11,16 +11,17 @@ import json
 import sys
 from pathlib import Path
 
-from weather_skills_core import DataError, UsageError, weather_skill
+from weather_skills_core import DataError, UsageError, provenance, weather_skill
 from weather_skills_core.region import (
     bbox_from_feature,
     geocode_nominatim,
+    level_features,
     lookup_region,
     should_geocode,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.4"
+_SKILL_VERSION = "0.0.10"
 
 # OSM feature types that name an area but come back from Nominatim as one centre
 # point ("Horn of Africa" is natural/peninsula). Padding that point would print a
@@ -64,6 +65,14 @@ _AREA_TYPES = frozenset(
     help="Optional path: write the boundary polygon as GeoJSON",
 )
 @weather_skill.argument(
+    "--level",
+    choices=("admin_1", "admin_2"),
+    help=(
+        "With --geojson: write every unit at this level inside the place (a country's "
+        "admin_1 units, or a country's or admin_1 unit's admin_2 units) instead of its outline"
+    ),
+)
+@weather_skill.argument(
     "--pad",
     type=float,
     default=0.25,
@@ -72,7 +81,7 @@ _AREA_TYPES = frozenset(
         "node, a station) so it becomes an area (default 0.25)."
     ),
 )
-def resolve_region(code, geojson, pad, **kwargs):
+def resolve_region(code, geojson, level, pad, **kwargs):
     """Turn a country, region, or place name into a lat/lon bounding box and optional boundary GeoJSON."""
     text = code.strip()
     if not text:
@@ -81,6 +90,13 @@ def resolve_region(code, geojson, pad, **kwargs):
             "a custom box (e.g. 'Indian Ocean'), "
             "a sub-national region (e.g. kenya-nairobi), "
             "or a landmark (e.g. 'Nairobi, Kenya')."
+        )
+    if level and not geojson:
+        raise UsageError("--level writes GeoJSON; pass --geojson PATH too")
+    if geojson and not provenance.can_replace_output(Path(geojson)):
+        raise UsageError(
+            f"--geojson {geojson} already exists and was not written by a weather skill, "
+            "so it may be your own data; pass a new path"
         )
     if len(text) == 3 and text.isalpha() and text != text.upper():
         raise UsageError(
@@ -129,15 +145,49 @@ def resolve_region(code, geojson, pad, **kwargs):
                 },
             }
 
+    features = [match]
+    if level:
+        match_level = match["properties"].get("level")
+        if match_level == "country":
+            iso3 = match["properties"]["iso3"]
+            features = [
+                f for f in level_features(level, (n, w, s, e)) if f["properties"]["iso3"] == iso3
+            ]
+        elif match_level == "admin_1" and level == "admin_2":
+            # admin_2 keys are the admin_1 key plus the unit's own name.
+            prefix = match["properties"]["region_name"] + "-"
+            features = [
+                f
+                for f in level_features(level, (n, w, s, e))
+                if f["properties"]["region_name"].startswith(prefix)
+            ]
+        else:
+            raise UsageError(
+                f"--level {level} needs a country, or an admin_1 unit for admin_2; "
+                f"{code!r} matched a {match_level} area"
+            )
+        if not features:
+            raise DataError(f"geoBoundaries has no {level} units for {code!r}")
+        print(f"{len(features)} {level} units", file=sys.stderr)
+
     # Write the polygon (guarded) BEFORE printing the bbox, so a failed write
     # never emits a valid-looking bbox to stdout that a caller might consume.
     if geojson:
-        out_fc = {"type": "FeatureCollection", "features": [match]}
+        out_fc = {"type": "FeatureCollection", "features": features}
         try:
+            Path(geojson).parent.mkdir(parents=True, exist_ok=True)
             Path(geojson).write_text(json.dumps(out_fc, separators=(",", ":")))
         except OSError as exc:
             raise DataError(f"could not write boundary polygon to {geojson}: {exc}") from None
-        print(f"Wrote boundary polygon: {geojson}", file=sys.stderr)
+        entry = provenance.build_entry(
+            "resolve-region",
+            _SKILL_VERSION,
+            {"code": code, "level": level, "pad": pad},
+            None,
+            revision=provenance.resolve_skill_revision(__file__),
+        )
+        provenance.stamp_figure(Path(geojson), [entry])
+        print(f"Wrote {len(features)} boundary polygon(s): {geojson}", file=sys.stderr)
 
     print(f"{n}/{w}/{s}/{e}")
 
