@@ -112,6 +112,17 @@ def test_ecmwf_reads_planette_mean_of_members(tmp_path, fetch, stores):
         assert ds.attrs["hindcast_dataset"] == "ecmwf"
 
 
+def test_disjoint_windows_keep_only_their_inits(tmp_path, fetch, stores):
+    out = tmp_path / "windows.zarr"
+    _run(fetch, out, "--dataset", "ecmwf",
+         "--start-time", "2018-10-01", "--end-time", "2018-10-03",
+         "--start-time", "2018-10-07", "--end-time", "2018-10-09",
+         "--start-time", "2018-10-02", "--end-time", "2018-10-03")  # fmt: skip
+    with xr.open_zarr(out) as ds:
+        # 2018-10-05 lies between the windows; the overlapping third window adds nothing.
+        assert _dates(ds) == ["2018-10-03", "2018-10-07"]
+
+
 def test_ecmwf_sst_nan_over_land_with_temperature(tmp_path, fetch, stores):
     out = tmp_path / "pl_sst.zarr"
     _run(fetch, out, "--dataset", "ecmwf", "--members", "-v", "sst", "-v", "tmp2m",
@@ -227,6 +238,8 @@ def test_window_without_inits_exits_1(tmp_path, fetch, stores):
     [
         ["--dataset", "ecmwf", "--start-time", "2018-10-01"],
         ["--dataset", "ecmwf", "--start-time", "2018-10-31", "--end-time", "2018-10-01"],
+        ["--dataset", "ecmwf", "--start-time", "2018-10-01", "--end-time", "2018-10-03",
+         "--start-time", "2018-10-07"],
         ["--dataset", "gefs", "--start-time", "2017-10-01", "--end-time", "2017-10-31", "--members"],
         ["--dataset", "ecmwf_wb2", "--start-time", "2018-10-01", "--end-time", "2018-10-31", "-v", "sst"],
         ["--dataset", "gefs", "--start-time", "2017-10-01", "--end-time", "2017-10-31", "-v", "sst"],

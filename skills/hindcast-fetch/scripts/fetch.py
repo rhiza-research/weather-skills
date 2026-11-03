@@ -96,8 +96,14 @@ def _open_store(path: str) -> xr.Dataset:
 @weather_skill.argument(
     "--dataset", choices=list(_STORES), help=f"Hindcast source: {', '.join(_STORES)}."
 )
-@weather_skill.argument("--start-time")
-@weather_skill.argument("--end-time")
+@weather_skill.argument(
+    "--start-time",
+    action="append",
+    help="Init window start; repeat with --end-time for several windows (each January).",
+)
+@weather_skill.argument(
+    "--end-time", action="append", help="Init window end, paired with --start-time."
+)
 @weather_skill.argument("--variable", "-v", action="append")
 @weather_skill.argument("--bbox")
 @weather_skill.argument(
@@ -124,10 +130,10 @@ def fetch(dataset, start_time, end_time, variable, bbox, members, probe_latest, 
         print(np_to_date(inits.max()).isoformat())
         return
 
-    if dataset is None or start_time is None or end_time is None:
+    if dataset is None or not start_time or not end_time:
         raise UsageError("--dataset, --start-time and --end-time are required.")
-    if start_time > end_time:
-        raise UsageError(f"--start-time {start_time} is after --end-time {end_time}.")
+    # Core pairs the Nth --start-time with the Nth --end-time and checks the order.
+    windows = list(zip(start_time, end_time, strict=True))
     if not dataset.startswith("ecmwf") and members:
         raise UsageError(
             "--members applies to --dataset ecmwf and ecmwf_wb2 only; gefs and cumulus always "
@@ -142,17 +148,22 @@ def fetch(dataset, start_time, end_time, variable, bbox, members, probe_latest, 
             f"choose from {', '.join(table)}."
         )
 
-    start = np.datetime64(start_time)
-    end = np.datetime64(end_time) + np.timedelta64(1, "D")
     parts = []
     for v in variables:
         path, source, units = table[v]
         ds = _open_store(path)
         inits = ds["init_time"].values
-        keep = np.nonzero((inits >= start) & (inits < end))[0]
+        # Every init in any window; overlapping windows take an init once.
+        in_windows = np.zeros(inits.shape, dtype=bool)
+        for start, end in windows:
+            in_windows |= (inits >= np.datetime64(start, "D")) & (
+                inits < np.datetime64(end, "D") + np.timedelta64(1, "D")
+            )
+        keep = np.nonzero(in_windows)[0]
         if keep.size == 0:
+            spans = ", ".join(f"{start}..{end}" for start, end in windows)
             raise DataError(
-                f"no {dataset} {v} hindcast init between {start_time} and {end_time} (the store "
+                f"no {dataset} {v} hindcast init in {spans} (the store "
                 f"runs {np_to_date(inits.min())} to {np_to_date(inits.max())})."
             )
         # A store's extra `time` coord, where it has one, repeats init_time.

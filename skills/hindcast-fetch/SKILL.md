@@ -1,6 +1,6 @@
 ---
 name: hindcast-fetch
-description: "Fetch ECMWF, GEFS or Cumulus subseasonal hindcasts (reforecasts) for a range of init dates over a region, as a multi-init weather-skills forecast Zarr: daily precipitation and 2 m temperature (plus sea-surface temperature for ECMWF) out to 46 (ECMWF, Cumulus) or 35 (GEFS) days, from Sheerwater's tiled hindcast stores. The default ECMWF hindcast is a single recent model cycle (IFS CY49R1, 2006–2025). Use when a task needs past forecasts for calibration, bias correction, skill scores or training against observations."
+description: "Fetch ECMWF, GEFS or Cumulus subseasonal hindcasts (reforecasts) for one or more ranges of init dates over a region, as a multi-init weather-skills forecast Zarr: daily precipitation and 2 m temperature (plus sea-surface temperature for ECMWF) out to 46 (ECMWF, Cumulus) or 35 (GEFS) days, from Sheerwater's tiled hindcast stores. The default ECMWF hindcast is a single recent model cycle (IFS CY49R1, 2006–2025). Use when a task needs past forecasts for calibration, bias correction, skill scores or training against observations."
 license: MIT
 compatibility: "Requires Python 3.12 and uv. Reads Sheerwater's hindcast Zarr stores via gcsfs. ECMWF and GEFS are public (gs://sheerwater-public-datalake/hindcasts) and need no credentials. Cumulus is private (gs://sheerwater-datalake/hindcasts) and needs Google Cloud credentials: NEURAL_GCM_SERVICE_CREDENTIALS (the raw service-account key JSON), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -28,6 +28,8 @@ Fetches every hindcast init in a date window from Sheerwater's tiled stores and 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf|ecmwf_wb2|gefs|cumulus --start-time YYYY-MM-DD --end-time YYYY-MM-DD -o OUT.zarr \
   [-v precip] [-v tmp2m] [-v sst] [--bbox N/W/S/E] [--members]
+# Several init windows: repeat the pair, e.g. each March to May
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf --start-time 2010-03-01 --end-time 2010-05-31 --start-time 2011-03-01 --end-time 2011-05-31 -o OUT.zarr
 # Latest hindcast init date (no download)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET]
 ```
@@ -43,7 +45,7 @@ Every dataset has `precip` and `tmp2m`; `ecmwf` also has `sst`.
 
 ### Arguments
 - `--dataset` — `ecmwf` (one recent model cycle; use it unless you need inits before 2006), `ecmwf_wb2` (1996–2021, mixed model cycles), `gefs` or `cumulus` (the IMERG-trained `gratis-czajkowski` Cumulus run).
-- `--start-time`, `--end-time` — inclusive window of hindcast init dates (the dates the runs start from, not when they were issued). Pass the same date twice for one init.
+- `--start-time`, `--end-time` — inclusive window of hindcast init dates (the dates the runs start from, not when they were issued). Pass the same date twice for one init. Repeat the pair for several disjoint windows, the Nth `--start-time` with the Nth `--end-time`; the output holds every init in any window once, in date order.
 - `--variable`, `-v` — `precip`, `tmp2m` and, for `ecmwf`, `sst`; repeatable. Default: `precip`. `tp` and `t2m` are accepted too.
 - `--bbox` — `N/W/S/E` decimal degrees. Omit for the full global grid.
 - `--members` — `ecmwf` and `ecmwf_wb2` only: the 10 perturbed members instead of their mean (neither has the control run). `gefs` and `cumulus` always return every member.
