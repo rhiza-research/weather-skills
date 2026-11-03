@@ -44,6 +44,7 @@ def _store(name, inits, members, value, *, order, lons=(-1.0, 0.0, 1.0), steps=N
 ECMWF_ORDER = ("member", "prediction_timedelta", "lat", "lon", "init_time")
 STORE_ORDER = ("init_time", "member", "prediction_timedelta", "lat", "lon")
 EC_INITS = ["2018-10-04", "2018-10-05", "2018-10-08"]
+PL_INITS = ["2018-10-03", "2018-10-05", "2018-10-07"]
 CUM_INITS = ["2024-12-27", "2024-12-29", "2024-12-31"]
 DAYS = np.arange(3).astype("timedelta64[D]").astype("timedelta64[ns]")
 
@@ -53,7 +54,17 @@ def stores(mod, monkeypatch):
     ec_p = _store("precip", EC_INITS, [1, 2], 4.0, order=ECMWF_ORDER)
     # The ECMWF store's extra `time` coord repeats init_time.
     ec_p = ec_p.assign_coords(time=("init_time", ec_p["init_time"].values))
+    # Planette's sst is NaN over land: one land cell here.
+    pl_sst = _store("sst", PL_INITS, [1, 2], 27.0, order=ECMWF_ORDER, steps=DAYS)
+    pl_sst["sst"][dict(lat=0, lon=0)] = np.nan
     data = {
+        f"{PUB}/ecmwf_planette_precip.zarr": _store(
+            "precip", PL_INITS, [1, 2], 3.0, order=ECMWF_ORDER, steps=DAYS
+        ),
+        f"{PUB}/ecmwf_planette_tmp2m.zarr": _store(
+            "tmp2m", PL_INITS, [1, 2], 22.0, order=ECMWF_ORDER, steps=DAYS
+        ),
+        f"{PUB}/ecmwf_planette_sst.zarr": pl_sst,
         f"{PUB}/ecmwf_ifs_precip.zarr": ec_p,
         f"{PUB}/ecmwf_ifs_tmp2m.zarr": _store("tmp2m", EC_INITS, [1, 2], 20.0, order=ECMWF_ORDER),
         f"{PUB}/gefs_precip.zarr": _store(
@@ -85,9 +96,49 @@ def _dates(ds):
     return ds["time"].values.astype("datetime64[D]").astype(str).tolist()
 
 
-def test_ecmwf_precip_mean_of_members(tmp_path, fetch, stores):
+def test_ecmwf_reads_planette_mean_of_members(tmp_path, fetch, stores):
+    out = tmp_path / "pl.zarr"
+    _run(fetch, out, "--dataset", "ecmwf", "--start-time", "2018-10-04", "--end-time", "2018-10-31")
+    assert stores.opened == [f"{PUB}/ecmwf_planette_precip.zarr"]
+    with xr.open_zarr(out) as ds:
+        assert _dates(ds) == ["2018-10-05", "2018-10-07"]
+        assert list(ds["precip"].dims) == ["time", "step", "latitude", "longitude"]
+        # Members are 3.0 and 3.5 mm: their mean.
+        np.testing.assert_allclose(ds["precip"].isel(step=0, latitude=0, longitude=0), [3.25, 3.25])
+        assert ds["step"].values[1] == np.timedelta64(1, "D")
+        assert ds.attrs["weather_skills_source"] == (
+            "sheerwater:sheerwater-public-datalake/hindcasts/ecmwf_planette_precip.zarr"
+        )
+        assert ds.attrs["hindcast_dataset"] == "ecmwf"
+
+
+def test_ecmwf_sst_nan_over_land_with_temperature(tmp_path, fetch, stores):
+    out = tmp_path / "pl_sst.zarr"
+    _run(fetch, out, "--dataset", "ecmwf", "--members", "-v", "sst", "-v", "tmp2m",
+         "--start-time", "2018-10-01", "--end-time", "2018-10-31")  # fmt: skip
+    with xr.open_zarr(out) as ds:
+        assert ds["sst"].attrs["units"] == "degree_Celsius"
+        assert ds["sst"].attrs["standard_name"] == "sea_surface_temperature"
+        sst = ds["sst"].isel(time=0, step=0)
+        assert bool(sst.isel(latitude=0, longitude=0).isnull().all())  # land, never filled
+        np.testing.assert_allclose(sst.isel(latitude=1, longitude=1), [27.0, 27.5])
+        np.testing.assert_allclose(
+            ds["tmp2m"].isel(time=0, step=0, latitude=0, longitude=0), [22.0, 22.5]
+        )
+
+
+def test_ecmwf_wb2_precip_mean_of_members(tmp_path, fetch, stores):
     out = tmp_path / "ec.zarr"
-    _run(fetch, out, "--dataset", "ecmwf", "--start-time", "2018-10-05", "--end-time", "2018-10-31")
+    _run(
+        fetch,
+        out,
+        "--dataset",
+        "ecmwf_wb2",
+        "--start-time",
+        "2018-10-05",
+        "--end-time",
+        "2018-10-31",
+    )
     assert stores.opened == [f"{PUB}/ecmwf_ifs_precip.zarr"]
     with xr.open_zarr(out) as ds:
         assert _dates(ds) == ["2018-10-05", "2018-10-08"]
@@ -99,13 +150,13 @@ def test_ecmwf_precip_mean_of_members(tmp_path, fetch, stores):
         assert ds.attrs["weather_skills_source"] == (
             "sheerwater:sheerwater-public-datalake/hindcasts/ecmwf_ifs_precip.zarr"
         )
-        assert ds.attrs["hindcast_dataset"] == "ecmwf"
+        assert ds.attrs["hindcast_dataset"] == "ecmwf_wb2"
     assert load_history(out)[-1]["skill"] == "hindcast-fetch"
 
 
-def test_ecmwf_members_and_temperature(tmp_path, fetch, stores):
+def test_ecmwf_wb2_members_and_temperature(tmp_path, fetch, stores):
     out = tmp_path / "ec_members.zarr"
-    _run(fetch, out, "--dataset", "ecmwf", "--members", "-v", "precip", "-v", "t2m",
+    _run(fetch, out, "--dataset", "ecmwf_wb2", "--members", "-v", "precip", "-v", "t2m",
          "--start-time", "2018-10-01", "--end-time", "2018-10-31")  # fmt: skip
     with xr.open_zarr(out) as ds:
         assert list(ds["precip"].dims) == ["time", "number", "step", "latitude", "longitude"]
@@ -177,7 +228,8 @@ def test_window_without_inits_exits_1(tmp_path, fetch, stores):
         ["--dataset", "ecmwf", "--start-time", "2018-10-01"],
         ["--dataset", "ecmwf", "--start-time", "2018-10-31", "--end-time", "2018-10-01"],
         ["--dataset", "gefs", "--start-time", "2017-10-01", "--end-time", "2017-10-31", "--members"],
-        ["--dataset", "ecmwf", "--start-time", "2018-10-01", "--end-time", "2018-10-31", "-v", "sst"],
+        ["--dataset", "ecmwf_wb2", "--start-time", "2018-10-01", "--end-time", "2018-10-31", "-v", "sst"],
+        ["--dataset", "gefs", "--start-time", "2017-10-01", "--end-time", "2017-10-31", "-v", "sst"],
         ["--dataset", "cumulus_1deg", "--start-time", "2024-12-01", "--end-time", "2024-12-31"],
         ["--dataset", "ecmwf", "--start-time", "2018-10-01", "--end-time", "2018-10-31",
          "--issue-year", "2022"],
@@ -191,6 +243,8 @@ def test_usage_errors_exit_2(tmp_path, fetch, stores, args):
 
 def test_probe_latest(capsys, fetch, stores):
     run_skill(fetch, "--probe-latest")
+    assert capsys.readouterr().out.strip() == "2018-10-07"
+    run_skill(fetch, "--probe-latest", "ecmwf_wb2")
     assert capsys.readouterr().out.strip() == "2018-10-08"
     run_skill(fetch, "--probe-latest", "cumulus")
     assert capsys.readouterr().out.strip() == "2024-12-31"

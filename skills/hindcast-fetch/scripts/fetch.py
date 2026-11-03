@@ -9,7 +9,9 @@
 # Every source is a Sheerwater hindcast Zarr in 6° lat/lon tiles, one variable per
 # store, dims (init_time, member, prediction_timedelta, lat, lon) in some order,
 # prediction_timedelta in whole days from 0:
-#   ecmwf — public. WeatherBench2's IFS extended-range reforecast members,
+#   ecmwf — public. Planette's ECMWF IFS CY49R1 reforecast members: one model
+#     cycle, inits every second day 2006-2025.
+#   ecmwf_wb2 — public. WeatherBench2's IFS extended-range reforecast members,
 #     flattened to one run per init date 1996-2021: the newest issue that re-ran
 #     that date, so the newest model that ran it.
 #   gefs — public. CHC's GEFSv12 reforecast, Wednesday inits 1998-2019.
@@ -39,6 +41,11 @@ _PRIVATE = "gs://sheerwater-datalake/hindcasts"
 # strings ("C", "mm / day") are not all pint-readable, so units are set here.
 _STORES = {
     "ecmwf": {
+        "precip": (f"{_PUBLIC}/ecmwf_planette_precip.zarr", "precip", "mm day-1"),
+        "tmp2m": (f"{_PUBLIC}/ecmwf_planette_tmp2m.zarr", "tmp2m", "degree_Celsius"),
+        "sst": (f"{_PUBLIC}/ecmwf_planette_sst.zarr", "sst", "degree_Celsius"),
+    },
+    "ecmwf_wb2": {
         "precip": (f"{_PUBLIC}/ecmwf_ifs_precip.zarr", "precip", "mm day-1"),
         "tmp2m": (f"{_PUBLIC}/ecmwf_ifs_tmp2m.zarr", "tmp2m", "degree_Celsius"),
     },
@@ -52,7 +59,11 @@ _STORES = {
     },
 }
 _ALIASES = {"tp": "precip", "precipitation": "precip", "t2m": "tmp2m"}
-_STANDARD_NAMES = {"precip": "lwe_precipitation_rate", "tmp2m": "air_temperature"}
+_STANDARD_NAMES = {
+    "precip": "lwe_precipitation_rate",
+    "tmp2m": "air_temperature",
+    "sst": "sea_surface_temperature",
+}
 _AUTH_MSG = (
     f"{_PRIVATE} is private. Set NEURAL_GCM_SERVICE_CREDENTIALS to the full service-account "
     "key JSON, GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON file path, or run "
@@ -92,7 +103,7 @@ def _open_store(path: str) -> xr.Dataset:
 @weather_skill.argument(
     "--members",
     action="store_true",
-    help="ecmwf only: the 10 perturbed members instead of their mean.",
+    help="ecmwf and ecmwf_wb2 only: the 10 perturbed members instead of their mean.",
 )
 @weather_skill.argument(
     "--probe-latest",
@@ -117,9 +128,10 @@ def fetch(dataset, start_time, end_time, variable, bbox, members, probe_latest, 
         raise UsageError("--dataset, --start-time and --end-time are required.")
     if start_time > end_time:
         raise UsageError(f"--start-time {start_time} is after --end-time {end_time}.")
-    if dataset != "ecmwf" and members:
+    if not dataset.startswith("ecmwf") and members:
         raise UsageError(
-            "--members applies to --dataset ecmwf only; gefs and cumulus always have all members."
+            "--members applies to --dataset ecmwf and ecmwf_wb2 only; gefs and cumulus always "
+            "have all members."
         )
     table = _STORES[dataset]
     variables = list(dict.fromkeys(_ALIASES.get(v, v) for v in (variable or ["precip"])))
@@ -186,8 +198,8 @@ def fetch(dataset, start_time, end_time, variable, bbox, members, probe_latest, 
         number=cube["number"].values.astype("int64"), step=steps.astype("timedelta64[ns]")
     )
     cube = cube.transpose("time", "number", "step", "latitude", "longitude")
-    if dataset == "ecmwf" and not members:
-        # WeatherBench2's ensemble mean is the mean of these 10 members.
+    if dataset.startswith("ecmwf") and not members:
+        # The ensemble mean of the 10 perturbed members (WeatherBench2's own mean is the same).
         cube = cube.mean("number", keep_attrs=True)
     print(
         f"hindcast-fetch: {dataset} {cube.sizes['time']} inits "
