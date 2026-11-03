@@ -363,3 +363,43 @@ def test_script_reruns_resolve_region_geojson(tmp_path, provenance, capsys):
 
     assert "resolve-region 'Indian Ocean' --pad 0.25 --geojson io.geojson" in captured
     assert "--code" not in captured
+
+
+def _plot_step(input_field):
+    # A skill with its own repeatable -i/--input PATH=NAME: core keeps it in args.
+    args = {
+        "input": ["/x/grid.zarr=G", "/x/coast.geojson=C"],
+        "const": ["top=5"],
+        "spec": {"data": [{"type": "heatmap", "z": "@G.precip"}]},
+    }
+    return {"skill": "plot", "version": "0.0.2", "args": args, "input": input_field}
+
+
+def test_script_keeps_recorded_input_flags(tmp_path, provenance, capsys):
+    step = _plot_step({"basename": "grid.zarr", "hash": "h"})
+    out = _stamp_history(tmp_path / "rep.zarr", [step])
+
+    captured = _script(provenance, out, capsys)
+
+    spec = """'{"data": [{"type": "heatmap", "z": "@G.precip"}]}'"""
+    assert (
+        "plot --const top=5 --input /x/grid.zarr=G --input /x/coast.geojson=C "
+        f"--spec {spec} --output rep.zarr"
+    ) in captured
+    assert "<UPSTREAM>" not in captured
+    assert captured.count("--input") == 2
+
+
+def test_script_links_recorded_input_to_upstream(tmp_path, provenance, capsys):
+    history = [_fetch("chirps-fetch"), _plot_step({"basename": "grid.zarr", "hash": "h"})]
+    out = _stamp_history(tmp_path / "rep.zarr", history)
+
+    captured = _script(provenance, out, capsys)
+
+    spec = """'{"data": [{"type": "heatmap", "z": "@G.precip"}]}'"""
+    assert "chirps-fetch --output step1.zarr" in captured
+    assert (
+        "plot --const top=5 --input step1.zarr=G --input /x/coast.geojson=C "
+        f"--spec {spec} --output rep.zarr"
+    ) in captured
+    assert captured.count("--input") == 2

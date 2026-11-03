@@ -302,6 +302,12 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
         output = final_output if i == n else f"{prefix}{i}.zarr"
         flags = JOIN_FLAGS.get(skill, [])
         branches = _parent_histories(step)
+        args = step.get("args") if isinstance(step.get("args"), dict) else {}
+        # A skill that declares its own input flag (not dataset-typed) keeps the
+        # paths in its recorded args, so nothing is appended for it.
+        carried = [d for d in ["input"] + [f[2:].replace("-", "_") for f in flags] if args.get(d)]
+        # Basename of each file this step read -> the path it has in the replay.
+        sources = {}
 
         if len(branches) >= 2:
             branch_outputs = []
@@ -317,6 +323,7 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
                         f"supply {basename} as {branch_out} yourself."
                     )
                 branch_outputs.append(branch_out)
+                sources[basename] = branch_out
                 lines.append("")
             lines.append(f"# --- combine the input branches ({skill}) ---")
             inputs = [
@@ -327,19 +334,50 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
             inputs = []
             for j, item in enumerate(step_input):
                 flag = flags[j] if j < len(flags) else "--input"
+                name = item.get("basename", "?") if isinstance(item, dict) else "?"
                 if j == 0 and prev is not None:
                     inputs.append((flag, prev))
+                    sources[name] = prev
                 else:
-                    name = item.get("basename", "?") if isinstance(item, dict) else "?"
                     inputs.append((flag, name))
         elif step_input is None:
             inputs = []
         elif prev is not None:
             inputs = [("--input", prev)]
+            if isinstance(step_input, dict):
+                sources[step_input.get("basename", "?")] = prev
+        elif carried:
+            inputs = []
         else:
             lines.append(f"# step {i} ({skill})'s input is an artifact outside this chain;")
             lines.append("# reproduce it separately and replace <UPSTREAM> below.")
             inputs = [("--input", "<UPSTREAM>")]
+
+        if carried:
+            # Recorded items are PATH or PATH=NAME; a PATH whose basename is a
+            # file this step read takes that file's replay path, keeping =NAME.
+            args = dict(args)
+            matched = set()
+            for dest in carried:
+                items = []
+                for item in args[dest] if isinstance(args[dest], list) else [args[dest]]:
+                    path, sep, name = str(item).rpartition("=")
+                    if not sep:
+                        path = str(item)
+                    base = Path(path).name
+                    if base in sources:
+                        matched.add(base)
+                        items.append(sources[base] + sep + name)
+                    else:
+                        items.append(item)
+                args[dest] = items if isinstance(args[dest], list) else items[0]
+            for base in sorted(set(sources) - matched):
+                lines.append(
+                    f"# step {i} ({skill}) records no path named {base}; "
+                    f"its recorded paths are kept, so point the one it read at {sources[base]}."
+                )
+            step = {**step, "args": args}
+            inputs = []
 
         lines.append(_command(step, inputs, output))
         prev = output
