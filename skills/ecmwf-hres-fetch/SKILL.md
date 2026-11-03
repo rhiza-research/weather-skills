@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`). No credentials or account required — ECMWF Open Data is a public feed.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.8"
+  version: "0.0.9"
   catalog-group: fetchers
   variables:
     - precip
@@ -50,7 +50,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
 ### Arguments
-- `--date` — init date. The skill tries `data.ecmwf.int` (last ~4 days) and then the AWS mirror (from 2023).
+- `--date` — init date. Inits from the last 4 days try `data.ecmwf.int` and then the AWS mirror; older inits (from 2023) come from the AWS mirror only.
 - `--run` — init hour UTC: `0`, `6`, `12`, or `18`. Default: `0`. 00/12 runs reach 360 h (3-hourly to 144 h, then 6-hourly); 06/18 runs reach 144 h, 3-hourly.
 - `--bbox` — required for a fetch. `N/W/S/E` decimal degrees. Open Data serves global files, so the full globe is downloaded for every step and clipped locally; a small bbox saves memory, not download time (`precip` for a 00 UTC run is ~80 MB; a pressure-level field is ~13×).
 - `--variable`, `-v` — one field per flag; repeat for several. Default: `precip`. Surface: `precip`, `t2m`, `d2m`, `msl`, `u10`, `v10`, `gust10`, `sp`, `tcwv`, `mucape`, `skt`, `ssrd`, `strd`, `str`, `ttr`. Pressure levels (1000–50 hPa, 13 levels): `t`, `gh`, `u`, `v`, `q`, `r`. Open Data names (`tp`, `2t`, `10u`) are accepted, as is `precipitation`. An unknown name exits and lists `Available (most used first):`.
@@ -65,7 +65,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - 06/18 runs stamp `data_interval = 3 hour`; 00/12 runs, whose spacing changes at 144 h, get `step_bounds`. Stamped `weather_skills_source=ecmwf-hres`.
 
 ### Notes
-- When `data.ecmwf.int` is busy it answers `503 Slow Down`. The skill tries it 3 times, 10 s apart, then moves to the AWS mirror instead of waiting.
+- Under load either source answers `503 Slow Down`. Each source gets one attempt, with no waiting; if every source is rate-limiting the skill exits saying so. Fetch one init at a time and try again in a few minutes.
 - `ssrd`, `strd`, `str`, `ttr` stay cumulative since init (J m-2); deaccumulate them for a rate.
 - `gust10` is the maximum gust since the previous output step.
 - `tcwv` is water vapour only; `mucape` is most-unstable CAPE (Open Data has no plain `cape`).

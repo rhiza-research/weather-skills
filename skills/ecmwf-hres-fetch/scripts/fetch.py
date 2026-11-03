@@ -34,17 +34,15 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.8"
+_SKILL_VERSION = "0.0.9"
 
 # HRES steps
 _FULL_RUN_STEPS = list(range(0, 144 + 1, 3)) + list(range(150, 360 + 1, 6))
 _SHORT_CUTOFF_STEPS = list(range(0, 144 + 1, 3))
 
-# ECMWF Open Data answers load with "503 Slow Down"; ecmwf-opendata's default
-# (500 tries, 120 s apart) left a chat waiting 30 min. Three tries 10 s apart,
-# then the next source (the AWS mirror) is tried.
-_OPEN_DATA_TRIES = 3
-_OPEN_DATA_RETRY_S = 10
+# data.ecmwf.int keeps only the inits of the last 4 days (today included);
+# older inits are only on the AWS mirror (from 2023).
+_ECMWF_DAYS_KEPT = 4
 
 # Every Open Data level from 1000 to 50 hPa. 10 hPa exists only since IFS
 # Cycle 50r1 (2026-05-12), so it is not requested: older inits would fail.
@@ -398,27 +396,36 @@ def fetch(bbox, date, run, variable, probe_latest, max_lead, **kwargs):
             req = _build_request(date_iso, run, group_vars, level_type, levels, steps)
             grib = tmp / f"hres_{i}.grib2"
             print(f"Retrieving {', '.join(group_vars)} ({level_type})...", file=sys.stderr)
-            # data.ecmwf.int keeps only the last ~4 days of inits; the AWS
-            # mirror holds the archive (from 2023). Try ECMWF first (fastest
-            # for fresh runs), then AWS.
+            # Recent inits try ECMWF first (fastest), then AWS; older inits go
+            # straight to AWS since ECMWF no longer has them. Each source gets
+            # one attempt: under load both answer "503 Slow Down", and waiting
+            # it out leaves the user waiting for nothing.
+            oldest_on_ecmwf = dt.datetime.now(dt.UTC).date() - dt.timedelta(
+                days=_ECMWF_DAYS_KEPT - 1
+            )
+            sources = ("ecmwf", "aws") if date >= oldest_on_ecmwf else ("aws",)
             errors = []
-            for source in ("ecmwf", "aws"):
+            for source in sources:
                 try:
-                    client = Client(
-                        source=source,
-                        maximum_retries=_OPEN_DATA_TRIES,
-                        retry_after=_OPEN_DATA_RETRY_S,
-                        use_server_retry_after=False,
-                    )
+                    client = Client(source=source, maximum_retries=1)
                     client.retrieve(request=req, target=str(grib))
                     break
                 except Exception as exc:  # noqa: BLE001
                     errors.append(f"{source}: {exc}")
             else:
+                if any("503" in e or "SlowDown" in e for e in errors):
+                    hint = (
+                        "The server is rate-limiting requests (503 Slow Down): fetch one "
+                        "init at a time and try again in a few minutes."
+                    )
+                else:
+                    hint = (
+                        "The init may not be published yet (recent inits lag ~6-9h; try "
+                        "--probe-latest) or this is a transport problem."
+                    )
                 raise DataError(
                     f"ECMWF Open Data retrieval failed for init {date_iso} {run:02d}Z "
-                    f"({'; '.join(errors)}). The init may not be published yet (recent "
-                    "inits lag ~6-9h; try --probe-latest) or this is a transport problem."
+                    f"({'; '.join(errors)}). {hint}"
                 )
             ds = _promote_vertical(_open_grib(grib))
             parts.append(_rename_to_short(ds, group_vars))
