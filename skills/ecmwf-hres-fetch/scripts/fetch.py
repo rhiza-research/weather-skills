@@ -90,10 +90,10 @@ class _Var(NamedTuple):
 
 # Most-used first, then the rest of the HRES ("oper") single-level and
 # pressure-level fields carried by ECMWF Open Data. `-v` / Zarr tokens mirror
-# the cfgrib short names used by ecmwf-fetch (t2m, not 2t) where a field also
-# exists in that skill, so downstream code can treat them the same way.
+# the names used by ecmwf-fetch (t2m, not 2t; rainfall as precip) where a field
+# also exists in that skill, so downstream code can treat them the same way.
 VARIABLES: dict[str, _Var] = {
-    "tp": _Var("tp"),
+    "precip": _Var("tp"),
     "t2m": _Var("2t"),
     "d2m": _Var("2d"),
     "msl": _Var("msl"),
@@ -116,11 +116,13 @@ VARIABLES: dict[str, _Var] = {
     "q": _Var("q", "pl", PRESSURE_LEVELS),
     "r": _Var("r", "pl", PRESSURE_LEVELS),
 }
-DEFAULT_VARIABLES = ["tp"]
+DEFAULT_VARIABLES = ["precip"]
 
 # cfgrib decodes Open Data GRIB2 with these short names; map back onto the
 # canonical `-v` tokens above (mirrors ecmwf-fetch's GRIB alias table).
 _GRIB_EXTRAS = {
+    "tp": "precip",
+    "precipitation": "precip",
     "2t": "t2m",
     "2d": "d2m",
     "10u": "u10",
@@ -290,8 +292,8 @@ def _to_celsius(da):
 def _standardize(ds):
     """CF attrs + standard units."""
     stamp_cf_attrs(ds)
-    if "tp" in ds.data_vars:
-        ds["tp"].attrs["long_name"] = "Total precipitation"
+    if "precip" in ds.data_vars:
+        ds["precip"].attrs["long_name"] = "Total precipitation"
     ds = to_standard_units(ds)
     for name in _KELVIN_TEMPS:
         if name in ds.data_vars:
@@ -322,9 +324,9 @@ def _standardize(ds):
     "-v",
     action="append",
     help=(
-        "HRES field to retrieve (repeatable). Most used first: tp, t2m, msl, "
-        "u10, v10. Pressure-level: t, gh, u, v, q, r. Default tp. Names mirror "
-        "ecmwf-fetch's cfgrib short names where the field also exists there."
+        "HRES field to retrieve (repeatable). Most used first: precip (also tp), "
+        "t2m, msl, u10, v10. Pressure-level: t, gh, u, v, q, r. Default precip. "
+        "Names mirror ecmwf-fetch's where the field also exists there."
     ),
 )
 @weather_skill.argument(
@@ -374,8 +376,8 @@ def fetch(bbox, date, run, variable, probe_latest, max_lead, **kwargs):
     names = _resolve_variables(variable)
     max_lead_h = None if max_lead is None else _parse_max_lead(max_lead)
     steps = _steps_for(run, max_lead_h)
-    if max_lead_h is not None and "tp" in names:
-        # tp becomes rates over [step, next step) and loses its last step, so one
+    if max_lead_h is not None and "precip" in names:
+        # precip becomes rates over [step, next step) and loses its last step, so one
         # more step is fetched to keep every step up to --max-lead.
         steps += [s for s in _steps_for(run) if s > max_lead_h][:1]
     groups = _group_for_request(names)

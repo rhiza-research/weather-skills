@@ -80,7 +80,7 @@ def test_hourly_normals_with_rate_precip(mod, monkeypatch, tmp_path):
     # t2m is instantaneous and keeps its hour.
     np.testing.assert_allclose(ds["t2m"].values[0], 15.0 + np.arange(24))
     # Precip over (t-1h, t] is labelled at t-1h: 00Z holds the 01Z amount.
-    np.testing.assert_allclose(ds["tp"].values[0], (1.5 + np.arange(24)) * 24.0)
+    np.testing.assert_allclose(ds["precip"].values[0], (1.5 + np.arange(24)) * 24.0)
     assert ds["t2m"].attrs["units"] == "degree_Celsius"
 
 

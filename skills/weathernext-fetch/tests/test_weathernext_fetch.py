@@ -92,22 +92,22 @@ def test_fetch_writes_zarr_and_stamps_history(tmp_path, fetch_mod, monkeypatch):
     assert seen["stamp"] == "20260925_06hr_01_preds"
     assert Path(out).exists()
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert "tp" in ds.data_vars
+        assert "precip" in ds.data_vars
         assert "total_precipitation_6hr" not in ds.data_vars
         assert {"number", "step", "lat", "lon"} <= set(ds.sizes)
-        assert ds["tp"].attrs["units"] == "mm day-1"
-        assert ds["tp"].attrs.get("data_interval")
-        # tp moves to period start (0..18 h); t2m keeps its native leads (6..24 h).
+        assert ds["precip"].attrs["units"] == "mm day-1"
+        assert ds["precip"].attrs.get("data_interval")
+        # precip moves to period start (0..18 h); t2m keeps its native leads (6..24 h).
         assert _lead_hours(ds) == [0, 6, 12, 18, 24]
         # 0.001 m / 6h = 4 mm day-1; no period after the last lead.
         np.testing.assert_allclose(
-            ds["tp"].values[0, :, 0, 0], [4.0, 4.0, 4.0, 4.0, np.nan], rtol=1e-5
+            ds["precip"].values[0, :, 0, 0], [4.0, 4.0, 4.0, 4.0, np.nan], rtol=1e-5
         )
         assert ds["2m_temperature"].attrs["units"] == "degree_Celsius"
         assert np.isnan(ds["2m_temperature"].values[0, 0, 0, 0])
         np.testing.assert_allclose(np.nanmean(ds["2m_temperature"].values), 6.85, atol=0.01)
         assert "weathernext:20260925_06hr_01_preds" in ds.attrs.get("weather_skills_source", "")
-        assert "aggregation_period" not in ds["tp"].attrs
+        assert "aggregation_period" not in ds["precip"].attrs
         assert ds["valid_time"].dims == ("step",)
     history = load_history(out)
     assert history[-1]["skill"] == "weathernext-fetch"
@@ -267,8 +267,8 @@ def test_missing_date_exits_1(tmp_path, fetch_mod, monkeypatch):
     assert exc.value.code == 1
 
 
-def test_t2m_keeps_native_lead_and_tp_moves_to_period_start(tmp_path, fetch_mod, monkeypatch):
-    """t2m is instantaneous at init + step; tp is a 6 h total labelled at its end."""
+def test_t2m_keeps_native_lead_and_precip_moves_to_period_start(tmp_path, fetch_mod, monkeypatch):
+    """t2m is instantaneous at init + step; precip is a 6 h total labelled at its end."""
     remote = _native_predictions(members=1)
     hours = np.array([6.0, 12.0, 18.0, 24.0], dtype="float32")
     remote["2m_temperature"].values[:] = (273.15 + hours)[None, :, None, None]  # degC == lead
@@ -279,15 +279,15 @@ def test_t2m_keeps_native_lead_and_tp_moves_to_period_start(tmp_path, fetch_mod,
     run_skill(fetch_mod.fetch, "--date", "2026-09-25", "-v", "tp", "-v", "t2m", "-o", str(out))
 
     ds = xr.open_zarr(out, consolidated=True).isel(number=0, lat=0, lon=0)
-    t2m = next(v for v in ds.data_vars if v != "tp")
+    t2m = next(v for v in ds.data_vars if v != "precip")
     lead_h = ds["step"].values / np.timedelta64(1, "h")
     np.testing.assert_allclose(lead_h, [0, 6, 12, 18, 24])
     # t2m sits on its own valid time: the 6 h value at step 6 h, nothing at 0.
     np.testing.assert_allclose(ds[t2m].values, [np.nan, 6, 12, 18, 24], rtol=1e-5)
     np.testing.assert_array_equal(ds["valid_time"].values, ds["time"].values + ds["step"].values)
-    # tp's 0-6 h total is labelled at the period start, nothing after the last period.
-    assert np.isnan(ds["tp"].values[-1]) and not np.isnan(ds["tp"].values[0])
-    assert ds["tp"].values[0] < ds["tp"].values[1]
+    # precip's 0-6 h total is labelled at the period start, nothing after the last period.
+    assert np.isnan(ds["precip"].values[-1]) and not np.isnan(ds["precip"].values[0])
+    assert ds["precip"].values[0] < ds["precip"].values[1]
 
 
 def test_t2m_alone_keeps_native_leads(tmp_path, fetch_mod, monkeypatch):
@@ -388,23 +388,23 @@ def test_v3_ensemble_flattens_hourly_leads(tmp_path, fetch_mod, monkeypatch):
         "--version", "3",
         "--date", "2026-10-02",
         "--billing-project", "my-proj",
-        "-v", "tp", "-v", "t2m",
+        "-v", "precip", "-v", "t2m",
         "-o", str(out),
     )  # fmt: skip
 
     assert seen["open"] == ("20261002_00hr_01_preds", "weathernext3_spatial", "my-proj")
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert set(ds.data_vars) == {"tp", "2m_temperature"}
+        assert set(ds.data_vars) == {"precip", "2m_temperature"}
         assert {"number", "step", "lat", "lon"} == set(ds.sizes)
-        # tp moves to period start (0..11 h); t2m keeps its native leads (1..12 h).
+        # precip moves to period start (0..11 h); t2m keeps its native leads (1..12 h).
         assert _lead_hours(ds) == list(range(13))
         valid = ds["valid_time"].values
         assert valid[0] == np.datetime64("2026-10-02T00:00:00", "ns")
         assert valid[-1] == np.datetime64("2026-10-02T12:00:00", "ns")
-        assert ds["tp"].attrs["units"] == "mm day-1"
+        assert ds["precip"].attrs["units"] == "mm day-1"
         # 0.001 m / 1h = 24 mm day-1; no period after the last lead.
-        np.testing.assert_allclose(ds["tp"].values[0, :-1, 0, 0], 24.0, rtol=1e-5)
-        assert np.isnan(ds["tp"].values[0, -1, 0, 0])
+        np.testing.assert_allclose(ds["precip"].values[0, :-1, 0, 0], 24.0, rtol=1e-5)
+        assert np.isnan(ds["precip"].values[0, -1, 0, 0])
         assert np.isnan(ds["2m_temperature"].values[0, 0, 0, 0])
         assert ds["2m_temperature"].attrs["units"] == "degree_Celsius"
         assert ds.attrs["weather_skills_source"] == "weathernext3:20261002_00hr_01_preds"
@@ -434,7 +434,7 @@ def test_v3_default_variables_are_01deg_surface(tmp_path, fetch_mod, monkeypatch
         "-o", str(out),
     )  # fmt: skip
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert set(ds.data_vars) == {"tp", "2m_temperature", "mean_sea_level_pressure"}
+        assert set(ds.data_vars) == {"precip", "2m_temperature", "mean_sea_level_pressure"}
         assert list(ds["number"].values) == [1]
 
 
@@ -448,23 +448,23 @@ def test_v3_statistics(tmp_path, fetch_mod, monkeypatch):
         "--version", "3",
         "--product", "statistics",
         "--date", "2026-10-02",
-        "-v", "tp", "-v", "t2m",
+        "-v", "precip", "-v", "t2m",
         "--statistic", "mean", "--statistic", "p90",
         "-o", str(out),
     )  # fmt: skip
     assert seen["open"] == ("20261002_00hr_01_preds", "weathernext3_statistics_spatial", None)
     with xr.open_zarr(out, consolidated=True) as ds:
         assert set(ds.data_vars) == {
-            "tp_mean",
-            "tp_p90",
+            "precip_mean",
+            "precip_p90",
             "2m_temperature_mean",
             "2m_temperature_p90",
         }
         assert "number" not in ds.dims
         assert _lead_hours(ds) == [0, 1, 2, 3]
-        np.testing.assert_allclose(ds["tp_mean"].values[:-1], 48.0, rtol=1e-5)
-        assert np.isnan(ds["tp_mean"].values[-1]).all()
-        assert ds["tp_p90"].attrs["units"] == "mm day-1"
+        np.testing.assert_allclose(ds["precip_mean"].values[:-1], 48.0, rtol=1e-5)
+        assert np.isnan(ds["precip_mean"].values[-1]).all()
+        assert ds["precip_p90"].attrs["units"] == "mm day-1"
         assert ds["2m_temperature_p90"].attrs["units"] == "degree_Celsius"
         assert "90th percentile" in ds["2m_temperature_p90"].attrs["long_name"]
         assert ds.attrs["weather_skills_source"].startswith("weathernext3-statistics:")
@@ -557,11 +557,19 @@ def test_v3_reads_store_without_dask(tmp_path, fetch_mod, monkeypatch):
 @pytest.mark.parametrize(
     ("argv", "expected"),
     [
-        (["-v", "tp_p90"], {"tp_p90"}),
-        (["-v", "total_precipitation_1hr_p90"], {"tp_p90"}),
-        (["-v", "tp_p90", "-v", "t2m_mean"], {"tp_p90", "2m_temperature_mean"}),
-        (["-v", "tp_p90", "-v", "tp"], {"tp_mean", "tp_p10", "tp_p50", "tp_p90"}),
-        (["-v", "tp_p90", "-v", "t2m", "--statistic", "p90"], {"tp_p90", "2m_temperature_p90"}),
+        (["-v", "precip_p90"], {"precip_p90"}),
+        (["-v", "tp_p90"], {"precip_p90"}),
+        (["-v", "precipitation"], {"precip_mean", "precip_p10", "precip_p50", "precip_p90"}),
+        (["-v", "total_precipitation_1hr_p90"], {"precip_p90"}),
+        (["-v", "precip_p90", "-v", "t2m_mean"], {"precip_p90", "2m_temperature_mean"}),
+        (
+            ["-v", "precip_p90", "-v", "precip"],
+            {"precip_mean", "precip_p10", "precip_p50", "precip_p90"},
+        ),
+        (
+            ["-v", "precip_p90", "-v", "t2m", "--statistic", "p90"],
+            {"precip_p90", "2m_temperature_p90"},
+        ),
     ],
 )
 def test_v3_variable_naming_a_statistic_keeps_only_it(
@@ -582,9 +590,9 @@ def test_v3_variable_naming_a_statistic_keeps_only_it(
 @pytest.mark.parametrize(
     "argv",
     [
-        ["--product", "statistics", "-v", "tp_p90", "--statistic", "mean"],  # conflict
-        ["--product", "statistics", "-v", "tp_p25"],  # statistic not in the store
-        ["--billing-project", "p", "-v", "tp_p90"],  # ensemble has no statistics
+        ["--product", "statistics", "-v", "precip_p90", "--statistic", "mean"],  # conflict
+        ["--product", "statistics", "-v", "precip_p25"],  # statistic not in the store
+        ["--billing-project", "p", "-v", "precip_p90"],  # ensemble has no statistics
     ],
 )
 def test_v3_bad_statistic_variable_exits_2(tmp_path, fetch_mod, monkeypatch, argv):
@@ -599,7 +607,7 @@ def test_v3_bad_statistic_variable_exits_2(tmp_path, fetch_mod, monkeypatch, arg
 
 
 def test_v3_solar_radiation_moves_to_period_start_in_j_m2(tmp_path, fetch_mod, monkeypatch):
-    """ssrd is a 1 h total ending at init + step, like tp: relabelled to its start."""
+    """ssrd is a 1 h total ending at init + step, like precip: relabelled to its start."""
     remote = _native_v3_ensemble(members=1)
     dims = remote["temperature_2m"].dims
     remote["surface_solar_radiation_downwards_1hr"] = (
@@ -647,7 +655,7 @@ def test_max_lead_and_cycle_accept_both_spellings(tmp_path, fetch_mod, monkeypat
 
 
 def test_precip_fields_stay_float32(tmp_path, fetch_mod, monkeypatch):
-    # v3 ensemble: tp plus the IMERG-calibrated and experimental precip fields.
+    # v3 ensemble: precip plus the IMERG-calibrated and experimental precip fields.
     remote = _native_v3_ensemble()
     for native in ("imerg_tp_1hr", "experimental_tp_1hr"):
         remote[native] = remote["total_precipitation_1hr"]
@@ -655,26 +663,26 @@ def test_precip_fields_stay_float32(tmp_path, fetch_mod, monkeypatch):
     out = tmp_path / "wn3.zarr"
     run_skill(
         fetch_mod.fetch, "--version", "3", "--date", "2026-10-02", "--billing-project", "p",
-        "-v", "tp", "-v", "imerg_tp", "-v", "experimental_tp", "-v", "t2m", "-o", str(out),
+        "-v", "precip", "-v", "imerg_precip", "-v", "experimental_precip", "-v", "t2m", "-o", str(out),
     )  # fmt: skip
     with xr.open_zarr(out, consolidated=True) as ds:
         assert {n: str(ds[n].dtype) for n in ds.data_vars} == {
-            "tp": "float32",
-            "imerg_tp": "float32",
-            "experimental_tp": "float32",
+            "precip": "float32",
+            "imerg_precip": "float32",
+            "experimental_precip": "float32",
             "2m_temperature": "float32",
         }
-        np.testing.assert_allclose(ds["imerg_tp"].values[0, :-1, 0, 0], 24.0, rtol=1e-5)
+        np.testing.assert_allclose(ds["imerg_precip"].values[0, :-1, 0, 0], 24.0, rtol=1e-5)
 
     # v3 statistics: per-statistic precip names.
     _mock_v3(monkeypatch, fetch_mod, _native_v3_statistics())
     out = tmp_path / "wn3_stats.zarr"
     run_skill(
         fetch_mod.fetch, "--version", "3", "--product", "statistics", "--date", "2026-10-02",
-        "-v", "tp", "--statistic", "mean", "--statistic", "p90", "-o", str(out),
+        "-v", "precip", "--statistic", "mean", "--statistic", "p90", "-o", str(out),
     )  # fmt: skip
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert ds["tp_mean"].dtype == np.float32 and ds["tp_p90"].dtype == np.float32
+        assert ds["precip_mean"].dtype == np.float32 and ds["precip_p90"].dtype == np.float32
 
 
 def test_filesystem_uses_credentials_json(fetch_mod, monkeypatch):
@@ -794,7 +802,7 @@ def test_repeated_init_windows_take_disjoint_inits(tmp_path, fetch_mod, monkeypa
         "--end-time",
         "2026-01-31",
         "-v",
-        "tp",
+        "precip",
         "-o",
         str(out),
     )

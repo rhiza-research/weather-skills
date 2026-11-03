@@ -8,7 +8,7 @@ metadata:
   version: "0.0.8"
   catalog-group: fetchers
   variables:
-    - tp
+    - precip
     - 2m_temperature
     - 2m_dewpoint_temperature
     - 10m_u_component_of_wind
@@ -67,7 +67,7 @@ Needs Google Cloud credentials: `GCLOUD_SERVICE_CREDENTIALS` (key JSON), `GOOGLE
 - `--start-time`, `--end-time` — an init window, both days inclusive. Repeat the pair for several windows, one window per pair. Takes the `--cycle` init (default 00 UTC) of every published day in the windows with all its leads: like `--date`, the windows select init times, not valid times. Use this instead of one `--date` call per init; not with `--date`. An init whose store is not complete yet is skipped with a `WARNING` on stderr; no init in any window exits 1.
 - `--cycle` — init hour UTC (`6` or `06`). WeatherNext 2: 00/06/12/18; WeatherNext 3 adds 48 h interim inits at the other hours. Default: `00` with `--date` or windows, else the newest 00/06/12/18.
 - `--bbox` — `N/W/S/E` decimal degrees. Default: global.
-- `--variable`, `-v` — repeatable. Common: `tp`/`precip`, `t2m`, `d2m`, `u10`, `v10`, `msl`, `sst`, `ssrd`; pressure levels `t`, `u`, `v`, `w`, `q`, `z` (more under Details). With `--product statistics`, `<name>_<stat>` (`tp_p90`) picks one statistic. Default: WeatherNext 2 every field; WeatherNext 3 every 0.1° surface field. Unknown names exit 2 listing `Available:`.
+- `--variable`, `-v` — repeatable. Common: `precip`/`tp`, `t2m`, `d2m`, `u10`, `v10`, `msl`, `sst`, `ssrd`; pressure levels `t`, `u`, `v`, `w`, `q`, `z` (more under Details). With `--product statistics`, `<name>_<stat>` (`precip_p90`) picks one statistic. Default: WeatherNext 2 every field; WeatherNext 3 every 0.1° surface field. Unknown names exit 2 listing `Available:`.
 - `--member` — 0-based member index, repeatable. Default: all 64. Not with `--product statistics`.
 - `--statistic` — with `--product statistics`: `mean`, `p10`, `p25`, `p50`, `p75`, `p90`, repeatable. Default: all six.
 - `--max-lead` — keep only leads up to this one after init: hours (`72`) or a timedelta (`72h`, `3D`). Default: every lead.
@@ -77,7 +77,7 @@ Needs Google Cloud credentials: `GCLOUD_SERVICE_CREDENTIALS` (key JSON), `GOOGLE
 
 ### Output
 - Dims `(number, step, [level,] lat, lon)`, scalar `time` = init, `valid_time` on `step`. With windows, `(time, step, number, [level,] lat, lon)`, one `time` per init, and `valid_time` on `(time, step)`; an init still publishing keeps its missing leads NaN (not filled), with a `WARNING` naming it. Statistics have no `number` and name variables `<name>_<stat>`.
-- `tp` (and `imerg_tp`, `experimental_tp`) is a rate in `mm day-1` and `ssrd` a 1 h total in `J m-2`, labelled at period start. Other fields are instants at `init + step`. Fetched together, the step axis starts at 0: the period fields are NaN at the last lead and the instants at 0 h. Never `deaccumulate` it.
+- `precip` (and `imerg_precip`, `experimental_precip`) is a rate in `mm day-1` and `ssrd` a 1 h total in `J m-2`, labelled at period start. Other fields are instants at `init + step`. Fetched together, the step axis starts at 0: the period fields are NaN at the last lead and the instants at 0 h. Never `deaccumulate` it.
 - Air temperatures are `degree_Celsius`; other fields keep ERA5-style units.
 
 ### Notes
@@ -89,28 +89,28 @@ Needs Google Cloud credentials: `GCLOUD_SERVICE_CREDENTIALS` (key JSON), `GOOGLE
 ### Example
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-10-14 --cycle 00 --bbox 5.5/33.5/-5/42.5 \
-  -v tp -v t2m --member 0 --member 1 --member 2 --member 3 -o weathernext_kenya.zarr
+  -v precip -v t2m --member 0 --member 1 --member 2 --member 3 -o weathernext_kenya.zarr
 ```
 Writes 4 WeatherNext 2 members of 6-hourly precip and 2 m temperature over Kenya.
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --version 3 --product statistics --bbox 5.5/33.5/-5/42.5 \
-  -v tp --statistic mean --statistic p90 --max-lead 72h -o wn3_kenya_tp_stats.zarr
+  -v precip --statistic mean --statistic p90 --max-lead 72h -o wn3_kenya_precip_stats.zarr
 ```
 Writes WeatherNext 3 hourly mean and 90th-percentile precip over Kenya for 3 days.
 
 ## Details
 
 ### Variables
-- Aliases for both versions: `tp`/`precip`/`pr`, `t2m`, `d2m`, `u10`, `v10`, `u100`, `v100`, `msl`, `sst`; pressure levels `t`, `u`, `v`, `w`, `q`, `z`/`geopotential`.
-- WeatherNext 3 adds `tcc`, `lcc`, `mcc`, `hcc`, `ssrd`, `si10`/`si100` (statistics only), `z300`, `z500`, `t300`, `t500`, `u1000`, `v1000`, `imerg_tp`, `experimental_tp`, `total_sky_direct_solar_radiation_at_surface_1hr`, and the 0.05° `station_head_temperature_2m` / `station_head_dewpoint_temperature_2m`.
+- Aliases for both versions: `precip`/`tp`/`precipitation`/`pr`, `t2m`, `d2m`, `u10`, `v10`, `u100`, `v100`, `msl`, `sst`; pressure levels `t`, `u`, `v`, `w`, `q`, `z`/`geopotential`.
+- WeatherNext 3 adds `tcc`, `lcc`, `mcc`, `hcc`, `ssrd`, `si10`/`si100` (statistics only), `z300`, `z500`, `t300`, `t500`, `u1000`, `v1000`, `imerg_precip`, `experimental_precip`, `total_sky_direct_solar_radiation_at_surface_1hr`, and the 0.05° `station_head_temperature_2m` / `station_head_dewpoint_temperature_2m`.
 - Native names also work (`total_precipitation_1hr`, `total_precipitation_1hr_p90`). WeatherNext 3 fields shared with WeatherNext 2 take the same ERA5-style names (`2m_temperature`, `10m_u_component_of_wind`, …).
-- A statistic named in `-v` (`tp_p90`) keeps only that statistic; a plain name (`tp`) keeps every statistic `--statistic` allows. A `-v` statistic that `--statistic` excludes exits 2.
+- A statistic named in `-v` (`precip_p90`) keeps only that statistic; a plain name (`precip`) keeps every statistic `--statistic` allows. A `-v` statistic that `--statistic` excludes exits 2.
 
 ### Grids and leads
 - `number` is 0..63. `level` is 13 pressure levels, 50–1000 hPa. WeatherNext 3's `lead_time` × `lead_subtime` becomes one hourly `step`, and its `lat_0p1`/`lon_0p1` (etc.) become `lat`/`lon`.
 - WeatherNext 3 groups: 0.1° hourly surface, 0.05° hourly station-head, 0.25° hourly single-level upper air (`z500`, `t500`, …) and 0.25° 6-hourly pressure-level cubes (`t`, `u`, `v`, `w`, `q`, `z`).
-- Period fields: `step=0` is `[init, init+6h)` for WeatherNext 2 `tp` and `[init, init+1h)` for WeatherNext 3 `tp`, `ssrd` and `total_sky_direct_solar_radiation_at_surface_1hr`. Precipitation is clipped at zero. The radiation fields stay hourly sums in `J m-2` (divide by 3600 s for a mean `W m-2` flux).
+- Period fields: `step=0` is `[init, init+6h)` for WeatherNext 2 `precip` and `[init, init+1h)` for WeatherNext 3 `precip`, `ssrd` and `total_sky_direct_solar_radiation_at_surface_1hr`. Precipitation is clipped at zero. The radiation fields stay hourly sums in `J m-2` (divide by 3600 s for a mean `W m-2` flux).
 
 ### Flags
 - WeatherNext 2 inits run daily from 2025-01-01, WeatherNext 3 from 2026. WeatherNext 3 interim cycles are `01`–`05`, `07`–`11`, `13`–`17`, `19`–`23`.

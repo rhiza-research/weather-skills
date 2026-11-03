@@ -45,7 +45,7 @@ _SKILL_VERSION = "0.0.6"
 _PROBE_POLL_SECONDS = 30
 _PROBE_POLL_MAX_SECONDS = 3600
 
-# S2S archives tp 6-hourly; request 00Z daily leads through the 46-day S2S range.
+# S2S archives precipitation 6-hourly; request 00Z daily leads through the 46-day S2S range.
 _MAX_LEAD_HOURS = 46 * 24
 LEADTIME_HOURS = [str(h) for h in range(0, _MAX_LEAD_HOURS + 1, 24)]
 
@@ -100,9 +100,10 @@ class _Var(NamedTuple):
 
 
 # Most-used first, then the rest of S2S single-level + ocean. `-v` / Zarr
-# tokens are cfgrib short names (sst, not ARCO 2m_temperature).
+# tokens are cfgrib short names (sst, not ARCO 2m_temperature), except
+# rainfall, written as `precip`.
 VARIABLES: dict[str, _Var] = {
-    "tp": _Var("total_precipitation", "instant"),
+    "precip": _Var("total_precipitation", "instant"),
     "t2m": _Var("2_m_temperature", "daily"),
     "sst": _Var("sea_surface_temperature", "daily"),
     "d2m": _Var("2_m_dewpoint_temperature", "daily"),
@@ -194,7 +195,7 @@ VARIABLES: dict[str, _Var] = {
     "zos": _Var("sea_surface_height", "daily"),
     "sos": _Var("sea_surface_pratical_salinity", "daily"),  # ECDS spelling
 }
-DEFAULT_VARIABLES = ["tp"]
+DEFAULT_VARIABLES = ["precip"]
 
 # dynamical.org ECMWF ER / S2S 46-day product. Inits start 2026-01-01; still
 # ~2-day embargo. Prefer this over ECDS when every requested field maps.
@@ -212,7 +213,7 @@ _DROP_COORDS = (
 # S2S short name → catalog field. Fluxes (ECDS accumulated J m-2 vs catalog
 # mean W m-2), 6-hour max/min, static masks, ocean, and pv stay on ECDS.
 _CATALOG_SURFACE = {
-    "tp": "precipitation_surface",
+    "precip": "precipitation_surface",
     "t2m": "average_temperature_2m",
     "sst": "sea_surface_temperature",
     "d2m": "average_dew_point_temperature_2m",
@@ -249,8 +250,10 @@ _CATALOG_PRESSURE = {
 }
 _CATALOG_TO_SHORT = {v: k for k, v in {**_CATALOG_SURFACE, **_CATALOG_PRESSURE}.items()}
 
-# cfgrib / S2S abbreviations that are not the canonical `-v` token.
+# cfgrib / S2S abbreviations and other names accepted for a canonical `-v` token.
 _GRIB_EXTRAS = {
+    "tp": "precip",
+    "precipitation": "precip",
     "2t": "t2m",
     "2d": "d2m",
     "10u": "u10",
@@ -260,8 +263,8 @@ _GRIB_EXTRAS = {
 }
 _GRIB_ALIASES = {name: name for name in VARIABLES} | _GRIB_EXTRAS
 
-# Cumulative-since-init fields besides `tp`, written as-is (not deaccumulated).
-# Mixing them with `tp` would relabel their steps onto tp's shortened axis.
+# Cumulative-since-init fields besides `precip`, written as-is (not deaccumulated).
+# Mixing them with `precip` would relabel their steps onto precip's shortened axis.
 _ACCUMULATED = frozenset(
     {"cp", "sf", "ro", "sro", "sshf", "slhf", "ssr", "ssrd", "str", "strd", "ttr", "ewss", "nsss"}
 )
@@ -283,7 +286,7 @@ def _canonical_name(token: str) -> str | None:
 
 
 def _flatten_variable_tokens(raw) -> list[str]:
-    """Accept ``-v tp t2m``, ``-v tp -v t2m``, and ``-v tp,t2m`` alike."""
+    """Accept ``-v precip t2m``, ``-v precip -v t2m``, and ``-v precip,t2m`` alike."""
     if raw is None:
         return []
     items = raw if isinstance(raw, (list, tuple)) else [raw]
@@ -396,9 +399,9 @@ def _drop_empty_lead0(ds):
 def _standardize_catalog(ds):
     """CF attrs + standard units. Catalog precip is already a rate."""
     stamp_cf_attrs(ds)
-    if "tp" in ds.data_vars:
-        ds["tp"].attrs.setdefault("standard_name", "precipitation_flux")
-        ds["tp"].attrs.setdefault("long_name", "Total precipitation")
+    if "precip" in ds.data_vars:
+        ds["precip"].attrs.setdefault("standard_name", "precipitation_flux")
+        ds["precip"].attrs.setdefault("long_name", "Total precipitation")
     ds = ensure_normalized_longitude(ds)
     out = ds
     for name in list(ds.data_vars):
@@ -543,7 +546,7 @@ def _build_request(
     date_iso: str,
     area: list[float],
     forecast_type: str,
-    variables: list[str] | tuple[str, ...] = ("tp",),
+    variables: list[str] | tuple[str, ...] = ("precip",),
 ) -> dict:
     names = list(variables)
     families = {VARIABLES[name].family for name in names}
@@ -678,12 +681,12 @@ def _to_celsius(da):
 
 
 def _standardize(ds):
-    """CF attrs + standard units. S2S ``tp`` is cumulative; convert to a rate."""
+    """CF attrs + standard units. S2S ``precip`` is cumulative; convert to a rate."""
     stamp_cf_attrs(ds)
-    if "tp" in ds.data_vars:
-        ds["tp"].attrs["standard_name"] = "precipitation_amount"
-        ds["tp"].attrs["units"] = "kg m-2"
-        ds["tp"].attrs["long_name"] = "Total precipitation"
+    if "precip" in ds.data_vars:
+        ds["precip"].attrs["standard_name"] = "precipitation_amount"
+        ds["precip"].attrs["units"] = "kg m-2"
+        ds["precip"].attrs["long_name"] = "Total precipitation"
     ds = ensure_normalized_longitude(ds)
     ds = to_standard_units(ds)
     for name in _KELVIN_TEMPS:
@@ -719,10 +722,10 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
     action="append",
     nargs="+",
     help=(
-        "S2S fields to retrieve. Pass several names in one flag (`-v tp t2m`), "
-        "repeat `-v`, or comma-separate (`-v tp,t2m`). Most used first: tp, "
-        "t2m, sst. Pressure-level: gh, t, u, v, w, q. Default tp. Names are "
-        "cfgrib short names (sst, t, not ARCO 2m_temperature)."
+        "S2S fields to retrieve. Pass several names in one flag (`-v precip t2m`), "
+        "repeat `-v`, or comma-separate (`-v precip,t2m`). Most used first: precip "
+        "(also tp), t2m, sst. Pressure-level: gh, t, u, v, w, q. Default precip. "
+        "Other names are cfgrib short names (sst, t, not ARCO 2m_temperature)."
     ),
 )
 @weather_skill.argument(
@@ -766,10 +769,10 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
         return _fetch_catalog(date, bbox, names)
 
     mixed = sorted(_ACCUMULATED.intersection(names))
-    if "tp" in names and mixed:
+    if "precip" in names and mixed:
         raise UsageError(
-            f"fetch {', '.join(mixed)} in a separate call from tp: they stay cumulative "
-            "since init and would be misaligned with tp's per-step rate."
+            f"fetch {', '.join(mixed)} in a separate call from precip: they stay cumulative "
+            "since init and would be misaligned with precip's per-step rate."
         )
     latest = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=2)
     if date > latest:
@@ -899,7 +902,7 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
                 ens = cf.expand_dims("number")
             if key[0] == "daily":
                 # cfgrib labels a 24 h mean at its window end; relabel to the
-                # window start so step 0 is the first 24 h, like tp.
+                # window start so step 0 is the first 24 h, like precip.
                 ens = ens.drop_vars("valid_time", errors="ignore")
                 ens = ens.assign_coords(step=ens["step"] - np.timedelta64(24, "h"))
             family_ensembles.append(_rename_to_short(ens, group_vars))
