@@ -12,7 +12,7 @@
 #   "eccodeslib",
 # ]
 # ///
-"""Fetch an ECMWF S2S (46-day) ensemble forecast for one init date as a weather-skills Zarr."""
+"""Fetch an ECMWF S2S (46-day) ensemble forecast for one init date or a range of inits as a weather-skills Zarr."""
 
 from __future__ import annotations
 
@@ -48,6 +48,9 @@ _PROBE_POLL_MAX_SECONDS = 3600
 # S2S archives precipitation 6-hourly; request 00Z daily leads through the 46-day S2S range.
 _MAX_LEAD_HOURS = 46 * 24
 LEADTIME_HOURS = [str(h) for h in range(0, _MAX_LEAD_HOURS + 1, 24)]
+
+# S2S inits are daily from this date, Mondays and Thursdays only before it.
+_DAILY_FROM = dt.date(2023, 6, 27)
 
 S2S_LICENCE_URL = "https://ecds.ecmwf.int/datasets/s2s-forecasts?tab=download#manage-licences"
 
@@ -415,11 +418,10 @@ def _standardize_catalog(ds):
     return stamp_data_interval(out)
 
 
-def _fetch_catalog(init: dt.date, bbox, names: list[str]):
+def _fetch_catalog(init: dt.date | None, bbox, names: list[str], windows=()):
     import numpy as np
     import xarray as xr
 
-    date_iso = init.isoformat()
     surface = [name for name in names if name in _CATALOG_SURFACE]
     pressure = [name for name in names if name in _CATALOG_PRESSURE]
 
@@ -445,20 +447,44 @@ def _fetch_catalog(init: dt.date, bbox, names: list[str]):
     ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
 
     inits = ds["init_time"].values
-    init_target = np.datetime64(f"{date_iso}T00:00:00").astype(inits.dtype)
-
-    def _no_init() -> DataError:
-        return DataError(
-            f"{_DATASET} has no {date_iso} 00 UTC init; available init range is "
-            f"{np_to_date(inits.min()).isoformat()}..{np_to_date(inits.max()).isoformat()}."
-        )
-
-    if init_target not in inits:
-        raise _no_init()
-    try:
+    init_range = f"{np_to_date(inits.min()).isoformat()}..{np_to_date(inits.max()).isoformat()}"
+    if windows:
+        # 00 UTC inits only, as with --date: the windows select init times, not
+        # valid times, and take every init the catalog has in them.
+        days = inits.astype("datetime64[D]")
+        keep = np.zeros(inits.size, dtype=bool)
+        for start, end in windows:
+            keep |= (inits == days) & (days >= np.datetime64(start)) & (days <= np.datetime64(end))
+        if not keep.any():
+            window_text = ", ".join(f"{start}..{end}" for start, end in windows)
+            raise DataError(
+                f"{_DATASET} has no 00 UTC init in {window_text}; "
+                f"available init range is {init_range}."
+            )
+        ds = ds.isel(init_time=np.nonzero(keep)[0]).load()
+        print(f"Selected {int(keep.sum())} inits.", file=sys.stderr)
+        # An init with no value in any field is skipped, never filled.
+        empty = np.ones(ds.sizes["init_time"], dtype=bool)
+        for name in ds.data_vars:
+            other = [d for d in ds[name].dims if d != "init_time"]
+            empty &= ds[name].isnull().all(other).values
+        for value in ds["init_time"].values[empty]:
+            print(
+                f"WARNING: {_DATASET} {np_to_date(value).isoformat()} init has no data "
+                "in the bbox (still publishing?); skipped.",
+                file=sys.stderr,
+            )
+        if empty.all():
+            raise DataError(f"no selected {_DATASET} init has data in the requested bbox.")
+        ds = ds.isel(init_time=np.nonzero(~empty)[0])
+    else:
+        init_target = np.datetime64(f"{init.isoformat()}T00:00:00").astype(inits.dtype)
+        if init_target not in inits:
+            raise DataError(
+                f"{_DATASET} has no {init.isoformat()} 00 UTC init; "
+                f"available init range is {init_range}."
+            )
         ds = ds.sel(init_time=init_target)
-    except KeyError:
-        raise _no_init() from None
 
     drop = [c for c in _DROP_COORDS if c in ds.coords or c in ds]
     if drop:
@@ -467,9 +493,11 @@ def _fetch_catalog(init: dt.date, bbox, names: list[str]):
     rename = {"lead_time": "step"}
     if "ensemble_member" in ds.dims:
         rename["ensemble_member"] = "number"
+    # One init: scalar `time`. A range of inits: a `time` axis (the init).
+    rename["init_time"] = "time"
     ds = ds.rename(rename)
-    if "init_time" in ds.coords or "init_time" in ds:
-        ds = ds.assign_coords(time=ds["init_time"]).drop_vars("init_time")
+    if windows:
+        ds = ds.transpose("time", "step", ...)
 
     rename_vars = {
         name: _CATALOG_TO_SHORT[name]
@@ -715,7 +743,15 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
     version=_SKILL_VERSION,
 )
 @weather_skill.argument("--bbox", required=True)
-@weather_skill.argument("--date", required=True)
+@weather_skill.argument("--date")
+@weather_skill.argument(
+    "--start-time",
+    action="append",
+    help="Init window start; repeat with --end-time for several windows (each January).",
+)
+@weather_skill.argument(
+    "--end-time", action="append", help="Init window end, paired with --start-time."
+)
 @weather_skill.argument(
     "--variable",
     "-v",
@@ -740,8 +776,8 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
         "(dataset id, IMERG late/final, …)."
     ),
 )
-def fetch(bbox, date, variable, probe_latest, **kwargs):
-    """Fetch an ECMWF S2S (46-day) ensemble forecast for one init date as a weather-skills Zarr."""
+def fetch(bbox, date, start_time, end_time, variable, probe_latest, **kwargs):
+    """Fetch an ECMWF S2S (46-day) ensemble forecast for one init date or a range of inits as a weather-skills Zarr."""
     if probe_latest is not None:
         found = _catalog_latest_init()
         if found is not None:
@@ -750,23 +786,32 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
         # Calendar fallback when the catalog is unreachable. 2-day embargo;
         # Mon/Thu only before 2023-06-27.
         day = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=2)
-        if day < dt.date(2023, 6, 27):
+        if day < _DAILY_FROM:
             while day.weekday() not in (0, 3):
                 day -= dt.timedelta(days=1)
         print(day.isoformat())
         return
 
-    date_iso = date.isoformat()
+    # One (start, end) pair per window; --end-time is an inclusive calendar day.
+    windows = list(zip(start_time or [], end_time or [], strict=True))
+    if (date is None) == (not windows):
+        raise UsageError(
+            "pass --date for one init, or --start-time/--end-time for a range of inits (not both)."
+        )
+    window_text = ", ".join(f"{start}..{end}" for start, end in windows)
+    when = date.isoformat() if date is not None else window_text
     area = list(bbox)
     names = _resolve_variables(variable)
 
-    if _catalog_covers(date, names):
+    # Windows use the catalog only when it covers every window.
+    first = date if date is not None else min(start for start, _ in windows)
+    if _catalog_covers(first, names):
         print(
             f"Fetching ECMWF S2S from dynamical:{_DATASET} "
-            f"for area={area} date={date_iso} variables={','.join(names)}",
+            f"for area={area} inits={when} variables={','.join(names)}",
             file=sys.stderr,
         )
-        return _fetch_catalog(date, bbox, names)
+        return _fetch_catalog(date, bbox, names, windows)
 
     mixed = sorted(_ACCUMULATED.intersection(names))
     if "precip" in names and mixed:
@@ -775,11 +820,43 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
             "since init and would be misaligned with precip's per-step rate."
         )
     latest = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=2)
-    if date > latest:
-        raise DataError(
-            f"init {date_iso} is inside the 2-day S2S real-time embargo; "
-            f"the latest init you can request is {latest.isoformat()}."
-        )
+    if windows:
+        # Every published init day in the windows: daily from _DAILY_FROM,
+        # Mondays and Thursdays before. The windows select init times.
+        inits = set()
+        for start, end in windows:
+            day = start
+            while day <= end:
+                if day >= _DAILY_FROM or day.weekday() in (0, 3):
+                    inits.add(day)
+                day += dt.timedelta(days=1)
+        inits = sorted(inits)
+        if not inits:
+            raise DataError(
+                f"no S2S init in {window_text}: inits are daily from {_DAILY_FROM}, "
+                "Mondays and Thursdays only before then."
+            )
+        embargoed = [init for init in inits if init > latest]
+        if embargoed:
+            print(
+                f"WARNING: {len(embargoed)} init(s) from {embargoed[0]} are inside the 2-day "
+                f"S2S real-time embargo (latest {latest}); skipped.",
+                file=sys.stderr,
+            )
+            inits = [init for init in inits if init <= latest]
+        if not inits:
+            raise DataError(
+                f"every init in {window_text} is inside the 2-day S2S real-time embargo; "
+                f"the latest init you can request is {latest.isoformat()}."
+            )
+        print(f"Selected {len(inits)} inits.", file=sys.stderr)
+    else:
+        if date > latest:
+            raise DataError(
+                f"init {date.isoformat()} is inside the 2-day S2S real-time embargo; "
+                f"the latest init you can request is {latest.isoformat()}."
+            )
+        inits = [date]
 
     require_env("ECMWF_DATASTORES_KEY")
     _ensure_datastores_url()
@@ -790,7 +867,7 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
     from ecmwf.datastores.processing import ProcessingFailedError
 
     print(
-        f"Fetching ECMWF S2S from ECDS for area={area} date={date_iso} variables={','.join(names)}",
+        f"Fetching ECMWF S2S from ECDS for area={area} inits={when} variables={','.join(names)}",
         file=sys.stderr,
     )
     with tempfile.TemporaryDirectory(prefix="ecmwf-fetch-") as tmpdir:
@@ -799,75 +876,103 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
         client = Client()
         groups = _group_for_request(names)
 
+        # One ECDS request per init, variable group, forecast type and sub-area.
         legs = []
-        for key, group_vars in groups:
-            slug = _group_slug(key)
-            control_only = key[3]
-            forecast_types = [("control_forecast", "cf")]
-            if not control_only:
-                forecast_types.append(("perturbed_forecast", "pf"))
-            for forecast_type, short in forecast_types:
-                for i, sub in enumerate(sub_areas):
-                    legs.append(
-                        {
-                            "key": key,
-                            "group_vars": group_vars,
-                            "forecast_type": forecast_type,
-                            "short": short,
-                            "area": sub,
-                            "grib": tmp / f"{short}_{slug}_{i}.grib",
-                            "remote": None,
-                        }
-                    )
+        for init in inits:
+            for key, group_vars in groups:
+                slug = _group_slug(key)
+                control_only = key[3]
+                forecast_types = [("control_forecast", "cf")]
+                if not control_only:
+                    forecast_types.append(("perturbed_forecast", "pf"))
+                for forecast_type, short in forecast_types:
+                    for i, sub in enumerate(sub_areas):
+                        legs.append(
+                            {
+                                "init": init,
+                                "key": key,
+                                "group_vars": group_vars,
+                                "forecast_type": forecast_type,
+                                "short": short,
+                                "area": sub,
+                                "grib": tmp / f"{short}_{slug}_{i}_{init.isoformat()}.grib",
+                                "remote": None,
+                            }
+                        )
 
         print(f"Submitting {len(legs)} retrieval leg(s)...", file=sys.stderr)
-        try:
-            for leg in legs:
-                req = _build_request(date_iso, leg["area"], leg["forecast_type"], leg["group_vars"])
-                leg["remote"] = _submit(client, req)
-        except DataError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            raise DataError(
-                f"ECDS submit failed for init {date_iso} ({exc}); this is a transport/auth problem."
-            ) from None
-
-        remotes = [leg["remote"] for leg in legs]
-        waited = 0
-        while True:
+        for leg in legs:
+            date_iso = leg["init"].isoformat()
+            req = _build_request(date_iso, leg["area"], leg["forecast_type"], leg["group_vars"])
             try:
-                if all(r.results_ready for r in remotes):
-                    break
-            except ProcessingFailedError as exc:
-                if _is_s2s_embargo_error(exc):
-                    raise DataError(
-                        f"init {date_iso} is inside the 2-day S2S real-time embargo "
-                        f"(access-restricted) ({exc}); use an older init date."
-                    ) from None
-                raise DataError(
-                    f"ECDS reported no data for init {date_iso} ({exc}); "
-                    "there may be no published S2S real-time forecast for that date "
-                    "(daily since 2023-06-27; Mondays/Thursdays only before then), "
-                    "or the init is not yet available — try another date."
-                ) from None
+                leg["remote"] = _submit(client, req)
+            except DataError:
+                raise
             except Exception as exc:  # noqa: BLE001
-                if _is_s2s_embargo_error(exc):
-                    raise DataError(
-                        f"init {date_iso} is inside the 2-day S2S real-time embargo "
-                        f"(access-restricted) ({exc}); use an older init date."
-                    ) from None
                 raise DataError(
-                    f"polling ECDS job for init {date_iso} failed ({exc}); "
+                    f"ECDS submit failed for init {date_iso} ({exc}); "
                     "this is a transport/auth problem."
                 ) from None
-            if waited >= _PROBE_POLL_MAX_SECONDS:
+
+        # Poll until every leg is ready. With windows, an init ECDS has no data
+        # for is skipped; with --date it is an error.
+        pending = list(legs)
+        waited = 0
+        max_wait = _PROBE_POLL_MAX_SECONDS * len(inits)
+        while pending:
+            for leg in list(pending):
+                if leg not in pending:  # its init was skipped earlier in this pass
+                    continue
+                date_iso = leg["init"].isoformat()
+                try:
+                    ready = leg["remote"].results_ready
+                except ProcessingFailedError as exc:
+                    embargo = _is_s2s_embargo_error(exc)
+                    if windows:
+                        reason = "inside the 2-day real-time embargo" if embargo else "no data"
+                        print(
+                            f"WARNING: ECDS init {date_iso}: {reason} ({exc}); skipped.",
+                            file=sys.stderr,
+                        )
+                        legs = [other for other in legs if other["init"] != leg["init"]]
+                        pending = [other for other in pending if other["init"] != leg["init"]]
+                        inits = [init for init in inits if init != leg["init"]]
+                        continue
+                    if embargo:
+                        raise DataError(
+                            f"init {date_iso} is inside the 2-day S2S real-time embargo "
+                            f"(access-restricted) ({exc}); use an older init date."
+                        ) from None
+                    raise DataError(
+                        f"ECDS reported no data for init {date_iso} ({exc}); "
+                        "there may be no published S2S real-time forecast for that date "
+                        "(daily since 2023-06-27; Mondays/Thursdays only before then), "
+                        "or the init is not yet available — try another date."
+                    ) from None
+                except Exception as exc:  # noqa: BLE001
+                    if _is_s2s_embargo_error(exc):
+                        raise DataError(
+                            f"init {date_iso} is inside the 2-day S2S real-time embargo "
+                            f"(access-restricted) ({exc}); use an older init date."
+                        ) from None
+                    raise DataError(
+                        f"polling ECDS job for init {date_iso} failed ({exc}); "
+                        "this is a transport/auth problem."
+                    ) from None
+                if ready:
+                    pending.remove(leg)
+            if not pending:
+                break
+            if waited >= max_wait:
                 raise DataError(
-                    f"ECDS job for init {date_iso} was still not ready after "
-                    f"{_PROBE_POLL_MAX_SECONDS}s; the job is stuck. Re-run, or pass a "
+                    f"ECDS jobs for inits {when} were still not ready after "
+                    f"{max_wait}s; the job is stuck. Re-run, or pass a "
                     "different init date."
                 )
             time.sleep(_PROBE_POLL_SECONDS)
             waited += _PROBE_POLL_SECONDS
+        if not inits:
+            raise DataError(f"ECDS had no data for any S2S init in {window_text}.")
 
         for leg in legs:
             print(f"Downloading {leg['grib'].name}...", file=sys.stderr)
@@ -875,43 +980,55 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
                 leg["remote"].download(str(leg["grib"]))
             except Exception as exc:  # noqa: BLE001
                 raise DataError(
-                    f"ECDS download failed for init {date_iso} ({exc}); "
+                    f"ECDS download failed for init {leg['init'].isoformat()} ({exc}); "
                     "this is a transport/auth problem."
                 ) from None
 
         print("Decoding GRIB and writing Zarr...", file=sys.stderr)
-        family_ensembles = []
-        for key, group_vars in groups:
-            cf_parts = [
-                _open_grib(leg["grib"])
-                for leg in legs
-                if leg["key"] == key and leg["forecast_type"] == "control_forecast"
-            ]
-            pf_parts = [
-                _open_grib(leg["grib"])
-                for leg in legs
-                if leg["key"] == key and leg["forecast_type"] == "perturbed_forecast"
-            ]
-            cf = _promote_vertical(_concat_lon(cf_parts).assign_coords(number=0))
-            if pf_parts:
-                pf = _promote_vertical(_concat_lon(pf_parts))
-                ens = xr.concat([pf, cf], dim="number").sortby("number")
-            else:
-                # Control-only fields keep a length-1 number axis so the merge
-                # below leaves members 1..50 NaN instead of dropping `number`.
-                ens = cf.expand_dims("number")
-            if key[0] == "daily":
-                # cfgrib labels a 24 h mean at its window end; relabel to the
-                # window start so step 0 is the first 24 h, like precip.
-                ens = ens.drop_vars("valid_time", errors="ignore")
-                ens = ens.assign_coords(step=ens["step"] - np.timedelta64(24, "h"))
-            family_ensembles.append(_rename_to_short(ens, group_vars))
-        ds = (
-            family_ensembles[0]
-            if len(family_ensembles) == 1
-            else xr.merge(family_ensembles, join="outer", compat="override")
-        )
-        ds = ds[names]
+        pieces = []
+        for init in inits:
+            family_ensembles = []
+            for key, group_vars in groups:
+                cf_parts = [
+                    _open_grib(leg["grib"])
+                    for leg in legs
+                    if leg["init"] == init
+                    and leg["key"] == key
+                    and leg["forecast_type"] == "control_forecast"
+                ]
+                pf_parts = [
+                    _open_grib(leg["grib"])
+                    for leg in legs
+                    if leg["init"] == init
+                    and leg["key"] == key
+                    and leg["forecast_type"] == "perturbed_forecast"
+                ]
+                cf = _promote_vertical(_concat_lon(cf_parts).assign_coords(number=0))
+                if pf_parts:
+                    pf = _promote_vertical(_concat_lon(pf_parts))
+                    ens = xr.concat([pf, cf], dim="number").sortby("number")
+                else:
+                    # Control-only fields keep a length-1 number axis so the merge
+                    # below leaves members 1..50 NaN instead of dropping `number`.
+                    ens = cf.expand_dims("number")
+                if key[0] == "daily":
+                    # cfgrib labels a 24 h mean at its window end; relabel to the
+                    # window start so step 0 is the first 24 h, like precip.
+                    ens = ens.drop_vars("valid_time", errors="ignore")
+                    ens = ens.assign_coords(step=ens["step"] - np.timedelta64(24, "h"))
+                family_ensembles.append(_rename_to_short(ens, group_vars))
+            ds = (
+                family_ensembles[0]
+                if len(family_ensembles) == 1
+                else xr.merge(family_ensembles, join="outer", compat="override")
+            )
+            pieces.append(ds[names])
+        if windows:
+            # A range of inits: a `time` axis (the init); valid_time gains it too.
+            ds = xr.concat(pieces, "time", join="outer", coords="different", compat="equals")
+            ds = ds.transpose("time", "step", ...)
+        else:
+            ds = pieces[0]
         ds.attrs.update(Conventions="CF-1.13", weather_skills_source="ecmwf-s2s")
         ds = _standardize(ds)
         # Materialize while GRIB files in the temp dir still exist.
