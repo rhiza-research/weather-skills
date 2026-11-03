@@ -28,7 +28,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.7"
+_SKILL_VERSION = "0.0.8"
 
 _ACCOUNT = "italynorthdata"
 _CONTAINER = "data"
@@ -43,8 +43,8 @@ _DATASETS = {
     "precip_1deg": "total_precipitation_24h_acc_imerg",  # IMERG-trained, native 1°
     "precip_era5": "total_precipitation_24h_acc_era5",  # ERA5-trained
 }
-# Accepted -v names; the output variable is always ``tp``.
-_TP_ALIASES = {"tp", "precip", "precipitation", "total_precipitation", *_DATASETS.values()}
+# Accepted -v names; the output variable is always ``precip``.
+_PRECIP_ALIASES = {"tp", "precip", "precipitation", "total_precipitation", *_DATASETS.values()}
 DEFAULT_WORKERS = 8
 
 
@@ -142,12 +142,12 @@ def _to_standard(ds):
     (name,) = ds.data_vars
     ds = ds.squeeze("init_time").drop_vars("valid_time", errors="ignore")
     ds = ds.rename(
-        {name: "tp", "init_time": "time", "lead_time": "step", "ensemble_member": "number"}
+        {name: "precip", "init_time": "time", "lead_time": "step", "ensemble_member": "number"}
     )
     ds["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
     # Each lead is the 24h total ending at init + lead; label it by the period start.
     ds = ds.assign_coords(step=ds["step"] - np.timedelta64(24, "h"))
-    ds["tp"].attrs["comment"] = (
+    ds["precip"].attrs["comment"] = (
         "24 h precipitation from init + step to init + step + 24 h "
         "(cumulus-fetch relabelled store leads from period end to period start)."
     )
@@ -217,10 +217,10 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
         print(stores[-1][:10] if stores else "none")
         return
 
-    unknown = set(variable or ()) - _TP_ALIASES
+    unknown = set(variable or ()) - _PRECIP_ALIASES
     if unknown:
         raise UsageError(
-            f"variable(s) not in this Cumulus product: {', '.join(sorted(unknown))}.\nAvailable: tp"
+            f"variable(s) not in this Cumulus product: {', '.join(sorted(unknown))}.\nAvailable: precip"
         )
 
     # One (start, end) pair per window; --end-time is an inclusive calendar day.
@@ -284,7 +284,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
         # A range of inits: a `time` axis (the init). An init still writing its
         # long leads keeps them NaN (not filled); say which init is short.
         ds = xr.concat(pieces, "time", join="outer").transpose("time", "step", ...)
-        init_empty = ds["tp"].isnull().all(("number", "latitude", "longitude")).values
+        init_empty = ds["precip"].isnull().all(("number", "latitude", "longitude")).values
         if init_empty.all():
             raise DataError(
                 f"no selected Cumulus init has data in the requested bbox under {prefix}."
@@ -305,7 +305,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
         ds = pieces[0]
         # A fresh init may still be writing its long leads (all-NaN). Error when
         # nothing is there; drop an empty tail and say so instead of writing it.
-        empty = ds["tp"].isnull().all(("number", "latitude", "longitude")).values
+        empty = ds["precip"].isnull().all(("number", "latitude", "longitude")).values
         if empty.all():
             raise DataError(
                 f"Cumulus init {store} has no data in the requested bbox (still publishing?). "

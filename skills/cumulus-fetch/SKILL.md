@@ -5,10 +5,10 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads private Zarr stores from Azure Blob italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr/total_precipitation_24h_acc_imerg_0p25 via adlfs. Requires AZURE_STORAGE_SAS_TOKEN (a read SAS with list and read, sp=rl).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.7"
+  version: "0.0.8"
   catalog-group: fetchers
   variables:
-    - tp
+    - precip
   openclaw:
     requires:
       env:
@@ -26,7 +26,7 @@ Fetches one Cumulus init, or every init in one or more date windows (all leads, 
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--dataset precip|precip_1deg|precip_era5] [--date YYYY-MM-DD] [--bbox N/W/S/E] [-v tp] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--dataset precip|precip_1deg|precip_era5] [--date YYYY-MM-DD] [--bbox N/W/S/E] [-v precip] -o OUT.zarr
 # Every 00 UTC init in a window, in one call; repeat the pair for several windows
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--start-time ... --end-time ...] --bbox N/W/S/E -o OUT.zarr
 # Latest init date (no download)
@@ -38,13 +38,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET]
 - `--date` — init date; takes that day's latest init hour. Default: the latest published init. A date with no init exits 1 and lists the nearest published inits, so pick one of those rather than trying other dates.
 - `--start-time`, `--end-time` — an init window, both days inclusive. Repeat the pair for several windows, one window per pair. Takes every 00 UTC init in the windows with all its leads: like `--date`, the windows select init times, not valid times. Use this instead of one `--date` call per init; not with `--date`. No init in any window exits 1.
 - `--bbox` — `N/W/S/E` decimal degrees; negative longitudes work. Omit for the full global grid (about 5.5 GB per init at 0.25°, 350 MB at 1°).
-- `--variable`, `-v` — each store holds one field, written as `tp`. Accepts `tp`, `precip`, `precipitation`, `total_precipitation` or a folder name; anything else exits 2. Optional.
+- `--variable`, `-v` — each store holds one field, written as `precip`. Accepts `precip`, `tp`, `precipitation`, `total_precipitation` or a folder name; anything else exits 2. Optional.
 - `--workers` — maximum concurrent chunk requests, at least 1. Default: 8.
 - `--probe-latest` — print the latest init date (`YYYY-MM-DD`, or `none`) on stdout and exit. Optional value: a `--dataset` id.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- `tp` in `mm day-1`, dims `(number, step, latitude, longitude)`, scalar `time` = init; with windows, `(time, step, number, latitude, longitude)`, one `time` per init.
+- `precip` in `mm day-1`, dims `(number, step, latitude, longitude)`, scalar `time` = init; with windows, `(time, step, number, latitude, longitude)`, one `time` per init.
 - `step` is the start of each 24 h period: `step = 0` is `[init, init + 1 day)`, up to 46 leads.
 - `number` is 0–29; members are interchangeable draws (member 0 is not a control).
 - Longitude `[-180, 180)`. `weather_skills_source=cumulus:<store folder>`, `data_interval` `1 day`.

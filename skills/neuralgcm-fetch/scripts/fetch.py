@@ -27,7 +27,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.8"
+_SKILL_VERSION = "0.0.9"
 
 _BUCKET = "neuralgcm-s2s"
 _PREFIX = "staging/realtime/tomorrow_now_2026/v1"
@@ -49,17 +49,17 @@ _DATASET_ALIASES = {
 _DATASET_CHOICES = list(_DATASET_ALIASES)
 
 _VAR_RENAME = {
-    _NATIVE_PRECIP: "tp",
+    _NATIVE_PRECIP: "precip",
     _NATIVE_T2M: "t2m",
     _NATIVE_D2M: "d2m",
 }
 _VAR_ALIASES = {
-    "tp": "tp",
-    "precip": "tp",
-    "precipitation": "tp",
-    "total_precipitation": "tp",
-    _NATIVE_PRECIP: "tp",
-    "pr": "tp",
+    "precip": "precip",
+    "tp": "precip",
+    "precipitation": "precip",
+    "total_precipitation": "precip",
+    _NATIVE_PRECIP: "precip",
+    "pr": "precip",
     "t2m": "t2m",
     _NATIVE_T2M: "t2m",
     "d2m": "d2m",
@@ -242,11 +242,11 @@ def _prepare_dataset(ds):
     present = {src: dst for src, dst in _VAR_RENAME.items() if src in ds.data_vars}
     if present:
         ds = ds.rename(present)
-    if "tp" in ds.data_vars:
-        ds["tp"] = ds["tp"].clip(min=0)
-        ds["tp"].attrs["units"] = "m"
-        ds["tp"].attrs["standard_name"] = "lwe_thickness_of_precipitation_amount"
-        ds["tp"].attrs["long_name"] = "Total precipitation"
+    if "precip" in ds.data_vars:
+        ds["precip"] = ds["precip"].clip(min=0)
+        ds["precip"].attrs["units"] = "m"
+        ds["precip"].attrs["standard_name"] = "lwe_thickness_of_precipitation_amount"
+        ds["precip"].attrs["long_name"] = "Total precipitation"
     if "t2m" in ds.data_vars:
         ds["t2m"].attrs.setdefault("units", "K")
         ds["t2m"].attrs.setdefault("standard_name", "air_temperature")
@@ -433,16 +433,16 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, cycle, probe_late
         converted, _ = convert_dataarray(ds["d2m"], "degree_Celsius")
         ds["d2m"] = converted
     ds = precip_amounts_to_rates(ds, interval=_PRECIP_INTERVAL, deaccumulate=False)
-    # tp is a 6 h period total labelled at its end: relabel it to the period
+    # precip is a 6 h period total labelled at its end: relabel it to the period
     # start. Temperatures are instantaneous at init + step and keep their
-    # leads. With both, the merged axis runs from 0: tp is NaN at the last lead
+    # leads. With both, the merged axis runs from 0: precip is NaN at the last lead
     # and the temperatures at 0 (gaps, not filled).
-    if "tp" in ds.data_vars:
+    if "precip" in ds.data_vars:
         import xarray as xr
 
-        tp = _shift_step_origin_to_zero(ds[["tp"]])
-        rest = ds.drop_vars("tp")
-        ds = xr.merge([rest, tp], join="outer", compat="override") if rest.data_vars else tp
+        precip = _shift_step_origin_to_zero(ds[["precip"]])
+        rest = ds.drop_vars("precip")
+        ds = xr.merge([rest, precip], join="outer", compat="override") if rest.data_vars else precip
     if windows:
         # An init still publishing its long leads keeps them NaN (not filled);
         # say which init is short.

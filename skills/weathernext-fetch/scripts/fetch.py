@@ -27,7 +27,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.8"
+_SKILL_VERSION = "0.0.9"
 
 _STORE_NAME = "predictions.zarr"
 _STAMP_RE = re.compile(r"^(\d{8})_(\d{2})hr_01_preds$")
@@ -121,9 +121,9 @@ _V3_RENAME = {
     "v_component_of_wind_100m": "100m_v_component_of_wind",
     "wind_speed_10m": "10m_wind_speed",
     "wind_speed_100m": "100m_wind_speed",
-    "total_precipitation_1hr": "tp",
-    "experimental_tp_1hr": "experimental_tp",
-    "imerg_tp_1hr": "imerg_tp",
+    "total_precipitation_1hr": "precip",
+    "experimental_tp_1hr": "experimental_precip",
+    "imerg_tp_1hr": "imerg_precip",
 }
 
 # Output variable -> (units, standard_name, long_name). WeatherNext 2 stores
@@ -177,9 +177,9 @@ _NATIVE_ATTRS = {
 }
 
 _PRECIP_LONG_NAMES = {
-    "tp": "Total precipitation",
-    "experimental_tp": "Experimental total precipitation",
-    "imerg_tp": "IMERG-calibrated total precipitation",
+    "precip": "Total precipitation",
+    "experimental_precip": "Experimental total precipitation",
+    "imerg_precip": "IMERG-calibrated total precipitation",
 }
 # Period totals labelled at the end of their period: precipitation and the
 # WeatherNext 3 1 h solar radiation sums (kept as J m-2 per hour, as other
@@ -194,7 +194,7 @@ _PERIOD_TOTALS = (
 # names come from _V3_RENAME; lookups fall back to the name itself.
 _VAR_ALIASES = {
     **_V3_RENAME,
-    _V2_NATIVE_PRECIP: "tp",
+    _V2_NATIVE_PRECIP: "precip",
     "t2m": "2m_temperature",
     "d2m": "2m_dewpoint_temperature",
     "u10": "10m_u_component_of_wind",
@@ -210,10 +210,10 @@ _VAR_ALIASES = {
     "mcc": "medium_cloud_cover",
     "hcc": "high_cloud_cover",
     "ssrd": "surface_solar_radiation_downwards_1hr",
-    "precip": "tp",
-    "precipitation": "tp",
-    "total_precipitation": "tp",
-    "pr": "tp",
+    "tp": "precip",
+    "precipitation": "precip",
+    "total_precipitation": "precip",
+    "pr": "precip",
     "q": "specific_humidity",
     "t": "temperature",
     "u": "u_component_of_wind",
@@ -489,7 +489,7 @@ def _resolve_names(variable, available) -> list[str]:
 
 def _select_v2(ds, variable):
     if _V2_NATIVE_PRECIP in ds.data_vars:
-        ds = ds.rename({_V2_NATIVE_PRECIP: "tp"})
+        ds = ds.rename({_V2_NATIVE_PRECIP: "precip"})
     return ds[_resolve_names(variable, ds.data_vars)] if variable else ds
 
 
