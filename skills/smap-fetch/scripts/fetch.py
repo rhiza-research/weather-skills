@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core>=0.3.3",
 #   "earthaccess",
 #   "h5py",
 # ]
@@ -27,7 +27,7 @@ from weather_skills_core.standard_utils import (
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.5"
+_SKILL_VERSION = "0.0.8"
 
 _SHORT_NAME = "SPL3SMP_E"
 _FILL = -9999.0
@@ -92,6 +92,8 @@ def _slice_from_file(path: str, group: str, day_iso: str, recommended_only: bool
 
     Fill, out-of-valid-range and (with ``recommended_only``) retrievals whose
     ``retrieval_qual_flag`` bit 0 is set (not recommended) become NaN.
+    Returns None when the overpass has no retrievals at all (every geolocation
+    cell is fill), since such a granule carries no grid to read.
     """
     import h5py
     import numpy as np
@@ -157,6 +159,13 @@ def _slice_from_file(path: str, group: str, day_iso: str, recommended_only: bool
     sm = np.where(bad, np.nan, sm)
     lat2d = np.where(lat2d == _FILL, np.nan, lat2d)
     lon2d = np.where(lon2d == _FILL, np.nan, lon2d)
+    if np.isnan(lat2d).all() or np.isnan(lon2d).all():
+        return None
+    # Geolocation is fill wherever the overpass made no retrieval; rows and
+    # columns it missed entirely have no coordinate and no data, so drop them.
+    rows = ~np.isnan(lat2d).all(axis=1)
+    cols = ~np.isnan(lon2d).all(axis=0)
+    sm, lat2d, lon2d = sm[rows][:, cols], lat2d[rows][:, cols], lon2d[rows][:, cols]
     lat1d, lon1d = _reduce_geolocation(lat2d, lon2d, day_iso)
 
     return xr.DataArray(
@@ -350,6 +359,7 @@ def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs)
         )
 
     day_datasets = []
+    empty_days = []
     with tempfile.TemporaryDirectory(prefix="smap-fetch-") as td:
         for d in present_days:
             day_iso = d.isoformat()
@@ -365,18 +375,40 @@ def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs)
                 raise DataError(f"download returned no local file for the {day_iso} granule.")
             try:
                 da = _slice_from_file(files[0], overpass, day_iso, quality == "recommended")
-                if bbox is not None:
+            except RuntimeError as exc:
+                raise DataError(str(exc)) from exc
+            # Each global granule is ~690 MB; free the disk before the next day.
+            os.remove(files[0])
+            if da is not None and bbox is not None:
+                try:
                     da = bbox_subset(
                         da.to_dataset(name="soil_moisture"),
                         bbox,
                         lat_dim="latitude",
                         lon_dim="longitude",
                     )["soil_moisture"]
-            except RuntimeError as exc:
-                raise DataError(str(exc)) from exc
-            # Each global granule is ~690 MB; free the disk before the next day.
-            os.remove(files[0])
+                except DataError:
+                    # The overpass missed the whole box: none of its rows or
+                    # columns survive. A malformed bbox raises UsageError instead.
+                    da = None
+            if da is None or da.isnull().all():
+                empty_days.append(day_iso)
+                continue
             day_datasets.append(da.expand_dims(time=[np.datetime64(day_iso)]).to_dataset())
+
+    if empty_days:
+        print(
+            f"WARNING: {len(empty_days)} day(s) have a granule but no usable "
+            f"{overpass} retrievals in the requested area (the overpass missed it, "
+            f"or every retrieval there was masked): "
+            f"{', '.join(empty_days)}; writing the other day(s) only.",
+            file=sys.stderr,
+        )
+    if not day_datasets:
+        raise DataError(
+            f"no usable {overpass} retrievals in the requested area in any granule "
+            f"within {start_iso}..{end_iso}; try the other --overpass or a wider window."
+        )
 
     ds = xr.concat(day_datasets, dim="time")
     _stamp_cf(ds)

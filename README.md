@@ -35,7 +35,7 @@ credentialed or source-specific fetcher only when it does not.
 | `tahmo-fetch` | TAHMO station observations (daily-aggregated) → Zarr |
 | `3dpaws-fetch` | 3D-PAWS station observations from a CHORDS portal (default: FEWS NET Kenya; daily precip, temperature, humidity, pressure, wind) → station Zarr. Requires credentials. |
 | `cumulus-fetch` | Cumulus AI operational ensemble precip (Aurora S2S run) — 30 members, 46 daily leads, 0.25° or 1° global (`--dataset precip`, `precip_1deg`, `precip_era5`), one init or a range of inits → Zarr. Requires credentials. |
-| `neuralgcm-fetch` | NeuralGCM S2S ensemble (IMERG precip `tp`, ERA5 surface `t2m`/`d2m`) — up to 50 members, 6-hour leads to 60 days, ~2.8°, one init or a range of inits → Zarr. Requires credentials. |
+| `neuralgcm-fetch` | NeuralGCM S2S ensemble (IMERG precip `precip`, ERA5 surface `t2m`/`d2m`) — up to 50 members, 6-hour leads to 60 days, ~2.8°, one init or a range of inits → Zarr. Requires credentials. |
 | `weathernext-fetch` | Google WeatherNext 2 ensemble (2025 on; 64 members, 6-hour leads to 15 days, 0.25°, 13 pressure levels) or WeatherNext 3 (2026 on; 64-member ensemble, requester pays, or free ensemble mean/percentiles; hourly leads to 15 days, 0.1°) → Zarr. One init or a range of inits. Pass `-v` and `--member` or `--statistic` (full cubes are ~1 TB). Requires credentials. |
 | `windborne-fetch` | WindBorne data, one `--product` per call: WeatherMesh-6 ensemble grids (live or archived runs from mid-2026; 128 members as mean, std or all; 3-hour leads to 15 days, 0.25°), point forecasts with spread, percentiles and rain-exceedance probabilities, vertical soundings, plain-language site summaries, ERA5 1991–2020 hourly normals at points, the recent ECMWF IFS analysis, or US state heating/cooling degree days → Zarr. Requires credentials. |
 | `pbc-fetch` | PBC / StillLearning AI Weather Quest precip **quintile probabilities** (`era5-p_pr_19` week 3, `era5-p_pr_26` week 4), 1.5° global, one init or a range of inits → Zarr. Requires credentials. |
@@ -72,11 +72,12 @@ credentialed or source-specific fetcher only when it does not.
 | `summarize-dim` | Summarize named dims with a statistic (mean/std/min/max/sum/median/quantile) — e.g. ensemble spread as the std across `number`, a 10–90% band with `--method quantile -q 0.1 -q 0.9`, or a time-mean baseline. `--by LABEL` gives one value per label (per county, per season), e.g. after `label-group` |
 | `point-value` | Sample a gridded dataset at point locations (station Zarr, `--point LAT,LON[,ID]`, or CSV) into a `station_id` point_obs dataset — nearest, bilinear, or N×N cell-mean — for grid-vs-station `difference` / `verify` |
 | `local-extrema` | Find the local highs or lows of a gridded field (pressure centres, rainfall maxima) into a `station_id` point_obs dataset of locations and central values — for H / L map labels or listing centres |
-| `csv-io` | Export a Zarr to a CSV or Excel table (units in the headers; `--pivot` for one column per date), or read a CSV or Excel sheet — station records, a gridded table, or one gauge (`--point`) — into a Zarr. Day-first dates need `--date-format`; missing codes need `--na-value`. |
+| `csv-io` | Export a Zarr as it is to a CSV or Excel table (units in the headers), or read a CSV or Excel sheet — station records, a gridded table, or one gauge (`--point`) — into a Zarr. Day-first dates need `--date-format`; missing codes need `--na-value`. |
 | `netcdf-io` | Export a Zarr to a NetCDF `.nc` file (attrs and history kept), or read one or more `.nc` files into a Zarr. Variables without units need `--units VAR=UNITS`. |
 | `difference` | Subtract one dataset from another (A − B) with inner-join alignment and broadcasting — anomalies vs a baseline, scenario-minus-historical change maps |
 | `standardize-anomaly` | Standardized anomaly aka z-score: `(field − clim_avg) / clim_std` against a climatology (e.g. `clim-fetch`) — dimensionless output, errors on units mismatch. For a plain physical-unit anomaly, use `difference` instead. |
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
+| `wind-speed-direction` | Wind speed (`hypot(u, v)`) and the directions the wind blows from and to (degrees clockwise from north) from a `--u` / `--v` component pair; calm cells (speed ≤ `--calm-speed`) get NaN direction |
 | `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). |
 | `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
 
@@ -86,7 +87,7 @@ dataset output.
 
 | Skill | What it does |
 |---|---|
-| `resolve-region` | Resolve a country, multi-country region, ocean box, state/province/county, or landmark to a `--bbox N/W/S/E` (and optional boundary polygon GeoJSON). |
+| `resolve-region` | Resolve a country, multi-country region, ocean box, state/province/county, or landmark to a `--bbox N/W/S/E` (and optional boundary polygon GeoJSON, or with `--level admin_1` every county of a country in one file). |
 | `resolve-time` | Resolve relative calendar dates ("the last two weeks", `latest`, `now-3d`) to absolute `--start-time`/`--end-time` or `--date`. Latest published day is the fetcher's `--probe-latest`, not this skill. |
 | `inspect-zarr` | Print dims, coordinate values, and a bounded data-variable summary of a Zarr (stdout; no write). Data arrays can be huge — this skill never dumps them in full. |
 | `provenance` | Inspect `weather_skills_history` on a Zarr, figure (PNG/JPEG/GIF/HTML/PDF/SVG), GeoJSON, or CSV/Excel table (DAG lineage, JSON, or a commit-pinned reproduction script). |

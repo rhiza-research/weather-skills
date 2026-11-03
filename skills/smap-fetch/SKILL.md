@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Authenticates to NASA Earthdata via the `earthaccess` library — set EARTHDATA_USERNAME and EARTHDATA_PASSWORD in the environment, or use a `.netrc` entry for `urs.earthdata.nasa.gov`. Earthdata accounts are free with sign-up at https://urs.earthdata.nasa.gov/users/new.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.5"
+  version: "0.0.8"
   catalog-group: fetchers
   variables:
     - soil_moisture
@@ -40,13 +40,14 @@ Needs `EARTHDATA_USERNAME` and `EARTHDATA_PASSWORD` (or `EARTHDATA_TOKEN`) in th
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- Dims `(time, latitude, longitude)`, daily, on the 9 km EASE-Grid 2.0 cell centres. Latitude is ascending and unevenly spaced in degrees (about 0.07° near the equator); longitude is evenly spaced.
+- Dims `(time, latitude, longitude)`, daily, on the 9 km EASE-Grid 2.0 cell centres. Latitude is ascending and unevenly spaced in degrees (about 0.07° near the equator); longitude is evenly spaced. Rows and columns that no fetched day's overpass covered are left out, so a window of partial-swath days can have gaps in either axis.
 - `soil_moisture` in `m3 m-3` (volume of water per volume of soil), `standard_name=volume_fraction_of_condensed_water_in_soil`, `data_interval="1 day"`. NaN marks ocean, no retrieval, values outside 0.02–0.5, and (with `--quality recommended`) lower-quality retrievals.
 - A `latitude_longitude` grid-mapping variable (WGS84); `weather_skills_source="smap"`.
 
 ### Notes
 - Each day is a separate download of about 690 MB, read one at a time, so keep windows to days or a few weeks.
 - Days with no published granule are left out, not filled; stderr lists them as trailing (likely not yet published) or interior gaps. A window with no granule exits 1.
+- A day whose granule has no usable retrievals for the chosen overpass inside the requested area (an instrument outage, a partial swath that missed the area, or every retrieval masked) is also left out, with a stderr warning; if no day has any, it exits 1 and suggests the other `--overpass` or a wider window.
 
 ### Example
 ```bash

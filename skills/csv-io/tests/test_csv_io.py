@@ -63,17 +63,6 @@ def test_grid_round_trip(tmp_path, csv_io):
     assert res.attrs["weather_skills_source"] == "csv:out.csv"
 
 
-def test_export_dropna_skips_empty_rows(tmp_path, csv_io):
-    ds = make_gridded(n_time=1, lats=(1.0, 2.0), lons=(10.0, 11.0))
-    ds["precip"].values[0, 0, :] = np.nan
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    out = tmp_path / "out.csv"
-
-    run_skill(csv_io, "-i", str(src), "-o", str(out), "--dropna")
-
-    assert len(pd.read_csv(out)) == 2
-
-
 def test_read_refuses_a_table_a_skill_exported(tmp_path, csv_io, capsys):
     src = write_zarr(make_gridded(n_time=2), tmp_path / "in.zarr")
     csv = tmp_path / "out.csv"
@@ -82,9 +71,10 @@ def test_read_refuses_a_table_a_skill_exported(tmp_path, csv_io, capsys):
     _exits_2(csv_io, "--csv", str(csv), "-o", str(tmp_path / "back.zarr"), "--names", "a,b,c,d")
     assert "use the Zarr it came from" in capsys.readouterr().err
 
-    # Once edited, the table no longer matches its history and reads as new data.
+    # Edited, it no longer matches its history, but its sidecar still marks it as exported.
     csv.write_text(csv.read_text().replace("2026-01-02", "2026-01-03"))
-    run_skill(csv_io, "--csv", str(csv), "-o", str(tmp_path / "back.zarr"))
+    _exits_2(csv_io, "--csv", str(csv), "-o", str(tmp_path / "back.zarr"))
+    assert "use the Zarr it came from" in capsys.readouterr().err
 
 
 def test_point_obs_round_trip_keeps_station_coords(tmp_path, csv_io):
@@ -355,80 +345,6 @@ def test_export_refuses_four_dims(tmp_path, csv_io, capsys):
     assert not (tmp_path / "out.csv").exists()
 
 
-def test_na_value_and_date_format_round_trip(tmp_path, csv_io):
-    ds = make_point_obs(n_time=2, n_points=1)
-    ds["precip"].values[:] = [[np.nan, 3.0]]
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    csv = tmp_path / "out.csv"
-    back = tmp_path / "back.zarr"
-    opts = ["--na-value", "-999", "--date-format", "%d/%m/%Y"]
-
-    run_skill(csv_io, "-i", str(src), "-o", str(csv), *opts)
-    df = pd.read_csv(csv)
-    assert list(df["time"]) == ["01/01/2026", "02/01/2026"]
-    assert df["precip [mm d-1]"].iloc[0] == -999
-    history_sidecar(csv).unlink()
-    run_skill(csv_io, "--csv", str(csv), "-o", str(back), *opts)
-
-    res = _open(back)
-    np.testing.assert_allclose(res["precip"].values, ds["precip"].values, equal_nan=True)
-    assert res["time"].values[1] == np.datetime64("2026-01-02")
-
-
-def test_pivot_round_trips_with_unpivot(tmp_path, csv_io):
-    ds = make_gridded(n_time=3, lats=(-1.0, 2.0), lons=(10.0, 11.0))
-    ds["precip"].values[:] = np.arange(12).reshape(3, 2, 2)
-    ds["precip"].values[1, 0, 0] = np.nan
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    csv = tmp_path / "out.csv"
-    back = tmp_path / "back.zarr"
-
-    run_skill(csv_io, "-i", str(src), "-o", str(csv), "--pivot", "time=precip")
-    df = pd.read_csv(csv)
-    assert list(df.columns) == ["latitude", "longitude", "2026-01-01", "2026-01-02", "2026-01-03"]
-    assert len(df) == 4
-    history_sidecar(csv).unlink()
-    run_skill(
-        csv_io,
-        "--csv",
-        str(csv),
-        "-o",
-        str(back),
-        "--unpivot",
-        "time=precip",
-        "--units",
-        "precip=mm day-1",
-    )
-
-    res = _open(back)
-    assert res["precip"].dims == ("time", "latitude", "longitude")
-    np.testing.assert_allclose(res["precip"].values, ds["precip"].values, equal_nan=True)
-
-
-def test_pivot_steps_read_back_as_leads(tmp_path, csv_io):
-    ds = make_forecast(n_step=3)
-    ds["tp"].values[:] = np.arange(12).reshape(3, 2, 2)
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    csv = tmp_path / "out.csv"
-    back = tmp_path / "back.zarr"
-
-    run_skill(csv_io, "-i", str(src), "-o", str(csv), "--pivot", "step=tp")
-    history_sidecar(csv).unlink()
-    run_skill(csv_io, "--csv", str(csv), "-o", str(back), "--unpivot", "step=tp")
-
-    res = _open(back)
-    assert res["step"].values[1] == np.timedelta64(1, "D")
-    np.testing.assert_allclose(res["tp"].values, ds["tp"].values)
-
-
-def test_pivot_needs_a_dim_and_a_variable(tmp_path, csv_io):
-    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
-    for spec in ("level=precip", "time=tmax", "time"):
-        with pytest.raises(SystemExit) as exc:
-            run_skill(csv_io, "-i", str(src), "-o", str(tmp_path / "out.csv"), "--pivot", spec)
-        assert exc.value.code == 2
-
-
 def test_excel_round_trip(tmp_path, csv_io):
     ds = make_point_obs(n_time=3, n_points=2)
     ds["precip"].values[:] = [[1.0, 2.0, np.nan], [4.0, 5.0, 6.0]]
@@ -436,27 +352,34 @@ def test_excel_round_trip(tmp_path, csv_io):
     xlsx = tmp_path / "out.xlsx"
     back = tmp_path / "back.zarr"
 
-    run_skill(csv_io, "-i", str(src), "-o", str(xlsx), "--sheet", "rain")
-    assert pd.ExcelFile(xlsx).sheet_names == ["rain"]
+    run_skill(csv_io, "-i", str(src), "-o", str(xlsx))
+    assert pd.ExcelFile(xlsx).sheet_names == ["Sheet1"]
     history_sidecar(xlsx).unlink()
-    run_skill(csv_io, "--csv", str(xlsx), "-o", str(back), "--sheet", "rain")
+    run_skill(csv_io, "--csv", str(xlsx), "-o", str(back), "--sheet", "Sheet1")
 
     res = _open(back)
     np.testing.assert_allclose(res["precip"].values, ds["precip"].values, equal_nan=True)
 
 
-def test_options_go_with_their_direction(tmp_path, csv_io):
+def test_export_takes_no_options(tmp_path, csv_io):
     src = write_zarr(make_gridded(), tmp_path / "in.zarr")
     csv = _write(tmp_path, "lat,lon,rain\n1,10,1\n")
+    out = str(tmp_path / "out.csv")
     for args in (
-        ["-i", str(src), "-o", str(tmp_path / "out.csv"), "--unpivot", "time=precip"],
-        ["-i", str(src), "-o", str(tmp_path / "out.csv"), "--na-value", "-9", "--na-value", "-8"],
-        ["-i", str(src), "-o", str(tmp_path / "out.csv"), "--sheet", "rain"],
+        ["-i", str(src), "-o", out, "--unpivot", "time=precip"],
+        ["-i", str(src), "-o", out, "--na-value", "-9"],
+        ["-i", str(src), "-o", out, "--date-format", "%d/%m/%Y"],
+        ["-i", str(src), "-o", out, "--timezone", "Africa/Nairobi"],
+        ["-i", str(src), "-o", out, "--sheet", "rain"],
+        ["-i", str(src), "-o", out, "-v", "precip"],
+        ["-i", str(src), "-o", out, "--pivot", "time=precip"],
+        ["-i", str(src), "-o", out, "--dropna"],
         ["--csv", str(csv), "-o", str(tmp_path / "out.zarr"), "--pivot", "time=rain"],
     ):
         with pytest.raises(SystemExit) as exc:
             run_skill(csv_io, *args)
         assert exc.value.code == 2
+    assert not (tmp_path / "out.csv").exists()
 
 
 def test_read_refuses_headers_that_clean_to_one_name(tmp_path, csv_io):
@@ -525,26 +448,6 @@ def test_read_names_the_bad_date(tmp_path, csv_io, capsys):
     assert "'02/10/2026'" in capsys.readouterr().err
 
 
-def test_station_pivot_round_trips_with_text_coords(tmp_path, csv_io):
-    ds = make_point_obs(n_time=3, n_points=2).rename(point_id="station_id")
-    ds = ds.assign_coords(name=("station_id", ["KMD HQ", "Kitui"]))
-    ds["precip"].values[:] = [[1.0, np.nan, 3.0], [4.0, 5.0, 6.0]]
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    csv = tmp_path / "out.csv"
-    back = tmp_path / "back.zarr"
-
-    run_skill(csv_io, "-i", str(src), "-o", str(csv), "--pivot", "time=precip")
-    history_sidecar(csv).unlink()
-    run_skill(
-        csv_io, "--csv", str(csv), "-o", str(back),
-        "--unpivot", "time=precip", "--units", "precip=mm day-1",
-    )  # fmt: skip
-
-    res = _open(back)
-    assert list(res["name"].values) == ["KMD HQ", "Kitui"]
-    np.testing.assert_allclose(res["precip"].values, ds["precip"].values, equal_nan=True)
-
-
 def test_unpivot_keeps_excel_date_headers_as_dates(tmp_path, csv_io):
     src = tmp_path / "in.xlsx"
     df = pd.DataFrame([[36.8, -1.3, "Dagoretti", 1.0, 2.0]])
@@ -568,17 +471,6 @@ def test_unpivot_keeps_index_columns(tmp_path, csv_io):
     res = _open(out)
     assert res["precip"].dims == ("Feature", "dekad")
     np.testing.assert_allclose(res["precip"].sel(Feature="Aldai").values, [17.8, 5.0])
-
-
-def test_export_refuses_date_format_that_drops_hours(tmp_path, csv_io):
-    ds = make_gridded(n_time=2, lats=(1.0,), lons=(10.0,))
-    ds = ds.assign_coords(time=pd.date_range("2026-10-01 06:00", periods=2, freq="6h"))
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    with pytest.raises(SystemExit) as exc:
-        run_skill(csv_io, "-i", str(src), "-o", str(tmp_path / "out.csv"),
-                  "--date-format", "%d/%m/%Y")  # fmt: skip
-    assert exc.value.code == 2
-    assert not (tmp_path / "out.csv").exists()
 
 
 def test_scalar_level_reads_back_as_scalar_and_re_exports(tmp_path, csv_io):
@@ -643,14 +535,6 @@ def test_export_single_value(tmp_path, csv_io):
     df = pd.read_csv(out)
     assert list(df.columns) == ["time", "precip [mm d-1]"]
     assert df["precip [mm d-1]"].iloc[0] == 1.0
-
-
-def test_export_dropna_with_nothing_left_exits_2(tmp_path, csv_io):
-    ds = make_gridded(n_time=1, lats=(1.0,), lons=(10.0,), fill=np.nan)
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    with pytest.raises(SystemExit) as exc:
-        run_skill(csv_io, "-i", str(src), "-o", str(tmp_path / "out.csv"), "--dropna")
-    assert exc.value.code == 2
 
 
 def test_read_windows_1252_csv(tmp_path, csv_io):
@@ -748,19 +632,17 @@ def test_timezone_leaves_dates_alone(tmp_path, csv_io):
     assert _open(out)["time"].values[0] == np.datetime64("2026-10-01")
 
 
-def test_timezone_round_trip_names_the_zone_in_the_header(tmp_path, csv_io):
+def test_times_of_day_export_in_utc_and_read_back(tmp_path, csv_io):
     ds = make_point_obs(n_time=2, n_points=1)
     ds = ds.assign_coords(time=pd.date_range("2026-10-01 00:00", periods=2, freq="h"))
     src = write_zarr(ds, tmp_path / "in.zarr")
-    for zone, first in (("Africa/Nairobi", "2026-10-01 03:00:00"), (None, "2026-10-01 00:00:00")):
-        csv = tmp_path / f"out{zone is None}.csv"
-        back = tmp_path / f"back{zone is None}.zarr"
-        run_skill(csv_io, "-i", str(src), "-o", str(csv), *(["--timezone", zone] if zone else []))
-        df = pd.read_csv(csv)
-        assert df[f"time [{zone or 'UTC'}]"].iloc[0] == first
-        history_sidecar(csv).unlink()
-        run_skill(csv_io, "--csv", str(csv), "-o", str(back))
-        np.testing.assert_array_equal(_open(back)["time"].values, ds["time"].values)
+    csv = tmp_path / "out.csv"
+    back = tmp_path / "back.zarr"
+    run_skill(csv_io, "-i", str(src), "-o", str(csv))
+    assert pd.read_csv(csv)["time [UTC]"].iloc[0] == "2026-10-01 00:00:00"
+    history_sidecar(csv).unlink()
+    run_skill(csv_io, "--csv", str(csv), "-o", str(back))
+    np.testing.assert_array_equal(_open(back)["time"].values, ds["time"].values)
 
 
 def test_timezone_refuses_unknown_zones_and_dst_gaps(tmp_path, csv_io):
@@ -1146,37 +1028,6 @@ def test_float32_with_nan_exports_and_round_trips(tmp_path, csv_io):
     np.testing.assert_allclose(_open(back)["precip"].values, [[[np.nan, 1.0]]])
 
 
-def test_pivot_of_hourly_steps_reads_back_in_hours(tmp_path, csv_io, capsys):
-    ds = make_forecast(n_step=3)
-    ds = ds.assign_coords(step=pd.to_timedelta([6, 12, 18], unit="h"))
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    csv = tmp_path / "out.csv"
-    back = tmp_path / "back.zarr"
-    run_skill(csv_io, "-i", str(src), "-o", str(csv), "--pivot", "step=tp")
-    assert "--units step=hours" in capsys.readouterr().err
-    history_sidecar(csv).unlink()
-    run_skill(
-        csv_io,
-        "--csv",
-        str(csv),
-        "-o",
-        str(back),
-        "--unpivot",
-        "step=tp",
-        "--units",
-        "step=hours",
-        "--units",
-        "tp=mm",
-    )
-    assert _open(back)["step"].values[0] == np.timedelta64(6, "h")
-
-
-def test_na_value_equal_to_a_real_value_exits_2(tmp_path, csv_io):
-    ds = make_gridded(n_time=1, lats=(1.0,), lons=(10.0,), fill=0.0)
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    _exits_2(csv_io, "-i", str(src), "-o", str(tmp_path / "out.csv"), "--na-value", "0")
-
-
 @pytest.mark.parametrize("name", ["level", "lat", "a [b]", "x (y)"])
 def test_export_refuses_names_that_read_back_differently(tmp_path, csv_io, name):
     ds = make_gridded(n_time=1, lats=(1.0,), lons=(10.0,)).rename(precip=name)
@@ -1223,13 +1074,6 @@ def test_date_variables_round_trip(tmp_path, csv_io):
     res = _open(back)
     assert res["onset"].values[0] == np.datetime64("2026-10-05")
     assert np.isnat(res["onset"].values[1])
-
-
-def test_pivot_needs_the_variable_along_the_dim(tmp_path, csv_io):
-    ds = make_gridded(n_time=2, lats=(1.0,), lons=(10.0,))
-    ds["elev"] = (("latitude", "longitude"), [[100.0]])
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    _exits_2(csv_io, "-i", str(src), "-o", str(tmp_path / "o.csv"), "--pivot", "time=elev")
 
 
 def test_text_that_looks_like_a_formula_stays_text(tmp_path, csv_io):
@@ -1296,14 +1140,6 @@ def test_valid_time_without_time_becomes_the_init(tmp_path, csv_io):
     history_sidecar(csv).unlink()
     run_skill(csv_io, "--csv", str(csv), "-o", str(back))
     assert _open(back)["time"].values == init
-
-
-def test_date_format_that_drops_the_hour_exits_2(tmp_path, csv_io):
-    # Daily values stamped 06:00: distinct dates, but %d/%m/%Y would lose the hour.
-    ds = make_gridded(n_time=2, lats=(1.0,), lons=(10.0,))
-    ds = ds.assign_coords(time=pd.date_range("2026-10-01 06:00", periods=2, freq="D"))
-    src = write_zarr(ds, tmp_path / "in.zarr")
-    _exits_2(csv_io, "-i", str(src), "-o", str(tmp_path / "o.csv"), "--date-format", "%d/%m/%Y")
 
 
 def test_nanosecond_times_exit_2(tmp_path, csv_io):

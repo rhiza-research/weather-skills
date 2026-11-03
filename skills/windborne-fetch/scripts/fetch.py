@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core>=0.3.3",
 #   "netcdf4",
 #   "pandas",
 #   "requests",
@@ -25,7 +25,7 @@ from weather_skills_core.standard_utils import bbox_subset, require_env
 from weather_skills_core.units import convert_dataarray, stamp_data_interval, to_standard_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.3"
+_SKILL_VERSION = "0.0.5"
 
 _HOST = "https://api.windbornesystems.com"
 _WM6 = f"{_HOST}/forecasts/v1/wm-6"
@@ -51,7 +51,7 @@ _PRODUCT_FLAGS = {
 # cfgrib names other fetchers use), mapped onto WindBorne names. Any other
 # WindBorne name is accepted as-is. The bool marks pressure-level fields.
 VARIABLES: dict[str, tuple[str, bool]] = {
-    "tp": ("total_precipitation_3h", False),
+    "precip": ("total_precipitation_3h", False),
     "t2m": ("temperature_2m", False),
     "d2m": ("dewpoint_2m", False),
     "msl": ("pressure_msl", False),
@@ -75,6 +75,8 @@ VARIABLES: dict[str, tuple[str, bool]] = {
     "u": ("wind_u", True),
     "v": ("wind_v", True),
 }
+# `-v tp` also names precip, in every product.
+_PRECIP_ALIASES = {"tp": "precip"}
 # WindBorne pressure-level names a point request may pass through as-is.
 _UPPER = frozenset(
     {"temperature", "geopotential", "specific_humidity", "wind_u", "wind_v", "wind_speed"}
@@ -85,7 +87,7 @@ _UPPER = frozenset(
 _POINT_DEFAULT_NAMES = {
     "temperature_2m": "t2m",
     "dewpoint_2m": "d2m",
-    "precipitation": "tp",
+    "precipitation": "precip",
     "pressure_msl": "msl",
     "wind_u_10m": "u10",
     "wind_v_10m": "v10",
@@ -109,7 +111,7 @@ _SOUNDING_FIELDS = {
 _CLIM_FIELDS = {
     "temperature_2m": ("t2m", "degree_Celsius"),
     "dewpoint_2m": ("d2m", "degree_Celsius"),
-    "precipitation": ("tp", "mm"),
+    "precipitation": ("precip", "mm"),
     "pressure_msl": ("msl", "hPa"),
     "wind_u_10m": ("u10", "m s-1"),
     "wind_v_10m": ("v10", "m s-1"),
@@ -121,7 +123,7 @@ _CLIM_FIELDS = {
 
 # ECMWF analysis `-v` tokens -> (WindBorne name, pressure-level?).
 _ANALYSIS_VARIABLES: dict[str, tuple[str, bool]] = {
-    "tp": ("total_precipitation_1h", False),
+    "precip": ("total_precipitation_1h", False),
     "t2m": ("temperature_2m", False),
     "d2m": ("dewpoint_2m", False),
     "msl": ("pressure_msl", False),
@@ -286,10 +288,12 @@ def _pick_init(session, available, date, run, *, archive):
     "-v",
     action="append",
     help=(
-        "grid, point, analysis: field to retrieve (repeatable). Short names: tp, t2m, "
+        "grid, point, analysis: field to retrieve (repeatable). Short names: precip "
+        "(also tp), t2m, "
         "d2m, msl, u10, v10, u100, v100, ws10, ws100, tmax, tmin, sp, tcwv, cape, tcc, "
         "ssrd, skt; pressure-level t, z, q, u, v (need --level). grid and point also "
-        "take any WindBorne variable name. Default: tp (grid), a bundle (point), t2m (analysis)."
+        "take any WindBorne variable name. Default: precip (grid), a bundle (point), t2m "
+        "(analysis)."
     ),
 )
 @weather_skill.argument(
@@ -303,7 +307,7 @@ def _pick_init(session, available, date, run, *, archive):
     choices=("mean", "std", "members"),
     help=(
         "grid: mean (default) and std of the 128-member ensemble, or all 128 members "
-        "(only some fields: tp, t2m, d2m, msl, u10, v10, u100, v100, tcc, z at 500 hPa)."
+        "(only some fields: precip, t2m, d2m, msl, u10, v10, u100, v100, tcc, z at 500 hPa)."
     ),
 )
 @weather_skill.argument(
@@ -311,8 +315,8 @@ def _pick_init(session, available, date, run, *, archive):
     action="store_true",
     help=(
         "point: also write each -v field's <name>_std and, where served, percentiles "
-        "(<name>_p01 … <name>_p99) and tp exceedance probabilities (tp_gt_0p25mm … "
-        "tp_gt_50mm). Needs -v."
+        "(<name>_p01 … <name>_p99) and precip exceedance probabilities "
+        "(precip_gt_0p25mm … precip_gt_50mm). Needs -v."
     ),
 )
 @weather_skill.argument(
@@ -463,7 +467,8 @@ def _grid(session, init, bbox, variable, level, ensemble, max_lead):
     upper_names = set(catalog["upper_variables"])
     wb_to_short = {wb: short for short, (wb, _) in VARIABLES.items()}
     fields = []
-    for token in variable or ["tp"]:
+    for token in variable or ["precip"]:
+        token = _PRECIP_ALIASES.get(token, token)
         if token in VARIABLES:
             wb_name, upper = VARIABLES[token]
         elif token in surface_names or token in upper_names:
@@ -600,16 +605,16 @@ def _grid(session, init, bbox, variable, level, ensemble, max_lead):
     ds = ds.assign_coords(time=np.datetime64(_parse_time(forecast_zero), "ns"))
     ds = ds.sortby("latitude")
 
-    if "tp" in ds.data_vars:
+    if "precip" in ds.data_vars:
         # total_precipitation_3h is the amount over 3 h: a mm day-1 rate.
-        ds["tp"] = ds["tp"] * 8.0
-        ds["tp"].attrs.update(
+        ds["precip"] = ds["precip"] * 8.0
+        ds["precip"].attrs.update(
             units="mm day-1",
             long_name="Total precipitation rate",
             windborne_name="total_precipitation_3h",
         )
     if interval:
-        # `_3h` fields (tp, tmax, tmin, ssrd, ...) at lead h cover (h-3, h]:
+        # `_3h` fields (precip, tmax, tmin, ssrd, ...) at lead h cover (h-3, h]:
         # label them at the interval start, like the other forecast fetchers.
         # Lead 0 covers the 3 h before forecast zero, so it is dropped. Every
         # other field is instantaneous at forecast zero + step and keeps its
@@ -630,8 +635,8 @@ def _grid(session, init, bbox, variable, level, ensemble, max_lead):
     # A spread is a difference: keep it in kelvin and pascals rather than
     # shifting temperatures by 273.15 as a unit conversion would.
     if ensemble != "std":
-        # tp is already a mm day-1 rate.
-        ds = to_standard_units(ds, [name for name in ds.data_vars if name != "tp"])
+        # precip is already a mm day-1 rate.
+        ds = to_standard_units(ds, [name for name in ds.data_vars if name != "precip"])
         for name in ds.data_vars:
             if (
                 ds[name].attrs.get("windborne_name") in _KELVIN
@@ -692,6 +697,7 @@ def _point(session, init, point, variable, level, distribution, max_lead):
         if token is None:
             requests_to_make.append((None, None))
             continue
+        token = _PRECIP_ALIASES.get(token, token)
         wb_name, upper = VARIABLES.get(token, (token, token in _UPPER))
         if upper:
             if not level:
@@ -701,10 +707,10 @@ def _point(session, init, point, variable, level, distribution, max_lead):
             requests_to_make.append((wb_name, None))
     if level and all(lev is None for _, lev in requests_to_make):
         raise UsageError("--level is only for pressure-level fields (t, z, q, u, v, ...).")
-    # Precipitation (the default bundle's `precipitation`, tp) and `_3h` fields
+    # Precipitation (the default bundle's `precipitation`, precip) and `_3h` fields
     # cover the 3 h ending at their lead, so lead 0 holds nothing inside the run.
     interval = [
-        "tp (in the default bundle)" if wb_name is None else wb_name
+        "precip (in the default bundle)" if wb_name is None else wb_name
         for wb_name, _ in requests_to_make
         if wb_name is None or wb_name.endswith("_3h")
     ]
@@ -785,13 +791,13 @@ def _point(session, init, point, variable, level, distribution, max_lead):
         },
     )
 
-    # Precip amounts per 3 h (tp, its spread and percentiles) become mm day-1
-    # rates; exceedance probabilities (tp_gt_*) stay probabilities.
+    # Precip amounts per 3 h (precip, its spread and percentiles) become mm day-1
+    # rates; exceedance probabilities (precip_gt_*) stay probabilities.
     for name in list(ds.data_vars):
-        if name == "tp" or (name.startswith("tp_") and not name.startswith("tp_gt_")):
+        if name == "precip" or (name.startswith("precip_") and not name.startswith("precip_gt_")):
             ds[name] = ds[name] * 8.0
             ds[name].attrs.update(units="mm day-1", windborne_name=columns[name]["windborne_name"])
-    # Interval fields (tp and its distribution, `_3h` fields) at lead h cover
+    # Interval fields (precip and its distribution, `_3h` fields) at lead h cover
     # (h-3, h]: label them at the interval start, and drop lead 0 (the 3 h
     # before forecast zero). Instantaneous fields keep their lead; the merged
     # axis is NaN where a field has no value (not filled).
@@ -982,12 +988,12 @@ def _clim(session, point, start_time, end_time, rolling_days):
     # a mm day-1 rate labelled at the interval start. The other fields are
     # instantaneous and keep their hour. Both are then cut to the requested
     # days; an hour a field lacks stays NaN (not filled).
-    if "tp" in ds.data_vars:
-        tp = ds["tp"] * 24.0
-        tp.attrs.update(units="mm day-1", windborne_name="precipitation")
-        tp = tp.assign_coords(time=tp["time"] - np.timedelta64(1, "h"))
-        rest = ds.drop_vars("tp")
-        ds = xr.merge([rest, tp], join="outer") if rest.data_vars else tp.to_dataset()
+    if "precip" in ds.data_vars:
+        precip = ds["precip"] * 24.0
+        precip.attrs.update(units="mm day-1", windborne_name="precipitation")
+        precip = precip.assign_coords(time=precip["time"] - np.timedelta64(1, "h"))
+        rest = ds.drop_vars("precip")
+        ds = xr.merge([rest, precip], join="outer") if rest.data_vars else precip.to_dataset()
     ds = ds.sel(time=slice(first, last))
 
     ds.attrs.update(
@@ -1032,6 +1038,7 @@ def _analysis(session, bbox, start_time, end_time, variable, level, probe_latest
 
     fields = []
     for token in variable or ["t2m"]:
+        token = _PRECIP_ALIASES.get(token, token)
         if token not in _ANALYSIS_VARIABLES:
             raise UsageError(
                 f"unknown variable {token!r}. Available: {', '.join(_ANALYSIS_VARIABLES)}"
@@ -1101,37 +1108,37 @@ def _analysis(session, bbox, start_time, end_time, variable, level, probe_latest
             variables[short] = da
 
     ds = xr.Dataset(variables).sortby("latitude")
-    if "tp" in ds.data_vars:
+    if "precip" in ds.data_vars:
         # total_precipitation_1h covers (T-1h, T] before each analysis time T: a
         # mm day-1 rate over that one hour, labelled at its start T-1h like the
         # other fetchers. The other five hours of each 6 h step are not served,
         # so it is not a 6-hourly mean. The other fields keep their analysis
         # times; the merged axis is NaN where a field has no value (not filled).
-        units = str(ds["tp"].attrs.get("units") or "mm")
-        tp, _ = convert_dataarray(ds["tp"], "mm") if units != "mm" else (ds["tp"], None)
-        tp = tp * 24.0
-        tp.attrs.update(units="mm day-1", windborne_name="total_precipitation_1h")
-        tp = tp.assign_coords(time=tp["time"] - np.timedelta64(1, "h"))
-        rest = ds.drop_vars("tp")
-        ds = xr.merge([rest, tp], join="outer") if rest.data_vars else tp.to_dataset()
+        units = str(ds["precip"].attrs.get("units") or "mm")
+        precip, _ = convert_dataarray(ds["precip"], "mm") if units != "mm" else (ds["precip"], None)
+        precip = precip * 24.0
+        precip.attrs.update(units="mm day-1", windborne_name="total_precipitation_1h")
+        precip = precip.assign_coords(time=precip["time"] - np.timedelta64(1, "h"))
+        rest = ds.drop_vars("precip")
+        ds = xr.merge([rest, precip], join="outer") if rest.data_vars else precip.to_dataset()
     ds.attrs.update(
         Conventions="CF-1.13",
         weather_skills_source="windborne-ecmwf-analysis",
         source="ECMWF IFS Analysis (Deterministic) via WindBorne",
     )
     stamp_cf_attrs(ds)
-    ds = to_standard_units(ds, [name for name in ds.data_vars if name != "tp"])
+    ds = to_standard_units(ds, [name for name in ds.data_vars if name != "precip"])
     for name in ds.data_vars:
         if ds[name].attrs.get("windborne_name") in _KELVIN and ds[name].attrs.get("units") == "K":
             converted, _ = convert_dataarray(ds[name], "degree_Celsius")
             converted.attrs["units"] = "degree_Celsius"
             ds[name] = converted
     # data_interval is per variable: the analysis fields are 6-hourly samples
-    # (stamped when there is more than one), tp a one-hour rate.
+    # (stamped when there is more than one), precip a one-hour rate.
     if len(times) > 1:
         ds = stamp_data_interval(ds, "6 hour")
-    if "tp" in ds.data_vars:
-        ds["tp"].attrs["data_interval"] = "1 hour"
+    if "precip" in ds.data_vars:
+        ds["precip"].attrs["data_interval"] = "1 hour"
     return ds
 
 
