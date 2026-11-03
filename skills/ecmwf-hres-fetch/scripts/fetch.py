@@ -23,11 +23,13 @@ import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
+import numpy as np
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
 from weather_skills_core.standard_utils import bbox_subset
 from weather_skills_core.units import (
     convert_dataarray,
+    data_interval_of,
     precip_amounts_to_rates,
     stamp_data_interval,
     to_standard_units,
@@ -303,12 +305,11 @@ def _standardize(ds):
     # On uneven leads (3- then 6-hourly) give each sample the cell [s, next
     # lead) like the tp rates, so a day bin holds the samples labelled in that
     # day; stamp_data_interval would infer cells ending at each step.
-    if "step" in ds.dims and "step_bounds" not in ds.coords and ds.sizes["step"] > 2:
-        import numpy as np
-
+    if "step" in ds.dims and "bounds" not in ds["step"].attrs and data_interval_of(ds) is None:
         leads = ds["step"].values
-        if len(set(np.diff(leads))) > 1:
-            ends = np.append(leads[1:], leads[-1] + (leads[-1] - leads[-2]))
+        gaps = np.diff(leads)
+        if len(set(gaps)) > 1:
+            ends = np.append(leads[1:], leads[-1] + gaps[-1])
             ds = ds.assign_coords(step_bounds=(("step", "nv"), np.stack([leads, ends], axis=1)))
             ds["step"].attrs["bounds"] = "step_bounds"
     return stamp_data_interval(ds)
