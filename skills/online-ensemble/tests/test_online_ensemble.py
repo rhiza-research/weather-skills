@@ -283,3 +283,13 @@ def test_resume_across_a_join(tmp_path, ensemble_fn, learner, split):
     np.testing.assert_allclose(
         ds["weight"].values, full["weight"].isel(time=slice(split - 3, None)).values, atol=1e-12
     )
+
+
+def test_regret_is_against_the_best_expert(tmp_path, ensemble_fn):
+    fc, obs = _inputs(tmp_path)
+    ds = _run(ensemble_fn, fc, obs, tmp_path / "out.zarr", "--delay", "3")
+
+    best = float((ds["ensemble_rmse"] - ds["expert_rmse"]).mean("time").max())
+    assert f"mean regret vs best expert {best:+.3g}" in ds.attrs["online_ensemble_summary"]
+    # The blend trails the near-perfect expert, so regret against the best is positive.
+    assert best > 0

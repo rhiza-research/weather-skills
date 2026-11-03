@@ -442,7 +442,7 @@ def online_ensemble(
         warnings.simplefilter("ignore", RuntimeWarning)
         mean_expert = np.nanmean(expert_rmse, axis=0)
         # Mean per scored round, against each expert over the rounds it took part in.
-        regret = np.nanmin(np.nanmean(ensemble_rmse[:, None] - expert_rmse, axis=0))
+        regret = np.nanmax(np.nanmean(ensemble_rmse[:, None] - expert_rmse, axis=0))
     summary = (
         f"{learner} + {hint} hint, delay {delay}: {n_round} rounds, {int(scored.sum())} scored. "
         f"Mean RMSE ensemble {np.nanmean(ensemble_rmse):.3g}{u}, "
