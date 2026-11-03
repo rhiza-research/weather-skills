@@ -166,15 +166,23 @@ def _process_scan(files, instrument, bands, bbox):
 
 
 @weather_skill(name="meteosat-fetch", version=_SKILL_VERSION)
-@weather_skill.argument("--date", required=True)
+@weather_skill.argument("--date")
+@weather_skill.argument(
+    "--start-time",
+    action="append",
+    help="First day of a window; repeat with --end-time for several windows.",
+)
+@weather_skill.argument(
+    "--end-time", action="append", help="Last day of a window, paired with --start-time."
+)
 @weather_skill.argument(
     "--time",
     action="append",
     required=True,
     metavar="HH:MM",
     help=(
-        "UTC scan time (repeatable, or comma-separated). Floored to the repeat cycle "
-        "start: 15 min for SEVIRI, 10 min for FCI. Keep this to a few views."
+        "UTC scan time on each day (repeatable, or comma-separated). Floored to the "
+        "repeat cycle start: 15 min for SEVIRI, 10 min for FCI. Keep this to a few views."
     ),
 )
 @weather_skill.argument(
@@ -229,15 +237,38 @@ def _process_scan(files, instrument, bands, bbox):
         "and exit; stderr gives its HH:MM UTC. Downloads nothing. IDENT is unused."
     ),
 )
-def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, **kwargs):
+def fetch(
+    date,
+    start_time,
+    end_time,
+    time,
+    bbox,
+    variable,
+    service,
+    instrument,
+    max_scans,
+    workers,
+    **kwargs,
+):
     """Fetch Meteosat SEVIRI or FCI visible and infrared scans over a bbox from the EUMETSAT Data Store."""
     import eumdac
 
     probe = kwargs.get("probe_latest") is not None
+    # Days to fetch: the one --date, or every day in the --start-time/--end-time
+    # windows (both ends inclusive).
+    windows = list(zip(start_time or [], end_time or [], strict=True))
+    if not probe and (date is None) == (not windows):
+        raise UsageError(
+            "pass --date for one day, or --start-time/--end-time for a range of days (not both)."
+        )
+    if date is not None:
+        days = [date]
+    else:
+        days = sorted({a + timedelta(days=i) for a, b in windows for i in range((b - a).days + 1)})
     # FCI by default, but SEVIRI for IODC and for days before FCI L1c starts.
     if instrument is None:
         instrument = (
-            "seviri" if service == "iodc" or (not probe and date < _FCI_FIRST_DAY) else "fci"
+            "seviri" if service == "iodc" or (not probe and days[0] < _FCI_FIRST_DAY) else "fci"
         )
     if (instrument, service) not in _SOURCES:
         raise UsageError(
@@ -276,9 +307,9 @@ def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, *
     import pandas as pd
     import xarray as xr
 
-    if instrument == "fci" and date < _FCI_FIRST_DAY:
+    if instrument == "fci" and days[0] < _FCI_FIRST_DAY:
         raise UsageError(
-            f"FCI L1c starts {_FCI_FIRST_DAY.isoformat()}; use --instrument seviri for {date}."
+            f"FCI L1c starts {_FCI_FIRST_DAY.isoformat()}; use --instrument seviri for {days[0]}."
         )
 
     # Bands: `vis`/`ir` shortcuts or explicit names, matched case-insensitively.
@@ -298,29 +329,32 @@ def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, *
     if not bands:
         raise UsageError("pass -v vis, -v ir, or explicit band names.")
 
-    # Times, each floored to its repeat cycle start (the scan's nominal time).
+    # Times of day, each floored to its repeat cycle start (the scan's nominal
+    # time), then taken on every day.
     requested = set()
     for token in (t.strip() for item in time for t in item.split(",")):
         if not token:
             continue
         try:
-            requested.add(datetime.combine(date, dt_time.fromisoformat(token)))
+            requested.add(datetime.combine(days[0], dt_time.fromisoformat(token)))
         except ValueError:
             raise UsageError(f"--time {token!r} is not HH:MM (UTC).") from None
     if not requested:
         raise UsageError("pass at least one --time HH:MM (UTC).")
-    slots = sorted({t - (t - datetime.min) % cadence for t in requested})
-    if len(slots) < len(requested):
+    cycles = sorted({(t - (t - datetime.min) % cadence).time() for t in requested})
+    slots = [datetime.combine(d, c) for d in days for c in cycles]
+    if len(cycles) < len(requested):
         print(
-            f"meteosat-fetch: {len(requested)} --time values fall in {len(slots)} "
+            f"meteosat-fetch: {len(requested)} --time values fall in {len(cycles)} "
             f"{instrument} repeat cycle(s) ({_CADENCE_MIN[instrument]} min); "
             "fetching each cycle once.",
             file=sys.stderr,
         )
     if len(slots) > max_scans:
         raise UsageError(
-            f"{len(slots)} scans requested; this skill is for a few views "
-            f"(--max-scans {max_scans}). Raise --max-scans if you really need more."
+            f"{len(slots)} scans requested ({len(days)} day(s) x {len(cycles)} time(s)); "
+            f"this skill is for a few views (--max-scans {max_scans}). "
+            "Raise --max-scans if you really need more."
         )
     if len(slots) > _WARN_SCANS:
         print(
@@ -347,9 +381,11 @@ def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, *
         hi = min(_FCI_N_CHUNKS, int((max(ys) + _FCI_Y_HALF) // height) + 2)
         chunks = list(range(lo, hi + 1))
 
-    # One product per slot: the scan that starts in that repeat cycle.
+    # One product per slot: the scan that starts in that repeat cycle. With
+    # --date a slot with no scan is an error; with windows it is left out.
     collection = eumdac.DataStore(token).get_collection(collection_id)
     products = {}
+    missing = []
     for slot in slots:
         hits = [
             p
@@ -358,18 +394,31 @@ def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, *
             )
             if slot <= p.sensing_start < slot + cadence
         ]
-        if not hits:
+        if not hits and date is not None:
             raise DataError(
                 f"no {instrument} scan for {slot:%Y-%m-%d %H:%M} UTC in {collection}; "
                 "check --probe-latest or try a neighbouring time."
             )
+        if not hits:
+            print(
+                f"meteosat-fetch: WARNING: no {instrument} scan for {slot:%Y-%m-%d %H:%M} UTC "
+                f"in {collection}; skipping it.",
+                file=sys.stderr,
+            )
+            missing.append(slot)
+            continue
         products[slot] = min(hits, key=lambda p: p.sensing_start)
+    if not products:
+        raise DataError(
+            f"no {instrument} scan for any of {', '.join(f'{s:%Y-%m-%d %H:%M}' for s in missing)} "
+            f"UTC in {collection}; check --probe-latest or try a neighbouring time."
+        )
 
     # Product.size is in KB for the whole disk; FCI fetches only some chunks.
     frac = len(chunks) / _FCI_N_CHUNKS if instrument == "fci" else 1.0
     est_mb = sum((p.size or 0) for p in products.values()) / 1024 * frac
     print(
-        f"meteosat-fetch: {instrument} {service} {collection_id}: {len(slots)} scan(s), "
+        f"meteosat-fetch: {instrument} {service} {collection_id}: {len(products)} scan(s), "
         f"bands {','.join(bands)}, ~{est_mb:,.0f} MB to download"
         + (f" (FCI chunks {chunks[0]}-{chunks[-1]})" if chunks else ""),
         file=sys.stderr,
@@ -377,7 +426,7 @@ def fetch(date, time, bbox, variable, service, instrument, max_scans, workers, *
     if est_mb > _WARN_DOWNLOAD_MB:
         print(
             f"meteosat-fetch: warning: ~{est_mb / 1024:.1f} GB download; "
-            "consider fewer --time values.",
+            "consider fewer --time values or days.",
             file=sys.stderr,
         )
 

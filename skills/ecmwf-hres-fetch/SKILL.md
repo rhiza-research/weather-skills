@@ -1,6 +1,6 @@
 ---
 name: ecmwf-hres-fetch
-description: "Fetch the deterministic ECMWF HRES (IFS high-resolution, single-member) forecast for one init date and run hour over a lat/lon box from the free ECMWF Open Data feed, as a weather-skills Zarr at 0.25°, out to 15 days. Slow: every lead is a global download. For ECMWF forecasts use dynamical-fetch first (IFS-ENS 0.25° and its control member, AIFS single and ensemble, and the 46-day IFS-ENS for extended range). Use this only when a task names HRES, or needs a field dynamical-fetch lacks: humidity or winds on pressure levels, levels other than 500/850/925 hPa, CAPE, column water vapour, skin temperature, or net and top-of-atmosphere radiation."
+description: "Fetch the deterministic ECMWF HRES (IFS high-resolution, single-member) forecast for one init date or a range of inits at one run hour over a lat/lon box from the free ECMWF Open Data feed, as a weather-skills Zarr at 0.25°, out to 15 days. Slow: every lead is a global download. For ECMWF forecasts use dynamical-fetch first (IFS-ENS 0.25° and its control member, AIFS single and ensemble, and the 46-day IFS-ENS for extended range). Use this only when a task names HRES, or needs a field dynamical-fetch lacks: humidity or winds on pressure levels, levels other than 500/850/925 hPa, CAPE, column water vapour, skin temperature, or net and top-of-atmosphere radiation."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`). No credentials or account required — ECMWF Open Data is a public feed.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -33,7 +33,7 @@ metadata:
 
 # ecmwf-hres-fetch
 
-Fetches one deterministic ECMWF HRES run from ECMWF Open Data as a weather-skills standard dataset Zarr.
+Fetches one deterministic ECMWF HRES run, or the `--run` init of every day in one or more date windows, from ECMWF Open Data as a weather-skills standard dataset Zarr.
 
 **Use dynamical-fetch first.** It reads only the bbox and leads asked for, so it takes seconds; this skill downloads the whole globe for every lead, which takes minutes and stalls when `data.ecmwf.int` is busy.
 - ECMWF IFS at 0.25°: `ecmwf-ifs-ens-forecast-15-day-0-25-degree`, 00 UTC inits. Since IFS Cycle 48r1 the ensemble runs at HRES resolution, so its control member (`select` member 0) stands in for HRES; the ensemble mean is usually the better forecast.
@@ -46,11 +46,14 @@ Those stores carry precipitation, 2 m temperature and dewpoint, sea-level and su
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date YYYY-MM-DD --bbox N/W/S/E [--run 0|6|12|18] [-v VAR ...] -o OUT.zarr
+# The --run init of every day in a window, in one call; repeat the pair for several windows
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--start-time ... --end-time ...] --bbox N/W/S/E [--run 0|6|12|18] [-v VAR ...] [--max-lead LEAD] -o OUT.zarr
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
 ### Arguments
-- `--date` — init date. The skill tries `data.ecmwf.int` (last ~4 days) and then the AWS mirror (from 2023).
+- `--date` — init date. The skill tries `data.ecmwf.int` (last ~4 days) and then the AWS mirror (from 2023). Pass `--date` or a window.
+- `--start-time`, `--end-time` — an init window, both days inclusive. Repeat the pair for several windows, one window per pair. Takes the `--run` init (default 00 UTC) of every day in the windows with all its leads: like `--date`, the windows select init times, not valid times. Use this instead of one `--date` call per init; not with `--date`. An init neither source has is skipped with a `WARNING` on stderr; no init in any window exits 1.
 - `--run` — init hour UTC: `0`, `6`, `12`, or `18`. Default: `0`. 00/12 runs reach 360 h (3-hourly to 144 h, then 6-hourly); 06/18 runs reach 144 h, 3-hourly.
 - `--bbox` — required for a fetch. `N/W/S/E` decimal degrees. Open Data serves global files, so the full globe is downloaded for every step and clipped locally; a small bbox saves memory, not download time (`precip` for a 00 UTC run is ~80 MB; a pressure-level field is ~13×).
 - `--variable`, `-v` — one field per flag; repeat for several. Default: `precip`. Surface: `precip`, `t2m`, `d2m`, `msl`, `u10`, `v10`, `gust10`, `sp`, `tcwv`, `mucape`, `skt`, `ssrd`, `strd`, `str`, `ttr`. Pressure levels (1000–50 hPa, 13 levels): `t`, `gh`, `u`, `v`, `q`, `r`. Open Data names (`tp`, `2t`, `10u`) are accepted, as is `precipitation`. An unknown name exits and lists `Available (most used first):`.
@@ -59,7 +62,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- Dims `(step, latitude, longitude)`, plus `vertical` (hPa) for pressure-level fields. Scalar `time` is the init.
+- Dims `(step, latitude, longitude)`, plus `vertical` (hPa) for pressure-level fields. Scalar `time` is the init; with windows, `(time, step, latitude, longitude)` (plus `vertical`), one `time` per init.
 - `precip` (total precipitation) is a rate in `mm day-1` over `[step, next step)`, labelled at the interval start (`step=0` is 0–3 h). The last lead has no interval, so it is dropped — for every field when `precip` is in the request.
 - `t2m`, `d2m`, `skt`, `t` are `degree_Celsius`; `gh` is metres; other units as published.
 - 06/18 runs stamp `data_interval = 3 hour`; 00/12 runs, whose spacing changes at 144 h, get `step_bounds`. Stamped `weather_skills_source=ecmwf-hres`.
@@ -69,10 +72,15 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - `ssrd`, `strd`, `str`, `ttr` stay cumulative since init (J m-2); deaccumulate them for a rate.
 - `gust10` is the maximum gust since the previous output step.
 - `tcwv` is water vapour only; `mucape` is most-unstable CAPE (Open Data has no plain `cape`).
-- An init or run that neither source has exits 1. New runs publish about 6–9 h after their init hour.
+- An init or run that neither source has exits 1 with `--date`; with windows it is skipped (not filled). New runs publish about 6–9 h after their init hour.
+- Window size: every init downloads the whole globe for every step, one init after another, so a window costs inits × the single-init download (`precip` is about 1 MB per step, ~80 MB per init to 15 days). Inits older than ~4 days come from the AWS mirror. Keep windows to about a week of inits with a short `--max-lead`, or a few inits at full lead; for longer runs of inits use dynamical-fetch's IFS-ENS (control member or ensemble mean).
 
 ### Example
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-10-15 --run 0 --bbox 5.5/33.5/-5/42.5 -v precip -v t2m -o hres_kenya.zarr
 ```
 Writes 15-day HRES precip rates and 2 m temperature over Kenya from the 00 UTC run.
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time 2026-10-12 --end-time 2026-10-18 --bbox 5.5/33.5/-5/42.5 -v precip --max-lead 24 -o hres_kenya_week.zarr
+```
+Writes the first 24 h of precip rates from each 00 UTC run of that week over Kenya, one `time` per init.

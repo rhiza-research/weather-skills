@@ -1,6 +1,6 @@
 ---
 name: ecmwf-fetch
-description: "Fetch an ECMWF S2S (extended-range, 46-day) ensemble forecast for one init date over a lat/lon box, as a weather-skills Zarr: precipitation, 2 m temperature, SST, winds, pressure-level fields and more. Also serves inits before 2026 and fields such as ocean variables, 6-hour max/min temperature, surface fluxes and potential vorticity through the ECMWF Data Store. Use when dynamical-fetch lacks the init date or field; the Data Store needs a free ECMWF key."
+description: "Fetch an ECMWF S2S (extended-range, 46-day) ensemble forecast for one init date or a range of inits over a lat/lon box, as a weather-skills Zarr: precipitation, 2 m temperature, SST, winds, pressure-level fields and more. Also serves inits before 2026 and fields such as ocean variables, 6-hour max/min temperature, surface fluxes and potential vorticity through the ECMWF Data Store. Use when dynamical-fetch lacks the init date or field; the Data Store needs a free ECMWF key."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Default source is the dynamical.org catalog (no credentials). ECDS fallback requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`) and ECMWF_DATASTORES_KEY (or a `~/.ecmwfdatastoresrc` file). The store URL (`https://ecds.ecmwf.int/api`) is hardcoded in the skill, not read from the environment; the key is the personal token from your ECDS account, free with sign-up — register an ECMWF account at https://www.ecmwf.int/user/register, then copy the token from https://ecds.ecmwf.int/how-to-api.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -29,30 +29,34 @@ metadata:
 
 # ecmwf-fetch
 
-Fetches one ECMWF S2S ensemble forecast (control plus 100 members, 46 daily leads) as a weather-skills standard dataset Zarr.
+Fetches one ECMWF S2S ensemble forecast (control plus 100 members, 46 daily leads), or every init in one or more date windows, as a weather-skills standard dataset Zarr.
 
 ## Usage
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date YYYY-MM-DD --bbox N/W/S/E [-v VAR ...] -o OUT.zarr
+# Every S2S init in a window, in one call; repeat the pair for several windows
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--start-time ... --end-time ...] --bbox N/W/S/E [-v VAR ...] -o OUT.zarr
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
-The skill reads the public dynamical.org copy (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`, no credentials) when the init is 2026-01-01 or later and every requested field is in it. Otherwise it queues a request on the ECMWF Data Store (ECDS), which needs `ECMWF_DATASTORES_KEY` (your ECDS token) and can take minutes to an hour.
+The skill reads the public dynamical.org copy (`ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`, no credentials) when the init (with windows, every window) is 2026-01-01 or later and every requested field is in it. Otherwise it queues a request on the ECMWF Data Store (ECDS), which needs `ECMWF_DATASTORES_KEY` (your ECDS token) and can take minutes to an hour.
 
 ### Arguments
-- `--date` — init date; the 00 UTC run. Inits are daily from 2023-06-27, Mondays and Thursdays before.
+- `--date` — init date; the 00 UTC run. Inits are daily from 2023-06-27, Mondays and Thursdays before. Pass `--date` or windows, not both.
+- `--start-time`, `--end-time` — an init window, both days inclusive. Repeat the pair for several windows, one window per pair. Takes every 00 UTC S2S init in the windows with all its leads (Mondays and Thursdays only before 2023-06-27): like `--date`, the windows select init times, not valid times. Use this instead of one `--date` call per init; not with `--date`. An init with no data (or inside the ECDS embargo) is skipped with a `WARNING` on stderr; no init in any window exits 1.
 - `--bbox` — required. `N/W/S/E` decimal degrees; W > E crosses the antimeridian.
 - `--variable`, `-v` — short names, several per flag, repeated, or comma-separated (`-v precip t2m`). Default: `precip`. Most used: `precip`, `t2m`, `sst`, `d2m`, `mx2t6`, `mn2t6`, `u10`, `v10`, `msl`, `cape`, `tcw`; pressure levels `gh`, `t`, `u`, `v`, `w`, `q`; `pv` (320 K). ECDS names (`2_m_temperature`) and GRIB names (`2t`, `wtmp`, `tp`) are accepted, as is `precipitation`. An unknown name exits and lists `Available (most used first):`.
 - `--probe-latest [IDENT]` — print the latest init on dynamical.org and exit; no download, no credentials. `IDENT` is ignored. If the catalog is unreachable, prints today − 2 days.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- Dims `(number, step, latitude, longitude)`, plus `vertical` (hPa, or K for `pv`) for level fields. `number=0` is the control, `1..100` the perturbed members. `step` is daily and labels the start of each 24 h window, so `step=0` is `[init, init+1d)`.
+- Dims `(number, step, latitude, longitude)` with scalar `time` = init; with windows, `(time, step, number, latitude, longitude)`, one `time` per init. Plus `vertical` (hPa, or K for `pv`) for level fields. `number=0` is the control, `1..100` the perturbed members. `step` is daily and labels the start of each 24 h window, so `step=0` is `[init, init+1d)`.
 - `precip` (total precipitation) is a rate in `mm day-1`; temperatures are `degree_Celsius`; other units as published. Stamped `weather_skills_source=ecmwf-s2s`.
 
 ### Notes
-- ECDS refuses inits newer than today − 2 days (real-time embargo); the skill exits 1 before contacting it.
+- ECDS refuses inits newer than today − 2 days (real-time embargo); the skill exits 1 before contacting it (with windows, those inits are skipped).
+- Window size: memory is about inits × 101 members × 46 leads × grid cells × 4 bytes per field, doubled while joining. A country box (Kenya, about 60 cells at 1.5°) is about 1 MB per init per field, so a year of daily inits fits; a global init is about 0.5 GB per field, so keep global windows to a few inits. On the catalog a season of inits over a country takes minutes. On ECDS each init is its own queued request per field group (control and members apart), so keep ECDS windows to about 10 inits per call.
 - Set `ECMWF_DATASTORES_KEY` before the first call that needs ECDS; the catalog path does not read it.
 - From ECDS, pressure-level fields and `pv` are control only: they have data at `number=0` and are NaN for members 1..100.
 - From ECDS, accumulated fields other than `precip` (`cp`, `sf`, `ro`, `sro`, `sshf`, `slhf`, `ssr`, `ssrd`, `str`, `strd`, `ttr`, `ewss`, `nsss`) stay cumulative since init in native units. Requesting them with `precip` exits 2.
@@ -64,6 +68,10 @@ The skill reads the public dynamical.org copy (`ecmwf-ifs-ens-forecast-46-day-da
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-10-12 --bbox 5.5/33.5/-5/42.5 -v precip t2m -o ecmwf_s2s_kenya.zarr
 ```
 Writes 101-member daily precip rates and 2 m temperature for 46 days over Kenya, from dynamical.org.
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time 2026-03-01 --end-time 2026-05-31 --bbox 5.5/33.5/-5/42.5 -v precip -o ecmwf_s2s_kenya_mam.zarr
+```
+Writes every 00 UTC init from March to May over Kenya, one `time` per init.
 
 ## Details
 
