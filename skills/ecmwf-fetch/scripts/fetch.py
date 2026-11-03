@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.3",
+#   "weather-skills-core>=0.3.4",
 #   "dynamical-catalog==1.0.1",
 #   "ecmwf-datastores-client==0.4.2",
 #   "requests",
@@ -40,7 +40,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.7"
+_SKILL_VERSION = "0.0.8"
 
 _PROBE_POLL_SECONDS = 30
 _PROBE_POLL_MAX_SECONDS = 3600

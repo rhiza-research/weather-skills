@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.3",
+#   "weather-skills-core>=0.3.4",
 #   "dynamical-catalog==1.0.1",
 # ]
 # ///
@@ -21,7 +21,7 @@ from weather_skills_core.standard_utils import (
 from weather_skills_core.units import stamp_data_interval, to_standard_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.6"
+_SKILL_VERSION = "0.0.7"
 
 _FINAL_ID = "ucsb-chc-chirps-analysis-final"
 _PRELIM_ID = "ucsb-chc-chirps-analysis-preliminary"

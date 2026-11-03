@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.3",
+#   "weather-skills-core>=0.3.4",
 #   "pandas",
 # ]
 # ///
@@ -20,7 +20,7 @@ from weather_skills_core.standard_utils import latitude_weights
 from weather_skills_core.units import dequantify_dataset, ureg, variable_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.7"
+_SKILL_VERSION = "0.0.8"
 
 _METRICS = ("hits", "bias", "mae")
 _VAR = {"hits": "event_hit", "bias": "bias", "mae": "mae"}
