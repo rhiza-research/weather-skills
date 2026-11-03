@@ -69,17 +69,11 @@ def _grib_like_t2m(values=None):
     )
 
 
-def test_old_init_falls_back_to_aws_mirror(mod, monkeypatch, tmp_path):
-    # data.ecmwf.int keeps only ~4 days of inits; older ones 404 there and
-    # used to fail outright although the AWS mirror holds them.
+def test_old_init_goes_straight_to_aws_mirror(mod, monkeypatch, tmp_path):
+    # data.ecmwf.int keeps only 4 days of inits; asking it for an older one
+    # always 404s, so only the AWS mirror is tried.
     sources = []
-
-    def retrieve(source, request, target):
-        sources.append(source)
-        if source == "ecmwf":
-            raise RuntimeError("404 Client Error: Not Found for url: https://data.ecmwf.int/...")
-
-    _fake_opendata(monkeypatch, retrieve)
+    _fake_opendata(monkeypatch, lambda source, request, target: sources.append(source))
     monkeypatch.setattr(mod, "_open_grib", lambda path: _grib_like_t2m())
     out = tmp_path / "hres.zarr"
     run_skill(
@@ -89,9 +83,37 @@ def test_old_init_falls_back_to_aws_mirror(mod, monkeypatch, tmp_path):
     import xarray as xr
 
     ds = xr.open_zarr(out)
-    assert sources == ["ecmwf", "aws"]
+    assert sources == ["aws"]
     assert ds["t2m"].attrs["units"] == "degree_Celsius"
     assert float(ds["t2m"].max()) == pytest.approx(26.85)
+
+
+@pytest.mark.parametrize("days_ago, sources_tried", [(3, ["ecmwf", "aws"]), (4, ["aws"])])
+def test_ecmwf_is_tried_for_the_last_4_days_of_inits(
+    mod, monkeypatch, tmp_path, days_ago, sources_tried
+):
+    sources = []
+
+    def retrieve(source, request, target):
+        sources.append(source)
+        if source == "ecmwf":
+            raise RuntimeError("404 Client Error: Not Found for url: https://data.ecmwf.int/...")
+
+    _fake_opendata(monkeypatch, retrieve)
+    monkeypatch.setattr(mod, "_open_grib", lambda path: _grib_like_t2m())
+    date = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=days_ago)
+    run_skill(
+        mod.fetch,
+        "--date",
+        date.isoformat(),
+        "--bbox",
+        "5/34/-5/42",
+        "-v",
+        "t2m",
+        "-o",
+        str(tmp_path / "hres.zarr"),
+    )
+    assert sources == sources_tried
 
 
 def test_max_lead_limits_requested_steps(mod, monkeypatch, tmp_path):
@@ -194,9 +216,10 @@ def test_max_lead_parsing(mod):
             mod._parse_max_lead(bad)
 
 
-def test_slow_down_retries_are_capped_then_aws_is_tried(mod, monkeypatch, tmp_path):
-    # ecmwf-opendata's default is 500 tries 120 s apart: a "503 Slow Down" from
-    # data.ecmwf.int hung a chat for 30 minutes before the AWS mirror was tried.
+def test_slow_down_is_not_retried_then_aws_is_tried(mod, monkeypatch, tmp_path):
+    # ecmwf-opendata retries a "503 Slow Down" (by default 500 times, 120 s
+    # apart), which left chats waiting on a throttled source; each source now
+    # gets one attempt.
     clients, sources = [], []
 
     def retrieve(source, request, target):
@@ -209,7 +232,7 @@ def test_slow_down_retries_are_capped_then_aws_is_tried(mod, monkeypatch, tmp_pa
     run_skill(
         mod.fetch,
         "--date",
-        "2026-02-15",
+        dt.datetime.now(dt.UTC).date().isoformat(),
         "--bbox",
         "5/34/-5/42",
         "-v",
@@ -218,24 +241,40 @@ def test_slow_down_retries_are_capped_then_aws_is_tried(mod, monkeypatch, tmp_pa
         str(tmp_path / "hres.zarr"),
     )
     assert sources == ["ecmwf", "aws"]
-    for client in clients:
-        assert client["maximum_retries"] <= 3
-        assert client["retry_after"] <= 10
-        assert client["use_server_retry_after"] is False
+    assert [c["maximum_retries"] for c in clients] == [1, 1]
 
 
-def test_unpublished_init_reports_both_sources(mod, monkeypatch, tmp_path):
-    from weather_skills_core import DataError
+def test_rate_limited_mirror_says_to_try_later(mod, monkeypatch, tmp_path, capsys):
+    def retrieve(source, request, target):
+        raise RuntimeError(
+            "503 Server Error: Service Unavailable for url: https://ecmwf-forecasts.s3..."
+        )
 
+    _fake_opendata(monkeypatch, retrieve)
+    with pytest.raises(SystemExit):
+        run_skill(
+            mod.fetch,
+            "--date",
+            "2026-02-15",
+            "--bbox",
+            "5/34/-5/42",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert "rate-limiting" in capsys.readouterr().err
+    assert not (tmp_path / "x.zarr").exists()
+
+
+def test_unpublished_init_reports_both_sources(mod, monkeypatch, tmp_path, capsys):
     def retrieve(source, request, target):
         raise RuntimeError(f"404 from {source}")
 
     _fake_opendata(monkeypatch, retrieve)
-    with pytest.raises((DataError, SystemExit)):
+    with pytest.raises(SystemExit):
         run_skill(
             mod.fetch,
             "--date",
-            "2026-10-15",
+            dt.datetime.now(dt.UTC).date().isoformat(),
             "--run",
             "18",
             "--bbox",
@@ -243,6 +282,9 @@ def test_unpublished_init_reports_both_sources(mod, monkeypatch, tmp_path):
             "-o",
             str(tmp_path / "x.zarr"),
         )
+    err = capsys.readouterr().err
+    assert "ecmwf: 404" in err and "aws: 404" in err
+    assert "not be published yet" in err
     assert not (tmp_path / "x.zarr").exists()
 
 
