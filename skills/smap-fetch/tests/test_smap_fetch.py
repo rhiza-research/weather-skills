@@ -50,7 +50,7 @@ class _FakeH5File(dict):
         return False
 
 
-def _fake_h5py(group, suffix, units=b"cm**3/cm**3", empty=False):
+def _fake_h5py(group, suffix, units=b"cm**3/cm**3", empty=False, missed=False):
     """A minimal stand-in for h5py exposing one SPL3SMP_E retrieval group."""
     sm = np.array([[0.10, 0.20, -9999.0], [0.30, 0.60, 0.40]], dtype="float32")
     qual = np.array([[0, 1, 65534], [0, 0, 8]], dtype="uint16")
@@ -59,6 +59,12 @@ def _fake_h5py(group, suffix, units=b"cm**3/cm**3", empty=False):
     if empty:
         # An overpass with no retrievals anywhere: every cell is fill.
         sm[:] = lat[:] = lon[:] = -9999.0
+    if missed:
+        # A partial swath: a row and a column the overpass missed are all fill.
+        sm, lat, lon = (
+            np.pad(v, ((0, 1), (1, 0)), constant_values=-9999.0) for v in (sm, lat, lon)
+        )
+        qual = np.pad(qual, ((0, 1), (1, 0)), constant_values=65534)
     grp = {
         f"soil_moisture{suffix}": _FakeDataset(
             sm, units=units, valid_min=np.float32(0.02), valid_max=np.float32(0.5)
@@ -95,6 +101,14 @@ def test_non_ratio_units_are_rejected(mod):
     with patch.dict(sys.modules, {"h5py": _fake_h5py("AM", "", units=b"kg m-2")}):
         with pytest.raises(RuntimeError, match="dimensionless volumetric ratio"):
             mod._slice_from_file("x.h5", "AM", "2024-06-01", True)
+
+
+def test_rows_and_columns_the_overpass_missed_are_dropped(mod):
+    with patch.dict(sys.modules, {"h5py": _fake_h5py("PM", "_pm", missed=True)}):
+        da = mod._slice_from_file("x.h5", "PM", "2026-10-31", False)
+    np.testing.assert_allclose(da["latitude"], [1.0, 0.5])
+    np.testing.assert_allclose(da["longitude"], [10.0, 11.0, 12.0])
+    np.testing.assert_allclose(da.values, [[0.10, 0.20, np.nan], [0.30, np.nan, 0.40]], rtol=1e-6)
 
 
 def test_overpass_with_no_retrievals_returns_none(mod):
@@ -158,7 +172,7 @@ def test_fetch_skips_days_with_no_retrievals(tmp_path, mod, fetch, capsys):
     out = tmp_path / "out.zarr"
 
     granules = []
-    for day in ("20260101", "20260102", "20260103"):
+    for day in ("20260101", "20260102", "20260103", "20260104", "20260105"):
         granule = MagicMock()
         granule.data_links.return_value = [f"https://example/SPL3SMP_E_{day}_001.h5"]
         granules.append(granule)
@@ -171,10 +185,13 @@ def test_fetch_skips_days_with_no_retrievals(tmp_path, mod, fetch, capsys):
     def fake_slice_from_file(_path, _group, day_iso, _recommended_only):
         if day_iso == "2026-01-02":
             return None
+        values = np.full((2, 2), np.nan) if day_iso == "2026-01-03" else [[0.2, 0.3], [0.4, 0.5]]
+        # The 01-04 swath missed the box, so only rows and columns outside it remain.
+        lats = [50.0, 51.0] if day_iso == "2026-01-04" else [1.0, 2.0]
         return xr.DataArray(
-            np.array([[0.2, 0.3], [0.4, 0.5]]),
+            np.array(values),
             dims=("latitude", "longitude"),
-            coords={"latitude": [1.0, 2.0], "longitude": [10.0, 11.0]},
+            coords={"latitude": lats, "longitude": [10.0, 11.0]},
             name="soil_moisture",
         )
 
@@ -189,13 +206,17 @@ def test_fetch_skips_days_with_no_retrievals(tmp_path, mod, fetch, capsys):
             "--start-time",
             "2026-01-01",
             "--end-time",
-            "2026-01-03",
+            "2026-01-05",
+            "--bbox",
+            "3/9/0/12",
             "-o",
             str(out),
         )
 
+    # 01-02 has no retrievals anywhere, 01-03 none inside the box, and 01-04's
+    # swath missed the box entirely.
     ds = xr.open_zarr(out, consolidated=True)
     np.testing.assert_array_equal(
-        ds["time"].values, np.array(["2026-01-01", "2026-01-03"], dtype="datetime64[ns]")
+        ds["time"].values, np.array(["2026-01-01", "2026-01-05"], dtype="datetime64[ns]")
     )
-    assert "no AM retrievals anywhere" in capsys.readouterr().err
+    assert "3 day(s) have a granule but no usable AM retrievals" in capsys.readouterr().err
