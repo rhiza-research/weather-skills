@@ -300,6 +300,19 @@ def test_t2m_alone_keeps_native_leads(tmp_path, fetch_mod, monkeypatch):
     np.testing.assert_allclose(lead_h, [6, 12, 18, 24])
 
 
+def test_fetch_writes_lat_south_to_north(tmp_path, fetch_mod, monkeypatch):
+    remote = _native_predictions(members=1).isel(lat=slice(None, None, -1))
+    remote["2m_temperature"].values[..., 0, :] = 300.0  # the northern row, first in the store
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, *args: True)
+    monkeypatch.setattr(fetch_mod, "_open_remote", lambda *args, **kwargs: remote.copy(deep=True))
+    out = tmp_path / "t2m.zarr"
+    run_skill(fetch_mod.fetch, "--date", "2026-09-25", "-v", "t2m", "-o", str(out))
+    written = xr.open_zarr(out, consolidated=True)
+    np.testing.assert_allclose(written["lat"].values, [0.0, 2.0])
+    t2m = written["2m_temperature"].isel(number=0, step=0)
+    np.testing.assert_allclose(t2m.sel(lat=2.0).values, 26.85, atol=0.01)
+
+
 # --- WeatherNext 3 -----------------------------------------------------------
 
 
