@@ -141,3 +141,83 @@ def test_delay_must_be_positive(tmp_path, ensemble_fn):
     with pytest.raises(SystemExit) as exc:
         _run(ensemble_fn, fc, obs, tmp_path / "out.zarr", "--delay", "0")
     assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("learner", ["dormplus", "dorm", "adahedged", "dub"])
+@pytest.mark.parametrize("hint", ["recent_g", "mean_g", "none"])
+def test_resume_from_state_matches_one_run(tmp_path, ensemble_fn, learner, hint):
+    fc, obs = _inputs(tmp_path)
+    opts = ("--delay", "3", "--learner", learner, "--hint", hint)
+    full = _run(ensemble_fn, fc, obs, tmp_path / "full.zarr", *opts)
+
+    first = xr.open_zarr(fc, consolidated=True).isel(time=slice(0, 18))
+    fc_first = write_zarr(first, tmp_path / "fc_first.zarr")
+    state = tmp_path / "state.json"
+    _run(ensemble_fn, fc_first, obs, tmp_path / "a.zarr", *opts, "--state-out", str(state))
+    # The full archive again: finished rounds are skipped, waiting ones are scored.
+    ds = _run(ensemble_fn, fc, obs, tmp_path / "b.zarr", *opts, "--state-in", str(state))
+
+    assert ds.sizes["time"] == 15  # 3 rounds waiting at the split + 12 new
+    np.testing.assert_allclose(
+        ds["weight"].values, full["weight"].isel(time=slice(15, None)).values, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        ds["ensemble_rmse"].values, full["ensemble_rmse"].isel(time=slice(15, None)).values
+    )
+
+
+def test_state_chains_over_three_runs(tmp_path, ensemble_fn):
+    fc, obs = _inputs(tmp_path)
+    full = _run(ensemble_fn, fc, obs, tmp_path / "full.zarr", "--delay", "3")
+
+    fc_all = xr.open_zarr(fc, consolidated=True)
+    state_in = []
+    for i, end in enumerate((10, 20, 30)):
+        part = write_zarr(fc_all.isel(time=slice(0, end)), tmp_path / f"fc{i}.zarr")
+        ds = _run(
+            ensemble_fn,
+            part,
+            obs,
+            tmp_path / f"out{i}.zarr",
+            "--delay",
+            "3",
+            *state_in,
+            "--state-out",
+            str(tmp_path / f"state{i}.json"),
+        )
+        state_in = ["--state-in", str(tmp_path / f"state{i}.json")]
+    np.testing.assert_allclose(
+        ds["weight"].values, full["weight"].isel(time=slice(17, None)).values, atol=1e-12
+    )
+
+
+def test_state_settings_must_match(tmp_path, ensemble_fn):
+    fc, obs = _inputs(tmp_path)
+    state = tmp_path / "state.json"
+    _run(ensemble_fn, fc, obs, tmp_path / "a.zarr", "--delay", "3", "--state-out", str(state))
+    with pytest.raises(SystemExit) as exc:
+        _run(
+            ensemble_fn,
+            fc,
+            obs,
+            tmp_path / "b.zarr",
+            "--delay",
+            "3",
+            "--learner",
+            "dorm",
+            "--state-in",
+            str(state),
+        )
+    assert exc.value.code == 2
+
+
+def test_state_needs_waiting_rounds(tmp_path, ensemble_fn):
+    fc, obs = _inputs(tmp_path)
+    state = tmp_path / "state.json"
+    _run(ensemble_fn, fc, obs, tmp_path / "a.zarr", "--delay", "3", "--state-out", str(state))
+    later = write_zarr(
+        xr.open_zarr(fc, consolidated=True).isel(time=slice(29, None)), tmp_path / "late.zarr"
+    )
+    with pytest.raises(SystemExit) as exc:
+        _run(ensemble_fn, later, obs, tmp_path / "b.zarr", "--delay", "3", "--state-in", str(state))
+    assert exc.value.code == 2

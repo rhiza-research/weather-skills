@@ -16,7 +16,7 @@ Treats each forecast time as one round. For each round it picks expert weights f
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/online_ensemble.py --forecast FC.zarr --obs OBS.zarr --delay D [--learner dormplus|dorm|adahedged|dub] [--hint recent_g|mean_g|none] [-v NAME] [--model-dim model] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/online_ensemble.py --forecast FC.zarr --obs OBS.zarr --delay D [--learner dormplus|dorm|adahedged|dub] [--hint recent_g|mean_g|none] [-v NAME] [--model-dim model] [--state-in STATE.json] [--state-out STATE.json] -o OUT.zarr
 ```
 
 ### Arguments
@@ -27,6 +27,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/online_ensemble.py --forecast FC.zarr --obs O
 - `--hint` — guess at the losses still waiting on obs: `recent_g` (the most recent observed loss gradient), `mean_g` (the mean of all observed gradients), or `none`. Default: `recent_g`.
 - `--variable`, `-v` — variable name in both inputs. Default: each input's first usable variable (names may differ).
 - `--model-dim` — dim of `--forecast` holding the experts. Default: `model`.
+- `--state-in` — a state file from an earlier run's `--state-out`. The run resumes the learner where that run stopped, instead of starting again from uniform weights.
+- `--state-out` — write the learner's state after the last round to this JSON file.
 - `--output`, `-o` — output Zarr.
 
 ### Output
@@ -44,9 +46,24 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/online_ensemble.py --forecast FC.zarr --obs O
 - Ensemble `number` is averaged first. Obs are converted to the forecast's units; incompatible units exit 2.
 - Weights start uniform and stay uniform until the first feedback arrives, `delay` rounds in.
 
+### Resuming from a state file
+- The state file holds everything the learner needs to continue: its internal state, the rounds still waiting on obs and the weights they were given, and the gradients the hint is built from. A resumed run gives exactly the weights one run over the whole record would.
+- `--forecast` must include the rounds the state is still waiting on (the last `delay` rounds of the earlier run) and the new rounds after them. Passing the whole archive again is fine: rounds the earlier run already finished are skipped, with a note on stderr. A waiting round missing from `--forecast` exits 2.
+- `--obs` needs the obs for the waiting rounds and the new ones, as in a single run.
+- The new rounds must follow on from the earlier run at the same spacing, since `--delay` counts rounds across runs.
+- `--learner`, `--hint`, `--delay` and the expert labels (and their order) must match the earlier run; a mismatch exits 2.
+- The output covers the waiting rounds and the new ones; the waiting rounds keep the weights the earlier run gave them. The stdout means cover only these rounds.
+- Pass `--state-in` and `--state-out` together to roll forward each time new forecasts arrive.
+
 ### Example
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/online_ensemble.py --forecast wk34_models_kenya.zarr \
   --obs chirps_wk34_kenya_on_models.zarr -v precip --delay 4 -o wk34_online_ensemble.zarr
 ```
 Learns DORM+ weights for weekly week-3–4 rainfall forecasts from three models over Kenya, scored against CHIRPS, and writes the blended forecast with each week's weights.
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/online_ensemble.py --forecast wk34_models_kenya_new.zarr \
+  --obs chirps_wk34_kenya_on_models.zarr -v precip --delay 4 \
+  --state-in wk34_state.json --state-out wk34_state.json -o wk34_online_ensemble_new.zarr
+```
+Next week: resumes from last week's state with the new forecasts and newly published obs, and writes the updated state back to the same file.

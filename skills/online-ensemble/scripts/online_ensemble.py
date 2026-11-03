@@ -7,6 +7,8 @@
 # ///
 """Learn weights for an ensemble of expert forecasts by online learning under delayed obs."""
 
+import json
+import sys
 import warnings
 
 import numpy as np
@@ -55,7 +57,17 @@ _HINTS = ("recent_g", "mean_g", "none")
     default="recent_g",
     help="Optimistic hint for the rounds still waiting on obs: recent_g, mean_g, or none.",
 )
-def online_ensemble(forecast, obs, variable, model_dim, delay, learner, hint, **kwargs):
+@weather_skill.argument(
+    "--state-in",
+    help="Learner state JSON from an earlier run's --state-out; resume from it.",
+)
+@weather_skill.argument(
+    "--state-out",
+    help="Write the learner state after the last round to this JSON file.",
+)
+def online_ensemble(
+    forecast, obs, variable, model_dim, delay, learner, hint, state_in, state_out, **kwargs
+):
     """Learn weights for an ensemble of expert forecasts by online learning under delayed obs."""
     fc_name = variable or auto_variable(forecast)
     obs_name = variable or auto_variable(obs)
@@ -85,8 +97,50 @@ def online_ensemble(forecast, obs, variable, model_dim, delay, learner, hint, **
         if "time" not in da.dims:
             raise UsageError(f"--{role} {da.name!r} needs a time dim with one entry per round.")
     times = fc["time"].values
-    if fc.sizes["time"] < 2 or not (times[1:] > times[:-1]).all():
-        raise UsageError("--forecast time must hold at least 2 strictly increasing rounds.")
+    if not (times[1:] > times[:-1]).all():
+        raise UsageError("--forecast time must be strictly increasing, one entry per round.")
+
+    # Round numbers count from the first round the learner ever played, so a resumed
+    # run keeps counting --delay across runs.
+    keys = [str(v) for v in times]
+    state = None
+    if state_in:
+        with open(state_in) as f:
+            state = json.load(f)
+        saved = {k: state[k] for k in ("learner", "hint", "delay")}
+        if saved != {"learner": learner, "hint": hint, "delay": delay}:
+            raise UsageError(
+                f"--state-in was written with {saved}; pass the same --learner, --hint "
+                "and --delay to resume."
+            )
+        waiting = state["waiting"]
+        missing = [k for k in waiting if k not in keys]
+        if missing:
+            raise UsageError(
+                f"--forecast lacks rounds {missing} that --state-in is still waiting on; "
+                "include them so their obs can score them."
+            )
+        last = keys.index(state["last_round"])
+        keep = [i for i, k in enumerate(keys) if k in waiting or i > last]
+        if len(keep) < len(keys):
+            print(
+                f"Note: skipping {len(keys) - len(keep)} rounds that --state-in already finished.",
+                file=sys.stderr,
+            )
+        fc, times = fc.isel(time=keep), times[keep]
+        keys = [keys[i] for i in keep]
+        round_no = []
+        next_round = state["poold"]["learner"]["t"]
+        for k in keys:
+            if k in waiting:
+                round_no.append(waiting[k])
+            else:
+                round_no.append(next_round)
+                next_round += 1
+    else:
+        round_no = list(range(len(keys)))
+    if not keys:
+        raise UsageError("--forecast has no rounds to play.")
 
     pair = []
     for da in (fc, truth):
@@ -130,6 +184,11 @@ def online_ensemble(forecast, obs, variable, model_dim, delay, learner, hint, **
     truth = truth.reindex(time=fc["time"])
 
     models = [str(m) for m in fc[model_dim].values]
+    if state and state["models"] != models:
+        raise UsageError(
+            f"--forecast {model_dim} is {models} but --state-in was written for "
+            f"{state['models']}; the experts and their order must match."
+        )
     n_round, n_model = fc.sizes["time"], len(models)
     X = fc.transpose("time", *space, model_dim).values.astype(float).reshape(n_round, -1, n_model)
     Y = truth.transpose("time", *space).values.astype(float).reshape(n_round, -1)
@@ -184,7 +243,7 @@ def online_ensemble(forecast, obs, variable, model_dim, delay, learner, hint, **
     for t in np.flatnonzero(scored):
         cells = valid[t]
         args = {"Xc": X[t, cells], "yc": Y[t, cells], "ac": area[cells] / area[cells].sum()}
-        losses[int(t)] = {
+        losses[round_no[t]] = {
             "fun": lambda w, a=args: rmse(w, **a),
             "grad": lambda w, a=args: rmse_grad(w, **a),
         }
@@ -195,24 +254,44 @@ def online_ensemble(forecast, obs, variable, model_dim, delay, learner, hint, **
         import poold
         from poold.utils import loss_regret
     ol = poold.create(learner, model_list=models)
+    # Observed gradients the hints are built from.
+    g_last, g_sum, g_n = np.zeros(n_model), np.zeros(n_model), 0
+    if state:
+        for k, v in state["poold"]["learner"].items():
+            cur = getattr(ol, k)
+            if isinstance(cur, np.ndarray):
+                v = np.array(v)
+            elif isinstance(cur, set):
+                v = set(v)
+            setattr(ol, k, v)
+        hist = state["poold"]["history"]
+        for name in ("play_history", "hint_history", "grad_history"):
+            getattr(ol.history, name).update({int(s): np.array(v) for s, v in hist[name].items()})
+        ol.history.os_history.update({int(s): set(v) for s, v in hist["os_history"].items()})
+        ol.history.param_history.update({int(s): v for s, v in hist["param_history"].items()})
+        g_last = np.array(state["hint_grads"]["last"])
+        g_sum = np.array(state["hint_grads"]["sum"])
+        g_n = state["hint_grads"]["count"]
     # DORM and DORM+ play in regret space, so their hints are regrets; AdaHedgeD and
     # DUB take gradient hints.
     regret_hint = learner in ("dorm", "dormplus")
-    fed = []
-    weights = np.zeros((n_round, n_model))
     with warnings.catch_warnings():
         # AdaHedgeD divides by a zero hint error when a hint is exact.
         warnings.simplefilter("ignore", RuntimeWarning)
-        for t in range(n_round):
+        for t in round_no:
+            if t < ol.t:
+                continue  # played in an earlier run
             os_times = sorted(ol.get_outstanding())
             losses_fb = [(s, losses[s]) for s in os_times if s + delay <= t and s in losses]
             ol.record_losses(losses_fb)
-            fed += [s for s, _ in losses_fb]
-            pending = [s for s in os_times if s not in fed]
+            for s, _ in losses_fb:
+                g_last = ol.get_grad(s)
+                g_sum = g_sum + g_last
+                g_n += 1
+            pending = [s for s in os_times if s not in dict(losses_fb)]
             h = None
-            if hint != "none" and fed:
-                grads = [ol.get_grad(s) for s in fed]
-                g_tilde = grads[-1] if hint == "recent_g" else np.mean(grads, axis=0)
+            if hint != "none" and g_n:
+                g_tilde = g_last if hint == "recent_g" else g_sum / g_n
                 h_vec = np.zeros(n_model)
                 for s in pending:
                     if regret_hint:
@@ -220,14 +299,63 @@ def online_ensemble(forecast, obs, variable, model_dim, delay, learner, hint, **
                     else:
                         h_vec += g_tilde
                 h = {"grad": lambda w, h_vec=h_vec: h_vec}
-            weights[t] = ol.update_and_play(losses_fb, hint=h)
+            ol.update_and_play(losses_fb, hint=h)
 
+    weights = np.array([ol.history.play_history[t] for t in round_no])
     expert_rmse = np.full((n_round, n_model), np.nan)
     ensemble_rmse = np.full(n_round, np.nan)
-    for t, loss in losses.items():
+    for t in np.flatnonzero(scored):
+        loss = losses[round_no[t]]
         ensemble_rmse[t] = loss["fun"](weights[t])
         for i in range(n_model):
             expert_rmse[t, i] = loss["fun"](np.eye(n_model)[i])
+
+    if state_out:
+        # Everything poold reads when a waiting round's obs arrive: the learner's own
+        # state, and the history of the waiting rounds and the rounds outstanding with them.
+        waiting = sorted(ol.outstanding)
+        needed = set(waiting).union(*(ol.history.os_history[s] for s in waiting))
+        hist = ol.history
+        label = dict(zip(round_no, keys, strict=True))
+        skip = ("history", "expert_models", "groups", "group_keys", "alg", "d", "reg", "T")
+        new_state = {
+            "learner": learner,
+            "hint": hint,
+            "delay": delay,
+            "models": models,
+            "last_round": keys[-1],
+            "waiting": {label[s]: s for s in waiting},
+            "hint_grads": {"last": g_last.tolist(), "sum": g_sum.tolist(), "count": g_n},
+            "poold": {
+                "learner": {
+                    k: sorted(v) if isinstance(v, set) else np.asarray(v).tolist()
+                    for k, v in vars(ol).items()
+                    if k not in skip
+                },
+                "history": {
+                    "play_history": {
+                        s: hist.play_history[s].tolist() for s in needed if s in hist.play_history
+                    },
+                    "hint_history": {
+                        s: hist.hint_history[s].tolist() for s in needed if s in hist.hint_history
+                    },
+                    "grad_history": {
+                        s: hist.grad_history[s].tolist() for s in needed if s in hist.grad_history
+                    },
+                    "os_history": {
+                        s: sorted(hist.os_history[s]) for s in needed if s in hist.os_history
+                    },
+                    "param_history": {
+                        s: {k: float(v) for k, v in hist.param_history[s].items()}
+                        for s in needed
+                        if s in hist.param_history
+                    },
+                },
+            },
+        }
+        with open(state_out, "w") as f:
+            json.dump(new_state, f)
+        print(f"Wrote state: {state_out}", file=sys.stderr)
 
     weight = xr.DataArray(
         weights,
