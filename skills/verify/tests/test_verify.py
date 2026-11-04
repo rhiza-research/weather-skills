@@ -317,3 +317,95 @@ def test_selected_weeks_that_differ_are_refused(tmp_path, verify_fn, capsys):
         )
     assert exc.value.code == 2
     assert "no overlapping time" in capsys.readouterr().err
+
+
+def _edges(path, lower, upper, units="mm day-1"):
+    """Category edges as summarize-dim --method quantile writes them."""
+    ds = xr.Dataset(
+        {"precip": (("quantile", "latitude", "longitude"), np.empty((2, 2, 2)))},
+        coords={"quantile": [0.333, 0.667], "latitude": [1.0, 2.0], "longitude": [10.0, 11.0]},
+    )
+    ds["precip"].values[0], ds["precip"].values[1] = lower, upper
+    ds["precip"].attrs["units"] = units
+    return write_zarr(ds, path)
+
+
+def _ensemble(members):
+    """Two inits of an ensemble on a 2x2 grid; every cell gets these member values."""
+    fc = make_gridded(n_time=2, lats=(1.0, 2.0), lons=(10.0, 11.0))
+    fc = fc.expand_dims(number=len(members)).copy(deep=True)
+    fc["precip"].values[:] = np.asarray(members, dtype=float)[:, None, None, None]
+    return fc
+
+
+def _rpss(tmp_path, verify_fn, fc, obs, *extra):
+    return _verify(
+        tmp_path,
+        verify_fn,
+        fc,
+        obs,
+        "--metric",
+        "rpss",
+        "--fc-edges",
+        str(_edges(tmp_path / "fc_edges.zarr", 1.0, 2.0)),
+        "--obs-edges",
+        str(_edges(tmp_path / "obs_edges.zarr", 1.0, 2.0)),
+        *extra,
+    )
+
+
+def test_rpss_perfect_climatological_and_wrong(tmp_path, verify_fn):
+    """All members in the observed tercile scores 1; an even split scores 0; the far tercile is worse than climatology."""
+    obs = make_gridded(n_time=2, lats=(1.0, 2.0), lons=(10.0, 11.0), fill=0.5)
+    perfect = _rpss(tmp_path, verify_fn, _ensemble([0.1, 0.2, 0.3]), obs)
+    np.testing.assert_allclose(perfect["rpss"].values, 1.0)
+    assert "time" not in perfect["rpss"].dims
+    assert perfect["rpss"].attrs["rpss_categories"] == 3
+    assert perfect.attrs["verify_score_summary"].startswith("RPSS +1.00")
+
+    even = _rpss(tmp_path, verify_fn, _ensemble([0.5, 1.5, 2.5]), obs)
+    np.testing.assert_allclose(even["rpss"].values, 0.0, atol=1e-6)
+
+    # Obs below: cdf (1, 1); all members above: cdf (0, 0) -> RPS 2; climatology 5/9.
+    wrong = _rpss(tmp_path, verify_fn, _ensemble([3.0, 3.0, 3.0]), obs)
+    np.testing.assert_allclose(wrong["rpss"].values, 1 - 2 / (5 / 9), rtol=1e-6)
+
+
+def test_rpss_nan_member_drops_that_case(tmp_path, verify_fn):
+    obs = make_gridded(n_time=2, lats=(1.0, 2.0), lons=(10.0, 11.0), fill=0.5)
+    fc = _ensemble([0.1, 0.2, 0.3])
+    fc["precip"].values[0, :, 0, 0] = np.nan
+    rpss = _rpss(tmp_path, verify_fn, fc, obs)["rpss"].values
+    assert np.isnan(rpss[0, 0])
+    np.testing.assert_allclose(rpss.ravel()[1:], 1.0)
+
+
+def test_rpss_edges_in_other_units(tmp_path, verify_fn):
+    """Edges are converted to the data's units before splitting it."""
+    obs = make_gridded(n_time=2, lats=(1.0, 2.0), lons=(10.0, 11.0), fill=0.5)
+    ds = _verify(
+        tmp_path,
+        verify_fn,
+        _ensemble([0.1, 0.2, 0.3]),
+        obs,
+        "--metric",
+        "rpss",
+        "--fc-edges",
+        str(_edges(tmp_path / "fe.zarr", 1 / 24, 2 / 24, units="mm hr-1")),
+        "--obs-edges",
+        str(_edges(tmp_path / "oe.zarr", 1.0, 2.0)),
+    )
+    np.testing.assert_allclose(ds["rpss"].values, 1.0, rtol=1e-5)
+
+
+def test_rpss_needs_edges_and_members(tmp_path, verify_fn, capsys):
+    obs = make_gridded(n_time=2, lats=(1.0, 2.0), lons=(10.0, 11.0), fill=0.5)
+    with pytest.raises(SystemExit) as exc:
+        _verify(tmp_path, verify_fn, _ensemble([0.1, 0.2]), obs, "--metric", "rpss")
+    assert exc.value.code == 2
+    assert "--fc-edges" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit) as exc:
+        _rpss(tmp_path, verify_fn, _ensemble([0.1, 0.2]).mean("number"), obs)
+    assert exc.value.code == 2
+    assert "ensemble members" in capsys.readouterr().err

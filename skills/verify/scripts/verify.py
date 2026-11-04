@@ -5,7 +5,7 @@
 #   "pandas",
 # ]
 # ///
-"""Score a forecast against observations cell by cell: event hits, bias, or mean absolute error."""
+"""Score a forecast against observations cell by cell: event hits, bias, mean absolute error, or RPSS."""
 
 import sys
 
@@ -22,8 +22,8 @@ from weather_skills_core.units import dequantify_dataset, ureg, variable_units
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.8"
 
-_METRICS = ("hits", "bias", "mae")
-_VAR = {"hits": "event_hit", "bias": "bias", "mae": "mae"}
+_METRICS = ("hits", "bias", "mae", "rpss")
+_VAR = {"hits": "event_hit", "bias": "bias", "mae": "mae", "rpss": "rpss"}
 
 
 @weather_skill(
@@ -37,7 +37,7 @@ _VAR = {"hits": "event_hit", "bias": "bias", "mae": "mae"}
     "--metric",
     choices=list(_METRICS),
     default="hits",
-    help="Verification metric: hits (event classification), bias (forecast − obs), or mae.",
+    help="Verification metric: hits (event classification), bias (forecast − obs), mae, or rpss.",
 )
 @weather_skill.argument(
     "--threshold",
@@ -45,8 +45,18 @@ _VAR = {"hits": "event_hit", "bias": "bias", "mae": "mae"}
     default=1.0,
     help="Event cutoff for --metric hits: a cell is an event when the variable is >= this.",
 )
-def verify(forecast, obs, variable, metric, threshold, **kwargs):
-    """Score a forecast against observations cell by cell: event hits, bias, or mean absolute error."""
+@weather_skill.argument(
+    "--fc-edges",
+    type=Dataset("any"),
+    help="For --metric rpss: category edges of the forecast's own climate, with a quantile dim.",
+)
+@weather_skill.argument(
+    "--obs-edges",
+    type=Dataset("any"),
+    help="For --metric rpss: category edges of the observed climate, with a quantile dim.",
+)
+def verify(forecast, obs, variable, metric, threshold, fc_edges, obs_edges, **kwargs):
+    """Score a forecast against observations cell by cell: event hits, bias, mean absolute error, or RPSS."""
     fc_name = variable or auto_variable(forecast)
     obs_name = variable or auto_variable(obs)
     for name, ds, role in ((fc_name, forecast, "forecast"), (obs_name, obs, "obs")):
@@ -87,9 +97,25 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
             "downscale the forecast to the obs grid."
         )
 
+    if metric == "rpss":
+        if fc_edges is None or obs_edges is None:
+            raise UsageError(
+                "--metric rpss needs --fc-edges and --obs-edges: category edges from "
+                "summarize-dim --dim time --method quantile -q 0.333 -q 0.667, run once on "
+                "the forecast's hindcast and once on the observations."
+            )
+        if "number" not in fc.dims:
+            raise UsageError(
+                "--metric rpss needs the forecast's ensemble members (a number dim); "
+                "pass the forecast before any ensemble mean."
+            )
+    elif fc_edges is not None or obs_edges is not None:
+        print(f"Note: --fc-edges / --obs-edges are ignored for --metric {metric}.", file=sys.stderr)
+
     pair = []
     for da in (fc, truth):
-        if "number" in da.dims:
+        # RPSS scores the members themselves, so only it keeps the forecast's.
+        if "number" in da.dims and (metric != "rpss" or da is truth):
             # A NaN member leaves the mean NaN (no mean over the members left).
             da = da.mean("number", skipna=False, keep_attrs=True)
         # A scalar time (after select) becomes a length-1 dim so the inner join
@@ -114,6 +140,42 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
                 "incompatible units (e.g. a total against a rate); put both on one basis "
                 "with aggregate-temporal / convert-to-totals first."
             ) from None
+    edges = []
+    quantiles = None
+    if metric == "rpss":
+        for eds, role, ref, ref_name in (
+            (fc_edges, "fc-edges", fc, fc_name),
+            (obs_edges, "obs-edges", truth, obs_name),
+        ):
+            name = ref_name if ref_name in eds else auto_variable(eds)
+            if not name or name not in eds:
+                raise UsageError(f"no usable variable in --{role}: {list(eds.data_vars)}")
+            e = eds[name]
+            if "quantile" not in e.dims or "number" in e.dims:
+                raise UsageError(
+                    f"--{role} {name!r} has dims {list(e.dims)}; it needs a quantile dim and "
+                    "no number dim (summarize-dim --dim time --dim number --method quantile "
+                    "-q 0.333 -q 0.667)."
+                )
+            e = e.sortby("quantile")
+            if (variable_units(e) is None) != (variable_units(ref) is None):
+                raise UsageError(f"--{role} {name!r} and the data it splits must both carry units.")
+            if variable_units(ref):
+                try:
+                    e = e.pint.to(ref.pint.units)
+                except (pint.DimensionalityError, pint_xarray.errors.PintExceptionGroup):
+                    raise UsageError(
+                        f"--{role} {name!r} ({variable_units(e)}) cannot be converted to the "
+                        f"units of the data it splits ({variable_units(ref)})."
+                    ) from None
+                e = e.pint.dequantify()
+            quantiles = [float(q) for q in e["quantile"].values]
+            edges.append(e.drop_vars("quantile").rename(quantile="category_edge"))
+        if edges[0].sizes["category_edge"] != edges[1].sizes["category_edge"]:
+            raise UsageError(
+                "--fc-edges and --obs-edges must hold the same number of quantiles "
+                f"({edges[0].sizes['category_edge']} vs {edges[1].sizes['category_edge']})."
+            )
     fc, truth = xr.align(fc, truth, join="inner")
     empty = [d for d, size in fc.sizes.items() if size == 0]
     if empty:
@@ -132,6 +194,14 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
     if u_fc and u_obs:
         error = dequantify_dataset(error.to_dataset(name="error"))["error"]
     fc, truth = (da.pint.dequantify() if da.pint.units is not None else da for da in (fc, truth))
+    if edges:
+        fc, truth, *edges = xr.align(fc, truth, *edges, join="inner")
+        empty = [d for d, size in fc.sizes.items() if size == 0]
+        if empty:
+            raise UsageError(
+                f"no overlapping {', '.join(empty)} labels between the data and "
+                "--fc-edges / --obs-edges; compute the edges on the forecast's grid."
+            )
     if metric != "hits" and threshold != 1.0:
         print(
             f"Note: --threshold {threshold} is ignored for --metric {metric}.",
@@ -146,8 +216,29 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
         field = xr.where(fc_event & obs_event, 1, xr.where(fc_event != obs_event, -1, 0))
     elif metric == "bias":
         field = error
-    else:
+    elif metric == "mae":
         field = np.abs(error)
+    else:
+        fc_edge, obs_edge = edges
+        n_cat = fc_edge.sizes["category_edge"] + 1
+        # Cumulative probability of falling at or below each edge.
+        fc_cdf = (fc <= fc_edge).mean("number")
+        obs_cdf = (truth <= obs_edge).astype(float)
+        clim_cdf = xr.DataArray(np.arange(1, n_cat) / n_cat, dims="category_edge")
+        valid = (
+            fc.notnull().all("number")
+            & truth.notnull()
+            & fc_edge.notnull().all("category_edge")
+            & obs_edge.notnull().all("category_edge")
+        )
+        rps = ((fc_cdf - obs_cdf) ** 2).sum("category_edge").where(valid)
+        rps_clim = ((clim_cdf - obs_cdf) ** 2).sum("category_edge").where(valid)
+        # Skill over all inits at a cell: 1 − ΣRPS / ΣRPS_clim, not a mean of per-init scores.
+        if "time" in rps.dims:
+            field = 1 - rps.sum("time", min_count=1) / rps_clim.sum("time", min_count=1)
+        else:
+            field = 1 - rps / rps_clim
+        valid = field.notnull()
     field = field.astype("float32").where(valid)
     field.name = _VAR[metric]
 
@@ -170,8 +261,19 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
         attrs.update(
             long_name="Forecast bias (forecast − observation)", units=error.attrs.get("units")
         )
-    else:
+    elif metric == "mae":
         attrs.update(long_name="Mean absolute error", units=error.attrs.get("units"))
+    else:
+        attrs.update(
+            long_name="Ranked probability skill score",
+            units="1",
+            rpss_categories=n_cat,
+            rpss_quantiles=quantiles,
+            comment=(
+                "1 - sum(RPS) / sum(RPS_clim) over time; the reference forecasts each "
+                f"of the {n_cat} categories with probability 1/{n_cat}."
+            ),
+        )
     field.attrs = attrs
 
     finite = field.notnull()
@@ -183,6 +285,17 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
             if n_obs == 0
             else f"hit rate {100 * n_hit / n_obs:.0f}%  ({n_hit}/{n_obs} obs events)"
         )
+    elif metric == "rpss":
+        lat = next((n for n in ("latitude", "lat") if n in rps.dims), None)
+        weights = latitude_weights(rps[lat]).broadcast_like(rps) if lat is not None else 1
+        n_cases = int(rps.notnull().sum())
+        den = float((rps_clim * weights).sum(skipna=True))
+        if n_cases == 0 or den == 0:
+            summary = "RPSS n/a  (no finite cells)"
+        else:
+            value = 1 - float((rps * weights).sum(skipna=True)) / den
+            how = "cos-lat weighted" if lat is not None else "unweighted"
+            summary = f"RPSS {value:+.2f}  ({how}, {n_cases} cell-inits, {n_cat} categories)"
     else:
         lat = next((n for n in ("latitude", "lat") if n in field.dims), None)
         u = f"{ureg.Unit(u_fc or u_obs):~}" if (u_fc or u_obs) else ""
