@@ -146,19 +146,13 @@ def _fetch_gridded(start_time, end_time, bbox):
         )
     ds = ds.isel(time=np.nonzero(keep)[0])
 
-    # Cell centres are multiples of 0.25°; rebuild the full regular grid over the
-    # store's extent. Cells with no station stay NaN (no data, nothing filled).
-    def regular(values):
-        steps = np.rint(np.asarray(values) / _GRID_STEP).astype(int)
-        return np.arange(steps.min(), steps.max() + 1) * _GRID_STEP
-
-    lat = ds["latitude"].values
-    lon = ds["longitude"].values
-    ds = ds.assign_coords(
-        latitude=np.rint(lat / _GRID_STEP) * _GRID_STEP,
-        longitude=np.rint(lon / _GRID_STEP) * _GRID_STEP,
+    # The store keeps only the rows and columns with a station; rebuild the regular
+    # 0.25° grid over its extent. Cells with no station stay NaN (nothing filled).
+    lat, lon = ds["latitude"].values, ds["longitude"].values
+    ds = ds.reindex(
+        latitude=np.arange(lat.min(), lat.max() + _GRID_STEP / 2, _GRID_STEP),
+        longitude=np.arange(lon.min(), lon.max() + _GRID_STEP / 2, _GRID_STEP),
     )
-    ds = ds.reindex(latitude=regular(lat), longitude=regular(lon))
     if bbox is not None:
         ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
     ds = ds.load()
