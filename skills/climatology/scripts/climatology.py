@@ -7,15 +7,19 @@
 #   "xarray",
 # ]
 # ///
-"""Compute a daily climatology (mean, standard deviation, quantiles, sample count per calendar day) from a multi-year daily Zarr.
+"""Compute a daily climatology from a multi-year daily Zarr.
 
-Each date maps to its month and day in the 1904 leap-year cycle (366 slots, Feb 29
-only from leap years). One pass over the 366 slots sums values, squares and counts
-over every year; an optional --window pools neighbouring slots (circular across the
-year end) before the mean and the sample standard deviation are taken. Quantiles are
-taken over the same pooled values, and --pool-members adds the ensemble members to
-the samples. The result is laid onto --start-time/--end-time like clim-fetch, so it
-is a drop-in replacement.
+For each calendar day, takes the values on that month and day from every year and
+writes their mean, sample standard deviation, optional quantiles and count. Calendar
+days are the 366 days of a leap year, so Feb 29 rests on leap years only.
+
+--window pools that many calendar days centred on each day, wrapping from Dec 31 to
+Jan 1. --pool-members counts each ensemble member as one more value instead of
+giving each member its own climatology. --min-fraction leaves a cell NaN when too
+few of its possible values exist.
+
+The result is repeated onto every date from --start-time to --end-time, in the same
+layout as clim-fetch.
 """
 
 import sys
@@ -152,10 +156,10 @@ def climatology(
             possible[k] = len(rows)
 
         # Pool the --window slots around each day, wrapping across the year end.
-        total = sum(np.roll(total, shift, axis=0) for shift in range(-half, half + 1))
-        squares = sum(np.roll(squares, shift, axis=0) for shift in range(-half, half + 1))
-        count = sum(np.roll(count, shift, axis=0) for shift in range(-half, half + 1))
-        possible = sum(np.roll(possible, shift, axis=0) for shift in range(-half, half + 1))
+        total, squares, count, possible = (
+            sum(np.roll(a, shift, axis=0) for shift in range(-half, half + 1))
+            for a in (total, squares, count, possible)
+        )
         enough = (count > 0) & (count >= min_fraction * possible)
 
         with np.errstate(invalid="ignore", divide="ignore"):
@@ -178,25 +182,15 @@ def climatology(
         coords = {**template.coords, time_dim: target}
         shape = (len(target), *rest_shape)
         attrs = {k: v for k, v in da.attrs.items() if k not in ("units", "cell_methods")}
-        out[f"{name}_avg"] = xr.DataArray(
-            mean[target_slots].reshape(shape),
-            dims=dims,
-            coords=coords,
-            attrs={**attrs, "units": units},
-        )
-        out[f"{name}_std"] = xr.DataArray(
-            std[target_slots].reshape(shape),
-            dims=dims,
-            coords=coords,
-            attrs={**attrs, "units": units},
-        )
+        stats = {"avg": (mean, {}), "std": (std, {})}
         for i, q in enumerate(qs):
-            label = f"{q * 100:02g}".replace(".", "p")
-            out[f"{name}_q{label}"] = xr.DataArray(
-                quant[target_slots, i].reshape(shape),
+            stats[f"q{q * 100:02g}".replace(".", "p")] = (quant[:, i], {"quantile": q})
+        for suffix, (stat, extra) in stats.items():
+            out[f"{name}_{suffix}"] = xr.DataArray(
+                stat[target_slots].reshape(shape),
                 dims=dims,
                 coords=coords,
-                attrs={**attrs, "units": units, "quantile": q},
+                attrs={**attrs, "units": units, **extra},
             )
         # A coordinate, like aggregate-temporal's coverage: as a data variable
         # its name ("precip_count") would read as a precip field downstream.

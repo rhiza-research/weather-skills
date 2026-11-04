@@ -66,7 +66,7 @@ Every dataset has `precip` and `tmp2m`; `ecmwf` also has `sst`.
 - `gefs` `tmp2m` is one value per day as the source publishes it; the source does not say whether it is a daily mean.
 - Stores of one model can skip different inits (GEFS `precip` and `tmp2m` do). A variable is NaN on inits its store lacks, never filled; stderr lists them. The stores' grids must match exactly, or the call exits 1.
 - `ecmwf_wb2` hindcast inits fall on the same calendar dates in every year, but on any weekday; `ecmwf` inits are every second day. Pair them with `gefs` Wednesday inits by valid date, not by init.
-- Every store is in 6° lat/lon tiles with all inits in each chunk: a small `--bbox` reads only its tiles, and a whole record takes about as long as one init (over Kenya, about a minute). Without `--bbox` the whole globe is read.
+- Every store is in 6° lat/lon tiles with all inits in each chunk: a small `--bbox` reads only its tiles, and a whole record takes about as long as one init (over Kenya, about a minute). Without `--bbox` the whole globe is read; a request over 4 GB per variable exits 2 and asks for a smaller `--bbox` or fewer inits.
 - Without the needed credentials the call exits 1 and says which to set.
 
 ### Example
