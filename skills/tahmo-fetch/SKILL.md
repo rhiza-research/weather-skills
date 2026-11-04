@@ -74,8 +74,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest --gridded --start-tim
 - A station whose fetch fails is dropped with a stderr line. No data for any station exits 1.
 
 ### Gridded history (`--gridded`)
-- Reads `gs://sheerwater-datalake/hindcasts/tahmo_precip.zarr`, Sheerwater's gold TAHMO release gridded to 0.25°. Days run 2015-03-05 to 2025-09-15 (first data 2015-03-24); the store is not updated daily, so use station mode for recent days. `--probe-latest --gridded` prints its last day with data. Cells with data span about 30°S-10°N, 24-49°E (East and Southern Africa); a `--bbox` with no such cell, or a range with no data in it, exits 1.
-- How a value is built, which differs from station mode: each station's day is the sum of its 5-minute records that passed the release QC (flag > 0.9) on that UTC calendar date, then averaged over the stations in the cell. Days with gaps in a station's record are not removed, so a station-day can undercount. The store keeps no station count or completeness per cell. When complete days matter, fetch the stations in station mode instead.
+- Reads `gs://sheerwater-datalake/hindcasts/tahmo_precip.zarr`. Days run 2015-03-05 to 2025-09-15 (first data 2015-03-24); the store is not updated, so use station mode for recent days. `--probe-latest --gridded` prints its last day with data. A `--bbox` with no cell that has data, or a range with no data in it, exits 1.
+- How the grid was made. The store is an unchanged copy (cast to float32) of the TAHMO release `v0.0.0` product `gridded_data_gold/tahmo_gridded_global0_25_mean.zarr`:
+  1. **Station-day**: the sum of the station's 5-minute "gold" (quality-controlled) rainfall records on that UTC calendar date. Days with missing records are kept, with no completeness threshold, so a station-day can undercount. For example, 65 of station TA00001's 2,245 days have fewer than the 288 records of a full day (the fewest is 231).
+  2. **Station to cell**: each station goes to the 0.25° cell whose centre (a multiple of 0.25°) is nearest its listed location.
+  3. **Cell-day**: the plain, unweighted mean of the stations in the cell that have a value that day. The number of stations can change from day to day; 89% of cell-days rest on one station, and the most is 6. The store keeps no station count or completeness per cell. A cell with no station that day is NaN.
+  4. **Coverage**: only 23.75–48.5°E, 29.75°S–10.25°N (East and Southern Africa), from 287 of the 603 stations in the release's daily data. West African stations (Ghana, Nigeria, Mali and others) are not in it, nor are 32 stations inside that area (mostly South Africa and Zambia); the release does not say why.
+- Station mode differs: it keeps only complete days and reports each station separately. When complete days or individual stations matter, use station mode.
 - Credentials: `GCLOUD_SERVICE_CREDENTIALS` (the key JSON itself), else `GOOGLE_APPLICATION_CREDENTIALS` or Application Default Credentials. Without access it exits 1 and says what to set. No TAHMO login is needed.
 - stderr prints how many cells have data and how many are complete for the whole range. Never fill the NaN days.
 
