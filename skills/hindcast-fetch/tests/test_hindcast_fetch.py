@@ -233,6 +233,14 @@ def test_window_without_inits_exits_1(tmp_path, fetch, stores):
     assert exc.value.code == 1
 
 
+def test_too_big_to_load_exits_2(tmp_path, fetch, stores, monkeypatch):
+    monkeypatch.setattr(xr.Dataset, "nbytes", property(lambda self: 5e9))
+    with pytest.raises(SystemExit) as exc:
+        _run(fetch, tmp_path / "x.zarr", "--dataset", "ecmwf", "--start-time", "2018-10-01",
+             "--end-time", "2018-10-31")  # fmt: skip
+    assert exc.value.code == 2
+
+
 @pytest.mark.parametrize(
     "args",
     [

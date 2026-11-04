@@ -173,6 +173,11 @@ def fetch(dataset, start_time, end_time, variable, bbox, members, probe_latest, 
         # Cut to the bbox and load before aligning inits: reindexing a lazy store
         # merges its lat/lon tiles and would read the whole globe.
         part = bbox_subset(part, bbox) if bbox is not None else ensure_normalized_longitude(part)
+        if part.nbytes > 4e9:
+            raise UsageError(
+                f"{dataset} {v} for these inits and this region is {part.nbytes / 1e9:.0f} GB, "
+                "more than fits in memory; pass a smaller --bbox or fewer init dates."
+            )
         parts.append(part.load())
     # Stores of one model can skip different inits; keep every init and leave a
     # variable NaN where its store has no run. Never filled: say which.
