@@ -95,7 +95,7 @@ def climatology(
             f"input has dates {spacing.min() * 24:g} hours apart; it must hold one value per day. "
             "Roll sub-daily data up with aggregate-temporal first."
         )
-    if spacing.size and spacing.min() > 1:
+    if spacing.size and spacing.min() > window:
         print(
             f"climatology: dates are at least {spacing.min():g} days apart, so most calendar days "
             "rest on few values; consider --window.",
