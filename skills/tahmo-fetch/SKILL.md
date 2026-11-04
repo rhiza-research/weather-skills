@@ -52,7 +52,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest --gridded --start-tim
 - `--start-time`, `--end-time` — inclusive range of days, `YYYY-MM-DD`.
 - `--day-start-hour` — UTC hour each day starts at, 0-23. Default: 0 (UTC calendar days). Day D runs from D HH:00 to D+1 HH:00 UTC and is labelled D. KMSA uses 6: 06 UTC 2 Oct to 06 UTC 3 Oct is 2 Oct's value.
 - `--workers` — concurrent station downloads. Default: 8. Lower it if TAHMO throttles.
-- `--gridded` — read the historical gridded store instead of the TAHMO API (see below). Takes `--start-time`, `--end-time` and optional `--bbox`; `--station`, `--list-stations` and a `--day-start-hour` other than 0 exit 2. `--workers` is ignored.
+- `--gridded` — read the historical gridded store instead of the TAHMO API (see below). Prefer it for long historical rainfall requests (months to years, 2015–2025): it is much faster than downloading each station (all of Kenya for 2015–2025 takes seconds). Takes `--start-time`, `--end-time` and optional `--bbox`; `--station`, `--list-stations` and a `--day-start-hour` other than 0 exit 2. `--workers` is ignored.
 - `--probe-latest` — print the latest day with a complete record in the last 14 days for the `--station` / `--bbox` stations (default: the first three TA stations) and exit. Any value passed is ignored.
 - `--output`, `-o` — output Zarr, overwritten.
 
@@ -74,6 +74,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest --gridded --start-tim
 - A station whose fetch fails is dropped with a stderr line. No data for any station exits 1.
 
 ### Gridded history (`--gridded`)
+- Use it first for long historical rainfall requests; use station mode for recent days, other variables, individual stations, or when only complete days will do.
 - Reads `gs://sheerwater-datalake/hindcasts/tahmo_precip.zarr`. Days run 2015-03-05 to 2025-09-15 (first data 2015-03-24); the store is not updated, so use station mode for recent days. `--probe-latest --gridded` prints its last day with data. A `--bbox` with no cell that has data, or a range with no data in it, exits 1.
 - How the grid was made. The store is an unchanged copy (cast to float32) of the TAHMO release `v0.0.0` product `gridded_data_gold/tahmo_gridded_global0_25_mean.zarr`:
   1. **Station-day**: the sum of the station's 5-minute "gold" (quality-controlled) rainfall records on that UTC calendar date. Days with missing records are kept, with no completeness threshold, so a station-day can undercount. For example, 65 of station TA00001's 2,245 days have fewer than the 288 records of a full day (the fewest is 231).
