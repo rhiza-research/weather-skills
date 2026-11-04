@@ -273,6 +273,7 @@ def test_public_store_opens_anonymously_without_gcsfs(mod, monkeypatch):
     monkeypatch.setitem(sys.modules, "gcsfs", None)  # importing it would fail
     assert mod._open_store(f"{PUB}/gefs_precip.zarr") == "store"
     assert seen["storage_options"] == {"token": "anon"}
+    assert seen["decode_timedelta"] is True  # most stores keep steps as integer days
 
 
 def test_private_store_uses_credentials(mod, monkeypatch):
@@ -287,9 +288,12 @@ def test_private_store_uses_credentials(mod, monkeypatch):
             return path
 
     monkeypatch.setitem(sys.modules, "gcsfs", types.SimpleNamespace(GCSFileSystem=FakeFS))
-    monkeypatch.setattr(mod.xr, "open_zarr", lambda mapper, **kwargs: "store")
+    monkeypatch.setattr(
+        mod.xr, "open_zarr", lambda mapper, **kwargs: seen.update(kwargs) or "store"
+    )
     monkeypatch.setenv("GCLOUD_SERVICE_CREDENTIALS", '{"type": "service_account"}')
     assert mod._open_store(f"{PRIV}/cumulus_precip.zarr") == "store"
+    assert seen["decode_timedelta"] is True
     assert seen["token"] == {"type": "service_account"}
     assert seen["path"] == "sheerwater-datalake/hindcasts/cumulus_precip.zarr"
 

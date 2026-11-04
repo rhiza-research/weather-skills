@@ -69,9 +69,10 @@ _AUTH_MSG = (
 
 def _open_store(path: str) -> xr.Dataset:
     """Open a hindcast store: public ones anonymously, private ones with Google credentials."""
+    # Most stores keep prediction_timedelta as integer days with units "days".
     if path.startswith(_PUBLIC):
         try:
-            return xr.open_zarr(path, storage_options={"token": "anon"})
+            return xr.open_zarr(path, storage_options={"token": "anon"}, decode_timedelta=True)
         except Exception as exc:  # noqa: BLE001
             raise DataError(f"failed to open {path} ({exc}).") from None
 
@@ -83,7 +84,10 @@ def _open_store(path: str) -> xr.Dataset:
     except json.JSONDecodeError as exc:
         raise DataError(f"GCLOUD_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
     try:
-        return xr.open_zarr(gcsfs.GCSFileSystem(token=token).get_mapper(path.removeprefix("gs://")))
+        return xr.open_zarr(
+            gcsfs.GCSFileSystem(token=token).get_mapper(path.removeprefix("gs://")),
+            decode_timedelta=True,
+        )
     except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
         raise DataError(f"{_AUTH_MSG} Opening {path} failed: {exc}") from None
 
