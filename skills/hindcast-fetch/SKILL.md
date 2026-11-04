@@ -2,7 +2,7 @@
 name: hindcast-fetch
 description: "Fetch ECMWF, GEFS or Cumulus subseasonal hindcasts (reforecasts) for one or more ranges of init dates over a region, as a multi-init weather-skills forecast Zarr: daily precipitation and 2 m temperature (plus sea-surface temperature for ECMWF) out to 46 (ECMWF, Cumulus) or 35 (GEFS) days, from Sheerwater's tiled hindcast stores. The default ECMWF hindcast is a single recent model cycle (IFS CY49R1, 2006–2025). Use when a task needs past forecasts for calibration, bias correction, skill scores or training against observations."
 license: MIT
-compatibility: "Requires Python 3.12 and uv. Reads Sheerwater's hindcast Zarr stores via gcsfs. ECMWF and GEFS are public (gs://sheerwater-public-datalake/hindcasts) and need no credentials. Cumulus is private (gs://sheerwater-datalake/hindcasts) and needs Google Cloud credentials: NEURAL_GCM_SERVICE_CREDENTIALS (the raw service-account key JSON), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
+compatibility: "Requires Python 3.12 and uv. Reads Sheerwater's hindcast Zarr stores via gcsfs. ECMWF and GEFS are public (gs://sheerwater-public-datalake/hindcasts) and need no credentials. Cumulus is private (gs://sheerwater-datalake/hindcasts) and needs Google Cloud credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
@@ -13,10 +13,10 @@ metadata:
     - sst
   openclaw:
     envVars:
-      - name: NEURAL_GCM_SERVICE_CREDENTIALS
+      - name: GCLOUD_SERVICE_CREDENTIALS
         description: Full contents of a GCP service-account key JSON that can read gs://sheerwater-datalake/hindcasts. Needed for Cumulus only.
       - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON file that can read gs://sheerwater-datalake/hindcasts. Used only if NEURAL_GCM_SERVICE_CREDENTIALS is unset.
+        description: Path to a GCP service-account JSON file that can read gs://sheerwater-datalake/hindcasts. Used only if GCLOUD_SERVICE_CREDENTIALS is unset.
 ---
 
 # hindcast-fetch

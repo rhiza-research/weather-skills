@@ -288,7 +288,7 @@ def test_private_store_uses_credentials(mod, monkeypatch):
 
     monkeypatch.setitem(sys.modules, "gcsfs", types.SimpleNamespace(GCSFileSystem=FakeFS))
     monkeypatch.setattr(mod.xr, "open_zarr", lambda mapper, **kwargs: "store")
-    monkeypatch.setenv("NEURAL_GCM_SERVICE_CREDENTIALS", '{"type": "service_account"}')
+    monkeypatch.setenv("GCLOUD_SERVICE_CREDENTIALS", '{"type": "service_account"}')
     assert mod._open_store(f"{PRIV}/cumulus_precip.zarr") == "store"
     assert seen["token"] == {"type": "service_account"}
     assert seen["path"] == "sheerwater-datalake/hindcasts/cumulus_precip.zarr"
@@ -300,7 +300,7 @@ def test_private_store_without_credentials_exits_1(tmp_path, mod, fetch, monkeyp
             raise RuntimeError("no credentials")
 
     monkeypatch.setitem(sys.modules, "gcsfs", types.SimpleNamespace(GCSFileSystem=FailingFS))
-    monkeypatch.delenv("NEURAL_GCM_SERVICE_CREDENTIALS", raising=False)
+    monkeypatch.delenv("GCLOUD_SERVICE_CREDENTIALS", raising=False)
     with pytest.raises(SystemExit) as exc:
         run_skill(fetch, "--dataset", "cumulus", "--start-time", "2024-12-01", "--end-time", "2024-12-31",
                   "-o", str(tmp_path / "x.zarr"))  # fmt: skip

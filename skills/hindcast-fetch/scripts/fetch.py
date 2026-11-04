@@ -61,7 +61,7 @@ _STANDARD_NAMES = {
     "sst": "sea_surface_temperature",
 }
 _AUTH_MSG = (
-    f"{_PRIVATE} is private. Set NEURAL_GCM_SERVICE_CREDENTIALS to the full service-account "
+    f"{_PRIVATE} is private. Set GCLOUD_SERVICE_CREDENTIALS to the full service-account "
     "key JSON, GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON file path, or run "
     "`gcloud auth application-default login`."
 )
@@ -77,11 +77,11 @@ def _open_store(path: str) -> xr.Dataset:
 
     import gcsfs
 
-    creds_json = os.environ.get("NEURAL_GCM_SERVICE_CREDENTIALS")
+    creds_json = os.environ.get("GCLOUD_SERVICE_CREDENTIALS")
     try:
         token = json.loads(creds_json) if creds_json else None
     except json.JSONDecodeError as exc:
-        raise DataError(f"NEURAL_GCM_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
+        raise DataError(f"GCLOUD_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
     try:
         return xr.open_zarr(gcsfs.GCSFileSystem(token=token).get_mapper(path.removeprefix("gs://")))
     except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
