@@ -61,12 +61,12 @@ Every dataset has `precip` and `tmp2m`; `ecmwf` also has `sst`.
 - `ecmwf` is one model cycle throughout (IFS CY49R1), so differences across inits are not model changes.
 - `ecmwf_wb2` is one time series stitched from many issues. ECMWF re-ran each issue's calendar date in each of the 20 years before it, so most dates were run by several issues; the store keeps the newest issue's run of each date. The model cycle still varies from date to date, so a trend across inits can be a model change.
 - `sst` is NaN over land, never filled; lakes the model resolves (e.g. Lake Victoria) have values.
-- `precip` is clipped at 0 in every store: `ecmwf_wb2`'s daily values come from differenced accumulations, and model output from Planette and Cumulus can dip slightly below 0. A store with negative `precip` is reported on stderr and kept as published.
+- `precip` is clipped at 0 in every store: `ecmwf_wb2`'s daily values come from differenced accumulations, and model output from Planette and Cumulus can dip slightly below 0.
 - `cumulus` `tmp2m` is the model's 2 m temperature as published, one value per lead day; the source does not say whether it is a daily mean or the value at the end of the day.
 - `gefs` `tmp2m` is one value per day as the source publishes it; the source does not say whether it is a daily mean.
 - Stores of one model can skip different inits (GEFS `precip` and `tmp2m` do). A variable is NaN on inits its store lacks, never filled; stderr lists them. The stores' grids must match exactly, or the call exits 1.
 - `ecmwf_wb2` hindcast inits fall on the same calendar dates in every year, but on any weekday; `ecmwf` inits are every second day. Pair them with `gefs` Wednesday inits by valid date, not by init.
-- Every store is in 6° lat/lon tiles with all inits in each chunk: a small `--bbox` reads only its tiles, and a whole record takes about as long as one init (over Kenya, about a minute). Without `--bbox` the whole globe is read; a request over 4 GB per variable exits 2 and asks for a smaller `--bbox` or fewer inits.
+- Every store is in 6° lat/lon tiles with all inits in each chunk: a small `--bbox` reads only its tiles, and a whole record takes about as long as one init (over Kenya, about a minute). Without `--bbox` the whole globe is read into memory.
 - Without the needed credentials the call exits 1 and says which to set.
 
 ### Example
