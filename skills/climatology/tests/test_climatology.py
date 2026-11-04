@@ -155,7 +155,7 @@ def test_weekly_forecast_inits_keep_member_and_lead_dims(tmp_path, mod, capsys):
     assert float((lead1 - lead0).max()) == pytest.approx(10.0)
     assert float(lead0.mean()) == pytest.approx(1.0, abs=0.1)  # roughly one init a year each
     assert int(out["precip_count"].min()) >= 2
-    assert "at least 7 days apart" in capsys.readouterr().err
+    assert "consider --window" not in capsys.readouterr().err  # --window 7 covers weekly inits
 
 
 def test_weekly_means_are_refused(tmp_path, mod, capsys):
