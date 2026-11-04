@@ -6,18 +6,14 @@
 # ]
 # ///
 """Fetch ECMWF, GEFS or Cumulus subseasonal hindcasts for a range of init dates as a weather-skills Zarr."""
-# Every source is a Sheerwater hindcast Zarr in 6° lat/lon tiles, one variable per
-# store, dims (init_time, member, prediction_timedelta, lat, lon) in some order,
-# prediction_timedelta in whole days from 0:
-#   ecmwf — public. Planette's ECMWF IFS CY49R1 reforecast members: one model
-#     cycle, inits every second day 2006-2025.
-#   ecmwf_wb2 — public. WeatherBench2's IFS extended-range reforecast members,
-#     flattened to one run per init date 1996-2021: the newest issue that re-ran
-#     that date, so the newest model that ran it.
+# Every source is a Sheerwater hindcast Zarr, one variable per store, dims
+# (init_time, member, prediction_timedelta, lat, lon) in some order:
+#   ecmwf — public. Planette's ECMWF IFS CY49R1 reforecast, inits every second day 2006-2025.
+#   ecmwf_wb2 — public. WeatherBench2's IFS reforecast, one run per init date 1996-2021
+#     from the newest issue that re-ran that date.
 #   gefs — public. CHC's GEFSv12 reforecast, Wednesday inits 1998-2019.
-#   cumulus — private. The gratis-czajkowski Cumulus run at 1°, inits every
-#     second day 2016-2024; member 0 is the cf run.
-# All become one multi-init cube (time=init, number, step, latitude, longitude).
+#   cumulus — private. The gratis-czajkowski Cumulus run at 1°, inits every second
+#     day 2016-2024; member 0 is the cf run.
 
 from __future__ import annotations
 
@@ -37,25 +33,25 @@ _SKILL_VERSION = "0.0.1"
 
 _PUBLIC = "gs://sheerwater-public-datalake/hindcasts"
 _PRIVATE = "gs://sheerwater-datalake/hindcasts"
-# --dataset -> -v name -> (store, store variable, units). The stores' own unit
-# strings ("C", "mm / day") are not all pint-readable, so units are set here.
+# --dataset -> variable -> (store, units). The stores' own unit strings ("C",
+# "mm" for a daily rate) are not all right or pint-readable, so units are set here.
 _STORES = {
     "ecmwf": {
-        "precip": (f"{_PUBLIC}/ecmwf_planette_precip.zarr", "precip", "mm day-1"),
-        "tmp2m": (f"{_PUBLIC}/ecmwf_planette_tmp2m.zarr", "tmp2m", "degree_Celsius"),
-        "sst": (f"{_PUBLIC}/ecmwf_planette_sst.zarr", "sst", "degree_Celsius"),
+        "precip": (f"{_PUBLIC}/ecmwf_planette_precip.zarr", "mm day-1"),
+        "tmp2m": (f"{_PUBLIC}/ecmwf_planette_tmp2m.zarr", "degree_Celsius"),
+        "sst": (f"{_PUBLIC}/ecmwf_planette_sst.zarr", "degree_Celsius"),
     },
     "ecmwf_wb2": {
-        "precip": (f"{_PUBLIC}/ecmwf_ifs_precip.zarr", "precip", "mm day-1"),
-        "tmp2m": (f"{_PUBLIC}/ecmwf_ifs_tmp2m.zarr", "tmp2m", "degree_Celsius"),
+        "precip": (f"{_PUBLIC}/ecmwf_ifs_precip.zarr", "mm day-1"),
+        "tmp2m": (f"{_PUBLIC}/ecmwf_ifs_tmp2m.zarr", "degree_Celsius"),
     },
     "gefs": {
-        "precip": (f"{_PUBLIC}/gefs_precip.zarr", "precip", "mm day-1"),
-        "tmp2m": (f"{_PUBLIC}/gefs_tmp2m.zarr", "tmp2m", "degree_Celsius"),
+        "precip": (f"{_PUBLIC}/gefs_precip.zarr", "mm day-1"),
+        "tmp2m": (f"{_PUBLIC}/gefs_tmp2m.zarr", "degree_Celsius"),
     },
     "cumulus": {
-        "precip": (f"{_PRIVATE}/cumulus_precip.zarr", "precip", "mm day-1"),
-        "tmp2m": (f"{_PRIVATE}/cumulus_tmp2m.zarr", "tmp2m", "K"),
+        "precip": (f"{_PRIVATE}/cumulus_precip.zarr", "mm day-1"),
+        "tmp2m": (f"{_PRIVATE}/cumulus_tmp2m.zarr", "K"),
     },
 }
 _ALIASES = {"tp": "precip", "precipitation": "precip", "t2m": "tmp2m"}
@@ -132,72 +128,56 @@ def fetch(dataset, start_time, end_time, variable, bbox, members, probe_latest, 
 
     if dataset is None or not start_time or not end_time:
         raise UsageError("--dataset, --start-time and --end-time are required.")
-    # Core pairs the Nth --start-time with the Nth --end-time and checks the order.
-    windows = list(zip(start_time, end_time, strict=True))
-    if not dataset.startswith("ecmwf") and members:
-        raise UsageError(
-            "--members applies to --dataset ecmwf and ecmwf_wb2 only; gefs and cumulus always "
-            "have all members."
-        )
+    if members and not dataset.startswith("ecmwf"):
+        raise UsageError("--members applies to --dataset ecmwf and ecmwf_wb2 only.")
     table = _STORES[dataset]
     variables = list(dict.fromkeys(_ALIASES.get(v, v) for v in (variable or ["precip"])))
     unknown = [v for v in variables if v not in table]
     if unknown:
         raise UsageError(
-            f"{dataset} hindcasts have no variable {', '.join(unknown)}; "
-            f"choose from {', '.join(table)}."
+            f"{dataset} has no variable {', '.join(unknown)}; choose from {', '.join(table)}."
         )
 
     parts = []
     for v in variables:
-        path, source, units = table[v]
-        ds = _open_store(path)
-        inits = ds["init_time"].values
-        # Every init in any window; overlapping windows take an init once.
-        in_windows = np.zeros(inits.shape, dtype=bool)
-        for start, end in windows:
-            in_windows |= (inits >= np.datetime64(start, "D")) & (
-                inits < np.datetime64(end, "D") + np.timedelta64(1, "D")
-            )
-        keep = np.nonzero(in_windows)[0]
-        if keep.size == 0:
-            spans = ", ".join(f"{start}..{end}" for start, end in windows)
+        path, units = table[v]
+        ds = _open_store(path)[[v]].drop_vars("time", errors="ignore")
+        # Core pairs the Nth --start-time with the Nth --end-time; an init in any window is kept once.
+        day = ds["init_time"].values.astype("datetime64[D]")
+        keep = np.any(
+            [
+                (day >= np.datetime64(s, "D")) & (day <= np.datetime64(e, "D"))
+                for s, e in zip(start_time, end_time, strict=True)
+            ],
+            axis=0,
+        )
+        if not keep.any():
             raise DataError(
-                f"no {dataset} {v} hindcast init in {spans} (the store "
-                f"runs {np_to_date(inits.min())} to {np_to_date(inits.max())})."
+                f"no {dataset} {v} init in the given dates (the store runs {day.min()} to {day.max()})."
             )
-        # A store's extra `time` coord, where it has one, repeats init_time.
-        part = ds[[source]].drop_vars("time", errors="ignore").isel(init_time=keep)
-        part = part.rename({source: v})
-        part[v].attrs = {"units": units}
-        # Cut to the bbox and load before aligning inits: reindexing a lazy store
-        # merges its lat/lon tiles and would read the whole globe.
-        part = bbox_subset(part, bbox) if bbox is not None else ensure_normalized_longitude(part)
-        if part.nbytes > 4e9:
-            raise UsageError(
-                f"{dataset} {v} for these inits and this region is {part.nbytes / 1e9:.0f} GB, "
-                "more than fits in memory; pass a smaller --bbox or fewer init dates."
-            )
-        parts.append(part.load())
-    # Stores of one model can skip different inits; keep every init and leave a
-    # variable NaN where its store has no run. Never filled: say which.
-    # Only init_time may differ: the grids and members must match exactly.
-    inits = np.unique(np.concatenate([part["init_time"].values for part in parts]))
-    try:
-        cube = xr.merge([part.reindex(init_time=inits) for part in parts], join="exact")
-    except ValueError as exc:
-        raise DataError(
-            f"{dataset} hindcast stores for {', '.join(variables)} are on different grids "
-            f"({exc}); fetch them in separate calls."
-        ) from None
-    for part, v in zip(parts, variables, strict=True):
-        missing = np.setdiff1d(inits, part["init_time"].values)
+        # Still lazy: only the chunks inside the inits and the bbox are read.
+        ds = ds.isel(init_time=keep)
+        ds = bbox_subset(ds, bbox) if bbox is not None else ensure_normalized_longitude(ds)
+        ds[v].attrs = {"units": units, "standard_name": _STANDARD_NAMES[v]}
+        parts.append(ds)
+
+    # Stores of one model can skip different inits: keep every init, NaN where a store has none.
+    inits = np.unique(np.concatenate([p["init_time"].values for p in parts]))
+    for p, v in zip(parts, variables, strict=True):
+        missing = np.setdiff1d(inits, p["init_time"].values)
         if missing.size:
             print(
                 f"hindcast-fetch: WARNING: {dataset} {v} has no run for {missing.size} init(s), "
                 "left NaN: " + ", ".join(str(np_to_date(t)) for t in missing),
                 file=sys.stderr,
             )
+    try:
+        cube = xr.merge([p.reindex(init_time=inits) for p in parts], join="exact")
+    except ValueError as exc:
+        raise DataError(
+            f"{dataset} stores for {', '.join(variables)} are on different grids ({exc})."
+        ) from None
+
     cube = cube.rename(
         init_time="time",
         member="number",
@@ -205,35 +185,9 @@ def fetch(dataset, start_time, end_time, variable, bbox, members, probe_latest, 
         lat="latitude",
         lon="longitude",
     )
-    # Daily leads: step d covers [init + d, init + d + 1 day). Stores keep steps
-    # as whole days, as integers or already decoded to timedelta.
-    steps = cube["step"].values
-    if not np.issubdtype(steps.dtype, np.timedelta64):
-        steps = steps.astype("int64").astype("timedelta64[D]")
-    cube = cube.assign_coords(
-        number=cube["number"].values.astype("int64"), step=steps.astype("timedelta64[ns]")
-    )
     cube = cube.transpose("time", "number", "step", "latitude", "longitude")
     if dataset.startswith("ecmwf") and not members:
-        # The ensemble mean of the 10 perturbed members (WeatherBench2's own mean is the same).
         cube = cube.mean("number", keep_attrs=True)
-    print(
-        f"hindcast-fetch: {dataset} {cube.sizes['time']} inits "
-        f"{np_to_date(cube['time'].values[0])}..{np_to_date(cube['time'].values[-1])} from "
-        + ", ".join(table[v][0] for v in variables),
-        file=sys.stderr,
-    )
-    if "precip" in cube and float(cube["precip"].min()) < -0.1:
-        # Some model output is slightly negative; kept as published, never clipped.
-        print(
-            f"hindcast-fetch: WARNING: precip goes down to {float(cube['precip'].min()):.2f} "
-            "mm day-1; kept as published (not clipped).",
-            file=sys.stderr,
-        )
-
-    # Names like tmp2m are not recognized by to_standard_units; the CF name is.
-    for v in variables:
-        cube[v].attrs["standard_name"] = _STANDARD_NAMES[v]
     cube = to_standard_units(cube, variables=variables)
     cube.attrs = {
         "Conventions": "CF-1.13",
@@ -246,6 +200,7 @@ def fetch(dataset, start_time, end_time, variable, bbox, members, probe_latest, 
         standard_name="forecast_period", long_name="time since forecast_reference_time"
     )
     stamp_cf_attrs(cube)
+    # Step d is the day [init + d, init + d + 1).
     return stamp_data_interval(cube, period="1 day", dim="step")
 
 

@@ -23,14 +23,14 @@ def fetch(mod):
     return mod.fetch
 
 
-def _store(name, inits, members, value, *, order, lons=(-1.0, 0.0, 1.0), steps=None):
+def _store(name, inits, members, value, *, order, lons=(-1.0, 0.0, 1.0)):
     """One-variable store; value + 0.5 * member index, so the member mean is checkable."""
     lat = np.array([-1.0, 0.0, 1.0], dtype=np.float32)
     lon = np.array(lons, dtype=np.float32)
     coords = {
         "init_time": np.array(inits, dtype="datetime64[ns]"),
         "member": np.array(members, dtype=np.int32),
-        "prediction_timedelta": np.arange(3) if steps is None else steps,
+        "prediction_timedelta": DAYS,
         "lat": lat,
         "lon": lon,
     }
@@ -55,14 +55,14 @@ def stores(mod, monkeypatch):
     # The ECMWF store's extra `time` coord repeats init_time.
     ec_p = ec_p.assign_coords(time=("init_time", ec_p["init_time"].values))
     # Planette's sst is NaN over land: one land cell here.
-    pl_sst = _store("sst", PL_INITS, [1, 2], 27.0, order=ECMWF_ORDER, steps=DAYS)
+    pl_sst = _store("sst", PL_INITS, [1, 2], 27.0, order=ECMWF_ORDER)
     pl_sst["sst"][dict(lat=0, lon=0)] = np.nan
     data = {
         f"{PUB}/ecmwf_planette_precip.zarr": _store(
-            "precip", PL_INITS, [1, 2], 3.0, order=ECMWF_ORDER, steps=DAYS
+            "precip", PL_INITS, [1, 2], 3.0, order=ECMWF_ORDER
         ),
         f"{PUB}/ecmwf_planette_tmp2m.zarr": _store(
-            "tmp2m", PL_INITS, [1, 2], 22.0, order=ECMWF_ORDER, steps=DAYS
+            "tmp2m", PL_INITS, [1, 2], 22.0, order=ECMWF_ORDER
         ),
         f"{PUB}/ecmwf_planette_sst.zarr": pl_sst,
         f"{PUB}/ecmwf_ifs_precip.zarr": ec_p,
@@ -72,10 +72,10 @@ def stores(mod, monkeypatch):
         ),
         f"{PUB}/gefs_tmp2m.zarr": _store("tmp2m", ["2017-10-11"], [0, 1], 25.0, order=STORE_ORDER),
         f"{PRIV}/cumulus_precip.zarr": _store(
-            "precip", CUM_INITS, [0, 1, 2], -0.6, order=STORE_ORDER, steps=DAYS
+            "precip", CUM_INITS, [0, 1, 2], -0.6, order=STORE_ORDER
         ),
         f"{PRIV}/cumulus_tmp2m.zarr": _store(
-            "tmp2m", CUM_INITS, [0, 1, 2], 300.0, order=STORE_ORDER, steps=DAYS
+            "tmp2m", CUM_INITS, [0, 1, 2], 300.0, order=STORE_ORDER
         ),
     }
     opened = []
@@ -199,11 +199,10 @@ def test_grid_mismatch_exits_1(tmp_path, fetch, stores):
     assert exc.value.code == 1
 
 
-def test_cumulus_members_negative_precip_kept_and_kelvin_converted(tmp_path, fetch, stores, capsys):
+def test_cumulus_members_and_kelvin_converted(tmp_path, fetch, stores):
     out = tmp_path / "cum.zarr"
     _run(fetch, out, "--dataset", "cumulus", "-v", "precip", "-v", "tmp2m",
          "--start-time", "2024-12-28", "--end-time", "2024-12-31")  # fmt: skip
-    assert "precip goes down to -0.60 mm day-1; kept as published" in capsys.readouterr().err
     with xr.open_zarr(out) as ds:
         assert _dates(ds) == ["2024-12-29", "2024-12-31"]
         assert ds["number"].values.tolist() == [0, 1, 2]
@@ -231,14 +230,6 @@ def test_window_without_inits_exits_1(tmp_path, fetch, stores):
         _run(fetch, tmp_path / "x.zarr", "--dataset", "ecmwf", "--start-time", "1990-01-01",
              "--end-time", "1990-12-31")  # fmt: skip
     assert exc.value.code == 1
-
-
-def test_too_big_to_load_exits_2(tmp_path, fetch, stores, monkeypatch):
-    monkeypatch.setattr(xr.Dataset, "nbytes", property(lambda self: 5e9))
-    with pytest.raises(SystemExit) as exc:
-        _run(fetch, tmp_path / "x.zarr", "--dataset", "ecmwf", "--start-time", "2018-10-01",
-             "--end-time", "2018-10-31")  # fmt: skip
-    assert exc.value.code == 2
 
 
 @pytest.mark.parametrize(
