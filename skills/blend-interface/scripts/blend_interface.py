@@ -36,6 +36,14 @@ class _Inputs:
         return str(self.path)
 
 
+def _default_label(path):
+    """blend's default --label: windborne_wm6_weekly_totals_init2026-11-02.zarr -> windborne_wm6"""
+    name = Path(str(path).rstrip("/")).name.removesuffix(".zarr")
+    for marker in ("_weekly", "_daily", "_monthly", "_init"):
+        name = name.split(marker)[0]
+    return name or str(path)
+
+
 def _run_blend(inputs, label, variable, lead, weights, reference_grid, out):
     if not _BLEND.is_file():
         raise UsageError(f"blend-interface needs the blend skill beside it ({_BLEND})")
@@ -66,26 +74,38 @@ def _layout(n):
     return rows, cols, small_cols, cells, blend, empty
 
 
-def _spec(n, title, subtitle, palette, units):
-    """Jsonnet: a small map per forecast, the blend large on the right, one class colorbar."""
+def _spec(n, title, subtitle, palette, units, anomaly):
+    """Jsonnet: a small map per forecast, the blend large on the right, one class colorbar.
+
+    With anomaly (its palette and units), every panel also holds a hidden anomaly map
+    on coloraxis2 with its own colorbar, for the page's Totals / Anomaly toggle.
+    """
     rows, cols, small_cols, cells, b, empty = _layout(n)
     j = json.dumps
-    hover = "%{y:.2f}°, %{x:.2f}°<br><b>blend %{z:.1f} " + units + "</b><extra></extra>"
+    anom_palette, anom_units = anomaly or (None, "")
+
+    def hover(u):
+        return "%{y:.2f}°, %{x:.2f}°<br><b>blend %{z:.1f} " + u + "</b><extra></extra>"
+
     return f"""
 local ws = import 'ws.libsonnet';
 local bbox = std.extVar('inputs').BL.bbox;
-local cells = {j(cells)}; local b = {b}; local gap = 0.04;
+local cells = {j(cells)}; local b = {b}; local gap = 0.04; local anomaly = {j(anomaly is not None)};
 local ax(c) = if c == 0 then '' else std.toString(c + 1);
-local small(k) = [{{type: 'heatmap', x: '@BL.lon', y: '@BL.lat', z: '@BL.m%d' % k,
-  coloraxis: 'coloraxis', hovertemplate: '%{{z:.1f}} {units}<extra></extra>'}} + ws.axes(cells[k])]
+local map(name, z, c, ca, hover, visible=true) = {{type: 'heatmap', name: name, x: '@BL.lon', y: '@BL.lat',
+  z: '@BL.' + z, coloraxis: ca, hovertemplate: hover, visible: visible}} + ws.axes(c);
+// Anomaly maps go under the base-map lines, next to their totals map.
+local layer(name, c, hover, anomHover) = [map(name, name, c, 'coloraxis', hover)]
+  + (if anomaly then [map(name + '_anom', name + '_anom', c, 'coloraxis2', anomHover, false)] else []);
+local small(k) = layer('m%d' % k, cells[k], '%{{z:.1f}} {units}<extra></extra>', '%{{z:.1f}} {anom_units}<extra></extra>')
   + ws.basemap(bbox, cells[k], rivers=false, lakes=false, admin=false);
 {{
   data: std.flattenArrays([small(k) for k in std.range(0, std.length(cells) - 1)])
-    + [{{type: 'heatmap', x: '@BL.lon', y: '@BL.lat', z: '@BL.blend', name: 'blend',
-        coloraxis: 'coloraxis', hovertemplate: {j(hover)}}} + ws.axes(b)]
+    + layer('blend', b, {j(hover(units))}, {j(hover(anom_units))})
     + ws.basemap(bbox, b, rivers=false, admin=1),
   layout: ws.grid(bbox, rows={rows}, cols={cols}, panel=210, empty={j(empty)})
     + ws.classBar(ws.palettes.{palette}, {j(units)}, y=0.05, len=0.85)
+    + (if anomaly then ws.classBar(ws.palettes.{anom_palette or palette}, {j(anom_units)}, coloraxis='coloraxis2', y=0.05, len=0.85) else {{}})
     + {{
       title: {{text: {j(title)}, subtitle: {{text: {j(subtitle)}}}}},
       // The blend spans every row on the right, with room for its latitude labels.
@@ -93,19 +113,25 @@ local small(k) = [{{type: 'heatmap', x: '@BL.lon', y: '@BL.lat', z: '@BL.m%d' % 
       ['yaxis' + ax(b)]+: {{domain: [gap / 2, 1 - gap / 2], showticklabels: true}},
       annotations+: [ws.panelTitle(b, '<b>Blend</b>') + {{font: {{size: 16}}}}],
     }}
+    // The anomaly colorbar starts hidden; the toggle swaps it with the totals one.
+    + {{
+      local hide(o) = if std.get(o, 'name', '') == 'classBar-coloraxis2' then o + {{visible: false}} else o,
+      shapes: [hide(o) for o in super.shapes],
+      annotations: [hide(o) for o in super.annotations],
+    }}
     + {{['xaxis' + ax(c)]+: {{showticklabels: false}} for c in cells}}
     + {{['yaxis' + ax(c)]+: {{showticklabels: false}} for c in cells}},
 }}
 """
 
 
-def _figure(bl, n, title, subtitle, palette, units):
+def _figure(bl, n, title, subtitle, palette, units, anomaly):
     from weather_skills_plotting.bind import resolve
     from weather_skills_plotting.export import validate
     from weather_skills_plotting.lint import check_bindings
     from weather_skills_plotting.render import SpecArg, evaluate, house_template, input_metadata
 
-    figure = evaluate(SpecArg(_spec(n, title, subtitle, palette, units)), {"BL": input_metadata(bl)}, {})
+    figure = evaluate(SpecArg(_spec(n, title, subtitle, palette, units, anomaly)), {"BL": input_metadata(bl)}, {})
     figure.setdefault("layout", {}).setdefault("template", house_template())
     check_bindings(figure)
     resolved, _ = resolve(figure, {"BL": bl, "const": {}})
@@ -119,9 +145,12 @@ def _figure(bl, n, title, subtitle, palette, units):
 @weather_skill.argument("--lead", type=int, default=1)
 @weather_skill.argument("--weights")
 @weather_skill.argument("--reference-grid")
+@weather_skill.argument("--anomaly", type=_Inputs, action="append")
 @weather_skill.argument("--palette", default="ppt_week")
+@weather_skill.argument("--anomaly-palette", default="ppt_anom_week")
 @weather_skill.argument("--title")
-def blend_interface(input, label, variable, lead, weights, reference_grid, palette, title, output, **kwargs):
+def blend_interface(input, label, variable, lead, weights, reference_grid, anomaly, palette,
+                    anomaly_palette, title, output, **kwargs):
     """Choose blend weights for several forecasts on an interactive HTML page with coupled sliders."""
     import plotly.io as pio
     import xarray as xr
@@ -129,10 +158,20 @@ def blend_interface(input, label, variable, lead, weights, reference_grid, palet
     if Path(output).suffix.lower() not in (".html", ".htm"):
         raise UsageError(f"--output {output}: the page is written to .html")
     inputs = [str(i) for i in input]
+    anomalies = [str(a) for a in anomaly or []]
+    if anomalies and len(anomalies) != len(inputs):
+        raise UsageError(f"got {len(anomalies)} --anomaly for {len(inputs)} --input; pass one per input, in the same order")
+    # Both runs use the same labels, so the anomaly maps pair with their forecasts.
+    labels = label or ([_default_label(p) for p in inputs] if anomalies else None)
     with tempfile.TemporaryDirectory(prefix="blend-interface-") as work:
         zarr = Path(work) / "members.zarr"
-        _run_blend(inputs, label, variable, lead, weights, reference_grid, zarr)
+        _run_blend(inputs, labels, variable, lead, weights, reference_grid, zarr)
         ds = xr.open_zarr(zarr).load()
+        if anomalies:
+            anom_zarr = Path(work) / "anomaly.zarr"
+            # On the totals blend's grid, so the two views line up cell for cell.
+            _run_blend(anomalies, labels, None, lead, weights, str(zarr), anom_zarr)
+            anom = xr.open_zarr(anom_zarr).load()
 
     variable = next(v for v in ds.data_vars if not v.endswith("_members"))
     members = ds[f"{variable}_members"].squeeze(drop=True)
@@ -140,6 +179,19 @@ def blend_interface(input, label, variable, lead, weights, reference_grid, palet
     units = str(ds[variable].attrs.get("units", ""))
     bl = xr.Dataset({f"m{k}": members.isel(model=k, drop=True) for k in range(len(names))})
     bl["blend"] = ds[variable].squeeze(drop=True)
+    anomaly_view = None
+    if anomalies:
+        avar = next(v for v in anom.data_vars if not v.endswith("_members"))
+        amembers = anom[f"{avar}_members"].squeeze(drop=True)
+        if [str(m) for m in amembers["model"].values] != names:
+            raise UsageError(
+                f"the anomalies reach lead {lead} for {list(amembers['model'].values)} but the "
+                f"forecasts for {names}; pass an anomaly Zarr for each forecast, in -i order"
+            )
+        for k in range(len(names)):
+            bl[f"m{k}_anom"] = amembers.isel(model=k, drop=True)
+        bl["blend_anom"] = anom[avar].squeeze(drop=True)
+        anomaly_view = (anomaly_palette, str(anom[avar].attrs.get("units", "")))
 
     left_out = json.loads(ds.attrs.get("blend_left_out", "[]"))
     init = str(ds.attrs.get("weather_skills_forecast_init", ""))[:10]
@@ -153,12 +205,18 @@ def blend_interface(input, label, variable, lead, weights, reference_grid, palet
         f"no lead {lead}: {', '.join(left_out)}" if left_out else "",
     ) if s)
 
-    fig = _figure(bl, len(names), title, subtitle, palette, units)
-    heatmaps = [k for k, t in enumerate(fig.data) if t.type == "heatmap"]
+    fig = _figure(bl, len(names), title, subtitle, palette, units, anomaly_view)
+    trace = {t.name: k for k, t in enumerate(fig.data) if t.type == "heatmap"}
     setup = {
         "labels": names,
-        "small": heatmaps[:-1],
-        "blend": heatmaps[-1],
+        "small": [trace[f"m{k}"] for k in range(len(names))],
+        "blend": trace["blend"],
+        "units": units,
+        "anomaly": anomaly_view and {
+            "small": [trace[f"m{k}_anom"] for k in range(len(names))],
+            "blend": trace["blend_anom"],
+            "units": anomaly_view[1],
+        },
         "axes": ["" if c == 0 else str(c + 1) for c in _layout(len(names))[3]],
         "weights": json.loads(ds.attrs["blend_weights"]),
         "record": {"skill": "blend", "inputs": inputs, **({"labels": label} if label else {}),
@@ -195,6 +253,12 @@ button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
 .wslider input { width: 100%; margin: 0; accent-color: #2563eb; }
 pre { margin: 6px 0 0; padding: 8px 10px; background: #f4f6f8; border: 1px solid #dde2e8; border-radius: 6px;
   font: 12px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; user-select: all; }
+.seg { display: inline-flex; }
+.seg[hidden] { display: none; }
+.seg button { border-radius: 0; margin-left: -1px; }
+.seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.seg button:last-child { border-radius: 0 6px 6px 0; }
+.seg button.on { background: #1b1f24; border-color: #1b1f24; color: #fff; }
 .footer { padding: 0 16px 20px; max-width: 1100px; }
 .footer h3 { font-size: 13px; margin: 8px 0 0; }
 </style>"""
@@ -202,6 +266,7 @@ pre { margin: 6px 0 0; padding: 8px 10px; background: #f4f6f8; border: 1px solid
 _TOOLBAR = """<p class="steps">When satisfied, either download or copy the blend and give it to the agent.</p>
 <div class="bar"><button id="download" class="primary" type="button">Download blend</button>
 <button id="equal" type="button">Reset to equal weights</button>
+<span class="seg" id="view" hidden><button type="button" data-view="totals" class="on">Totals</button><button type="button" data-view="anomaly">Anomaly</button></span>
 <span class="muted" id="sum"></span><span id="status"></span></div>
 <div class="bar"><span class="muted" id="readout"></span></div>"""
 
@@ -226,6 +291,8 @@ function rows(z) {
   return Array.from({length: ny}, (_, j) => Array.from(flat.subarray(j * nx, (j + 1) * nx)));
 }
 const Z = S.small.map(k => rows(gd.data[k].z));
+const A = S.anomaly && S.anomaly.small.map(k => rows(gd.data[k].z));
+let view = 'totals';
 
 // Weights start from the address (#w=name:0.2,...), so a reload or a shared link
 // keeps them, else from the weights the page was built with.
@@ -281,7 +348,7 @@ function setWeight(m, v) {
 }
 
 // Same rule as the blend skill: blank where any forecast with weight has no value.
-function blended() {
+function blended(Z) {
   return Z[0].map((row, j) => row.map((_, i) => {
     let s = 0;
     for (let m = 0; m < n; m++) {
@@ -302,7 +369,8 @@ function refresh() {
   });
   $('sum').textContent = 'Sum of weights: ' + w.reduce((a, b) => a + b, 0).toFixed(2);
   $('weights').textContent = recordText();
-  Plotly.restyle(gd, {z: [blended()]}, [S.blend]);
+  if (A) Plotly.restyle(gd, {z: [blended(Z), blended(A)]}, [S.blend, S.anomaly.blend]);
+  else Plotly.restyle(gd, {z: [blended(Z)]}, [S.blend]);
   try {
     const tag = S.labels.map((l, m) => `${l}:${w[m].toFixed(4)}`).join(',');
     history.replaceState(null, '', '#w=' + encodeURIComponent(tag));
@@ -327,13 +395,33 @@ $('download').addEventListener('click', () => {
 });
 $('equal').addEventListener('click', () => { w = new Array(n).fill(1 / n); refresh(); });
 
+// Totals / Anomaly swaps every map and the colorbar; the weights carry over.
+function setView(v) {
+  view = v;
+  const anom = v === 'anomaly';
+  const totals = [...S.small, S.blend], anoms = [...S.anomaly.small, S.anomaly.blend];
+  Plotly.restyle(gd, {visible: [...totals.map(() => !anom), ...anoms.map(() => anom)]}, [...totals, ...anoms]);
+  const show = o => {
+    if (o.name === 'classBar-coloraxis') return Object.assign({}, o, {visible: !anom});
+    if (o.name === 'classBar-coloraxis2') return Object.assign({}, o, {visible: anom});
+    return o;
+  };
+  Plotly.relayout(gd, {shapes: gd.layout.shapes.map(show), annotations: gd.layout.annotations.map(show)});
+  document.querySelectorAll('#view button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
+}
+if (A) {
+  $('view').hidden = false;
+  document.querySelectorAll('#view button').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
+}
+
 // Hovering the blend lists what each forecast has in that cell.
 gd.on('plotly_hover', ev => {
   const p = ev.points[0];
-  if (p.curveNumber !== S.blend) return;
-  const [j, i] = p.pointIndex;
+  const anom = view === 'anomaly';
+  if (p.curveNumber !== (anom ? S.anomaly.blend : S.blend)) return;
+  const [j, i] = p.pointIndex, F = anom ? A : Z;
   $('readout').textContent = '· ' + S.labels.map((l, m) => {
-    const v = Z[m][j][i];
+    const v = F[m][j][i];
     return `${l} ${v == null || !isFinite(v) ? '–' : v.toFixed(1)}`;
   }).join(', ');
 });
