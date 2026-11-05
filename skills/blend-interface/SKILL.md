@@ -1,6 +1,6 @@
 ---
 name: blend-interface
-description: "Build an interactive HTML page for choosing blend weights: one map per forecast with a weight slider above it (the sliders always add to 1), the live blend on the right, and a Finish button that hands back the weights to paste into chat or save as JSON for the blend skill. Use when someone wants to weigh several forecasts by eye before blending."
+description: "Build an interactive HTML page for choosing blend weights: one map per forecast with a weight slider above it (the sliders always add to 1), the live blend on the right, and a Download blend button that saves the weights as a JSON file to upload to the chat for the blend skill. Use when someone wants to weigh several forecasts by eye before blending."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Calls the blend skill, which must sit beside it; draws with weather-skills-plotting.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/blend_interface.py *)
@@ -27,16 +27,16 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/blend_interface.py -i A.zarr -i B.zarr [-i ..
 
 ### Output
 An HTML page with plotly.js inside (about 5 MB), so it works offline and in any viewer that runs JavaScript:
+- Instructions at the top: set the weights, press **Download blend**, upload the file to the chat.
 - A small map per forecast, each with a 0–1 weight slider. Moving one rescales the others in proportion so they add to 1. **Reset to equal weights** undoes it.
 - The blend on the right, recomputed as the sliders move with blend's rule (NaN where any weighted forecast is NaN). Hovering it lists every forecast's value in that cell.
-- Under the maps, the weights as a dictionary (`{"gefs": 0.5, ...}`, four decimals adding to 1), with **Copy weights**.
-- **Finish** opens the record blend takes as `--weights`: inputs, variable, lead, init, valid date and weights, with **Copy** and **Download .json**. It also posts `{type: "weather-skills-blend", record}` to the embedding page (`window.parent.postMessage`), for hosts that listen.
+- Under the maps, the weights as a dictionary (`{"gefs": 0.5, ...}`, four decimals adding to 1).
+- **Download blend** saves `blend_weights_<init>_lead<N>.json`: inputs, variable, lead, init, valid date and weights, the record blend takes as `--weights`. It also posts `{type: "weather-skills-blend", record}` to the embedding page (`window.parent.postMessage`), for hosts that listen.
 - The address keeps the current weights after `#w=`, so a reload or shared link opens on them.
 
 ### Notes
-- To finish a blend: set the sliders, press Finish, and paste the record (or attach the `.json`) into the chat. Then run blend with the same `-i` files and `--label` values and `--weights '<record>'`.
-- Copy and download depend on the viewer: some chat interfaces block the clipboard or downloads inside a page. The record and the weights dictionary are plain text that can always be selected and copied by hand.
-- Downloads land on the viewer's own computer, not in the agent's sandbox; attach the file to the chat to hand it over.
+- To finish a blend: the user uploads the downloaded file to the chat; run blend with the same `-i` files and `--label` values and `--weights <file>`.
+- The download lands on the viewer's own computer, not in the agent's sandbox. Where a viewer blocks downloads, the page says so; the weights dictionary under the maps can be selected and pasted into the chat as `--weights` instead.
 - The page is about 1,500 px wide; narrower windows cut off the blend and colorbar.
 
 ### Example
