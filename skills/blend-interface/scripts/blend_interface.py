@@ -186,6 +186,7 @@ button { font: inherit; padding: 5px 10px; border-radius: 6px; border: 1px solid
 button:hover { border-color: #2563eb; }
 button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
 .muted { color: #5b6573; font-variant-numeric: tabular-nums; }
+.steps { margin: 10px 16px 0; padding: 8px 12px; max-width: 900px; background: #eef4ff; border: 1px solid #c9dafc; border-radius: 6px; }
 .bar { display: flex; gap: 10px; align-items: center; padding: 10px 16px 0; flex-wrap: wrap; }
 .wslider { position: absolute; display: flex; flex-direction: column; gap: 1px; z-index: 5; }
 .wslider .lab { display: flex; justify-content: space-between; gap: 6px; font-weight: 600; white-space: nowrap; }
@@ -196,29 +197,16 @@ pre { margin: 6px 0 0; padding: 8px 10px; background: #f4f6f8; border: 1px solid
   font: 12px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; user-select: all; }
 .footer { padding: 0 16px 20px; max-width: 1100px; }
 .footer h3 { font-size: 13px; margin: 8px 0 0; }
-.done { position: fixed; top: 12px; right: 16px; z-index: 20; width: min(520px, calc(100vw - 32px)); background: #fff;
-  border: 1px solid #c8ced6; border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.15); padding: 12px; }
-.done[hidden] { display: none; }
-.done .head { display: flex; justify-content: space-between; align-items: center; }
-.done .head button { border: 0; font-size: 18px; padding: 0 4px; }
-.done p { margin: 6px 0; }
-.done pre { max-height: 50vh; overflow: auto; }
 </style>"""
 
-_TOOLBAR = """<div class="bar"><button id="finish" class="primary" type="button">Finish</button>
+_TOOLBAR = """<p class="steps"><b>To blend:</b> set the weights with the sliders, press <b>Download blend</b>,
+then upload the downloaded file to your chat to generate the blended Zarr.</p>
+<div class="bar"><button id="download" class="primary" type="button">Download blend</button>
 <button id="equal" type="button">Reset to equal weights</button>
-<span class="muted" id="sum"></span><span class="muted" id="readout"></span></div>
-<div class="done" id="done" hidden>
-  <div class="head"><b>Blend weights</b><button id="close" type="button" aria-label="Close">×</button></div>
-  <p class="muted">Paste this into the chat, or attach the downloaded file, to write the blended Zarr with blend.</p>
-  <pre id="record"></pre>
-  <div class="bar" style="padding:8px 0 0"><button id="copy" class="primary" type="button">Copy</button>
-  <button id="download" type="button">Download .json</button><span class="muted" id="donemsg"></span></div>
-</div>"""
+<span class="muted" id="sum"></span><span id="status"></span></div>
+<div class="bar"><span class="muted" id="readout"></span></div>"""
 
-_FOOTER = """<div class="footer"><h3>Weights</h3><pre id="weights"></pre>
-<div class="bar" style="padding:6px 0 0"><button id="copyweights" type="button">Copy weights</button>
-<span class="muted" id="copymsg"></span></div></div>"""
+_FOOTER = """<div class="footer"><h3>Weights</h3><pre id="weights"></pre></div>"""
 
 # Runs after Plotly draws the figure; {plot_id} is the figure's div. The footer
 # comes after the figure in the page, so wait for the whole document.
@@ -321,23 +309,8 @@ function refresh() {
   } catch (e) {}
 }
 
-async function copy(text, el) {
-  try { await navigator.clipboard.writeText(text); el.textContent = 'Copied'; return; } catch (e) {}
-  el.textContent = 'Copying is blocked here; select the text and copy it';
-}
-
-// Finish hands the weights back every way a host might take them: text to copy,
-// a file to save, and a message to the page that embeds this one.
-$('finish').addEventListener('click', () => {
-  const r = record();
-  $('record').textContent = JSON.stringify(r, null, 1);
-  $('donemsg').textContent = '';
-  $('done').hidden = false;
-  try { if (window.parent !== window) window.parent.postMessage({type: 'weather-skills-blend', record: r}, '*'); } catch (e) {}
-});
-$('close').addEventListener('click', () => { $('done').hidden = true; });
-$('copy').addEventListener('click', () => copy($('record').textContent, $('donemsg')));
-$('copyweights').addEventListener('click', () => copy($('weights').textContent, $('copymsg')));
+// Download blend saves the record as a file to upload to the chat, and also posts it
+// to the page that embeds this one, for hosts that listen.
 $('download').addEventListener('click', () => {
   const r = record();
   const name = `blend_weights_${r.init || 'init'}_lead${r.lead}.json`;
@@ -346,8 +319,11 @@ $('download').addEventListener('click', () => {
     const a = Object.assign(document.createElement('a'), {href: url, download: name});
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    $('donemsg').textContent = 'Saved ' + name + ' (where this viewer allows downloads)';
-  } catch (e) { $('donemsg').textContent = 'Downloads are blocked here; copy the text instead'; }
+    $('status').textContent = `Downloaded ${name}: upload it to your chat.`;
+  } catch (e) {
+    $('status').textContent = 'The download was blocked; paste the weights below into your chat instead.';
+  }
+  try { if (window.parent !== window) window.parent.postMessage({type: 'weather-skills-blend', record: r}, '*'); } catch (e) {}
 });
 $('equal').addEventListener('click', () => { w = new Array(n).fill(1 / n); refresh(); });
 
