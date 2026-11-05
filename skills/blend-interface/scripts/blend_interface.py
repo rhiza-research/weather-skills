@@ -108,6 +108,10 @@ local small(k) = layer('m%d' % k, cells[k], '%{{z:.1f}} {units}<extra></extra>',
     + (if anomaly then ws.classBar(ws.palettes.{anom_palette or palette}, {j(anom_units)}, coloraxis='coloraxis2', y=0.05, len=0.85) else {{}})
     + {{
       title: {{text: {j(title)}, subtitle: {{text: {j(subtitle)}}}}},
+      // Only the blend has longitude labels, so most of ws.grid's bottom margin is
+      // empty; trim it (and the height with it) so the controls below sit close.
+      height: super.height - (super.margin.b - 30),
+      margin+: {{b: 30}},
       // The blend spans every row on the right, with room for its latitude labels.
       ['xaxis' + ax(b)]+: {{domain: [{small_cols} / {cols} + gap, 1 - gap / 2], showticklabels: true}},
       ['yaxis' + ax(b)]+: {{domain: [gap / 2, 1 - gap / 2], showticklabels: true}},
@@ -244,7 +248,7 @@ button { font: inherit; padding: 5px 10px; border-radius: 6px; border: 1px solid
 button:hover { border-color: #2563eb; }
 button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
 .muted { color: #5b6573; font-variant-numeric: tabular-nums; }
-.steps { margin: 10px 0 0; padding: 8px 12px; max-width: 900px; background: #eef4ff; border: 1px solid #c9dafc; border-radius: 6px; }
+.steps { padding: 5px 10px; background: #eef4ff; border: 1px solid #c9dafc; border-radius: 6px; }
 .bar { display: flex; gap: 10px; align-items: center; padding: 10px 16px 0; flex-wrap: wrap; }
 .wslider { position: absolute; display: flex; flex-direction: column; gap: 1px; z-index: 5; }
 .wslider .lab { display: flex; justify-content: space-between; gap: 6px; font-weight: 600; white-space: nowrap; }
@@ -259,7 +263,7 @@ pre { margin: 6px 0 0; padding: 8px 10px; background: #f4f6f8; border: 1px solid
 .seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
 .seg button:last-child { border-radius: 0 6px 6px 0; }
 .seg button.on { background: #1b1f24; border-color: #1b1f24; color: #fff; }
-.footer { padding: 0 16px 20px; max-width: 1100px; }
+.footer { padding: 0 16px 16px; max-width: 1100px; }
 .footer h3 { font-size: 13px; margin: 8px 0 0; }
 </style>"""
 
@@ -269,10 +273,11 @@ _TOOLBAR = """<div class="bar"><button id="equal" type="button">Reset to equal w
 <div class="bar"><span class="muted" id="readout"></span></div>"""
 
 # Everything to hand back sits together under the maps.
-_FOOTER = """<div class="footer"><p class="steps">When satisfied, either download or copy the blend and give it to the agent.</p>
-<h3>Blend weights</h3><pre id="weights"></pre>
-<div class="bar" style="padding:8px 0 0"><button id="download" class="primary" type="button">Download blend</button>
-<span id="status"></span></div></div>"""
+_FOOTER = """<div class="footer"><div class="bar" style="padding:0">
+<button id="download" class="primary" type="button">Download blend</button>
+<span class="steps">When satisfied, either download or copy the blend and give it to the agent.</span>
+<span id="status"></span></div>
+<pre id="weights"></pre></div>"""
 
 # Runs after Plotly draws the figure; {plot_id} is the figure's div. The footer
 # comes after the figure in the page, so wait for the whole document.
