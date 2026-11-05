@@ -56,6 +56,26 @@ def _spacing(da):
     return max(grid_spacing(da[lat_dim].values), grid_spacing(da[lon_dim].values))
 
 
+def _write_grid(target, workdir):
+    """The target lat/lon as a small Zarr for coarsen / downscale --reference-grid.
+
+    Written fresh because those skills open the reference with plain xr.open_zarr,
+    which can't read an input given as a zipped Zarr.
+    """
+    import numpy as np
+    import xarray as xr
+
+    lat_dim, lon_dim = detect_spatial_dims(target)
+    lat, lon = target[lat_dim].values, target[lon_dim].values
+    grid = xr.Dataset(
+        {"grid": (("latitude", "longitude"), np.zeros((lat.size, lon.size), dtype="float32"))},
+        coords={"latitude": lat, "longitude": lon},
+    )
+    path = Path(workdir) / "grid.zarr"
+    grid.to_zarr(path, mode="w", consolidated=True)
+    return path
+
+
 def _regrid(path, variable, reference, finer, workdir, label):
     """Put one input on the reference grid with coarsen (finer input) or downscale (coarser)."""
     import xarray as xr
@@ -123,7 +143,7 @@ def _parse_weights(text, labels, absent):
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument("--lead", type=int, default=1)
 @weather_skill.argument("--weights")
-@weather_skill.argument("--reference-grid")
+@weather_skill.argument("--reference-grid", type=Dataset("spatial"))
 @weather_skill.argument("--keep-members", action="store_true")
 def blend(ds, label, variable, lead, weights, reference_grid, keep_members, **kwargs):
     """Blend several forecasts at one lead into one weighted mean on a common grid."""
@@ -163,19 +183,18 @@ def blend(ds, label, variable, lead, weights, reference_grid, keep_members, **kw
         raise UsageError(f"only {len(kept)} input(s) reach lead {lead}; need at least two")
 
     # Target grid: --reference-grid, else the grid most inputs share (ties: the earliest).
-    if reference_grid:
-        target = xr.open_zarr(reference_grid)
-        ref_path = Path(reference_grid)
+    if reference_grid is not None:
+        target = reference_grid
     else:
         keys = [_grid_key(da) for _, _, da, _ in kept]
         best = Counter(keys).most_common(1)[0][1]
-        first = next(k for k, key in enumerate(keys) if Counter(keys)[key] == best)
-        target, ref_path = kept[first][2], kept[first][1]
+        target = kept[next(k for k, key in enumerate(keys) if Counter(keys)[key] == best)][2]
     target_key, target_res = _grid_key(target), _spacing(target)
     lat_t, lon_t = (np.asarray(v) for v in target_key)
 
     fields = []
     with tempfile.TemporaryDirectory(prefix="blend-") as work:
+        ref_path = _write_grid(target, work)
         for lab, path, da, dim in kept:
             if _grid_key(da) != target_key:
                 da = _regrid(path, variable, ref_path, _spacing(da) < target_res * 0.99, work, lab)
