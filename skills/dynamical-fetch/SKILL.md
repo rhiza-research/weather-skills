@@ -7,11 +7,7 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.11"
   catalog-group: fetchers
-  variables:
-    - precipitation_surface
-    - temperature_2m
-    - temperature_850hpa
-    - geopotential_height_500hpa
+  variables: "precipitation_surface temperature_2m temperature_850hpa geopotential_height_500hpa"
 ---
 
 # dynamical-fetch

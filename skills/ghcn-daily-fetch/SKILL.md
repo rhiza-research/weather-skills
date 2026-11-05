@@ -7,11 +7,7 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.9"
   catalog-group: fetchers
-  variables:
-    - precip
-    - tmax
-    - tmin
-    - tavg
+  variables: "precip tmax tmin tavg"
 ---
 
 # ghcn-daily-fetch

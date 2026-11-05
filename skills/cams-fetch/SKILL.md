@@ -7,28 +7,8 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.5"
   catalog-group: fetchers
-  variables:
-    - pm25
-    - pm10
-    - no2
-    - o3
-    - aod550
-    - so2
-    - co
-    - pm1
-    - duaod550
-    - tcno2
-    - tco3
-    - tcco
-    - tcso2
-  openclaw:
-    requires:
-      env:
-        - ADS_API_KEY
-    primaryEnv: ADS_API_KEY
-    envVars:
-      - name: ADS_API_KEY
-        description: Personal token from https://ads.atmosphere.copernicus.eu/profile
+  variables: "pm25 pm10 no2 o3 aod550 so2 co pm1 duaod550 tcno2 tco3 tcco tcso2"
+  required-env: "ADS_API_KEY"
 ---
 
 # cams-fetch
