@@ -27,16 +27,16 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/blend_interface.py -i A.zarr -i B.zarr [-i ..
 
 ### Output
 An HTML page with plotly.js inside (about 5 MB), so it works offline and in any viewer that runs JavaScript:
-- Instructions at the top: set the weights, press **Download blend**, upload the file to the chat.
+- One line at the top: "When satisfied, either download or copy the blend and give it to the agent."
 - A small map per forecast, each with a 0–1 weight slider. Moving one rescales the others in proportion so they add to 1. **Reset to equal weights** undoes it.
 - The blend on the right, recomputed as the sliders move with blend's rule (NaN where any weighted forecast is NaN). Hovering it lists every forecast's value in that cell.
-- Under the maps, the weights as a dictionary (`{"gefs": 0.5, ...}`, four decimals adding to 1).
-- **Download blend** saves `blend_weights_<init>_lead<N>.json`: inputs, variable, lead, init, valid date and weights, the record blend takes as `--weights`. It also posts `{type: "weather-skills-blend", record}` to the embedding page (`window.parent.postMessage`), for hosts that listen.
+- Under the maps, the weights as one line of JSON (`{"gefs":0.5,...}`, four decimals adding to 1), to copy by hand.
+- **Download blend** saves that same line as `blend_weights_<init>_lead<N>.json`. It also posts `{type: "weather-skills-blend", record}` (inputs, variable, lead, init, valid date, weights) to the embedding page (`window.parent.postMessage`), for hosts that listen.
 - The address keeps the current weights after `#w=`, so a reload or shared link opens on them.
 
 ### Notes
-- To finish a blend: the user uploads the downloaded file to the chat; run blend with the same `-i` files and `--label` values and `--weights <file>`.
-- The download lands on the viewer's own computer, not in the agent's sandbox. Where a viewer blocks downloads, the page says so; the weights dictionary under the maps can be selected and pasted into the chat as `--weights` instead.
+- To finish a blend, the user uploads `blend_weights_<init>_lead<N>.json` or pastes the weights line from under the maps. Run blend with the same `-i` files, `--lead` and `--label` values as the page, and `--weights <file or pasted text>`.
+- The download lands on the viewer's own computer, not in the agent's sandbox; where a viewer blocks downloads, the page says so and the weights line can be pasted instead.
 - The page is about 1,500 px wide; narrower windows cut off the blend and colorbar.
 
 ### Example
