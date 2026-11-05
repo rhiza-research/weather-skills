@@ -235,7 +235,8 @@ def blend_interface(input, label, variable, lead, weights, reference_grid, anoma
         config={"scrollZoom": True, "showSendToCloud": False, "displaylogo": False},
     )
     page = page.replace("<head>", "<head>\n<title>Forecast Blend</title>\n" + _CSS, 1)
-    page = page.replace("<body>", "<body>\n" + _TOOLBAR, 1).replace("</body>", _FOOTER + "\n</body>", 1)
+    page = page.replace("<body>", '<body>\n<div class="page">\n' + _TOOLBAR, 1)
+    page = page.replace("</body>", _FOOTER + "\n</div>\n</body>", 1)
     out = Path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(page, encoding="utf-8")
@@ -243,6 +244,10 @@ def blend_interface(input, label, variable, lead, weights, reference_grid, anoma
 
 
 _CSS = """<style>
+/* The page scrolls in its own box, so it scrolls in viewers that show it at a fixed
+   height without scrolling the frame. */
+html, body { height: 100%; overflow: hidden; }
+.page { height: 100vh; overflow-x: auto; overflow-y: scroll; }
 body { margin: 0; background: #fff; color: #1b1f24; font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; }
 button { font: inherit; padding: 5px 10px; border-radius: 6px; border: 1px solid #c8ced6; background: #fff; cursor: pointer; }
 button:hover { border-color: #2563eb; }
