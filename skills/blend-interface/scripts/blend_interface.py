@@ -199,14 +199,13 @@ pre { margin: 6px 0 0; padding: 8px 10px; background: #f4f6f8; border: 1px solid
 .footer h3 { font-size: 13px; margin: 8px 0 0; }
 </style>"""
 
-_TOOLBAR = """<p class="steps"><b>To blend:</b> set the weights with the sliders, press <b>Download blend</b>,
-then upload the downloaded file to your chat to generate the blended Zarr.</p>
+_TOOLBAR = """<p class="steps">When satisfied, either download or copy the blend and give it to the agent.</p>
 <div class="bar"><button id="download" class="primary" type="button">Download blend</button>
 <button id="equal" type="button">Reset to equal weights</button>
 <span class="muted" id="sum"></span><span id="status"></span></div>
 <div class="bar"><span class="muted" id="readout"></span></div>"""
 
-_FOOTER = """<div class="footer"><h3>Weights</h3><pre id="weights"></pre></div>"""
+_FOOTER = """<div class="footer"><h3>Blend weights</h3><pre id="weights"></pre></div>"""
 
 # Runs after Plotly draws the figure; {plot_id} is the figure's div. The footer
 # comes after the figure in the page, so wait for the whole document.
@@ -248,7 +247,8 @@ function weightMap() {
   r[w.indexOf(Math.max(...w))] += 10000 - r.reduce((a, b) => a + b, 0);
   return Object.fromEntries(S.labels.map((l, m) => [l, r[m] / 10000]));
 }
-const record = () => Object.assign({}, S.record, {weights: weightMap()});
+// The text under the maps and the downloaded file are this same string.
+const recordText = () => JSON.stringify(weightMap());
 
 gd.parentElement.style.position = 'relative';
 const boxes = S.labels.map((lab, m) => {
@@ -301,7 +301,7 @@ function refresh() {
     box.style.opacity = w[m] < 0.005 ? 0.55 : 1;
   });
   $('sum').textContent = 'Sum of weights: ' + w.reduce((a, b) => a + b, 0).toFixed(2);
-  $('weights').textContent = JSON.stringify(weightMap());
+  $('weights').textContent = recordText();
   Plotly.restyle(gd, {z: [blended()]}, [S.blend]);
   try {
     const tag = S.labels.map((l, m) => `${l}:${w[m].toFixed(4)}`).join(',');
@@ -312,16 +312,16 @@ function refresh() {
 // Download blend saves the record as a file to upload to the chat, and also posts it
 // to the page that embeds this one, for hosts that listen.
 $('download').addEventListener('click', () => {
-  const r = record();
+  const text = recordText(), r = Object.assign({}, S.record, {weights: JSON.parse(text)});
   const name = `blend_weights_${r.init || 'init'}_lead${r.lead}.json`;
   try {
-    const url = URL.createObjectURL(new Blob([JSON.stringify(r, null, 1)], {type: 'application/json'}));
+    const url = URL.createObjectURL(new Blob([text], {type: 'application/json'}));
     const a = Object.assign(document.createElement('a'), {href: url, download: name});
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     $('status').textContent = `Downloaded ${name}: upload it to your chat.`;
   } catch (e) {
-    $('status').textContent = 'The download was blocked; paste the weights below into your chat instead.';
+    $('status').textContent = 'The download was blocked; copy the text below the maps into your chat instead.';
   }
   try { if (window.parent !== window) window.parent.postMessage({type: 'weather-skills-blend', record: r}, '*'); } catch (e) {}
 });
