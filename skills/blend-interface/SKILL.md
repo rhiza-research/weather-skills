@@ -29,11 +29,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/blend_interface.py -i A.zarr -i B.zarr [-i ..
 
 ### Output
 An HTML page with plotly.js inside (about 5 MB), so it works offline and in any viewer that runs JavaScript:
-- One line at the top: "When satisfied, either download or copy the blend and give it to the agent."
 - A small map per forecast, each with a 0–1 weight slider. Moving one rescales the others in proportion so they add to 1. **Reset to equal weights** undoes it.
 - The blend on the right, recomputed as the sliders move with blend's rule (NaN where any weighted forecast is NaN). Hovering it lists every forecast's value in that cell.
 - With `--anomaly`, a **Totals / Anomaly** toggle that switches every map and the colorbar; the weights carry over.
-- Under the maps, the weights as one line of JSON (`{"gefs":0.5,...}`, four decimals adding to 1), to copy by hand.
+- Under the maps, together: the line "When satisfied, either download or copy the blend and give it to the agent.", the weights as one line of JSON (`{"gefs":0.5,...}`, four decimals adding to 1) to copy by hand, and **Download blend**.
 - **Download blend** saves that same line as `blend_weights_<init>_lead<N>.json`. It also posts `{type: "weather-skills-blend", record}` (inputs, variable, lead, init, valid date, weights) to the embedding page (`window.parent.postMessage`), for hosts that listen.
 - The address keeps the current weights after `#w=`, so a reload or shared link opens on them.
 

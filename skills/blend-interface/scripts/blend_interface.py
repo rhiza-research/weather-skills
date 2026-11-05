@@ -244,7 +244,7 @@ button { font: inherit; padding: 5px 10px; border-radius: 6px; border: 1px solid
 button:hover { border-color: #2563eb; }
 button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
 .muted { color: #5b6573; font-variant-numeric: tabular-nums; }
-.steps { margin: 10px 16px 0; padding: 8px 12px; max-width: 900px; background: #eef4ff; border: 1px solid #c9dafc; border-radius: 6px; }
+.steps { margin: 10px 0 0; padding: 8px 12px; max-width: 900px; background: #eef4ff; border: 1px solid #c9dafc; border-radius: 6px; }
 .bar { display: flex; gap: 10px; align-items: center; padding: 10px 16px 0; flex-wrap: wrap; }
 .wslider { position: absolute; display: flex; flex-direction: column; gap: 1px; z-index: 5; }
 .wslider .lab { display: flex; justify-content: space-between; gap: 6px; font-weight: 600; white-space: nowrap; }
@@ -263,14 +263,16 @@ pre { margin: 6px 0 0; padding: 8px 10px; background: #f4f6f8; border: 1px solid
 .footer h3 { font-size: 13px; margin: 8px 0 0; }
 </style>"""
 
-_TOOLBAR = """<p class="steps">When satisfied, either download or copy the blend and give it to the agent.</p>
-<div class="bar"><button id="download" class="primary" type="button">Download blend</button>
-<button id="equal" type="button">Reset to equal weights</button>
+_TOOLBAR = """<div class="bar"><button id="equal" type="button">Reset to equal weights</button>
 <span class="seg" id="view" hidden><button type="button" data-view="totals" class="on">Totals</button><button type="button" data-view="anomaly">Anomaly</button></span>
-<span class="muted" id="sum"></span><span id="status"></span></div>
+</div>
 <div class="bar"><span class="muted" id="readout"></span></div>"""
 
-_FOOTER = """<div class="footer"><h3>Blend weights</h3><pre id="weights"></pre></div>"""
+# Everything to hand back sits together under the maps.
+_FOOTER = """<div class="footer"><p class="steps">When satisfied, either download or copy the blend and give it to the agent.</p>
+<h3>Blend weights</h3><pre id="weights"></pre>
+<div class="bar" style="padding:8px 0 0"><button id="download" class="primary" type="button">Download blend</button>
+<span id="status"></span></div></div>"""
 
 # Runs after Plotly draws the figure; {plot_id} is the figure's div. The footer
 # comes after the figure in the page, so wait for the whole document.
@@ -367,7 +369,6 @@ function refresh() {
     box.querySelector('output').textContent = w[m].toFixed(2);
     box.style.opacity = w[m] < 0.005 ? 0.55 : 1;
   });
-  $('sum').textContent = 'Sum of weights: ' + w.reduce((a, b) => a + b, 0).toFixed(2);
   $('weights').textContent = recordText();
   if (A) Plotly.restyle(gd, {z: [blended(Z), blended(A)]}, [S.blend, S.anomaly.blend]);
   else Plotly.restyle(gd, {z: [blended(Z)]}, [S.blend]);
