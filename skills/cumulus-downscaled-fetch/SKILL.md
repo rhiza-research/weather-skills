@@ -29,6 +29,8 @@ Fetches one Cumulus downscaled init (all leads, ensemble mean or members) and wr
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--source SUBFOLDER] [--model diffusion|flow-matching|unet] [--target era5|imerg] [--members] [--date YYYY-MM-DD] [--bbox N/W/S/E] -o OUT.zarr
 # Latest init date with output (no download)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--source SUBFOLDER] --probe-latest [MODEL]
+# Sources, inits, and the models, checkpoints and targets at one init (no download)
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--source SUBFOLDER] [--date YYYY-MM-DD] --list
 ```
 
 ### Arguments
@@ -50,6 +52,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--source SUBFOLDER] --probe-latest 
 - `--variable`, `-v` — the product holds one field, written as `tp`. Accepts `tp`, `precip`, `precipitation`, `total_precipitation` or `precip_24h`; anything else exits 2. Optional.
 - `--workers` — maximum concurrent file downloads, at least 1. Default: 16.
 - `--probe-latest` — print the latest init date (`YYYY-MM-DD`, or `none`) with output on stdout and exit. Optional value: a `--model` name.
+- `--list` — print the `--source` subfolders, the inits of `--source`, and each model folder, checkpoint and target at `--date` (default: the latest init) on stdout, then exit. Use it once, before a fetch, when the source, model or checkpoint name is not known; do not guess names to read them from errors.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output

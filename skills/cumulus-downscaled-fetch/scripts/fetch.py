@@ -143,6 +143,16 @@ def _azure_error(exc: Exception, what: str) -> DataError:
         "on stdout and exit. Optional IDENT selects a --model."
     ),
 )
+@weather_skill.argument(
+    "--list",
+    dest="list_",
+    action="store_true",
+    probe=True,
+    help=(
+        "Print the sources, the inits of --source, and every model, checkpoint and "
+        "target at --date (default: the latest init) on stdout, then exit."
+    ),
+)
 def fetch(
     source,
     model,
@@ -153,6 +163,7 @@ def fetch(
     bbox,
     variable,
     probe_latest,
+    list_,
     workers,
     **kwargs,
 ):
@@ -214,8 +225,25 @@ def fetch(
         with xr.open_dataset(io.BytesIO(raw), engine="h5netcdf") as ds:
             return ds["precip_24h"].squeeze("time", drop=True).load()
 
-    # Walk back from the newest init to the first that has this model.
     all_inits = [i for i in ls(root) if _INIT_RE.fullmatch(i)]
+    if list_:
+        # One call shows every name --source, --model, --checkpoint and --target accept.
+        print(f"sources: {', '.join(ls(_BASE)) or 'none'}")
+        print(f"inits of {source}: {', '.join(all_inits) or 'none'}")
+        shown = date.isoformat() if date else (all_inits[-1] if all_inits else None)
+        if shown not in all_inits:
+            if shown:
+                print(f"init {shown}: none")
+            return
+        print(f"init {shown}:")
+        for folder in ls(f"{root}/{shown}"):
+            print(f"  model {folder}")
+            for ckpt in ls(f"{root}/{shown}/{folder}"):
+                found = ls(f"{root}/{shown}/{folder}/{ckpt}")
+                names = [t for t in _TARGETS if _TARGETS[t] in found]
+                print(f"    checkpoint {ckpt} (targets: {', '.join(names) or 'none'})")
+        return
+    # Walk back from the newest init to the first that has this model.
     inits = all_inits
     if date is not None:
         inits = [i for i in inits if i == date.isoformat()]
@@ -247,7 +275,7 @@ def fetch(
         elif models:
             hint = f"That init has model folders: {', '.join(models)}. Pass one as --model."
         else:
-            hint = "Pass --probe-latest to see the latest init with output, or try another --model."
+            hint = "Run --list to see the inits, models and checkpoints there."
         raise DataError(
             f"no Cumulus downscaled output for model {model!r}"
             + (f", checkpoint matching {checkpoint!r}" if checkpoint else "")

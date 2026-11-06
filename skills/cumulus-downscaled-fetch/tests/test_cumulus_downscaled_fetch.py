@@ -222,6 +222,22 @@ def test_unknown_source_lists_subfolders(tmp_path, fetch_mod, remote, capsys):
     assert "aurora, aurora-imerg" in capsys.readouterr().err
 
 
+def test_list_shows_names_without_reading_files(fetch_mod, remote, capsys):
+    remote["tree"]["data/live_forecasts/downscaled_models"] = ["aurora", "aurora-imerg"]
+    run_skill(fetch_mod.fetch, "--list", "--date", "2026-10-20")
+    out = capsys.readouterr().out
+    assert "sources: aurora, aurora-imerg" in out
+    assert "inits of aurora: 2026-10-20, 2026-10-27" in out
+    assert f"  model {DIFF}\n    checkpoint ckpt-a (targets: era5)" in out
+    assert f"  model {UNET}" in out
+    assert remote["read"] == []
+    run_skill(fetch_mod.fetch, "--list")
+    out = capsys.readouterr().out
+    assert "init 2026-10-27:" in out and UNET not in out
+    run_skill(fetch_mod.fetch, "--list", "--source", "nope")
+    assert "inits of nope: none" in capsys.readouterr().out
+
+
 def test_missing_date_exits_1(tmp_path, fetch_mod, remote):
     with pytest.raises(SystemExit) as exc:
         run_skill(fetch_mod.fetch, "--date", "2020-01-01", "-o", str(tmp_path / "unused.zarr"))
