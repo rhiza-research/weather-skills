@@ -135,6 +135,7 @@ def _read(paths, units):
 @weather_skill.argument(
     "--netcdf",
     type=Path,
+    source=True,
     action="append",
     help="NetCDF file to read (repeatable, joined on coordinates); -o names the .zarr to write.",
 )
