@@ -403,3 +403,41 @@ def test_script_links_recorded_input_to_upstream(tmp_path, provenance, capsys):
         f"--spec {spec} --output rep.zarr"
     ) in captured
     assert captured.count("--input") == 2
+
+
+def test_script_reads_imported_file_from_its_recorded_flag(tmp_path, provenance, capsys):
+    # An imported CSV is recorded as the input and as --csv; it is read in place.
+    step = {
+        "skill": "csv-io",
+        "version": "0.0.1",
+        "args": {"csv": "/x/rain.csv"},
+        "input": {"basename": "rain.csv", "hash": "h"},
+    }
+    history = [step, {**_fetch("drop"), "input": {"basename": "step1.zarr", "hash": "h"}}]
+    out = _stamp_history(tmp_path / "rep.zarr", history)
+
+    captured = _script(provenance, out, capsys)
+
+    assert "csv-io --csv /x/rain.csv --output step1.zarr" in captured
+    assert "drop --input step1.zarr --output rep.zarr" in captured
+    assert "<UPSTREAM>" not in captured
+
+
+def test_script_keeps_imported_join_files_at_recorded_paths(tmp_path, provenance, capsys):
+    # Several imported NetCDF files record a join whose parents have no history.
+    step = {
+        "skill": "netcdf-io",
+        "version": "0.0.1",
+        "args": {"netcdf": ["/x/a.nc", "/x/b.nc"]},
+        "input": [
+            {"basename": "a.nc", "hash": "h", "history": []},
+            {"basename": "b.nc", "hash": "h", "history": []},
+        ],
+    }
+    out = _stamp_history(tmp_path / "rep.zarr", [step])
+
+    captured = _script(provenance, out, capsys)
+
+    assert "netcdf-io --netcdf /x/a.nc --netcdf /x/b.nc --output rep.zarr" in captured
+    assert "--input" not in captured
+    assert "yourself" not in captured

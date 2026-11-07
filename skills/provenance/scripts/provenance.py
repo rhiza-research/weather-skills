@@ -303,9 +303,23 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
         flags = JOIN_FLAGS.get(skill, [])
         branches = _parent_histories(step)
         args = step.get("args") if isinstance(step.get("args"), dict) else {}
-        # A skill that declares its own input flag (not dataset-typed) keeps the
-        # paths in its recorded args, so nothing is appended for it.
-        carried = [d for d in ["input"] + [f[2:].replace("-", "_") for f in flags] if args.get(d)]
+        read = {
+            item.get("basename")
+            for item in (step_input if isinstance(step_input, list) else [step_input])
+            if isinstance(item, dict)
+        }
+        # A skill that takes a file through its own flag (not a dataset-typed
+        # --input) keeps the path in its recorded args, as PATH or PATH=NAME:
+        # those args carry the inputs, so nothing is appended for them.
+        carried = [
+            dest
+            for dest, value in args.items()
+            if any(
+                Path(str(v).rpartition("=")[0] or str(v)).name in read
+                for v in (value if isinstance(value, list) else [value])
+                if v is not None
+            )
+        ]
         # Basename of each file this step read -> the path it has in the replay.
         sources = {}
 
@@ -317,13 +331,16 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
                 lines.append(f"# --- input branch {label} ---")
                 if history:
                     lines += _emit_graph(history, f"{prefix}{label}_", branch_out)
+                    sources[basename] = branch_out
+                elif carried:
+                    # A file from outside the skills: read from its recorded path.
+                    lines.append(f"# branch {label} is {basename}, read from its recorded path.")
                 else:
                     lines.append(
                         f"# branch {label} records no steps; "
                         f"supply {basename} as {branch_out} yourself."
                     )
                 branch_outputs.append(branch_out)
-                sources[basename] = branch_out
                 lines.append("")
             lines.append(f"# --- combine the input branches ({skill}) ---")
             inputs = [
