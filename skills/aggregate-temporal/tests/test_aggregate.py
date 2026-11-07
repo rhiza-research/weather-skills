@@ -926,3 +926,39 @@ def test_window_on_uneven_leads_weights_by_duration(tmp_path, aggregate):
     assert float(rolled["precip"].values[at[18]]) == pytest.approx(2.5)
     assert float(rolled[AGGREGATION_COVERAGE_COORD].values[at[18]]) == pytest.approx(1.0)
     assert float(rolled[AGGREGATION_COVERAGE_COORD].values[at[60]]) == pytest.approx(0.5)
+
+
+def _overlapping_weekly_means(n, fill=2.0):
+    """One 7-day mean every 2 days, as for a week-1 lead labeled at each forecast init."""
+    times = np.datetime64("2026-01-01", "ns") + np.arange(n) * np.timedelta64(2, "D")
+    attrs = {"units": "mm day-1", "standard_name": "lwe_precipitation_rate"}
+    attrs["data_interval"] = "7 day"
+    return xr.Dataset(
+        {"precip": (("time", "latitude", "longitude"), np.full((n, 1, 1), fill), attrs)},
+        coords={"time": times, "latitude": [1.0], "longitude": [10.0]},
+    )
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["--period", "monthly"], ["--period", "28 day", "--end-time", "2026-03-01"]],
+    ids=["monthly", "28-day-any-end"],
+)
+def test_overlapping_samples_aggregate_by_overlap(tmp_path, aggregate, args):
+    """Overlapping weekly means are binned by overlap, not refused, and cover a bin once."""
+    src = write_zarr(_overlapping_weekly_means(40), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), *args)
+    ds = xr.open_zarr(out, consolidated=True)
+    np.testing.assert_allclose(ds["precip"].values[:, 0, 0], 2.0)
+    # Bins wholly inside the series are complete, though ~14 samples overlap in each.
+    assert ds[AGGREGATION_COVERAGE_COORD].values.max() == pytest.approx(1.0)
+
+
+def test_overlapping_samples_coverage_counts_covered_days_once(tmp_path, aggregate):
+    """Inits on days 0-8 cover days 0-15 of a 28-day bin: 15/28, not 5 x 7/28."""
+    src = write_zarr(_overlapping_weekly_means(5), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--period", "28 day")
+    cov = xr.open_zarr(out, consolidated=True)[AGGREGATION_COVERAGE_COORD].values
+    assert cov.tolist() == pytest.approx([15 / 28])

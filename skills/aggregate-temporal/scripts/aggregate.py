@@ -185,6 +185,16 @@ def aggregate(
                 break
         else:
             cell = data_interval_of(ds)
+        # Samples spaced closer than their cell overlap (one weekly mean per forecast
+        # init, inits days apart): they cannot tile bins whole, so weight each
+        # [t, t + cell) by its overlap with the bin, as for CF bounds.
+        raw = np.asarray(ds[dim].values)
+        if cell and raw.dtype.kind in "Mm" and raw.size > 1:
+            cell_ns = round(float(parse_aggregation_period(cell).to("ns").magnitude))
+            if np.diff(np.sort(_as_ns(raw))).min() < cell_ns:
+                bounds = np.stack([raw, raw + np.timedelta64(cell_ns, "ns")], axis=1)
+                starts, ends = _as_ns(bounds[:, 0]), _as_ns(bounds[:, 1])
+                cell = None
 
     key = period or window
     flag = "--period" if period else "--window"
@@ -219,7 +229,7 @@ def aggregate(
 
     # --period at the input's own spacing: nothing to aggregate, just stamp it.
     same = False
-    if window is None and native_interval:
+    if window is None and native_interval and bounds is None:
         try:
             same = parse_aggregation_period(agg) == parse_aggregation_period(native_interval)
         except UsageError:
@@ -424,7 +434,15 @@ def aggregate(
                 idx = np.flatnonzero(overlap > 0)
                 if idx.size == 0 or right_ns <= left_ns:
                     continue
-                coverage = float((overlap * present)[idx].sum()) / (right_ns - left_ns)
+                # Covered time counts once, however many overlapping samples cover it.
+                covered, reach = 0, left_ns
+                held = idx[present[idx] > 0]
+                for lo, hi in sorted(zip(starts[held].tolist(), ends[held].tolist(), strict=True)):
+                    lo, hi = max(lo, reach), min(hi, right_ns)
+                    if hi > lo:
+                        covered += hi - lo
+                        reach = hi
+                coverage = covered / (right_ns - left_ns)
             else:
                 idx = np.flatnonzero((raw >= left) & (raw < right))
                 if idx.size == 0:
