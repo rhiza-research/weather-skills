@@ -65,6 +65,6 @@ Writes 6-hour mean GFS precip rates; hourly and 3-hourly leads are weighted by t
 
 **Coverage.** A sample counts only when some cell has data (a fixed land mask does not count as missing; an all-NaN unpublished lead does). Re-aggregated input counts at its own coverage, so a 3/7 week inside a 14-day window gives 10/14.
 
-**Irregular axes.** Inputs with CF `{dim}_bounds` are weighted by sample duration (`sum(rate × dt) / sum(dt)`).
+**Irregular axes.** Inputs with CF `{dim}_bounds` are weighted by sample duration (`sum(rate × dt) / sum(dt)`). Samples spaced closer than their `data_interval` (one weekly mean per forecast init, inits days apart) overlap, so each `[t, t + data_interval)` is weighted by its overlap with the bin the same way, at any period or `--end-time`; coverage counts each covered day once.
 
 **Calendar dekads.** Fetch the dekad and pass its length with `--end-time` the day after it: 21–31 Oct is `--period '11 day' --end-time 2026-11-01`.
