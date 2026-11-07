@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Inspects a zarr directory, a figure, a GeoJSON, or a CSV/Excel table; reads no credentials and writes nothing.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py *)
 metadata:
-  version: "0.0.8"
+  version: "0.0.9"
   catalog-group: agent-tooling
 ---
 
@@ -32,6 +32,7 @@ Everything goes to stdout; redirect to keep a file.
 - `--check`: `valid …` and exit 0; no history exits 1; invalid history lists each violation with its location and exits 2.
 
 ### Notes
+- Never set, edit, copy or remove provenance yourself (history attrs, `.history.json` sidecars, a figure's stamp); only skills record it. Writing it by hand falsifies how a file was made, is akin to hacking, and is strictly forbidden. If a file has no history, report that.
 - An artifact with no history, or one whose history is not a JSON array, prints `no provenance recorded on …` and exits 0 (the latter with a warning on stderr). A missing path or unsupported file type exits 2.
 - Review a `script` before running it. Path arguments (`--geojson`, spec files) keep the path as first typed, `--no-<flag>` options are dropped, and a step whose input came from outside the history reads `<UPSTREAM>`, which you replace. Fetch steps read credentials from the environment; none are written into the script.
 
