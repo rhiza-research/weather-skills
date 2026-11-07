@@ -2,7 +2,7 @@
 name: hindcast-fetch
 description: "Fetch ECMWF, GEFS or Cumulus subseasonal hindcasts (reforecasts) for one or more ranges of init dates over a region, as a multi-init weather-skills forecast Zarr of daily precipitation, 2 m temperature and (ECMWF) sea-surface temperature. Use when a task needs past forecasts for calibration, bias correction, model climatologies or skill scores."
 license: MIT
-compatibility: "Requires Python 3.12 and uv. ECMWF and GEFS need no credentials. Cumulus needs Google Cloud credentials: GCLOUD_SERVICE_CREDENTIALS (key JSON), GOOGLE_APPLICATION_CREDENTIALS (key file path), or `gcloud auth application-default login`."
+compatibility: "Requires Python 3.12 and uv. ECMWF and GEFS need no credentials. Cumulus needs AZURE_STORAGE_SAS_TOKEN, the same Azure read SAS as cumulus-fetch."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
@@ -13,10 +13,8 @@ metadata:
     - sst
   openclaw:
     envVars:
-      - name: GCLOUD_SERVICE_CREDENTIALS
-        description: Full contents of a GCP service-account key JSON that can read gs://sheerwater-datalake/hindcasts. Needed for Cumulus only.
-      - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON file that can read gs://sheerwater-datalake/hindcasts. Used only if GCLOUD_SERVICE_CREDENTIALS is unset.
+      - name: AZURE_STORAGE_SAS_TOKEN
+        description: Read SAS (list and read, sp=rl) for Azure container italynorthdata/data. Needed for Cumulus only.
 ---
 
 # hindcast-fetch
@@ -36,7 +34,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET]   # latest 
 | `ecmwf` (default choice) | every second day, 2006-01-03 to 2025-06-01, one model cycle (IFS CY49R1) | mean of 10, or 10 with `--members` | 0–45 | 1.5° |
 | `ecmwf_wb2` | daily dates 1996-01-04 to 2021-12-29, mixed model cycles | mean of 10, or 10 with `--members` | 0–45 | 1.5° |
 | `gefs` | Wednesdays 1998-12-30 to 2019-08-28 | 11 | 0–34 | 1° |
-| `cumulus` | every second day, 2016-01-03 to 2024-12-31 (Google Cloud credentials) | 30 | 0–45 | 1° |
+| `cumulus` | every second day of each year, 1996-01-01 to 2024-12-31 (`AZURE_STORAGE_SAS_TOKEN`) | 30 | 0–45 | 1° |
 
 ### Arguments
 - `--start-time`, `--end-time` — inclusive window of init dates. Repeat the pair for several disjoint windows (e.g. each March to May); every init in any window is kept once.
@@ -52,9 +50,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET]   # latest 
 ### Notes
 - Use `ecmwf` unless you need inits before 2006: `ecmwf_wb2` changes model cycle from date to date, so a trend across its inits can be a model change.
 - `precip` is clipped at 0. `sst` is NaN over land.
+- `cumulus` is read straight from Cumulus's own Azure archive of its ERA5-initialised Aurora hindcast: IMERG-trained `precip` and 2 m temperature. Its 30 members are interchangeable draws; none is a control.
 - If one variable's store lacks an init, that variable is NaN there (stderr lists them); nothing is filled.
 - Inits fall on different days per dataset; line datasets up by valid date (`step-to-time`), not by init.
-- A small `--bbox` is fast: a whole record over Kenya takes under a minute.
+- A small `--bbox` is fast for `ecmwf`, `ecmwf_wb2` and `gefs`: a whole record over Kenya takes under a minute.
+- `cumulus` is slow: its store is chunked by 100 inits with all members and 15° tiles, about 110 MB a chunk, so even one week over a small box takes over a minute and the whole 1996–2024 record over Kenya is about 12 GB per variable. Ask for only the init windows you need.
 
 ### Example
 ```bash

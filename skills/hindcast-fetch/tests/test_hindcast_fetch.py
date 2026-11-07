@@ -10,7 +10,7 @@ from conftest import load_skill, run_skill
 from weather_skills_core.provenance import load_history
 
 PUB = "gs://sheerwater-public-datalake/hindcasts"
-PRIV = "gs://sheerwater-datalake/hindcasts"
+AZ = "az://data/ml_reforecasts/gratis-czajkowski-era5/zarr"
 
 
 @pytest.fixture(scope="module")
@@ -71,11 +71,12 @@ def stores(mod, monkeypatch):
             "precip", ["2017-10-04", "2017-10-11", "2017-10-18"], [0, 1], 2.0, order=STORE_ORDER
         ),
         f"{PUB}/gefs_tmp2m.zarr": _store("tmp2m", ["2017-10-11"], [0, 1], 25.0, order=STORE_ORDER),
-        f"{PRIV}/cumulus_precip.zarr": _store(
-            "precip", CUM_INITS, [0, 1, 2], -0.6, order=STORE_ORDER
+        # As _open_store maps them; the variables keep Cumulus's own names.
+        f"{AZ}/total_precipitation_24h_acc_imerg.zarr": _store(
+            "total_precipitation_24h_acc_imerg", CUM_INITS, [0, 1, 2], -0.6, order=STORE_ORDER
         ),
-        f"{PRIV}/cumulus_tmp2m.zarr": _store(
-            "tmp2m", CUM_INITS, [0, 1, 2], 300.0, order=STORE_ORDER
+        f"{AZ}/2m_temperature.zarr": _store(
+            "2m_temperature", CUM_INITS, [0, 1, 2], 300.0, order=STORE_ORDER
         ),
     }
     opened = []
@@ -107,7 +108,7 @@ def test_ecmwf_reads_planette_mean_of_members(tmp_path, fetch, stores):
         np.testing.assert_allclose(ds["precip"].isel(step=0, latitude=0, longitude=0), [3.25, 3.25])
         assert ds["step"].values[1] == np.timedelta64(1, "D")
         assert ds.attrs["weather_skills_source"] == (
-            "sheerwater:sheerwater-public-datalake/hindcasts/ecmwf_planette_precip.zarr"
+            "gs://sheerwater-public-datalake/hindcasts/ecmwf_planette_precip.zarr"
         )
         assert ds.attrs["hindcast_dataset"] == "ecmwf"
 
@@ -159,7 +160,7 @@ def test_ecmwf_wb2_precip_mean_of_members(tmp_path, fetch, stores):
         assert ds["precip"].attrs["units"] == "mm day-1"
         assert ds["step"].values[1] == np.timedelta64(1, "D")
         assert ds.attrs["weather_skills_source"] == (
-            "sheerwater:sheerwater-public-datalake/hindcasts/ecmwf_ifs_precip.zarr"
+            "gs://sheerwater-public-datalake/hindcasts/ecmwf_ifs_precip.zarr"
         )
         assert ds.attrs["hindcast_dataset"] == "ecmwf_wb2"
     assert load_history(out)[-1]["skill"] == "hindcast-fetch"
@@ -276,36 +277,56 @@ def test_public_store_opens_anonymously_without_gcsfs(mod, monkeypatch):
     assert seen["decode_timedelta"] is True  # most stores keep steps as integer days
 
 
-def test_private_store_uses_credentials(mod, monkeypatch):
+def test_azure_store_maps_cumulus_layout(mod, monkeypatch):
+    """Cumulus's own Zarr: ensemble_member, lead_time at the window end, latitude/longitude."""
     seen = {}
 
-    class FakeFS:
-        def __init__(self, token):
-            seen["token"] = token
+    class FakeStore:
+        fs = None
 
-        def get_mapper(self, path):
-            seen["path"] = path
-            return path
+        @classmethod
+        def from_url(cls, url, storage_options, read_only):
+            seen.update(url=url, **storage_options)
+            return cls()
 
-    monkeypatch.setitem(sys.modules, "gcsfs", types.SimpleNamespace(GCSFileSystem=FakeFS))
-    monkeypatch.setattr(
-        mod.xr, "open_zarr", lambda mapper, **kwargs: seen.update(kwargs) or "store"
+    raw = xr.Dataset(
+        {"2m_temperature": (("init_time", "lead_time", "ensemble_member", "latitude", "longitude"),
+                            np.zeros((1, 2, 3, 2, 2), dtype=np.float32))},
+        coords={"init_time": np.array(["1996-01-01"], dtype="datetime64[ns]"),
+                "lead_time": np.array([1, 2], dtype="timedelta64[D]").astype("timedelta64[ns]"),
+                "ensemble_member": np.arange(3, dtype=np.int16),
+                "latitude": [1.0, 0.0], "longitude": [0.0, 359.0],
+                "valid_time": (("init_time", "lead_time"), np.zeros((1, 2), dtype="datetime64[ns]"))},
+    )  # fmt: skip
+    monkeypatch.setitem(
+        sys.modules,
+        "zarr",
+        types.SimpleNamespace(storage=types.SimpleNamespace(FsspecStore=FakeStore)),
     )
-    monkeypatch.setenv("GCLOUD_SERVICE_CREDENTIALS", '{"type": "service_account"}')
-    assert mod._open_store(f"{PRIV}/cumulus_precip.zarr") == "store"
-    assert seen["decode_timedelta"] is True
-    assert seen["token"] == {"type": "service_account"}
-    assert seen["path"] == "sheerwater-datalake/hindcasts/cumulus_precip.zarr"
+    monkeypatch.setattr(mod.xr, "open_zarr", lambda store, **kw: raw)
+    monkeypatch.setenv("AZURE_STORAGE_SAS_TOKEN", "?sv=2024&sp=rl&sig=abc")
+    ds = mod._open_store(f"{AZ}/2m_temperature.zarr")
+    mod._AZURE_FS.clear()
+    assert seen["url"] == f"{AZ}/2m_temperature.zarr"
+    assert seen["account_name"] == "italynorthdata"
+    assert seen["sas_token"] == "sv=2024&sp=rl&sig=abc"
+    assert set(ds.dims) == {"init_time", "prediction_timedelta", "member", "lat", "lon"}
+    assert "valid_time" not in ds.coords
+    # The 24 h window ending at init + 1 day starts at init.
+    assert ds["prediction_timedelta"].values.tolist() == [0, 86_400_000_000_000]
 
 
-def test_private_store_without_credentials_exits_1(tmp_path, mod, fetch, monkeypatch):
-    class FailingFS:
-        def __init__(self, token):
-            raise RuntimeError("no credentials")
-
-    monkeypatch.setitem(sys.modules, "gcsfs", types.SimpleNamespace(GCSFileSystem=FailingFS))
-    monkeypatch.delenv("GCLOUD_SERVICE_CREDENTIALS", raising=False)
+def test_cumulus_without_sas_exits_nonzero(tmp_path, mod, fetch, monkeypatch, capsys):
+    monkeypatch.delenv("AZURE_STORAGE_SAS_TOKEN", raising=False)
     with pytest.raises(SystemExit) as exc:
         run_skill(fetch, "--dataset", "cumulus", "--start-time", "2024-12-01", "--end-time", "2024-12-31",
                   "-o", str(tmp_path / "x.zarr"))  # fmt: skip
-    assert exc.value.code == 1
+    assert exc.value.code != 0
+    assert "AZURE_STORAGE_SAS_TOKEN" in capsys.readouterr().err
+
+
+def test_azure_errors_redact_the_sas_signature(mod):
+    text = mod._redact(
+        RuntimeError("GET https://x/y?sv=1&sig=SECRET123&se=2 failed; sig%3DSECRET456")
+    )
+    assert "SECRET" not in text
