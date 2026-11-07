@@ -1,6 +1,6 @@
 ---
 name: weathernext-fetch
-description: "Fetch a Google WeatherNext AI forecast for one init or a range of inits over an optional lat/lon box, as a weather-skills Zarr: WeatherNext 2 (64-member ensemble, 6-hourly leads to 15 days, 0.25° global, from 2022) or WeatherNext 3 (64-member ensemble or its precomputed mean and percentiles, hourly leads to 15 days, 0.1° global, from 2026). Precipitation, 2 m temperature and dewpoint, winds, sea-level pressure, SST, cloud, radiation and pressure-level fields. WeatherNext 2 surface fields come from the dynamical.org catalog with no login; everything else reads the gs://weathernext buckets with a Google Cloud login. Use for any WeatherNext forecast."
+description: "Fetch a Google WeatherNext AI forecast for one init or a range of inits over an optional lat/lon box, as a weather-skills Zarr: WeatherNext 2 (64-member ensemble, 6-hourly leads to 15 days, 0.25° global, from 2022) or WeatherNext 3 (64-member ensemble or its precomputed mean and percentiles, hourly leads to 15 days, 0.1° global, from 2026). Precipitation, 2 m temperature (and dewpoint, WeatherNext 3 only), winds, sea-level pressure, SST, cloud, radiation and pressure-level fields. WeatherNext 2 surface fields come from the dynamical.org catalog with no login; everything else reads the gs://weathernext buckets with a Google Cloud login. Use for any WeatherNext forecast."
 license: MIT
 compatibility: "Requires Python 3.12 and uv. Reads WeatherNext 2 surface fields from the public dynamical.org catalog (no credentials) and everything else from the WeatherNext 2 and 3 realtime archives on GCS via gcsfs. GCS reads need Google Cloud credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login` — any authenticated Google account works, the buckets have no special allowlist; a Google account is free with sign-up at https://accounts.google.com/signup. WeatherNext 3 ensemble reads are requester pays and need a billing project (--billing-project or GOOGLE_CLOUD_PROJECT)."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -57,7 +57,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--version 3 ...] --probe-latest [--
 
 WeatherNext 2 picks its source per request, and one stderr line (`Source: ...`) names it and, on GCS, why:
 - dynamical.org first, at any cycle (00/06/12/18 UTC), when every `-v` is a catalog field: `precip`, `t2m`, `sst`, `msl`, `u10`, `v10`, `u100`, `v100`. No credentials needed.
-- GCS when it is not (`d2m`, pressure levels, or no `-v`), or when the catalog cannot be opened or read, or lacks a complete init for the date (for windows: lacks every init in them). With windows, each init the catalog lacks or is still publishing is skipped with a `WARNING` naming it (not filled, not read from GCS).
+- GCS when it is not (pressure levels, or no `-v`), or when the catalog cannot be opened or read, or lacks a complete init for the date (for windows: lacks every init in them). With windows, each init the catalog lacks or is still publishing is skipped with a `WARNING` naming it (not filled, not read from GCS).
 - Inits before 2025 exist only in the catalog: a request that does not fit it, or a catalog failure, exits 1.
 
 GCS reads need Google Cloud credentials: `GCLOUD_SERVICE_CREDENTIALS` (key JSON), `GOOGLE_APPLICATION_CREDENTIALS` (key file path), or `gcloud auth application-default login`. WeatherNext 3 always reads GCS; its ensemble reads are requester pays and exit 2 without a billing project.
@@ -104,7 +104,7 @@ Writes WeatherNext 3 hourly mean and 90th-percentile precip over Kenya for 3 day
 ## Details
 
 ### Variables
-- Aliases for both versions: `precip`/`tp`/`precipitation`/`pr`, `t2m`, `d2m`, `u10`, `v10`, `u100`, `v100`, `msl`, `sst`; pressure levels `t`, `u`, `v`, `w`, `q`, `z`/`geopotential`.
+- Aliases for both versions: `precip`/`tp`/`precipitation`/`pr`, `t2m`, `d2m` (WeatherNext 3 only; WeatherNext 2 has no dewpoint), `u10`, `v10`, `u100`, `v100`, `msl`, `sst`; pressure levels `t`, `u`, `v`, `w`, `q`, `z`/`geopotential`.
 - WeatherNext 3 adds `tcc`, `lcc`, `mcc`, `hcc`, `ssrd`, `si10`/`si100` (statistics only), `z300`, `z500`, `t300`, `t500`, `u1000`, `v1000`, `imerg_precip`, `experimental_precip`, `total_sky_direct_solar_radiation_at_surface_1hr`, and the 0.05° `station_head_temperature_2m` / `station_head_dewpoint_temperature_2m`.
 - Native names also work (`total_precipitation_1hr`, `total_precipitation_1hr_p90`). WeatherNext 3 fields shared with WeatherNext 2 take the same ERA5-style names (`2m_temperature`, `10m_u_component_of_wind`, …).
 - A statistic named in `-v` (`precip_p90`) keeps only that statistic; a plain name (`precip`) keeps every statistic `--statistic` allows. A `-v` statistic that `--statistic` excludes exits 2.
