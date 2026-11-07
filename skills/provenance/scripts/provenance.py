@@ -284,11 +284,22 @@ def _command(step: dict, inputs: list, output: str) -> str:
     return line
 
 
+def _recorded_path(item) -> tuple:
+    """``(path, sep, name)`` of a recorded PATH or PATH=NAME arg item."""
+    path, sep, name = str(item).rpartition("=")
+    return (path, sep, name) if sep else (str(item), "", "")
+
+
 def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
     """Emit one command per step; a join step first reproduces each parent subgraph.
 
     A join can sit anywhere on the path (its output feeding later steps), so every
     step is checked, and nested joins recurse.
+
+    A step whose args name every file it read (core records each input's path)
+    is replayed from its args alone: each named file becomes the file the replay
+    makes for it, and a file with no history is read from its recorded path.
+    Older histories, whose args leave inputs out, have their input flags added.
     """
     lines = []
     prev = None
@@ -302,6 +313,21 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
         output = final_output if i == n else f"{prefix}{i}.zarr"
         flags = JOIN_FLAGS.get(skill, [])
         branches = _parent_histories(step)
+        args = step.get("args") if isinstance(step.get("args"), dict) else {}
+        read = [
+            item.get("basename")
+            for item in (step_input if isinstance(step_input, list) else [step_input])
+            if isinstance(item, dict)
+        ]
+        named = {
+            Path(_recorded_path(v)[0]).name
+            for value in args.values()
+            for v in (value if isinstance(value, list) else [value])
+            if isinstance(v, str)
+        }
+        recorded = bool(read) and all(name in named for name in read)
+        # Basename of each file this step read -> the file the replay makes for it.
+        replay = {}
 
         if len(branches) >= 2:
             branch_outputs = []
@@ -311,6 +337,9 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
                 lines.append(f"# --- input branch {label} ---")
                 if history:
                     lines += _emit_graph(history, f"{prefix}{label}_", branch_out)
+                    replay[basename] = branch_out
+                elif recorded:
+                    lines.append(f"# branch {label} is {basename}, read from its recorded path.")
                 else:
                     lines.append(
                         f"# branch {label} records no steps; "
@@ -336,10 +365,27 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
             inputs = []
         elif prev is not None:
             inputs = [("--input", prev)]
+        elif recorded:
+            inputs = []
         else:
             lines.append(f"# step {i} ({skill})'s input is an artifact outside this chain;")
             lines.append("# reproduce it separately and replace <UPSTREAM> below.")
             inputs = [("--input", "<UPSTREAM>")]
+
+        if recorded:
+            if prev is not None and len(branches) < 2:
+                replay[read[0]] = prev
+            relinked = {}
+            for dest, value in args.items():
+                items = []
+                for item in value if isinstance(value, list) else [value]:
+                    path, sep, name = (
+                        _recorded_path(item) if isinstance(item, str) else ("", "", "")
+                    )
+                    base = Path(path).name
+                    items.append(replay[base] + sep + name if base in replay else item)
+                relinked[dest] = items if isinstance(value, list) else items[0]
+            step, inputs = {**step, "args": relinked}, []
 
         lines.append(_command(step, inputs, output))
         prev = output

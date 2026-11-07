@@ -34,7 +34,7 @@ Everything goes to stdout; redirect to keep a file.
 ### Notes
 - Never set, edit, copy or remove provenance yourself (history attrs, `.history.json` sidecars, a figure's stamp); only skills record it. Writing it by hand falsifies how a file was made, is akin to hacking, and is strictly forbidden. If a file has no history, report that.
 - An artifact with no history, or one whose history is not a JSON array, prints `no provenance recorded on …` and exits 0 (the latter with a warning on stderr). A missing path or unsupported file type exits 2.
-- Review a `script` before running it. Path arguments (`--geojson`, spec files) keep the path as first typed, `--no-<flag>` options are dropped, and a step whose input came from outside the history reads `<UPSTREAM>`, which you replace. Fetch steps read credentials from the environment; none are written into the script.
+- Review a `script` before running it. Each step's input files are the paths recorded in its args, swapped for the files the script makes; a file with no history of its own (an imported table, a GeoJSON outline, a spec file) keeps its recorded path, relative to the folder the step ran in. `--no-<flag>` options are dropped. In histories written before core recorded input paths, a step whose input came from outside the history reads `<UPSTREAM>`, which you replace. Fetch steps read credentials from the environment; none are written into the script.
 
 ### Example
 ```bash
