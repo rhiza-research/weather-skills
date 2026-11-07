@@ -1,5 +1,6 @@
 """Correctness tests for weathernext-fetch (network / remote Zarr mocked)."""
 
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +14,19 @@ from weather_skills_core.units import units_equal
 @pytest.fixture(scope="module")
 def fetch_mod():
     return load_skill("weathernext-fetch", "fetch")
+
+
+class _NoCatalog:
+    """dynamical_catalog stand-in that is unreachable: WeatherNext 2 falls back to GCS."""
+
+    @staticmethod
+    def list():
+        raise ConnectionError("catalog unreachable (test stub)")
+
+
+@pytest.fixture(autouse=True)
+def _no_live_catalog(monkeypatch):
+    monkeypatch.setitem(sys.modules, "dynamical_catalog", _NoCatalog)
 
 
 def _lead_hours(ds):
@@ -883,3 +897,219 @@ def test_init_window_with_no_init_exits_1(tmp_path, fetch_mod, monkeypatch):
             str(tmp_path / "x.zarr"),
         )
     assert exc.value.code == 1
+
+
+# --- WeatherNext 2 from the dynamical.org catalog -----------------------------
+
+
+def _catalog_like(native, init="2026-09-25T00:00"):
+    """The dynamical.org copy of ``native``: y/x, degC, kg m-2, an init_time axis."""
+    lead = native["time"].values.astype("timedelta64[ns]")
+    inits = np.array([init], dtype="datetime64[ns]")
+    dims = ("init_time", "ensemble_member", "lead_time", "y", "x")
+    attrs = {"comment": "catalog attrs are dropped", "step_type": "instant"}
+    return xr.Dataset(
+        {
+            "total_precipitation_surface": (
+                dims,
+                native["total_precipitation_6hr"].values[None] * np.float32(1000),
+                {"units": "kg m-2", "step_type": "accum"},
+            ),
+            "temperature_2m": (
+                dims,
+                native["2m_temperature"].values[None] - np.float32(273.15),
+                {"units": "degree_Celsius", **attrs},
+            ),
+        },
+        coords={
+            "init_time": inits,
+            "ensemble_member": native["sample"].values.astype("int16"),
+            "lead_time": lead,
+            "valid_time": (("init_time", "lead_time"), inits[:, None] + lead[None]),
+            "expected_forecast_length": ("init_time", [np.timedelta64(360, "h")]),
+            "y": native["lat"].values.astype("float64"),
+            "x": native["lon"].values.astype("float64"),
+            "spatial_ref": 0,
+        },
+        attrs={"dataset_id": "x", "license": "y"},
+    )
+
+
+def _mock_catalog(monkeypatch, ds, opened=None):
+    """dynamical_catalog stand-in serving ``ds``; ``ds=None`` fails to read."""
+    opened = [] if opened is None else opened
+
+    class _Catalog:
+        @staticmethod
+        def list():
+            return [
+                "google-weathernext2-forecast-operational-virtual",
+                "google-weathernext2-forecast-historical-virtual",
+            ]
+
+        @staticmethod
+        def open(dataset, **kwargs):
+            opened.append(dataset)
+            if ds is None:
+                raise OSError("catalog read failed")
+            return ds.copy(deep=True)
+
+    monkeypatch.setitem(sys.modules, "dynamical_catalog", _Catalog)
+    return opened
+
+
+def _no_gcs(monkeypatch, fetch_mod):
+    def boom(*args, **kwargs):
+        raise AssertionError("GCS touched on the catalog path")
+
+    for name in ("_filesystem", "_open_remote", "_store_exists", "_list_init_stamps"):
+        monkeypatch.setattr(fetch_mod, name, boom)
+
+
+def test_v2_00z_surface_fields_come_from_catalog_without_gcs(
+    tmp_path, fetch_mod, monkeypatch, capsys
+):
+    opened = _mock_catalog(monkeypatch, _catalog_like(_native_predictions()))
+    _no_gcs(monkeypatch, fetch_mod)
+    out = tmp_path / "cat.zarr"
+    run_skill(fetch_mod.fetch, "--date", "2026-09-25", "-v", "tp", "-v", "t2m", "-o", str(out))
+    assert opened == ["google-weathernext2-forecast-operational-virtual"]
+    assert "Source: dynamical.org google-weathernext2-forecast-operational-virtual" in (
+        capsys.readouterr().err
+    )
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds.attrs["weather_skills_source"] == "weathernext:20260925_00hr_01_preds"
+
+
+def test_v2_06z_comes_from_catalog(tmp_path, fetch_mod, monkeypatch, capsys):
+    _mock_catalog(monkeypatch, _catalog_like(_native_predictions(), init="2026-09-25T06:00"))
+    _no_gcs(monkeypatch, fetch_mod)
+    out = tmp_path / "cat06.zarr"
+    argv = ["--date", "2026-09-25", "--cycle", "6", "-v", "t2m", "-o", str(out)]
+    run_skill(fetch_mod.fetch, *argv)
+    assert "Source: dynamical.org" in capsys.readouterr().err
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds.attrs["weather_skills_source"] == "weathernext:20260925_06hr_01_preds"
+
+
+@pytest.mark.parametrize(
+    ("argv", "catalog_opened"),
+    [
+        (["-v", "t2m", "-v", "d2m"], []),  # dewpoint is GCS only
+        (["-v", "t2m"], ["google-weathernext2-forecast-operational-virtual"]),  # read fails
+    ],
+)
+def test_v2_falls_back_to_gcs(tmp_path, fetch_mod, monkeypatch, capsys, argv, catalog_opened):
+    remote = _native_predictions()
+    remote["2m_dewpoint_temperature"] = remote["2m_temperature"] - 5
+    opened = _mock_catalog(monkeypatch, None)
+    seen = []
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, *args: True)
+    monkeypatch.setattr(
+        fetch_mod, "_open_remote", lambda stamp, *a: seen.append(stamp) or remote.copy(deep=True)
+    )
+    run_skill(fetch_mod.fetch, "--date", "2026-09-25", *argv, "-o", str(tmp_path / "g.zarr"))
+    err = capsys.readouterr().err
+    assert opened == catalog_opened
+    assert "Source: gs://weathernext/" in err
+    assert ("catalog read failed" in err) == bool(catalog_opened)
+    assert seen and seen[0].startswith("20260925_")
+
+
+def test_v2_catalog_and_gcs_write_the_same_dataset(tmp_path, fetch_mod, monkeypatch):
+    native = _native_predictions(members=2)
+    hours = np.array([6.0, 12.0, 18.0, 24.0], dtype="float32")
+    native["2m_temperature"].values[:] = (273.15 + hours)[None, :, None, None]
+    native["total_precipitation_6hr"].values[:] = (hours / 1000.0)[None, :, None, None]
+    native["total_precipitation_6hr"].values[0, 0, 0, 0] = -0.0001  # clipped at zero
+    argv = ["--date", "2026-09-25", "-v", "precip", "-v", "t2m", "--bbox", "3/9/0/12"]
+
+    _mock_catalog(monkeypatch, _catalog_like(native))
+    _no_gcs(monkeypatch, fetch_mod)
+    run_skill(fetch_mod.fetch, *argv, "-o", str(tmp_path / "cat.zarr"))
+
+    monkeypatch.setitem(sys.modules, "dynamical_catalog", _NoCatalog)
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, *args: True)
+    monkeypatch.setattr(fetch_mod, "_open_remote", lambda *a: native.copy(deep=True))
+    run_skill(fetch_mod.fetch, *argv, "-o", str(tmp_path / "gcs.zarr"))
+
+    cat = xr.open_zarr(tmp_path / "cat.zarr", consolidated=True)
+    gcs = xr.open_zarr(tmp_path / "gcs.zarr", consolidated=True)
+    assert set(cat.data_vars) == set(gcs.data_vars) == {"precip", "2m_temperature"}
+    assert dict(cat.sizes) == dict(gcs.sizes)
+    assert set(cat.coords) == set(gcs.coords)
+    for name in [*cat.data_vars, *cat.coords]:
+        assert cat[name].dims == gcs[name].dims, name
+        assert cat[name].dtype == gcs[name].dtype, name
+        assert cat[name].attrs == gcs[name].attrs, name
+    assert _lead_hours(cat) == _lead_hours(gcs) == [0, 6, 12, 18, 24]
+    assert cat["precip"].attrs["units"] == "mm day-1"
+    assert cat["2m_temperature"].attrs["units"] == "degree_Celsius"
+    for name in ("valid_time", "time", "number", "lat", "lon"):
+        np.testing.assert_array_equal(cat[name].values, gcs[name].values)
+    for name in cat.data_vars:
+        np.testing.assert_allclose(cat[name].values, gcs[name].values, rtol=1e-5, atol=1e-5)
+    assert float(cat["precip"].min()) == 0.0
+    assert cat.attrs["weather_skills_source"] == gcs.attrs["weather_skills_source"]
+
+
+def test_v2_pre_2025_inits_use_the_historical_catalog(tmp_path, fetch_mod, monkeypatch):
+    opened = _mock_catalog(
+        monkeypatch, _catalog_like(_native_predictions(), init="2024-03-01T00:00")
+    )
+    _no_gcs(monkeypatch, fetch_mod)
+    out = tmp_path / "hist.zarr"
+    run_skill(fetch_mod.fetch, "--date", "2024-03-01", "-v", "precip", "-o", str(out))
+    assert opened == ["google-weathernext2-forecast-historical-virtual"]
+    with pytest.raises(SystemExit) as exc:  # dewpoint is not in the catalog, and GCS starts 2025
+        run_skill(fetch_mod.fetch, "--date", "2024-03-01", "-v", "d2m", "-o", str(out))
+    assert exc.value.code == 1
+
+
+def test_v2_catalog_skips_an_init_still_publishing(tmp_path, fetch_mod, monkeypatch, capsys):
+    native = _native_predictions()
+    native["2m_temperature"].values[:, -1] = np.nan
+    _mock_catalog(monkeypatch, _catalog_like(native))
+    monkeypatch.setattr(fetch_mod, "_store_exists", lambda stamp, *args: True)
+    monkeypatch.setattr(fetch_mod, "_open_remote", lambda *a: _native_predictions())
+    run_skill(fetch_mod.fetch, "--date", "2026-09-25", "-v", "t2m", "-o", str(tmp_path / "o.zarr"))
+    err = capsys.readouterr().err
+    assert "20260925_00hr_01_preds is still publishing" in err
+    assert "Source: gs://weathernext/" in err
+
+
+@pytest.mark.parametrize("cycle", [[], ["--cycle", "18"]])
+def test_v2_probe_latest_uses_catalog(capsys, fetch_mod, monkeypatch, cycle):
+    import datetime as dt
+
+    yesterday = (dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)).isoformat()
+    native = _native_predictions()
+    _mock_catalog(monkeypatch, _catalog_like(native, init=f"{yesterday}T18:00"))
+    _no_gcs(monkeypatch, fetch_mod)
+    run_skill(fetch_mod.fetch, "--probe-latest", *cycle)
+    assert capsys.readouterr().out.strip() == yesterday
+
+
+def test_v2_catalog_window_warns_on_each_missing_init(tmp_path, fetch_mod, monkeypatch, capsys):
+    native = _native_predictions()
+    one = _catalog_like(native, init="2025-01-30T00:00")
+    cat = xr.concat(
+        [one, _catalog_like(native, init="2025-02-01T00:00")],
+        "init_time",
+        coords="different",
+        compat="equals",
+    )
+    _mock_catalog(monkeypatch, cat)
+    _no_gcs(monkeypatch, fetch_mod)
+    out = tmp_path / "w.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--start-time", "2025-01-30", "--end-time", "2025-02-01",
+        "-v", "t2m", "-o", str(out),
+    )  # fmt: skip
+    err = capsys.readouterr().err
+    assert "WARNING: dynamical.org has no init 20250131_00hr_01_preds; skipped." in err
+    assert err.count("dynamical.org has no init") == 1
+    with xr.open_zarr(out, consolidated=True) as ds:
+        days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+    assert days == ["2025-01-30", "2025-02-01"]  # the missing init is not filled

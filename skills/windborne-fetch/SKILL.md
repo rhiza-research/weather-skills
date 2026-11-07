@@ -89,7 +89,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--product P] --probe-latest
 ### Notes
 - Set `WB_CLIENT_ID` and `WB_API_KEY` in the environment for every call, including `--probe-latest`; without them it exits 2. Never write their values into files or commands.
 - For a point or sounding from an archived run, fetch the grid (with `--level` for profiles) and sample it with point-value.
-- Prefer dynamical-fetch for the ECMWF analysis when it carries what you need: it is credential-free with a longer history.
+- Prefer ecmwf-fetch for ECMWF fields when it carries what you need: it is credential-free with a longer history.
 
 ### Example
 ```bash

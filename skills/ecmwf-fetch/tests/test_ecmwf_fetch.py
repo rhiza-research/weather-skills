@@ -64,14 +64,18 @@ def test_ensure_datastores_url_does_not_override_explicit_env(mod):
         assert os.environ["ECMWF_DATASTORES_URL"] == "https://example.invalid"
 
 
-def test_unknown_variable_exits_2(tmp_path, fetch):
+def test_unknown_variable_exits_2(tmp_path, mod, fetch):
+    """A name that is neither a short name nor a catalog field is a usage error."""
     out = tmp_path / "out.zarr"
     env = {
         **os.environ,
         "ECMWF_DATASTORES_URL": "https://example.invalid",
         "ECMWF_DATASTORES_KEY": "dummy",
     }
-    with patch.dict(os.environ, env, clear=True):
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch.object(mod, "_open_catalog", return_value=_catalog_surface_ds()),
+    ):
         with pytest.raises(SystemExit) as exc:
             run_skill(
                 fetch,
@@ -377,20 +381,26 @@ def test_catalog_covers_mapped_fields_from_2026(mod):
     assert not mod._catalog_covers(date(2026, 1, 1), ["precip", "mx2t6"])
 
 
-def test_drop_empty_lead0_shifts_when_all_nan(mod):
-    ds = _catalog_surface_ds()[["precipitation_surface"]]
-    out = mod._drop_empty_lead0(ds)
-    assert out.sizes["lead_time"] == 2
+def _run_catalog(tmp_path, mod, fetch, *variables):
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_catalog", return_value=_catalog_surface_ds()):
+        run_skill(
+            fetch, "--date", "2026-01-01", "--bbox", "3/10/0/13", "-v", *variables, "-o", str(out)
+        )
+    return xr.open_zarr(out, consolidated=True)
+
+
+def test_empty_lead0_dropped_and_steps_shift_when_all_nan(tmp_path, mod, fetch):
+    out = _run_catalog(tmp_path, mod, fetch, "precip")
+    assert out.sizes["step"] == 2
     np.testing.assert_array_equal(
-        np.asarray(out["lead_time"].values).astype("timedelta64[D]"),
+        np.asarray(out["step"].values).astype("timedelta64[D]"),
         np.array([0, 1], dtype="timedelta64[D]"),
     )
 
 
-def test_drop_empty_lead0_keeps_instant_fields(mod):
-    ds = _catalog_surface_ds()[["wind_u_10m"]]
-    out = mod._drop_empty_lead0(ds)
-    assert out.sizes["lead_time"] == 3
+def test_empty_lead0_kept_for_instant_fields(tmp_path, mod, fetch):
+    assert _run_catalog(tmp_path, mod, fetch, "u10").sizes["step"] == 3
 
 
 def test_catalog_fetch_writes_precip_without_creds(tmp_path, mod, fetch):
@@ -427,7 +437,7 @@ def test_catalog_fetch_writes_precip_without_creds(tmp_path, mod, fetch):
 def test_catalog_fetch_pressure_group(tmp_path, mod, fetch):
     out = tmp_path / "out.zarr"
 
-    def open_catalog(group=None):
+    def open_catalog(dataset, group=None):
         if group == "pressure_level":
             return _catalog_pressure_ds()
         return _catalog_surface_ds()

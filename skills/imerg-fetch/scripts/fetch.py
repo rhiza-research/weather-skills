@@ -2,13 +2,15 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core>=0.3.6",
+#   "dynamical-catalog==1.0.1",
 #   "earthaccess",
 #   "h5netcdf",
 #   "h5py",
 # ]
 # ///
-"""Fetch NASA IMERG daily precipitation from GES DISC (Earthdata login) as a weather-skills Zarr."""
+"""Fetch NASA IMERG precipitation (Early, Late or Final) as a weather-skills Zarr."""
 
+import os
 import re
 import sys
 import tempfile
@@ -17,16 +19,28 @@ from pathlib import Path
 
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
-from weather_skills_core.standard_utils import ensure_normalized_longitude
+from weather_skills_core.standard_utils import (
+    bbox_subset,
+    ensure_normalized_longitude,
+    np_to_date,
+)
 from weather_skills_core.units import stamp_data_interval, to_standard_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.8"
 
+VERSIONS = ["early", "late", "final"]
+# dynamical.org half-hourly stores: no login, read only the bbox.
+CATALOG_IDS = {
+    "early": "nasa-imerg-analysis-early",
+    "late": "nasa-imerg-analysis-late",
+}
+# NASA GES DISC daily files: Earthdata login, one global file per day.
 SHORTNAMES = {
     "late": "GPM_3IMERGDL",
     "final": "GPM_3IMERGDF",
 }
+_STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
 _GRANULE_DATE_RE = re.compile(r"\.(\d{8})-S")
 _AUTH_FAIL_MSG = (
     "Earthdata authentication failed; configure EARTHDATA_USERNAME/"
@@ -51,13 +65,27 @@ def _login() -> None:
     raise DataError(_AUTH_FAIL_MSG)
 
 
+def _open_catalog(dataset):
+    """Open a dynamical.org store, retrying on the staging catalog if production lacks it."""
+    import dynamical_catalog
+
+    catalog = dynamical_catalog.list()
+    if dataset not in catalog:
+        os.environ["DYNAMICAL_STAC_CATALOG_URL"] = _STAGING_CATALOG
+        dynamical_catalog.clear_cache()
+        catalog = dynamical_catalog.list()
+    if dataset not in catalog:
+        raise DataError(f"{dataset} is not in the dynamical.org catalog (production or staging)")
+    return dynamical_catalog.open(dataset)
+
+
 @weather_skill(
     name="imerg-fetch",
     version=_SKILL_VERSION,
 )
 @weather_skill.argument("--start-time", required=True)
 @weather_skill.argument("--end-time", required=True)
-@weather_skill.argument("--version", default="late", choices=list(SHORTNAMES))
+@weather_skill.argument("--version", default="late", choices=VERSIONS)
 @weather_skill.argument("--bbox")
 @weather_skill.argument(
     "--probe-latest",
@@ -68,17 +96,28 @@ def _login() -> None:
     help=(
         "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
         "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "(IMERG early, late or final)."
     ),
 )
 def fetch(start_time, end_time, version, bbox, probe_latest, **kwargs):
-    """Fetch NASA IMERG daily precipitation from GES DISC (Earthdata login) as a weather-skills Zarr."""
+    """Fetch NASA IMERG precipitation (Early, Late or Final) as a weather-skills Zarr."""
     if probe_latest is not None:
+        import numpy as np
+
+        release = probe_latest or version
+        if release not in VERSIONS:
+            raise UsageError(f"unknown IMERG product {release!r}; choose early, late or final")
+        if release in CATALOG_IDS:
+            latest = np.max(_open_catalog(CATALOG_IDS[release])["time"].values)
+            if latest != latest.astype("datetime64[D]"):
+                print(
+                    f"Note: latest timestamp is {str(latest)[:16]}; that day is partial.",
+                    file=sys.stderr,
+                )
+            print(np_to_date(latest).isoformat())
+            return
         import earthaccess
 
-        release = probe_latest or version or "late"
-        if release not in SHORTNAMES:
-            raise UsageError(f"unknown IMERG product {release!r}; choose late or final")
         _login()
         # Newest granule first: Final can lag (or stop) far behind any fixed window.
         results = earthaccess.search_data(
@@ -104,9 +143,66 @@ def fetch(start_time, end_time, version, bbox, probe_latest, **kwargs):
     import numpy as np
     import xarray as xr
 
-    shortname = SHORTNAMES[version]
     start = start_time.isoformat()
     end = end_time.isoformat()
+
+    # Early and Late try dynamical.org first; Late falls back to GES DISC daily files.
+    fallback = None
+    if version in CATALOG_IDS:
+        dataset = CATALOG_IDS[version]
+        lo = np.datetime64(start)
+        hi = np.datetime64(end) + np.timedelta64(1, "D")
+        try:
+            ds = _open_catalog(dataset)
+            times = ds["time"].values
+        except Exception as exc:  # noqa: BLE001 — any catalog failure triggers the fallback
+            fallback = f"could not open dynamical.org {dataset} ({exc})"
+        else:
+            inside = (times >= lo) & (times < hi)
+            if not inside.any():
+                fallback = f"dynamical.org {dataset} has no data in {start}..{end}"
+        if fallback and version == "early":
+            raise DataError(f"{fallback}; IMERG Early has no other source.")
+
+    if version in CATALOG_IDS and fallback is None:
+        print(
+            f"Fetching IMERG {version} from dynamical:{dataset} {start} -> {end}", file=sys.stderr
+        )
+        # Keep every half-hourly step of the end day. The catalog lists only
+        # published times, so a window past the latest time comes back shorter.
+        # Say so; never pad.
+        spacing = times[1] - times[0] if len(times) > 1 else np.timedelta64(1, "D")
+        if times[inside][0] > lo or times[inside][-1] + spacing < hi:
+            print(
+                f"WARNING: {dataset} covers only {str(times[inside][0])[:16]}.."
+                f"{str(times[inside][-1])[:16]} of the requested {start}..{end}; "
+                "writing that partial window (not padded).",
+                file=sys.stderr,
+            )
+        ds = ds[["precipitation_surface"]].isel(time=np.nonzero(inside)[0])
+        ds = ds.drop_vars([c for c in ("spatial_ref",) if c in ds.coords])
+        if bbox is not None:
+            ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
+        else:
+            ds = ensure_normalized_longitude(ds, lon_dim="longitude")
+        ds = ds.rename({"precipitation_surface": "precip"}).sortby("latitude")
+        ds.attrs.update(
+            Conventions="CF-1.13",
+            weather_skills_source=f"dynamical:{dataset}",
+            source=f"dynamical.org {dataset} (IMERG {version.capitalize()} half-hourly, 0.1 degree)",
+            imerg_version=version,
+        )
+        stamp_cf_attrs(ds)
+        ds = to_standard_units(ds, variables=["precip"])
+        return stamp_data_interval(ds)
+
+    if fallback:
+        print(
+            f"NOTE: {fallback}; falling back to NASA GES DISC GPM_3IMERGDL. "
+            "Output is DAILY (data_interval 1 day), not half-hourly.",
+            file=sys.stderr,
+        )
+    shortname = SHORTNAMES[version]
 
     print(f"Fetching IMERG {version} ({shortname}) {start} -> {end}", file=sys.stderr)
 
