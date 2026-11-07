@@ -40,7 +40,7 @@ _STORE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}\.zarr$")
 # per live folder, <_HINDCAST_ROOT>/<folder>.zarr, holding every init (1996-2024, every
 # second day) with the same variable, grid and layout as that folder's live stores.
 # Chunks are 15° tiles over many inits (100 at 1°, 5 at 0.25°), about 100 MB each, so
-# any read downloads whole tiles. The run also has 2m_temperature.zarr (no live counterpart).
+# any read downloads whole tiles.
 _HINDCAST_ROOT = f"{_CONTAINER}/ml_reforecasts/gratis-czajkowski-era5/zarr"
 
 # --dataset name → variable folder. Each folder's stores hold that one variable.
@@ -51,6 +51,9 @@ _DATASETS = {
 }
 # Accepted -v names; the output variable is always ``precip``.
 _PRECIP_ALIASES = {"tp", "precip", "precipitation", "total_precipitation", *_DATASETS.values()}
+# 2 m temperature exists only in the hindcast (1°), as instants at init + lead; written as t2m.
+_T2M_FOLDER = "2m_temperature"
+_T2M_ALIASES = {"t2m", "2t", "tas", "temperature_2m", _T2M_FOLDER}
 DEFAULT_WORKERS = 8
 
 
@@ -147,17 +150,23 @@ def _to_standard(ds):
     import numpy as np
 
     (name,) = ds.data_vars
+    out = "t2m" if name == _T2M_FOLDER else "precip"
     ds = ds.squeeze("init_time").drop_vars("valid_time", errors="ignore")
     ds = ds.rename(
-        {name: "precip", "init_time": "time", "lead_time": "step", "ensemble_member": "number"}
+        {name: out, "init_time": "time", "lead_time": "step", "ensemble_member": "number"}
     )
     ds["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
-    # Each lead is the 24h total ending at init + lead; label it by the period start.
-    ds = ds.assign_coords(step=ds["step"] - np.timedelta64(24, "h"))
-    ds["precip"].attrs["comment"] = (
-        "24 h precipitation from init + step to init + step + 24 h "
-        "(cumulus-fetch relabelled store leads from period end to period start)."
-    )
+    if out == "t2m":
+        ds["t2m"].attrs["comment"] = (
+            "2 m temperature at init + step (an instant, not a daily mean)."
+        )
+    else:
+        # Each lead is the 24h total ending at init + lead; label it by the period start.
+        ds = ds.assign_coords(step=ds["step"] - np.timedelta64(24, "h"))
+        ds["precip"].attrs["comment"] = (
+            "24 h precipitation from init + step to init + step + 24 h "
+            "(cumulus-fetch relabelled store leads from period end to period start)."
+        )
     return ds.transpose("number", "step", "latitude", "longitude")
 
 
@@ -224,11 +233,21 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
         print(stores[-1][:10] if stores else "none")
         return
 
-    unknown = set(variable or ()) - _PRECIP_ALIASES
+    requested = set(variable or ())
+    unknown = requested - _PRECIP_ALIASES - _T2M_ALIASES
     if unknown:
         raise UsageError(
-            f"variable(s) not in this Cumulus product: {', '.join(sorted(unknown))}.\nAvailable: precip"
+            f"variable(s) not in this Cumulus product: {', '.join(sorted(unknown))}.\n"
+            "Available: precip, t2m (hindcast inits only)"
         )
+    temperature = bool(requested & _T2M_ALIASES)
+    if temperature and requested & _PRECIP_ALIASES:
+        raise UsageError("fetch t2m and precip in separate calls: they come from different grids.")
+    if temperature and dataset != "precip":
+        raise UsageError("--dataset selects a precip product; t2m has one 1° hindcast, so omit it.")
+    out = "t2m" if temperature else "precip"
+    if temperature:
+        folder = _T2M_FOLDER
 
     # One (start, end) pair per window; --end-time is an inclusive calendar day.
     windows = list(zip(start_time or [], end_time or [], strict=True))
@@ -238,12 +257,17 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
         )
 
     # Names sort by init date then hour, so the last match is the latest init.
-    stores = _list_stores(folder)
+    stores = [] if temperature else _list_stores(folder)
     # Inits before the first live store are read from the hindcast; one call reads one source.
     first_live = stores[0][:10] if stores else "9999-12-31"
     hindcast = date is not None and date.isoformat() < first_live
     if windows:
         hindcast = any(a.isoformat() < first_live for a, _ in windows)
+    if temperature and not hindcast:
+        raise UsageError(
+            "t2m comes only from the Cumulus hindcast (1996-2024; the live runs have no "
+            "temperature): pass --date or --start-time/--end-time in that range."
+        )
     hindcast_url = f"az://{_HINDCAST_ROOT}/{folder}.zarr"
     if hindcast:
         # Just the coordinates: list the hindcast inits under the live store names.
@@ -304,7 +328,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
                 if dates
                 else "Nothing is published. "
             )
-            + "Omit --date to take the latest."
+            + ("" if hindcast else "Omit --date to take the latest.")
         )
     if not windows:
         stores = stores[-1:]
@@ -324,7 +348,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
         # A range of inits: a `time` axis (the init). An init still writing its
         # long leads keeps them NaN (not filled); say which init is short.
         ds = xr.concat(pieces, "time", join="outer").transpose("time", "step", ...)
-        init_empty = ds["precip"].isnull().all(("number", "latitude", "longitude")).values
+        init_empty = ds[out].isnull().all(("number", "latitude", "longitude")).values
         if init_empty.all():
             raise DataError(
                 f"no selected Cumulus init has data in the requested bbox under {prefix}."
@@ -345,7 +369,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
         ds = pieces[0]
         # A fresh init may still be writing its long leads (all-NaN). Error when
         # nothing is there; drop an empty tail and say so instead of writing it.
-        empty = ds["precip"].isnull().all(("number", "latitude", "longitude")).values
+        empty = ds[out].isnull().all(("number", "latitude", "longitude")).values
         if empty.all():
             raise DataError(
                 f"Cumulus init {stores[-1]} has no data in the requested bbox (still publishing?). "

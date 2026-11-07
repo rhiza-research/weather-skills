@@ -456,3 +456,71 @@ def test_windows_crossing_live_start_exit_2(tmp_path, fetch_mod, hindcast, capsy
                   "-o", str(tmp_path / "x.zarr"))  # fmt: skip
     assert exc.value.code == 2
     assert "split the request at 2026-09-07" in capsys.readouterr().err
+
+
+@pytest.fixture
+def t2m_hindcast(fetch_mod, monkeypatch):
+    """The 2 m temperature hindcast: K instants, no live stores; records the opened urls."""
+    opened = []
+
+    def fake_open(url, bbox, workers, select=None):
+        opened.append(url)
+        ds = xr.concat(
+            [
+                _live_store(values=(280.0 + i, 281.0, 282.0)).assign_coords(
+                    init_time=[np.datetime64(d, "ns")],
+                    valid_time=(("init_time", "lead_time"), [[np.datetime64(d, "ns")] * 3]),
+                )
+                for i, d in enumerate(_HINDCAST_INITS)
+            ],
+            "init_time",
+        ).rename(total_precipitation_24h_acc_imerg_0p25="2m_temperature")
+        ds["2m_temperature"].attrs = {"units": "K", "long_name": "2 metre temperature"}
+        return select(ds) if select is not None else ds
+
+    def no_live(folder):
+        raise AssertionError("t2m must not list live stores")
+
+    monkeypatch.setattr(fetch_mod, "_list_stores", no_live)
+    monkeypatch.setattr(fetch_mod, "_open_store", fake_open)
+    return opened
+
+
+def test_t2m_reads_temperature_hindcast_as_instants(tmp_path, fetch_mod, t2m_hindcast):
+    out = tmp_path / "t.zarr"
+    run_skill(fetch_mod.fetch, "-v", "t2m", "--start-time", "2010-01-01", "--end-time", "2010-01-04",
+              "-o", str(out))  # fmt: skip
+    assert all(u.endswith("/2m_temperature.zarr") for u in t2m_hindcast)
+    with xr.open_zarr(out) as ds:
+        assert list(ds.data_vars) == ["t2m"]
+        assert ds["t2m"].attrs["units"] == "degree_Celsius"
+        assert ds.attrs["weather_skills_source"] == "cumulus-hindcast:2m_temperature"
+        # Instants keep the store's leads (init + 1 day onward); no period relabel.
+        assert ds["step"].values.astype("timedelta64[D]").astype(int).tolist() == [1, 2, 3]
+        np.testing.assert_allclose(ds["t2m"].values[:, 0, 0, 0, 0], [6.85, 7.85], atol=1e-4)
+
+
+@pytest.mark.parametrize(
+    "args, message",
+    [
+        (["-v", "t2m"], "only from the Cumulus hindcast"),
+        (["-v", "t2m", "-v", "precip", "--date", "2010-01-03"], "separate calls"),
+        (["-v", "t2m", "--dataset", "precip_era5", "--date", "2010-01-03"], "omit it"),
+    ],
+)
+def test_t2m_misuse_exits_2(tmp_path, fetch_mod, t2m_hindcast, capsys, args, message):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, *args, "-o", str(tmp_path / "x.zarr"))
+    assert exc.value.code == 2
+    assert message in capsys.readouterr().err
+
+
+def test_t2m_live_date_lists_hindcast_inits(tmp_path, fetch_mod, t2m_hindcast, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch, "-v", "t2m", "--date", "2026-10-01", "-o", str(tmp_path / "x.zarr")
+        )
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "Nearest published inits: 2010-01-01, 2010-01-03, 2010-01-05" in err
+    assert "Omit --date" not in err
