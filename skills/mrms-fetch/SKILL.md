@@ -2,7 +2,7 @@
 name: mrms-fetch
 description: "Fetch NOAA MRMS hourly radar-and-gauge precipitation analysis (0.01°, ~1 km, contiguous US, 2014 to a few hours ago) for a date range over a region from the public dynamical.org catalog, as a weather-skills Zarr. No credentials needed. Use when a task needs observed hourly rainfall over the United States."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
+compatibility: Requires Python 3.12 and uv. Reads public data from the dynamical.org catalog; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
@@ -15,9 +15,9 @@ metadata:
 
 Fetches the NOAA Multi-Radar Multi-Sensor (MRMS) hourly precipitation analysis from the [dynamical.org catalog](https://dynamical.org/catalog/), subset by bbox, time, and variables, as a weather-skills standard dataset Zarr.
 
-| Catalog id | Time step | Coverage |
-|---|---|---|
-| `noaa-mrms-conus-analysis-hourly` | hourly | 0.01° (~1 km), 20–55°N, 130–60°W, from 2014-11 |
+| Time step | Coverage |
+|---|---|
+| hourly | 0.01° (~1 km), 20–55°N, 130–60°W, from 2014-11 |
 
 ## Usage
 
@@ -33,7 +33,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --list-variables
 
 ### Arguments
 - `--start-time`, `--end-time` — inclusive date range; `--end-time` includes the whole end day (24 hourly steps). Repeat the pair for several windows, one window per pair.
-- `--bbox` — `N/W/S/E`, longitudes −180..180. Omit for the full CONUS grid (3500 × 7000 cells per hour; always pass a bbox for more than a few hours).
+- `--bbox` — `N/W/S/E`, longitudes −180..180. Omit for the full CONUS grid (about 25 million cells per hour; always pass a bbox for more than a few hours).
 - `--variable`, `-v` — catalog variable name; repeat for several. Aliases: `precip`/`tp`/`pr` → `precipitation_surface`. `NAME` also matches `NAME_surface` (`precipitation_radar_only`, `precipitation_pass_1`). An unknown name exits and lists `Available:`. Omitting `-v` fetches every field.
 - `--probe-latest` — print the latest day and exit. Takes no value. stderr notes that the latest day is partial.
 - `--list-variables` — print each variable (name, units, long name), then exit. Does not download fields.
@@ -42,11 +42,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --list-variables
 ### Output
 - `(time, latitude, longitude)`, latitude ascending, `data_interval` `1 hour`.
 - Rainfall (`precipitation_surface`) is written as `precip` in `mm day-1`; the other fields (`precipitation_pass_1_surface`, `precipitation_pass_2_surface`, `precipitation_radar_only_surface`, `categorical_precipitation_type_surface`, `flash_qpe_ffg_max_surface`) keep their catalog names, with precip rates also in `mm day-1`.
-- `weather_skills_source` is `dynamical:noaa-mrms-conus-analysis-hourly`.
 - A window past the latest published hour is written as available, with a `WARNING` on stderr; nothing is padded. No data in any window exits 1.
 
 ### Notes
-- Each `time` labels the hour by the catalog's timestamp. For daily totals, run `aggregate-temporal --period daily` and then `convert-to-totals`.
+- Each `time` labels the hour by its published timestamp. For daily totals, run `aggregate-temporal --period daily` and then `convert-to-totals`.
 
 ### Example
 ```bash

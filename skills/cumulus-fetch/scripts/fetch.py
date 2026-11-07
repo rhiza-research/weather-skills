@@ -37,11 +37,11 @@ _SAS_ENV = "AZURE_STORAGE_SAS_TOKEN"
 _ROOT = f"{_CONTAINER}/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr"
 _STORE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}\.zarr$")
 # Inits before the first live store come from Cumulus's own Aurora hindcast: one Zarr
-# of every init, same layout as a live store, IMERG-trained precip on the native 1° grid.
-_HINDCAST_RUN = "gratis-czajkowski-era5"
-_HINDCAST = (
-    f"{_CONTAINER}/ml_reforecasts/{_HINDCAST_RUN}/zarr/total_precipitation_24h_acc_imerg.zarr"
-)
+# per live folder, <_HINDCAST_ROOT>/<folder>.zarr, holding every init (1996-2024, every
+# second day) with the same variable, grid and layout as that folder's live stores.
+# Chunks are 15° tiles over many inits (100 at 1°, 5 at 0.25°), about 100 MB each, so
+# any read downloads whole tiles. The run also has 2m_temperature.zarr (no live counterpart).
+_HINDCAST_ROOT = f"{_CONTAINER}/ml_reforecasts/gratis-czajkowski-era5/zarr"
 
 # --dataset name → variable folder. Each folder's stores hold that one variable.
 _DATASETS = {
@@ -244,10 +244,11 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
     hindcast = date is not None and date.isoformat() < first_live
     if windows:
         hindcast = any(a.isoformat() < first_live for a, _ in windows)
+    hindcast_url = f"az://{_HINDCAST_ROOT}/{folder}.zarr"
     if hindcast:
         # Just the coordinates: list the hindcast inits under the live store names.
         inits = _open_store(
-            f"az://{_HINDCAST}", None, workers, lambda ds: ds.drop_vars(list(ds.data_vars))
+            hindcast_url, None, workers, lambda ds: ds.drop_vars(list(ds.data_vars))
         )["init_time"].values
         hindcast_stores = [f"{str(t)[:10]}-{str(t)[11:13]}.zarr" for t in inits]
         if windows and any(b.isoformat() >= first_live for _, b in windows):
@@ -258,25 +259,13 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
             ):
                 raise UsageError(
                     f"the init windows cross {first_live}, where the live Cumulus runs start. "
-                    f"Earlier inits come from the Cumulus hindcast ({_HINDCAST_RUN}, 1° grid, "
-                    "a different store), so one call reads only one side: "
+                    "Earlier inits come from the Cumulus hindcast (a different store), "
+                    "so one call reads only one side: "
                     f"split the request at {first_live} into two calls."
                 )
             hindcast = False  # the windows hold no hindcast init: read the live side only
     if hindcast:
-        if folder == _DATASETS["precip_era5"]:
-            raise UsageError(
-                f"no ERA5-trained Cumulus hindcast: inits before {first_live} exist only for "
-                "precip_1deg (IMERG-trained, 1°). Use --dataset precip_1deg, or inits from "
-                f"{first_live}."
-            )
-        if folder == _DATASETS["precip"]:
-            print(
-                f"WARNING: inits before {first_live} come from the Cumulus hindcast, which is "
-                "on a 1° grid (not 0.25°); writing 1°.",
-                file=sys.stderr,
-            )
-        prefix = f"az://{_ACCOUNT}/{_HINDCAST}"
+        prefix = f"az://{_ACCOUNT}/{_HINDCAST_ROOT}/{folder}.zarr"
         stores = hindcast_stores
     published = stores
     if windows:
@@ -322,13 +311,9 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
     # One store per init: each is opened, cut to the bbox and loaded on its own.
     pieces = []
     if hindcast:
-        print(
-            f"Reading {len(stores)} init(s) from the Cumulus hindcast {_HINDCAST_RUN} "
-            f"(IMERG-trained, 1°) at az://{_ACCOUNT}/{_HINDCAST}",
-            file=sys.stderr,
-        )
+        print(f"Reading {len(stores)} init(s) from the Cumulus hindcast {prefix}", file=sys.stderr)
         times = [np.datetime64(f"{s[:10]}T{s[11:13]}", "ns") for s in stores]
-        ds = _open_store(f"az://{_HINDCAST}", bbox, workers, lambda ds: ds.sel(init_time=times))
+        ds = _open_store(hindcast_url, bbox, workers, lambda ds: ds.sel(init_time=times))
         pieces = [_to_standard(ds.isel(init_time=[i])) for i in range(len(times))]
     for store in [] if hindcast else stores:
         print(f"Opening {prefix}{store}", file=sys.stderr)
@@ -379,7 +364,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
     if bbox is None:
         ds = ensure_normalized_longitude(ds)
 
-    source = f"cumulus-hindcast:{_HINDCAST_RUN}" if hindcast else f"cumulus:{folder}"
+    source = f"cumulus-hindcast:{folder}" if hindcast else f"cumulus:{folder}"
     ds.attrs.update(Conventions="CF-1.13", weather_skills_source=source)
     stamp_cf_attrs(ds)
     stamp_precip_amounts(ds)

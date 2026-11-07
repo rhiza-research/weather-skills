@@ -36,10 +36,9 @@ Prefer small steps over stuffing every filter into one call:
   needs Earthdata). **CHIRPS:** `chirps-fetch`. **WeatherNext:** `weathernext-fetch`.
   **ICON-EU / MRMS:** `icon-eu-fetch`, `mrms-fetch`. Rainfall is written as `precip`
   (`-v precip`). Use `neuralgcm-fetch` for the Tomorrow
-  Now 2026 NeuralGCM ensemble at `gs://neuralgcm-s2s` (GCS credentials; default
+  Now 2026 NeuralGCM ensemble (Google Cloud credentials; default
   `-v precip`). Use `pbc-fetch` for quintile precip
-  probabilities from `gs://sheerwater-datalake/pbc-data` (GCS credentials;
-  not millimetres).
+  probabilities (Google Cloud credentials; not millimetres).
 - **Dates:** Fetchers take absolute `YYYY-MM-DD` only (`--start-time`/`--end-time` or
   `--date`). Use `resolve-time` for calendar ideas like "today" or "the last two
   weeks" — it prints flags against UTC today (or `--as-of`). "The last month of
@@ -128,7 +127,7 @@ every required env var on the **first** call — do not run once, read
 
 Required names (from each skill's `metadata.openclaw.requires.env`):
 
-- `ecmwf-fetch` — `ECMWF_DATASTORES_KEY` (ECDS fallback only)
+- `ecmwf-fetch` — `ECMWF_DATASTORES_KEY` (ECMWF Data Store fallback only)
 - `imerg-fetch` (Final and the Late fallback only) / `smap-fetch` — `EARTHDATA_USERNAME`, `EARTHDATA_PASSWORD`
 - `tahmo-fetch` — `TAHMO_API_USERNAME`, `TAHMO_API_PASSWORD`
 - `openaq-fetch` — `OPENAQ_API_KEY`

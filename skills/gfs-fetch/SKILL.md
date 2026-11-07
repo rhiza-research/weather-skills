@@ -2,7 +2,7 @@
 name: gfs-fetch
 description: "Fetch a NOAA GFS forecast, GEFS 31-member ensemble forecast (to 35 days; GEFSv12 reforecast for 1998-2019 inits), or GFS / GEFS analysis (0.25° global) for an init date or date range over a region from the public dynamical.org catalog, as a weather-skills Zarr. No credentials needed. Use when a task needs GFS or GEFS precipitation, temperature, winds, pressure or other surface fields."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required. GEFS inits before 2020-10-01 read the public Sheerwater GEFSv12 reforecast Zarr on Google Cloud Storage anonymously.
+compatibility: Requires Python 3.12 and uv. Reads public data from the dynamical.org catalog and, for GEFS inits before 2020-10-01, the public GEFSv12 reforecast; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.1"
@@ -17,13 +17,13 @@ metadata:
 
 Fetches NOAA GFS or GEFS from the [dynamical.org catalog](https://dynamical.org/catalog/), subset by bbox, time, and variables, as a weather-skills standard dataset Zarr.
 
-| `--product` | Catalog id | Members | Leads / time step | Coverage |
-|---|---|---|---|---|
-| `gefs` (default) | `noaa-gefs-forecast-35-day` | 31 (0 = control) | 3-hourly to 10 days, then 6-hourly to 35 days | 0.25° global, 00 UTC inits from 2020-10-01 |
-| `gefs`, inits before 2020-10-01 | GEFSv12 reforecast (Sheerwater) | 11 (0 = control) | daily, steps 0–34 days | 1° global, Wednesday 00 UTC inits 1998-12-30 to 2019-08-28; `precip` and `temperature_2m` only |
-| `gfs` | `noaa-gfs-forecast` | 1 | hourly to 5 days, then 3-hourly to 16 days | 0.25° global, inits from 2021-05 |
-| `gfs-analysis` | `noaa-gfs-analysis` | — | hourly | 0.25° global, from 2021-05 |
-| `gefs-analysis` | `noaa-gefs-analysis` | — | 3-hourly | 0.25° global, from 2000 |
+| `--product` | Members | Leads / time step | Coverage |
+|---|---|---|---|
+| `gefs` (default) | 31 (0 = control) | 3-hourly to 10 days, then 6-hourly to 35 days | 0.25° global, 00 UTC inits from 2020-10-01 |
+| `gefs`, inits before 2020-10-01 (GEFSv12 reforecast) | 11 (0 = control) | daily, steps 0–34 days | 1° global, Wednesday inits 1998-12-30 to 2019-08-28; `precip` and `temperature_2m` only |
+| `gfs` | 1 | hourly to 5 days, then 3-hourly to 16 days | 0.25° global, inits from 2021-05 |
+| `gfs-analysis` | — | hourly | 0.25° global, from 2021-05 |
+| `gefs-analysis` | — | 3-hourly | 0.25° global, from 2000 |
 
 ## Usage
 
@@ -56,20 +56,19 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--product P] --list-variables
 ### Output
 - Forecasts: `(step, [number,] latitude, longitude)` with scalar `time` = init; with windows, `(time, step, [number,] latitude, longitude)`, one `time` per init. Analyses: `(time, latitude, longitude)`. GEFS `geopotential_height` adds `vertical` (500 hPa).
 - Rainfall is written as `precip` in `mm day-1`; other fields keep their catalog names. Air temperature in `degree_Celsius`, other units as published. Longitude is `[-180, 180)`, latitude ascending.
-- `weather_skills_source` is `dynamical:<catalog id>`.
+- `weather_skills_source` names the source used.
 - Requested windows or leads past what is published are written as available, with a `WARNING` on stderr; nothing is padded. No data at all exits 1.
 
 ### Historical GEFS inits
-`--product gefs` picks the source from the requested inits: from 2020-10-01 the live catalog, before it the GEFSv12 reforecast in `gs://sheerwater-public-datalake/hindcasts/gefs_{precip,tmp2m}.zarr`. stderr names the source used.
+`--product gefs` inits before 2020-10-01 come from the GEFSv12 reforecast; stderr names the source used.
 - The reforecast has Wednesday inits only, 1998-12-30 to 2019-08-28; other days and 2019-08-29 to 2020-09-30 have none. No init at all in the request exits 1.
 - It offers `precip` (`precip`/`tp`/`pr`) and `temperature_2m` (`t2m`) only, in `mm day-1` and `degree_Celsius`; other `-v` names exit 2. Omitting `-v` fetches both.
-- Steps are daily: `step = d` is the day `[init + d, init + d + 1)`, 0 to 34 days. Members are 0–10 (0 = control). Dims and names are as for live GEFS; `--bbox` and `--max-lead` apply; `--probe-latest` and `--list-variables` describe the live catalog only.
+- Steps are daily: `step = d` is the day `[init + d, init + d + 1)`, 0 to 34 days. Members are 0–10 (0 = control). Dims and names are as for live GEFS; `--bbox` and `--max-lead` apply; `--probe-latest` and `--list-variables` describe live GEFS only.
 - A variable with no run for an init stays NaN for it, with a `WARNING`; nothing is filled.
-- A request with inits on both sides of 2020-10-01 exits 2: split it there, because member count and step spacing differ between the two sources, so they cannot share one Zarr.
-- `weather_skills_source` is `sheerwater-hindcast:gefs`.
+- A request with inits on both sides of 2020-10-01 exits 2: split it there into two calls (member count and step spacing differ).
 
 ### Notes
-- **Forecast `step` is the interval start.** The catalog labels averaged fields (precip, radiation, cloud cover) at the end of their interval, so lead 0 is NaN. When every selected field is NaN at lead 0, fetch drops that lead and shifts each step back one, so `step = 0` is the first interval and daily or weekly bins line up with `aggregate-temporal`. Where lead spacing changes (GFS 1- to 3-hourly, GEFS 3- to 6-hourly), fetch writes `step_bounds`. Instant fields (`temperature_2m`, winds, pressure) keep the catalog labels; on uneven leads each sample's cell is `[s, next lead)`. Fetched together with averaged fields, the cells end at each step instead, so fetch averaged and instant fields separately when you need interval-start steps.
+- **Forecast `step` is the interval start.** dynamical.org labels averaged fields (precip, radiation, cloud cover) at the end of their interval, so lead 0 is NaN. When every selected field is NaN at lead 0, fetch drops that lead and shifts each step back one, so `step = 0` is the first interval and daily or weekly bins line up with `aggregate-temporal`. Where lead spacing changes (GFS 1- to 3-hourly, GEFS 3- to 6-hourly), fetch writes `step_bounds`. Instant fields (`temperature_2m`, winds, pressure) keep their own labels; on uneven leads each sample's cell is `[s, next lead)`. Fetched together with averaged fields, the cells end at each step instead, so fetch averaged and instant fields separately when you need interval-start steps.
 - GFS publishes 00/06/12/18 UTC inits; only the 00 UTC init of each day is fetched.
 - GEFS reads every member: pass `--bbox`, `-v` and `--max-lead` to keep reads small.
 

@@ -26,7 +26,7 @@ metadata:
 
 # meteosat-fetch
 
-Downloads Meteosat Level 1 scans, calibrates them with satpy, keeps only the `--bbox`, and writes one variable per band on a regular lat/lon grid.
+Downloads Meteosat Level 1 scans, calibrates them, keeps only the `--bbox`, and writes one variable per band on a regular lat/lon grid.
 
 A scan is one full image of the Earth disk, taken every 10 minutes (FCI) or 15 minutes (SEVIRI). The skill is built for a handful of chosen times (before and after a storm, a few views through one afternoon, one view a day for a week or two), not for long or dense series; see [Request size](#request-size).
 
@@ -55,7 +55,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--service 0deg|iodc]
 - Dims `(time, latitude, longitude)`, one variable per band named as above. `vis` bands are reflectance in `%` (`toa_bidirectional_reflectance`), `ir` bands brightness temperature in `K` (`toa_brightness_temperature`).
 - Regular grid at the finest requested band's native sampling: 0.01° FCI visible, 0.02° FCI infrared only, 0.03° SEVIRI. Nearest-neighbour resampled; pixels off the disk are NaN.
 - `time` is the repeat-cycle start; coord `scan_start` is the sensing start. The scan sweeps the disk over 10–12 minutes, so a region is imaged a few minutes after either.
-- Attrs `platform`, `instrument`, `eumetsat_service`, `sub_satellite_longitude`; `weather_skills_source=eumetsat-datastore:<collection id>`.
+- Attrs `platform`, `instrument`, `eumetsat_service`, `sub_satellite_longitude`, and `weather_skills_source`.
 
 ### Notes
 - Set `EUMETSAT_CONSUMER_KEY` and `EUMETSAT_CONSUMER_SECRET` in the environment for every call, including `--probe-latest`; without them (or `~/.eumdac/credentials`) it exits 2. Never put the values on the command line.
@@ -63,14 +63,14 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--service 0deg|iodc]
 - `--bbox` must lie on the disk. Near the disk edge (high latitudes, or far east or west of the satellite) pixels are stretched and the far side is NaN; stderr warns when a band is more than half missing.
 
 ### Request size
-EUMETSAT serves only whole-disk files, so the download does not shrink with a small box the way the output does.
+EUMETSAT serves whole-disk scans, so the download does not shrink with a small box the way the output does.
 
 | Instrument | Download per scan | What sets it |
 |---|---|---|
 | SEVIRI (`0deg`, `iodc`) | ~180 MB | Always the full disk, whatever the box or bands. |
-| FCI (`0deg`) | ~200–300 MB for a Kenya-sized box | The disk comes in 40 west–east strips; only the strips covering the box's latitude range (plus one either side) are downloaded. A taller box downloads more; a wider one does not. |
+| FCI (`0deg`) | ~200–300 MB for a Kenya-sized box | Only the latitude band covering the box (plus a small margin) is downloaded: a taller box downloads more; a wider one does not. |
 
-The number of bands does not change the download (every file holds all channels), only the output size. So the cost is roughly scans × the figure above, where scans = days × `--time` cycles: 12 FCI scans ≈ 3 GB, a full day (144 FCI scans) ≈ 35 GB. A sensible range is one or two `--time` slots a day over up to about a week (within the default 12 scans, ≈ 3 GB); a month at one slot a day (30 scans ≈ 7.5 GB FCI) needs `--max-scans 30` and is near the practical limit. Stderr prints the estimate before downloading and warns above 4 scans or 1.5 GB. Above `--max-scans` the call exits 2 without downloading.
+The number of bands does not change the download, only the output size. So the cost is roughly scans × the figure above, where scans = days × `--time` cycles: 12 FCI scans ≈ 3 GB, a full day (144 FCI scans) ≈ 35 GB. A sensible range is one or two `--time` slots a day over up to about a week (within the default 12 scans, ≈ 3 GB); a month at one slot a day (30 scans ≈ 7.5 GB FCI) needs `--max-scans 30` and is near the practical limit. Stderr prints the estimate before downloading and warns above 4 scans or 1.5 GB. Above `--max-scans` the call exits 2 without downloading.
 
 For a long rainfall or cloud record, use a gridded precipitation product (IMERG, GSMaP, CHIRPS) instead.
 
@@ -105,10 +105,10 @@ Writes the 12:00 UTC FCI scan on each of seven days over Kenya, seven steps on o
 
 ## Details
 
-| `--service` | `--instrument` | Collection | Satellite | Repeat |
-|---|---|---|---|---|
-| `0deg` | `fci` | `EO:EUM:DAT:0662` | MTG-I1 (Meteosat-12) | 10 min |
-| `0deg` | `seviri` | `EO:EUM:DAT:MSG:HRSEVIRI` | MSG (Meteosat-11/10) | 15 min |
-| `iodc` | `seviri` | `EO:EUM:DAT:MSG:HRSEVIRI-IODC` | MSG (Meteosat-9) | 15 min |
+| `--service` | `--instrument` | Satellite | Repeat |
+|---|---|---|---|
+| `0deg` | `fci` | MTG-I1 (Meteosat-12) | 10 min |
+| `0deg` | `seviri` | MSG (Meteosat-11/10) | 15 min |
+| `iodc` | `seviri` | MSG (Meteosat-9) | 15 min |
 
-There is no FCI Indian Ocean service, and SEVIRI HRV is not offered. FCI L1c starts 2024-09-24. Raw files go to a temporary directory and are deleted after each scan.
+There is no FCI Indian Ocean service, and SEVIRI HRV is not offered. FCI starts 2024-09-24.

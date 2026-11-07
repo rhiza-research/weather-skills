@@ -344,7 +344,7 @@ def test_init_window_with_no_init_exits_1(tmp_path, fetch_mod, monkeypatch):
     assert exc.value.code == 1
 
 
-# The hindcast: one store of every init (2010-01-01, -03, -05), same layout as a live store.
+# The hindcast: one store per dataset of every init (2010-01-01, -03, -05), live layout.
 _HINDCAST_INITS = ["2010-01-01", "2010-01-03", "2010-01-05"]
 
 
@@ -366,7 +366,9 @@ def hindcast(fetch_mod, monkeypatch):
                 for i, d in enumerate(_HINDCAST_INITS)
             ],
             "init_time",
-        ).rename(total_precipitation_24h_acc_imerg_0p25="total_precipitation_24h_acc_imerg")
+        )
+        folder = url.rsplit("/", 1)[-1].removesuffix(".zarr")
+        ds = ds.rename(total_precipitation_24h_acc_imerg_0p25=folder)
         return select(ds) if select is not None else ds
 
     monkeypatch.setattr(fetch_mod, "_list_stores", lambda folder: list(STORES))
@@ -384,14 +386,17 @@ def test_historical_window_reads_hindcast(tmp_path, fetch_mod, hindcast, capsys)
     run_skill(fetch_mod.fetch, "--dataset", "precip_1deg", "--start-time", "2010-01-01",
               "--end-time", "2010-01-04", "-o", str(out))  # fmt: skip
     err = capsys.readouterr().err
-    assert "Cumulus hindcast gratis-czajkowski-era5" in err
+    assert "Cumulus hindcast" in err
     assert "WARNING" not in err
-    assert all("/ml_reforecasts/gratis-czajkowski-era5/" in u for u in hindcast)
+    assert all(u.endswith("/total_precipitation_24h_acc_imerg.zarr") for u in hindcast)
     live = tmp_path / "live.zarr"
     run_skill(fetch_mod.fetch, "--start-time", "2026-09-01", "--end-time", "2026-09-30",
               "-o", str(live))  # fmt: skip
     with xr.open_zarr(out) as ds, xr.open_zarr(live) as ref:
-        assert ds.attrs["weather_skills_source"] == "cumulus-hindcast:gratis-czajkowski-era5"
+        assert (
+            ds.attrs["weather_skills_source"]
+            == "cumulus-hindcast:total_precipitation_24h_acc_imerg"
+        )
         assert ds["precip"].dims == ref["precip"].dims
         assert sorted(ds.coords) == sorted(ref.coords)
         assert ds["precip"].attrs["units"] == ref["precip"].attrs["units"] == "mm day-1"
@@ -415,10 +420,25 @@ def test_historical_date_matches_live_layout(tmp_path, fetch_mod, hindcast):
         np.testing.assert_allclose(ds["precip"].values[0, :, 0, 0], [1.0, 1.0, 1.0])
 
 
-def test_historical_precip_warns_and_serves_1deg(tmp_path, fetch_mod, hindcast, capsys):
-    run_skill(fetch_mod.fetch, "--date", "2010-01-03", "-o", str(tmp_path / "h.zarr"))
-    assert "1° grid (not 0.25°)" in capsys.readouterr().err
-    assert all("/ml_reforecasts/" in u for u in hindcast)
+@pytest.mark.parametrize(
+    "dataset, folder",
+    [
+        ("precip", "total_precipitation_24h_acc_imerg_0p25"),
+        ("precip_era5", "total_precipitation_24h_acc_era5"),
+    ],
+)
+def test_historical_dataset_reads_its_own_hindcast(
+    tmp_path, fetch_mod, hindcast, capsys, dataset, folder
+):
+    out = tmp_path / "h.zarr"
+    run_skill(fetch_mod.fetch, "--date", "2010-01-03", "--dataset", dataset, "-o", str(out))
+    assert "WARNING" not in capsys.readouterr().err
+    assert all(
+        u.endswith(f"/ml_reforecasts/gratis-czajkowski-era5/zarr/{folder}.zarr") for u in hindcast
+    )
+    with xr.open_zarr(out) as ds:
+        assert ds.attrs["weather_skills_source"] == f"cumulus-hindcast:{folder}"
+        assert ds["precip"].dims == ("number", "step", "latitude", "longitude")
 
 
 def test_historical_date_without_init_lists_nearest(tmp_path, fetch_mod, hindcast, capsys):
@@ -427,13 +447,6 @@ def test_historical_date_without_init_lists_nearest(tmp_path, fetch_mod, hindcas
                   "-o", str(tmp_path / "x.zarr"))  # fmt: skip
     assert exc.value.code == 1
     assert "Nearest published inits: 2010-01-01, 2010-01-03, 2010-01-05" in capsys.readouterr().err
-
-
-def test_historical_era5_exits_2(tmp_path, fetch_mod, hindcast):
-    with pytest.raises(SystemExit) as exc:
-        run_skill(fetch_mod.fetch, "--dataset", "precip_era5", "--date", "2010-01-03",
-                  "-o", str(tmp_path / "x.zarr"))  # fmt: skip
-    assert exc.value.code == 2
 
 
 def test_windows_crossing_live_start_exit_2(tmp_path, fetch_mod, hindcast, capsys):
