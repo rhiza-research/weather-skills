@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.3.6",
 # ]
 # ///
 """Apply a yes/no weather rule to each day or week of a Zarr, optionally reduced to an onset date or a probability."""
