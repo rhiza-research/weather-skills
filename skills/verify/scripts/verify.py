@@ -217,7 +217,7 @@ def verify(forecast, obs, variable, metric, threshold, member_fraction, **kwargs
                     ) from None
                 cutoff = cutoff.magnitude
                 print(
-                    f"--threshold {threshold} over {period} = {cutoff:.6g} {u_fc}.",
+                    f"--threshold {threshold} over {period} = {cutoff:.6g} {ureg.Unit(u_fc):~}.",
                     file=sys.stderr,
                 )
         cutoff = float(cutoff)
