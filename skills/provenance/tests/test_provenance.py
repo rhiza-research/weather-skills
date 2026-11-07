@@ -441,3 +441,25 @@ def test_script_keeps_imported_join_files_at_recorded_paths(tmp_path, provenance
     assert "netcdf-io --netcdf /x/a.nc --netcdf /x/b.nc --output rep.zarr" in captured
     assert "--input" not in captured
     assert "yourself" not in captured
+
+
+def test_script_join_mixes_input_and_recorded_flag(tmp_path, provenance, capsys):
+    # coarsen: the main input is a dataset-typed --input (not in args); the
+    # reference grid is a recorded path arg. Each branch reaches its own flag.
+    step = {
+        "skill": "coarsen",
+        "version": "0.0.1",
+        "args": {"method": "conservative", "reference_grid": "/x/imerg_dek.zarr"},
+        "input": [
+            {"basename": "chirps_dek.zarr", "hash": "h", "history": [_fetch("chirps-fetch")]},
+            {"basename": "imerg_dek.zarr", "hash": "h", "history": [_fetch("imerg-fetch")]},
+        ],
+    }
+    out = _stamp_history(tmp_path / "rep.zarr", [step])
+
+    captured = _script(provenance, out, capsys)
+
+    assert "chirps-fetch --output a.zarr" in captured
+    assert "imerg-fetch --output b.zarr" in captured
+    assert "coarsen --method conservative --reference-grid b.zarr --input a.zarr" in captured
+    assert captured.count("--input") == 1
