@@ -221,6 +221,44 @@ def test_late_reads_catalog_half_hourly_without_login(tmp_path, mod, fetch):
     assert ds.attrs["imerg_version"] == "late"
 
 
+def _run_daily(tmp_path, mod, catalog, end):
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_catalog", return_value=catalog):
+        run_skill(
+            mod.fetch, "--start-time", "2026-01-01", "--end-time", end, "--daily", "-o", str(out)
+        )
+    return xr.open_zarr(out, consolidated=True)
+
+
+def test_daily_writes_one_mean_per_utc_day(tmp_path, mod):
+    catalog = _catalog_ds()
+    times = catalog["time"].values
+    # Each half hour holds its day number in kg m-2 s-1 / 86400 (so 1 or 2 mm day-1).
+    day = ((times - times[0]) // np.timedelta64(1, "D") + 1).astype(float)
+    catalog["precipitation_surface"].values[:] = (day / 86400)[:, None, None]
+    # One cell misses one half hour on day 1: NaN that day, not a 47-step mean.
+    catalog["precipitation_surface"].values[5, 0, 0] = np.nan
+    ds = _run_daily(tmp_path, mod, catalog, "2026-01-02")
+    assert [str(t)[:10] for t in ds["time"].values] == ["2026-01-01", "2026-01-02"]
+    # Latitude ascending: catalog row 0 (lat 2) is output row 1.
+    assert np.isnan(ds["precip"].values[0, 1, 0])
+    np.testing.assert_allclose(ds["precip"].values[0, 0], [1, 1], rtol=1e-6)
+    np.testing.assert_allclose(ds["precip"].values[1], 2, rtol=1e-6)
+    assert ds["precip"].attrs["units"] == "mm day-1"
+    assert ds["precip"].attrs["data_interval"] == "1 day"
+    assert ds["precip"].attrs["aggregation_period"] == "1 day"
+    assert ds["precip"].attrs["cell_methods"] == "time: mean (interval: 30 minute)"
+    np.testing.assert_allclose(ds["aggregation_coverage"].values, [1, 1])
+
+
+def test_daily_keeps_partial_last_day_with_its_coverage(tmp_path, mod, capsys):
+    # Store ends 2026-01-02T05:30: 12 of 48 half hours on the last day.
+    catalog = _catalog_ds().isel(time=slice(0, 60))
+    ds = _run_daily(tmp_path, mod, catalog, "2026-01-02")
+    np.testing.assert_allclose(ds["aggregation_coverage"].values, [1, 0.25])
+    assert "1 of 2 day(s) are incomplete" in capsys.readouterr().err
+
+
 def test_late_falls_back_to_ges_disc_when_catalog_fails(tmp_path, mod, fetch, capsys):
     out = tmp_path / "out.zarr"
     _run(mod, fetch, out, _raw_daily())
