@@ -758,3 +758,112 @@ def test_precip_written_as_precip(tmp_path, mod, fetch):
     np.testing.assert_allclose(
         written["precip"].values, ds["precipitation_surface"].values[0, 1:] * 86400
     )
+
+
+HINDCAST = "gs://sheerwater-public-datalake/hindcasts"
+
+
+def _hindcast_store(name, inits, value):
+    """One-variable GEFSv12 reforecast store as Sheerwater lays it out."""
+    shape = (len(inits), 2, 3, 3, 3)
+    return xr.Dataset(
+        {
+            name: (
+                ("init_time", "member", "prediction_timedelta", "lat", "lon"),
+                np.full(shape, value),
+            )
+        },
+        coords={
+            "init_time": np.array(inits, dtype="datetime64[ns]"),
+            "member": np.array([0, 1], dtype=np.int32),
+            "prediction_timedelta": np.arange(3).astype("timedelta64[D]").astype("timedelta64[ns]"),
+            "lat": np.array([-1.0, 0.0, 1.0], dtype=np.float32),
+            "lon": np.array([-1.0, 0.0, 1.0], dtype=np.float32),
+        },
+    )
+
+
+@pytest.fixture
+def hindcast(mod):
+    stores = {
+        f"{HINDCAST}/gefs_precip.zarr": _hindcast_store(
+            "precip", ["2010-03-03", "2010-03-10"], 2.0
+        ),
+        # The tmp2m store skips 2010-03-03.
+        f"{HINDCAST}/gefs_tmp2m.zarr": _hindcast_store("tmp2m", ["2010-03-10"], 25.0),
+    }
+    with (
+        patch.object(mod, "_open_hindcast", side_effect=stores.__getitem__) as opened,
+        patch.object(mod, "_open_dataset", side_effect=AssertionError("catalog opened")),
+    ):
+        yield opened
+
+
+def test_live_gefs_init_reads_catalog_not_hindcast(tmp_path, mod, fetch):
+    ds = _forecast_catalog_ds().assign_coords(init_time=[np.datetime64("2024-01-03", "ns")])
+    with (
+        patch.object(mod, "_open_hindcast", side_effect=AssertionError("hindcast opened")),
+        patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "forecast"}) as opened,
+    ):
+        run_skill(
+            fetch, "--product", "gefs", "--date", "2024-01-03", "-o", str(tmp_path / "o.zarr")
+        )
+    opened.assert_called_once_with("noaa-gefs-forecast-35-day")
+
+
+def test_historical_gefs_window_reads_hindcast_like_live(tmp_path, fetch, hindcast, capsys):
+    out = tmp_path / "h.zarr"
+    run_skill(fetch, "--product", "gefs", "--start-time", "2010-03-01", "--end-time", "2010-03-31",
+              "--bbox", "2/-2/-2/2", "-v", "precip", "-v", "t2m", "--max-lead", "1D",
+              "-o", str(out))  # fmt: skip
+    err = capsys.readouterr().err
+    assert "sheerwater-hindcast:gefs" in err
+    # A store without an init stays NaN for it, with a warning; never filled.
+    assert "temperature_2m has no run for 1 init(s), left NaN (not filled): 2010-03-03" in err
+    ds = xr.open_zarr(out)
+    assert sorted(ds.data_vars) == ["precip", "temperature_2m"]
+    for name in ds.data_vars:
+        assert ds[name].dims == ("time", "step", "number", "latitude", "longitude")
+    assert ds["precip"].attrs["units"] == "mm day-1"
+    assert ds["temperature_2m"].attrs["units"] == "degree_Celsius"
+    assert ds["precip"].attrs["data_interval"] == "1 day"
+    assert list(ds["number"].values) == [0, 1]
+    assert list(ds["step"].values) == [np.timedelta64(0, "ns"), np.timedelta64(1, "D")]
+    assert ds.attrs["weather_skills_source"] == "sheerwater-hindcast:gefs"
+    t2m = ds["temperature_2m"].isel(step=0, number=0, latitude=0, longitude=0).values
+    assert np.isnan(t2m[0]) and t2m[1] == 25.0
+    assert load_history(out)[-1]["skill"] == "gfs-fetch"
+
+
+def test_historical_gefs_date_has_scalar_time(tmp_path, fetch, hindcast):
+    out = tmp_path / "h.zarr"
+    run_skill(fetch, "--product", "gefs", "--date", "2010-03-10", "-o", str(out))
+    ds = xr.open_zarr(out)
+    assert ds["precip"].dims == ("step", "number", "latitude", "longitude")
+    assert ds["time"].values == np.datetime64("2010-03-10", "ns")
+
+
+def test_gefs_window_across_live_start_exits_2(tmp_path, fetch, hindcast, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch, "--product", "gefs", "--start-time", "2019-01-01",
+                  "--end-time", "2021-01-01", "-o", str(tmp_path / "o.zarr"))  # fmt: skip
+    assert exc.value.code == 2
+    assert "split the request there" in capsys.readouterr().err
+    hindcast.assert_not_called()
+
+
+def test_historical_gefs_no_wednesday_exits_1(tmp_path, fetch, hindcast, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch, "--product", "gefs", "--start-time", "2010-03-04",
+                  "--end-time", "2010-03-09", "-o", str(tmp_path / "o.zarr"))  # fmt: skip
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "Wednesday" in err and "2010-03-03..2010-03-10" in err
+
+
+def test_historical_gefs_unknown_variable_exits_2(tmp_path, fetch, hindcast, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch, "--product", "gefs", "--date", "2010-03-10", "-v", "u10",
+                  "-o", str(tmp_path / "o.zarr"))  # fmt: skip
+    assert exc.value.code == 2
+    assert "offer only precip" in capsys.readouterr().err
