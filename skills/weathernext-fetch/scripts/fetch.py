@@ -922,7 +922,7 @@ def fetch(
     catalog = None
     if product.version == "2":
         historical = bool(days) and days[0] < _GCS_V2_START
-        # No -v means every field, dewpoint and pressure levels included: GCS.
+        # No -v means every field, pressure levels included: GCS.
         fits = bool(variable) and all(_VAR_ALIASES.get(v, v) in _CATALOG_FIELDS for v in variable)
         gcs = f"gs://{product.bucket}/{product.prefix}/"
         if not fits:
