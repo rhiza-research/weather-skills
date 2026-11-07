@@ -1,0 +1,48 @@
+name: Keep PRs up to date
+
+# Merges main into every open PR labelled `keep-updated` once main moves.
+# Runs after Version bump so the bump commit ([skip ci], which triggers
+# nothing itself) is included. Uses the release-bot App token so the
+# update triggers CI on the PR; GITHUB_TOKEN pushes would not.
+
+on:
+  workflow_run:
+    workflows: [Version bump]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: keep-updated
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+      - name: Merge main into labelled PRs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          gh pr list -R "$REPO" --base main --label keep-updated --state open \
+            --json number,headRefName --jq '.[] | "\(.number) \(.headRefName)"' |
+          while read -r pr head; do
+            behind=$(gh api "repos/$REPO/compare/main...$head" --jq .behind_by)
+            if [ "$behind" = 0 ]; then
+              echo "#$pr: already up to date"
+            elif gh api -X PUT "repos/$REPO/pulls/$pr/update-branch" >/dev/null; then
+              echo "#$pr: merged $behind commit(s) from main"
+            else
+              echo "::warning::#$pr not updated; resolve its conflicts with main by hand"
+              echo fail >> "$RUNNER_TEMP/failed"
+            fi
+          done
+          [ ! -s "$RUNNER_TEMP/failed" ]
