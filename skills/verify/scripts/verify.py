@@ -17,7 +17,12 @@ import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable
 from weather_skills_core.standard_utils import latitude_weights
-from weather_skills_core.units import dequantify_dataset, ureg, variable_units
+from weather_skills_core.units import (
+    dequantify_dataset,
+    parse_aggregation_period,
+    ureg,
+    variable_units,
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.8"
@@ -41,11 +46,22 @@ _VAR = {"hits": "event_hit", "bias": "bias", "mae": "mae"}
 )
 @weather_skill.argument(
     "--threshold",
-    type=float,
-    default=1.0,
-    help="Event cutoff for --metric hits: a cell is an event when the variable is >= this.",
+    default="1",
+    help=(
+        "Event cutoff for --metric hits: a cell is an event when the variable is >= this. "
+        "A bare number is in the forecast's units; '50 mm' on a rate is a total over its "
+        "aggregation_period."
+    ),
 )
-def verify(forecast, obs, variable, metric, threshold, **kwargs):
+@weather_skill.argument(
+    "--member-fraction",
+    type=float,
+    help=(
+        "--metric hits on an ensemble: the forecast event is at least this share of members "
+        ">= --threshold (0.5 = half). Default: the ensemble mean >= --threshold."
+    ),
+)
+def verify(forecast, obs, variable, metric, threshold, member_fraction, **kwargs):
     """Score a forecast against observations cell by cell: event hits, bias, or mean absolute error."""
     fc_name = variable or auto_variable(forecast)
     obs_name = variable or auto_variable(obs)
@@ -56,11 +72,13 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
             )
 
     fc, truth = forecast[fc_name], obs[obs_name]
-    if "step" in fc.dims and "step" not in truth.dims:
-        raise UsageError(
-            "forecast still has a step axis; run step-to-time before verify "
-            "so valid times can align with --obs."
-        )
+    if member_fraction is not None:
+        if metric != "hits":
+            raise UsageError("--member-fraction is for --metric hits.")
+        if not 0 < member_fraction <= 1:
+            raise UsageError(f"--member-fraction must be in (0, 1]; got {member_fraction}")
+        if "number" not in fc.dims:
+            raise UsageError("--member-fraction needs an ensemble forecast (a number dim).")
 
     mismatched = []
     for axis, names in (("latitude", ("latitude", "lat")), ("longitude", ("longitude", "lon"))):
@@ -89,7 +107,8 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
 
     pair = []
     for da in (fc, truth):
-        if "number" in da.dims:
+        # --member-fraction counts members, so keep the forecast's.
+        if "number" in da.dims and not (member_fraction is not None and da is fc):
             # A NaN member leaves the mean NaN (no mean over the members left).
             da = da.mean("number", skipna=False, keep_attrs=True)
         # A scalar time (after select) becomes a length-1 dim so the inner join
@@ -98,6 +117,33 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
             da = da.expand_dims("time")
         pair.append(da)
     fc, truth = pair
+    if "step" in fc.dims and "step" not in truth.dims:
+        # Score each lead: pair forecast (init, step) with the obs at init + step.
+        if "time" not in fc.dims or "time" not in truth.dims:
+            raise UsageError(
+                "forecast has a step axis but no init time, or --obs has no time axis; "
+                "cannot match leads to obs dates."
+            )
+        valid = (fc["time"] + fc["step"]).transpose("time", "step")
+        pos = pd.Index(truth["time"].values).get_indexer(valid.values.ravel())
+        pos = pos.reshape(valid.shape)
+        if (pos < 0).all():
+            raise UsageError(
+                f"no --obs time matches a forecast valid time (init + step): valid "
+                f"{pd.Timestamp(valid.values.min())} … {pd.Timestamp(valid.values.max())} vs obs "
+                f"{pd.Timestamp(truth['time'].values.min())} … "
+                f"{pd.Timestamp(truth['time'].values.max())}. Label both with the same bins: "
+                "obs windows start on the day each forecast step starts."
+            )
+        attrs = truth.attrs
+        picked = truth.drop_vars(
+            [c for c in truth.coords if c != "time" and "time" in truth[c].dims]
+        ).isel(time=xr.DataArray(np.maximum(pos, 0), dims=("init", "step")))
+        truth = picked.drop_vars("time").rename(init="time")
+        # Valid times past the obs record stay NaN: not scored, never filled.
+        truth = truth.where(xr.DataArray(pos >= 0, dims=("time", "step")))
+        truth = truth.assign_coords(time=fc["time"].values, step=fc["step"].values)
+        truth.attrs = attrs
     u_fc, u_obs = variable_units(fc), variable_units(truth)
     if bool(u_fc) != bool(u_obs):
         raise UsageError(
@@ -132,18 +178,66 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
     if u_fc and u_obs:
         error = dequantify_dataset(error.to_dataset(name="error"))["error"]
     fc, truth = (da.pint.dequantify() if da.pint.units is not None else da for da in (fc, truth))
-    if metric != "hits" and threshold != 1.0:
+    if metric != "hits" and threshold != "1":
         print(
             f"Note: --threshold {threshold} is ignored for --metric {metric}.",
             file=sys.stderr,
         )
 
+    cutoff = None
+    if metric == "hits":
+        try:
+            cutoff = float(threshold)
+        except ValueError:
+            try:
+                quantity = ureg.Quantity(threshold)
+            except Exception:  # noqa: BLE001 — any pint parse failure is a usage error
+                raise UsageError(
+                    f"--threshold {threshold!r} is not a number or a quantity"
+                ) from None
+            if not u_fc:
+                raise UsageError(
+                    f"--threshold {threshold!r} has units but the forecast has none."
+                ) from None
+            try:
+                cutoff = quantity.to(ureg.Unit(u_fc)).magnitude
+            except pint.DimensionalityError:
+                # A total ("50 mm") on a rate: spread it over the forecast's window.
+                period = fc.attrs.get("aggregation_period") or fc.attrs.get("data_interval")
+                if not period:
+                    raise UsageError(
+                        f"--threshold {threshold!r} is a total but the forecast ({u_fc}) has no "
+                        "aggregation_period or data_interval to spread it over."
+                    ) from None
+                try:
+                    cutoff = (quantity / parse_aggregation_period(period)).to(ureg.Unit(u_fc))
+                except pint.DimensionalityError:
+                    raise UsageError(
+                        f"--threshold {threshold!r} cannot be compared with {u_fc}."
+                    ) from None
+                cutoff = cutoff.magnitude
+                print(
+                    f"--threshold {threshold} over {period} = {cutoff:.6g} {ureg.Unit(u_fc):~}.",
+                    file=sys.stderr,
+                )
+        cutoff = float(cutoff)
+
+    if member_fraction is not None:
+        # Share of members at or above the cutoff; a NaN member leaves the cell NaN.
+        share = (fc >= cutoff).where(fc.notnull()).mean("number", skipna=False)
+        fc = share
+        fc_event = share >= member_fraction
+    elif metric == "hits":
+        fc_event = fc >= cutoff
     valid = fc.notnull() & truth.notnull()
     obs_event = None
     if metric == "hits":
-        fc_event = fc >= threshold
-        obs_event = truth >= threshold
-        field = xr.where(fc_event & obs_event, 1, xr.where(fc_event != obs_event, -1, 0))
+        obs_event = truth >= cutoff
+        field = xr.where(
+            fc_event & obs_event,
+            1,
+            xr.where(obs_event, 2, xr.where(fc_event, 3, 0)),
+        )
     elif metric == "bias":
         field = error
     else:
@@ -161,11 +255,13 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
         attrs.update(
             long_name="Event verification",
             units="1",
-            flag_values=np.array([-1, 0, 1], dtype=np.int8),
-            flag_meanings="disagree below hit",
-            event_threshold=threshold,
+            flag_values=np.array([0, 1, 2, 3], dtype=np.int8),
+            flag_meanings="correct_negative hit miss false_alarm",
+            event_threshold=cutoff,
             event_variable=fc_name if fc_name == obs_name else f"{fc_name},{obs_name}",
         )
+        if member_fraction is not None:
+            attrs["event_member_fraction"] = member_fraction
     elif metric == "bias":
         attrs.update(
             long_name="Forecast bias (forecast − observation)", units=error.attrs.get("units")
@@ -174,16 +270,20 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
         attrs.update(long_name="Mean absolute error", units=error.attrs.get("units"))
     field.attrs = attrs
 
-    finite = field.notnull()
-    if metric == "hits":
-        n_obs = int(obs_event.where(finite, False).sum())
-        n_hit = int(((field == 1) & finite).sum())
-        summary = (
-            "hit rate n/a  (0 obs events)"
-            if n_obs == 0
-            else f"hit rate {100 * n_hit / n_obs:.0f}%  ({n_hit}/{n_obs} obs events)"
-        )
-    else:
+    def _summary(field):
+        finite = field.notnull()
+        if metric == "hits":
+            n_hit = int((field == 1).sum())
+            n_miss = int((field == 2).sum())
+            n_false = int((field == 3).sum())
+            n_obs = n_hit + n_miss
+            if n_obs == 0:
+                text = "hit rate n/a  (0 obs events)"
+            else:
+                text = f"hit rate {100 * n_hit / n_obs:.0f}%  ({n_hit}/{n_obs} obs events)"
+            far = f"{100 * n_false / (n_hit + n_false):.0f}%" if n_hit + n_false else "n/a"
+            csi = f"{n_hit / (n_obs + n_false):.2f}" if n_obs + n_false else "n/a"
+            return f"{text}, false alarms {n_false} (FAR {far}), CSI {csi}"
         lat = next((n for n in ("latitude", "lat") if n in field.dims), None)
         u = f"{ureg.Unit(u_fc or u_obs):~}" if (u_fc or u_obs) else ""
         u_suffix = f" {u}" if u else ""
@@ -202,13 +302,19 @@ def verify(forecast, obs, variable, metric, threshold, **kwargs):
                 if den != 0 and np.isfinite(float(den)):
                     value = float(num / den)
         if value is None:
-            summary = f"{metric} n/a  (no finite cells)"
-        elif metric == "bias":
+            return f"{metric} n/a  (no finite cells)"
+        if metric == "bias":
             sign = "+" if value >= 0 else ""
-            summary = f"bias {sign}{value:.2g}{u_suffix}  ({how})"
-        else:
-            summary = f"MAE {value:.2g}{u_suffix}  ({how})"
-    print(f"verify  {summary}")
+            return f"bias {sign}{value:.2g}{u_suffix}  ({how})"
+        return f"MAE {value:.2g}{u_suffix}  ({how})"
+
+    summary = _summary(field)
+    if "step" in field.dims and field.sizes["step"] > 1:
+        for step in field["step"].values:
+            line = f"step {pd.Timedelta(step)}: {_summary(field.sel(step=step))}"
+            print(f"verify  {line}")
+            summary += f"; {line}"
+    print(f"verify  {summary.split('; ')[0]}")
 
     out = field.to_dataset()
     out.attrs["Conventions"] = "CF-1.13"
