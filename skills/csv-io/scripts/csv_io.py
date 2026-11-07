@@ -1030,7 +1030,7 @@ def _read(
 @weather_skill.argument(
     "--csv",
     type=Path,
-    source=True,
+    external_input=True,
     help="CSV or Excel (.xlsx) to read; -o names the .zarr to write.",
 )
 @weather_skill.argument("--variable", "-v", action="append", help="Read: keep only these.")

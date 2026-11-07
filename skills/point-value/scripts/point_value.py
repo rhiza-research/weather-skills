@@ -66,7 +66,7 @@ def _load_points(points, point, points_csv):
     help="LAT,LON[,ID] (repeatable), e.g. --point -1.29,36.82,nairobi.",
 )
 @weather_skill.argument(
-    "--points-csv", type=Path, source=True, help="CSV with columns id,lat,lon[,name]."
+    "--points-csv", type=Path, external_input=True, help="CSV with columns id,lat,lon[,name]."
 )
 @weather_skill.argument("--method", choices=["nearest", "bilinear", "cell-mean"], default="nearest")
 @weather_skill.argument(
