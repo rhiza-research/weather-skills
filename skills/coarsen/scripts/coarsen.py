@@ -9,11 +9,20 @@
 
 import math
 import sys
+from pathlib import Path
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import detect_spatial_dims
 from weather_skills_core.standard_utils import ensure_normalized_longitude, grid_spacing
 from weather_skills_core.units import dequantify_dataset
+
+
+class ZarrPath(str):
+    """A Zarr path the decorator hashes into the history, with the Zarr's own history."""
+
+    def zarr_paths(self):
+        return [Path(self)]
+
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.9"
@@ -69,6 +78,7 @@ def _clip_reference_axis(input_vals, ref_vals):
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument(
     "--reference-grid",
+    type=ZarrPath,
     help=(
         "Zarr whose lat/lon become the target (exact coordinate values). "
         "Prefer this when matching another dataset for difference/verify."
