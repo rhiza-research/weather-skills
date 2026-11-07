@@ -35,7 +35,11 @@ def _live_store(values=(5.0, 5.0, 5.0), members=3):
             "valid_time": (("init_time", "lead_time"), (init + leads)[None, :]),
         },
     )
-    ds[name].attrs.update(units="mm", long_name="24-hour total precipitation")
+    ds[name].attrs.update(
+        units="mm",
+        long_name="24-hour total precipitation",
+        cell_methods="time: sum (interval: 24 hours)",
+    )
     ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north")
     ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east")
     return ds
@@ -56,7 +60,7 @@ def remote(fetch_mod, monkeypatch):
 
 
 def test_to_standard_maps_live_layout(fetch_mod):
-    out = fetch_mod._to_standard(_live_store())
+    out = fetch_mod._to_standard(_live_store(), "precip")
     assert out["precip"].dims == ("number", "step", "latitude", "longitude")
     assert out["time"].values == np.datetime64("2026-09-18", "ns")
     hours = out["step"].values.astype("timedelta64[h]").astype(int)
@@ -123,7 +127,7 @@ def test_unknown_variable_exits_2(tmp_path, fetch_mod, remote):
 
 def test_missing_date_exits_1(tmp_path, fetch_mod, remote, capsys):
     with pytest.raises(SystemExit) as exc:
-        run_skill(fetch_mod.fetch, "--date", "2020-01-01", "-o", str(tmp_path / "unused.zarr"))
+        run_skill(fetch_mod.fetch, "--date", "2026-09-10", "-o", str(tmp_path / "unused.zarr"))
     assert exc.value.code == 1
     assert "Nearest published inits: 2026-09-07, 2026-09-18" in capsys.readouterr().err
 
@@ -186,16 +190,15 @@ def test_nonpositive_workers_exits_2(tmp_path, fetch_mod, remote, workers):
 
 @pytest.mark.parametrize("flag", ["--dataset", "--probe-latest"])
 def test_unknown_dataset_exits_2(tmp_path, fetch_mod, remote, flag):
-    # Any other folder's field would be renamed to precip and stamped as precipitation.
     with pytest.raises(SystemExit) as exc:
-        run_skill(fetch_mod.fetch, flag, "2m_temperature", "-o", str(tmp_path / "out.zarr"))
+        run_skill(fetch_mod.fetch, flag, "soil_moisture", "-o", str(tmp_path / "out.zarr"))
     assert exc.value.code == 2
 
 
-def test_hindcast_run_name_says_only_live_runs(tmp_path, fetch_mod, remote, capsys):
+def test_hindcast_run_name_says_dates_route_automatically(tmp_path, fetch_mod, remote, capsys):
     with pytest.raises(SystemExit):
         run_skill(fetch_mod.fetch, "--dataset", "gratis-czajkowski", "--probe-latest")
-    assert "hindcast (reforecast) runs are not served here" in capsys.readouterr().err
+    assert "read from the Cumulus hindcast automatically" in capsys.readouterr().err
 
 
 def test_folder_name_accepted_as_dataset(tmp_path, fetch_mod, remote):
@@ -246,7 +249,9 @@ _WINDOW_STORES = [
 def _mock_windows(monkeypatch, fetch_mod, opened=None, short=()):
     """Per-init stores whose precip is the init's day of month; ``short`` inits lack leads 2+."""
 
-    def fake_open(url, bbox, workers):
+    def fake_open(url, bbox, workers, select=None):
+        if "/ml_reforecasts/" in url:  # a hindcast with no init in these windows
+            return xr.Dataset(coords={"init_time": np.array([], "datetime64[ns]")})
         name = url.rsplit("/", 1)[-1]
         if opened is not None:
             opened.append(name)
@@ -333,10 +338,198 @@ def test_init_window_with_no_init_exits_1(tmp_path, fetch_mod, monkeypatch):
         run_skill(
             fetch_mod.fetch,
             "--start-time",
-            "2024-06-01",
+            "2025-06-01",
             "--end-time",
-            "2024-06-30",
+            "2025-06-30",
             "-o",
             str(tmp_path / "x.zarr"),
         )
     assert exc.value.code == 1
+
+
+# The hindcast: one store per dataset of every init (2010-01-01, -03, -05), live layout.
+_HINDCAST_INITS = ["2010-01-01", "2010-01-03", "2010-01-05"]
+
+
+@pytest.fixture
+def hindcast(fetch_mod, monkeypatch):
+    """Live stores from 2026-09-07 (STORES) plus a mocked hindcast; records the opened urls."""
+    opened = []
+
+    def fake_open(url, bbox, workers, select=None):
+        opened.append(url)
+        if "/ml_reforecasts/" not in url:
+            return _live_store()
+        ds = xr.concat(
+            [
+                _live_store(values=(i, i, i)).assign_coords(
+                    init_time=[np.datetime64(d, "ns")],
+                    valid_time=(("init_time", "lead_time"), [[np.datetime64(d, "ns")] * 3]),
+                )
+                for i, d in enumerate(_HINDCAST_INITS)
+            ],
+            "init_time",
+        )
+        folder = url.rsplit("/", 1)[-1].removesuffix(".zarr")
+        ds = ds.rename(total_precipitation_24h_acc_imerg_0p25=folder)
+        return select(ds) if select is not None else ds
+
+    monkeypatch.setattr(fetch_mod, "_list_stores", lambda folder: list(STORES))
+    monkeypatch.setattr(fetch_mod, "_open_store", fake_open)
+    return opened
+
+
+def test_live_init_reads_live_store(tmp_path, fetch_mod, hindcast):
+    run_skill(fetch_mod.fetch, "--date", "2026-09-18", "-o", str(tmp_path / "live.zarr"))
+    assert [u for u in hindcast if "/ml_reforecasts/" in u] == []
+
+
+def test_historical_window_reads_hindcast(tmp_path, fetch_mod, hindcast, capsys):
+    out = tmp_path / "h.zarr"
+    run_skill(fetch_mod.fetch, "--dataset", "precip_1deg", "--start-time", "2010-01-01",
+              "--end-time", "2010-01-04", "-o", str(out))  # fmt: skip
+    err = capsys.readouterr().err
+    assert "Cumulus hindcast" in err
+    assert "WARNING" not in err
+    assert all(u.endswith("/total_precipitation_24h_acc_imerg.zarr") for u in hindcast)
+    live = tmp_path / "live.zarr"
+    run_skill(fetch_mod.fetch, "--start-time", "2026-09-01", "--end-time", "2026-09-30",
+              "-o", str(live))  # fmt: skip
+    with xr.open_zarr(out) as ds, xr.open_zarr(live) as ref:
+        assert (
+            ds.attrs["weather_skills_source"]
+            == "cumulus-hindcast:total_precipitation_24h_acc_imerg"
+        )
+        assert ds["precip"].dims == ref["precip"].dims
+        assert sorted(ds.coords) == sorted(ref.coords)
+        assert ds["precip"].attrs["units"] == ref["precip"].attrs["units"] == "mm day-1"
+        assert ds["time"].values.astype("datetime64[D]").astype(str).tolist() == _HINDCAST_INITS[:2]
+        # Leads relabelled from the window end to its start.
+        days = ds["step"].values.astype("timedelta64[D]").astype(int).tolist()
+        assert days == [0, 1, 2]
+        np.testing.assert_allclose(ds["precip"].values[:, 0, 0, 0, 0], [0.0, 1.0])
+
+
+def test_historical_date_matches_live_layout(tmp_path, fetch_mod, hindcast):
+    out, live = tmp_path / "h.zarr", tmp_path / "live.zarr"
+    run_skill(fetch_mod.fetch, "--date", "2010-01-03", "--dataset", "precip_1deg", "-o", str(out))
+    run_skill(fetch_mod.fetch, "--date", "2026-09-18", "-o", str(live))
+    with xr.open_zarr(out) as ds, xr.open_zarr(live) as ref:
+        assert (
+            ds["precip"].dims == ref["precip"].dims == ("number", "step", "latitude", "longitude")
+        )
+        assert ds["time"].ndim == 0 and str(ds["time"].values)[:10] == "2010-01-03"
+        assert ds["number"].values.tolist() == ref["number"].values.tolist()
+        np.testing.assert_allclose(ds["precip"].values[0, :, 0, 0], [1.0, 1.0, 1.0])
+
+
+@pytest.mark.parametrize(
+    "dataset, folder",
+    [
+        ("precip", "total_precipitation_24h_acc_imerg_0p25"),
+        ("precip_era5", "total_precipitation_24h_acc_era5"),
+    ],
+)
+def test_historical_dataset_reads_its_own_hindcast(
+    tmp_path, fetch_mod, hindcast, capsys, dataset, folder
+):
+    out = tmp_path / "h.zarr"
+    run_skill(fetch_mod.fetch, "--date", "2010-01-03", "--dataset", dataset, "-o", str(out))
+    assert "WARNING" not in capsys.readouterr().err
+    assert all(
+        u.endswith(f"/ml_reforecasts/gratis-czajkowski-era5/zarr/{folder}.zarr") for u in hindcast
+    )
+    with xr.open_zarr(out) as ds:
+        assert ds.attrs["weather_skills_source"] == f"cumulus-hindcast:{folder}"
+        assert ds["precip"].dims == ("number", "step", "latitude", "longitude")
+
+
+def test_historical_date_without_init_lists_nearest(tmp_path, fetch_mod, hindcast, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--date", "2010-01-02", "--dataset", "precip_1deg",
+                  "-o", str(tmp_path / "x.zarr"))  # fmt: skip
+    assert exc.value.code == 1
+    assert "Nearest published inits: 2010-01-01, 2010-01-03, 2010-01-05" in capsys.readouterr().err
+
+
+def test_windows_crossing_live_start_exit_2(tmp_path, fetch_mod, hindcast, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--start-time", "2010-01-01", "--end-time", "2010-01-31",
+                  "--start-time", "2026-09-01", "--end-time", "2026-09-30",
+                  "-o", str(tmp_path / "x.zarr"))  # fmt: skip
+    assert exc.value.code == 2
+    assert "split the request at 2026-09-07" in capsys.readouterr().err
+
+
+@pytest.fixture
+def t2m_hindcast(fetch_mod, monkeypatch):
+    """The 2 m temperature hindcast: K instants, no live stores; records the opened urls."""
+    opened = []
+
+    def fake_open(url, bbox, workers, select=None):
+        opened.append(url)
+        ds = xr.concat(
+            [
+                _live_store(values=(280.0 + i, 281.0, 282.0)).assign_coords(
+                    init_time=[np.datetime64(d, "ns")],
+                    valid_time=(("init_time", "lead_time"), [[np.datetime64(d, "ns")] * 3]),
+                )
+                for i, d in enumerate(_HINDCAST_INITS)
+            ],
+            "init_time",
+        ).rename(total_precipitation_24h_acc_imerg_0p25="2m_temperature")
+        ds["2m_temperature"].attrs = {
+            "units": "K",
+            "long_name": "2 metre temperature",
+        }  # an instant
+        return select(ds) if select is not None else ds
+
+    monkeypatch.setattr(fetch_mod, "_list_stores", lambda folder: [])
+    monkeypatch.setattr(fetch_mod, "_open_store", fake_open)
+    return opened
+
+
+def test_t2m_reads_temperature_hindcast_as_instants(tmp_path, fetch_mod, t2m_hindcast):
+    out = tmp_path / "t.zarr"
+    run_skill(fetch_mod.fetch, "-v", "t2m", "--start-time", "2010-01-01", "--end-time", "2010-01-04",
+              "-o", str(out))  # fmt: skip
+    assert all(u.endswith("/2m_temperature.zarr") for u in t2m_hindcast)
+    with xr.open_zarr(out) as ds:
+        assert list(ds.data_vars) == ["t2m"]
+        assert ds["t2m"].attrs["units"] == "degree_Celsius"
+        assert ds.attrs["weather_skills_source"] == "cumulus-hindcast:2m_temperature"
+        # Instants keep the store's leads (init + 1 day onward); no period relabel.
+        assert ds["step"].values.astype("timedelta64[D]").astype(int).tolist() == [1, 2, 3]
+        np.testing.assert_allclose(ds["t2m"].values[:, 0, 0, 0, 0], [6.85, 7.85], atol=1e-4)
+
+
+def test_no_live_runs_without_dates_exits_1(tmp_path, fetch_mod, t2m_hindcast, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "-v", "t2m", "-o", str(tmp_path / "x.zarr"))
+    assert exc.value.code == 1
+    assert "no live t2m runs" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["-v", "t2m", "-v", "precip", "--date", "2010-01-03"],
+        ["-v", "t2m", "--dataset", "precip_era5", "--date", "2010-01-03"],
+    ],
+)
+def test_variable_not_in_dataset_exits_2(tmp_path, fetch_mod, t2m_hindcast, capsys, args):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, *args, "-o", str(tmp_path / "x.zarr"))
+    assert exc.value.code == 2
+    assert "fetch one per call" in capsys.readouterr().err
+
+
+def test_t2m_live_date_lists_hindcast_inits(tmp_path, fetch_mod, t2m_hindcast, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch_mod.fetch, "-v", "t2m", "--date", "2026-10-01", "-o", str(tmp_path / "x.zarr")
+        )
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "Nearest published inits: 2010-01-01, 2010-01-03, 2010-01-05" in err
+    assert "Omit --date" not in err

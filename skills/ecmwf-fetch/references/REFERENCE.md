@@ -1,31 +1,48 @@
 # ecmwf-fetch reference
 
-## dynamical.org catalog (default)
+## dynamical.org catalog
 
-Dataset id: `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` (read from the
-production catalog, or the staging catalog when production does not list it). 101 members, 1.5°,
-daily 00 UTC inits from 2026-01-01, 47 daily leads (0–1104 h). Surface
-fields at the store root; pressure fields in `group="pressure_level"`.
-Catalog precip is already a rate (`kg m-2 s-1`). 24-hour surface
-statistics are all-NaN at lead 0; this skill drops that lead and shifts
-remaining steps so `step=0` is the first 24 h. Pressure fields carry all
-101 members on 10 levels (1000–10 hPa); `q` is NaN above 200 hPa.
+| `--product` | Dataset id | Native dims |
+|---|---|---|
+| `s2s` | `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` | `init_time, lead_time, ensemble_member, latitude, longitude`; `pressure_level` group adds `pressure_level` |
+| `s2s-6h` | `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | `init_time, lead_time, ensemble_member, latitude, longitude` |
+| `ifs-ens` | `ecmwf-ifs-ens-forecast-15-day-0-25-degree` | `init_time, lead_time, ensemble_member, latitude, longitude` |
+| `aifs-ens` | `ecmwf-aifs-ens-forecast` | `init_time, lead_time, ensemble_member, latitude, longitude` |
+| `aifs-single` | `ecmwf-aifs-single-forecast` | `init_time, lead_time, latitude, longitude` |
 
-The catalog stores SST as `sea_surface_temperature` (not `sst`). This skill
-accepts `-v sst` / `wtmp` and writes the S2S short name `sst`. Catalog
-`precipitation_surface` is written as `precip`.
+Each id is read from the production catalog, or the staging catalog when
+production does not list it. `init_time` becomes `time`, `lead_time`
+becomes `step`, `ensemble_member` becomes `number`, and `pressure_level`
+(or a `*_Nhpa` suffix) becomes `vertical`. Catalog precip is already a
+rate (`kg m-2 s-1`, written as `mm day-1`). Averaged fields are all-NaN at
+lead 0; when every requested field is, the skill drops that lead and
+labels each value at its interval start.
 
-| `-v` | Catalog field |
+The 46-day daily store keeps surface fields at the root and pressure
+fields in `group="pressure_level"` (10 levels, 1000–10 hPa, all 101
+members; `q` is NaN above 200 hPa), opened when a requested field is not
+at the root. The 15-day and AIFS stores keep `temperature_{850,925}hpa`
+and `geopotential_height_{500,850,925}hpa` as separate fields, stacked
+onto `vertical`. The 6-hourly 46-day store has precip, 10 m wind, and 6 h
+max/min 2 m temperature only.
+
+`-v` takes a short name or any catalog name. Fields with a short name are
+written under it; other catalog fields keep their catalog name and units
+(e.g. `net_long_wave_radiation_flux_top_of_atmosphere`, OLR as a daily
+mean in `W m-2`).
+
+| `-v` | Catalog field (first one the store has) |
 |---|---|
 | `precip` | `precipitation_surface` |
-| `t2m` | `average_temperature_2m` |
+| `t2m` | `temperature_2m` (instant, 15-day / AIFS), `average_temperature_2m` (46-day daily mean) |
+| `d2m` | `dew_point_temperature_2m`, `average_dew_point_temperature_2m` |
 | `sst` | `sea_surface_temperature` |
-| `d2m` | `average_dew_point_temperature_2m` |
-| `u10` / `v10` | `wind_u_10m` / `wind_v_10m` |
-| `msl` | `pressure_reduced_to_mean_sea_level` |
-| `cape` | `average_convective_available_potential_energy_atmosphere` |
+| `u10` / `v10` / `u100` / `v100` | `wind_u_10m` / `wind_v_10m` / `wind_u_100m` / `wind_v_100m` |
+| `gust10` | `wind_gust_10m` |
+| `msl` / `sp` | `pressure_reduced_to_mean_sea_level` / `pressure_surface` |
+| `cape` | `average_convective_available_potential_energy_surface` |
 | `tcw` | `total_column_water_atmosphere` |
-| `skt` / `tcc` / `sp` | `skin_temperature_surface` / `total_cloud_cover_atmosphere` / `pressure_surface` |
+| `skt` / `tcc` | `skin_temperature_surface` / `total_cloud_cover_atmosphere` |
 | `sd` / `rsn` / `asn` | `snow_water_equivalent_surface` / `snow_density_surface` / `snow_albedo_surface` |
 | `sm20` / `sm100` | `soil_moisture_0_20cm` / `soil_moisture_0_100cm` |
 | `st20` / `st100` | `soil_temperature_0_20cm` / `soil_temperature_0_100cm` |
@@ -33,13 +50,38 @@ accepts `-v sst` / `wtmp` and writes the S2S short name `sst`. Catalog
 | `cp` / `sf` | `precipitation_convective_surface` / `snowfall_water_equivalent_rate_surface` |
 | `ewss` / `nsss` | `eastward_turbulent_surface_stress` / `northward_turbulent_surface_stress` |
 | `ro` / `sro` | `runoff_water_equivalent_surface` / `runoff_surface` |
-| `gh` / `t` / `u` / `v` / `w` / `q` | `pressure_level` group: `geopotential_height`, `temperature`, `wind_u`, `wind_v`, `vertical_velocity`, `specific_humidity` |
+| `gh` / `t` / `u` / `v` / `w` / `q` | `geopotential_height`, `temperature`, `wind_u`, `wind_v`, `vertical_velocity`, `specific_humidity` (every level) |
 
-Not mapped (ECDS fallback): `mx2t6`, `mn2t6` (catalog 24 h max/min is a
-different statistic), accumulated fluxes (`sshf`, `slhf`, `ssr`, `ssrd`,
-`str`, `strd`, `ttr`), static fields (`lsm`, `orog`, `slt`), `pv`, and
-ocean parameters. Mixed catalog + unmapped fields in one call also use
-ECDS. Pre-2026 inits use ECDS.
+Before 2026-01-01, `s2s` reads `precip`, `t2m` and `sst` from the ECMWF
+reforecast (below). It uses the Data Store for a `--date` the reforecast
+lacks and, for one `--date` or an init window, for fields with neither a catalog nor a reforecast equivalent: `mx2t6`, `mn2t6` (the catalog 24 h
+max/min is a different statistic), accumulated fluxes (`sshf`, `slhf`,
+`ssr`, `ssrd`, `str`, `strd`, `ttr`; the catalog means in `W m-2` are
+reachable by their catalog names), static fields (`lsm`, `orog`, `slt`),
+`pv`, and ocean parameters. A call mixing those with catalog fields also
+uses the Data Store. With a window, the Data Store gets one set of requests
+(control and members, per field group) for every published init day in the
+windows; inits inside the embargo or with no data are skipped with a
+`WARNING`, and the inits stack on a leading `time` axis.
+
+## ECMWF reforecast stores
+
+Public Sheerwater Zarr stores, read anonymously with gcsfs from
+`gs://sheerwater-public-datalake/hindcasts/`. Each holds one variable with
+dims `member, prediction_timedelta, lat, lon, init_time` on a 1.5° global
+grid, `prediction_timedelta` 0..45 days labelling the day that starts there.
+
+| `-v` | `ecmwf_planette` store (inits 2006-01-03..2025-06-01, every second day) | `ecmwf_wb2` store (inits 1996-01-04..2021-12-29) | Stored as |
+|---|---|---|---|
+| `precip` | `ecmwf_planette_precip.zarr` | `ecmwf_ifs_precip.zarr` | `precip`, daily mean rate, written `mm day-1` |
+| `t2m` | `ecmwf_planette_tmp2m.zarr` | `ecmwf_ifs_tmp2m.zarr` | `tmp2m`, daily mean, `degree_Celsius` |
+| `sst` | `ecmwf_planette_sst.zarr` | none | `sst`, daily mean, `degree_Celsius`, NaN over land |
+
+The Planette stores are read first; the WeatherBench2 stores serve only inits
+before Planette's first. Only the selected inits, leads up to `--max-lead`
+and the bbox are read. `init_time` becomes `time`, `member` becomes `number`
+(1..10), `prediction_timedelta` becomes `step`, `lat`/`lon` become
+`latitude`/`longitude`.
 
 ## ECDS request
 
@@ -143,3 +185,32 @@ the embargo window fail with a clear error suggesting an older date.
 ## Retrieval time
 
 ECDS retrievals are queued and can take from a few minutes to over an hour. Bigger bboxes and the perturbed retrieval (all 100 members) queue longer than the control. The skill submits cf and pf concurrently via `client.submit()` so the overall wall time is bounded by the slower of the two.
+
+## HRES (ECMWF Open Data)
+
+`--product hres` builds one `ecmwf-opendata` request per level type:
+
+| Key | Value |
+|---|---|
+| date / time | `--date` (or each day of the `--start-time`/`--end-time` windows) / `--run` (0, 6, 12, 18) |
+| type | `fc` (stream left to the client, which maps 06/18 UTC runs by IFS cycle) |
+| step | 0–144 h every 3 h, then 150–360 h every 6 h (06/18 UTC: 0–144 h every 3 h), cut at `--max-lead` |
+| levtype | `sfc` or `pl` |
+| levelist | `pl` only: 1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50 hPa |
+| param | Open Data short names below |
+
+| `-v` | Open Data param |
+|---|---|
+| `precip` | `tp` |
+| `t2m` / `d2m` | `2t` / `2d` |
+| `msl` / `sp` | `msl` / `sp` |
+| `u10` / `v10` / `gust10` | `10u` / `10v` / `10fg` |
+| `tcwv` / `mucape` / `skt` | `tcwv` / `mucape` / `skt` |
+| `ssrd` / `strd` / `str` / `ttr` | same (cumulative since init, J m-2) |
+| `t` / `gh` / `u` / `v` / `q` / `r` | same, on the 13 levels above |
+
+Inits from the last 4 days try `data.ecmwf.int`, then the AWS mirror;
+older inits (from 2023) use the AWS mirror only. Each source gets one
+attempt. The GRIB is read one step at a time and clipped to the bbox.
+With windows, inits are fetched one after another and stacked on a leading
+`time` axis; an init neither source has is skipped with a `WARNING`.

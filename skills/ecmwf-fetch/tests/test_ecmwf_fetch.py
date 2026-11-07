@@ -1,6 +1,7 @@
 """Correctness tests for ecmwf-fetch (no network; helpers + missing creds)."""
 
 import os
+import types
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -64,14 +65,18 @@ def test_ensure_datastores_url_does_not_override_explicit_env(mod):
         assert os.environ["ECMWF_DATASTORES_URL"] == "https://example.invalid"
 
 
-def test_unknown_variable_exits_2(tmp_path, fetch):
+def test_unknown_variable_exits_2(tmp_path, mod, fetch):
+    """A name that is neither a short name nor a catalog field is a usage error."""
     out = tmp_path / "out.zarr"
     env = {
         **os.environ,
         "ECMWF_DATASTORES_URL": "https://example.invalid",
         "ECMWF_DATASTORES_KEY": "dummy",
     }
-    with patch.dict(os.environ, env, clear=True):
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch.object(mod, "_open_catalog", return_value=_catalog_surface_ds()),
+    ):
         with pytest.raises(SystemExit) as exc:
             run_skill(
                 fetch,
@@ -303,13 +308,14 @@ def test_standardize_sst_to_celsius(mod):
     )
 
 
-def _catalog_surface_ds(*, n_lead=3, with_lead0_nan=True):
-    inits = np.array([np.datetime64("2026-01-01T00:00")])
+def _catalog_surface_ds(*, n_lead=3, with_lead0_nan=True, inits=("2026-01-01",)):
+    n_init = len(inits)
+    inits = np.array([np.datetime64(f"{init}T00:00") for init in inits])
     leads = np.arange(n_lead) * np.timedelta64(1, "D")
     lats = [2.0, 1.0]
     lons = [11.0, 12.0]
-    precip = np.full((1, n_lead, 2, 2, 2), 2e-6, dtype=np.float64)
-    t2m = np.full((1, n_lead, 2, 2, 2), 20.0, dtype=np.float64)
+    precip = np.full((n_init, n_lead, 2, 2, 2), 2e-6, dtype=np.float64)
+    t2m = np.full((n_init, n_lead, 2, 2, 2), 20.0, dtype=np.float64)
     if with_lead0_nan:
         precip[:, 0] = np.nan
         t2m[:, 0] = np.nan
@@ -327,7 +333,7 @@ def _catalog_surface_ds(*, n_lead=3, with_lead0_nan=True):
             ),
             "wind_u_10m": (
                 ("init_time", "lead_time", "ensemble_member", "latitude", "longitude"),
-                np.ones((1, n_lead, 2, 2, 2)),
+                np.ones((n_init, n_lead, 2, 2, 2)),
                 {"units": "m s-1"},
             ),
         },
@@ -377,20 +383,26 @@ def test_catalog_covers_mapped_fields_from_2026(mod):
     assert not mod._catalog_covers(date(2026, 1, 1), ["precip", "mx2t6"])
 
 
-def test_drop_empty_lead0_shifts_when_all_nan(mod):
-    ds = _catalog_surface_ds()[["precipitation_surface"]]
-    out = mod._drop_empty_lead0(ds)
-    assert out.sizes["lead_time"] == 2
+def _run_catalog(tmp_path, mod, fetch, *variables):
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_catalog", return_value=_catalog_surface_ds()):
+        run_skill(
+            fetch, "--date", "2026-01-01", "--bbox", "3/10/0/13", "-v", *variables, "-o", str(out)
+        )
+    return xr.open_zarr(out, consolidated=True)
+
+
+def test_empty_lead0_dropped_and_steps_shift_when_all_nan(tmp_path, mod, fetch):
+    out = _run_catalog(tmp_path, mod, fetch, "precip")
+    assert out.sizes["step"] == 2
     np.testing.assert_array_equal(
-        np.asarray(out["lead_time"].values).astype("timedelta64[D]"),
+        np.asarray(out["step"].values).astype("timedelta64[D]"),
         np.array([0, 1], dtype="timedelta64[D]"),
     )
 
 
-def test_drop_empty_lead0_keeps_instant_fields(mod):
-    ds = _catalog_surface_ds()[["wind_u_10m"]]
-    out = mod._drop_empty_lead0(ds)
-    assert out.sizes["lead_time"] == 3
+def test_empty_lead0_kept_for_instant_fields(tmp_path, mod, fetch):
+    assert _run_catalog(tmp_path, mod, fetch, "u10").sizes["step"] == 3
 
 
 def test_catalog_fetch_writes_precip_without_creds(tmp_path, mod, fetch):
@@ -427,7 +439,7 @@ def test_catalog_fetch_writes_precip_without_creds(tmp_path, mod, fetch):
 def test_catalog_fetch_pressure_group(tmp_path, mod, fetch):
     out = tmp_path / "out.zarr"
 
-    def open_catalog(group=None):
+    def open_catalog(dataset, group=None):
         if group == "pressure_level":
             return _catalog_pressure_ds()
         return _catalog_surface_ds()
@@ -470,6 +482,9 @@ def _fake_grib(path):
     if "_daily_" in name:
         steps = np.arange(24, 24 * 4 + 1, 24) * _H  # 0_24 .. 72_96
         var, vals, units = "2t", 280.0 + np.arange(4), "K"
+    elif "potential_temperature" in name:
+        steps = np.arange(0, 24 * 4 + 1, 24) * _H
+        var, vals, units = "pv", 1e-6 * np.arange(5), "K m2 kg-1 s-1"
     elif "10lev" in name:
         steps = np.arange(0, 24 * 4 + 1, 24) * _H
         var, vals, units = "t", 250.0 + np.arange(5), "K"
@@ -477,7 +492,7 @@ def _fake_grib(path):
         steps = np.arange(0, 24 * 4 + 1, 24) * _H
         var, vals, units = "tp", np.array([0.0, 2.0, 5.0, 9.0, 14.0]), "kg m-2"
     steps = steps.astype("timedelta64[ns]")
-    init = np.datetime64("2025-06-02", "ns")
+    init = np.datetime64(name.rsplit("_", 1)[1][:10], "ns")  # <...>_YYYY-MM-DD.grib
     dims = ["step", "latitude", "longitude"]
     data = np.broadcast_to(vals[:, None, None], (len(steps), 2, 2)).copy()
     coords = {
@@ -505,10 +520,18 @@ def fake_ecds(monkeypatch, mod):
     import sys
     import types
 
-    downloads = {"error": None}
+    failed = type("ProcessingFailedError", (Exception,), {})
+    downloads = {"error": None, "requests": [], "no_data": set()}
 
     class Remote:
-        results_ready = True
+        def __init__(self, request):
+            self.day = "-".join(request[k][0] for k in ("year", "month", "day"))
+
+        @property
+        def results_ready(self):
+            if self.day in downloads["no_data"]:
+                raise failed("no data for request")
+            return True
 
         def download(self, path):
             if downloads["error"] is not None:
@@ -517,17 +540,19 @@ def fake_ecds(monkeypatch, mod):
 
     class Client:
         def submit(self, name, request):
-            return Remote()
+            downloads["requests"].append(request)
+            return Remote(request)
 
     datastores = types.ModuleType("ecmwf.datastores")
     datastores.Client = Client
     processing = types.ModuleType("ecmwf.datastores.processing")
-    processing.ProcessingFailedError = type("ProcessingFailedError", (Exception,), {})
+    processing.ProcessingFailedError = failed
     monkeypatch.setitem(sys.modules, "ecmwf", types.ModuleType("ecmwf"))
     monkeypatch.setitem(sys.modules, "ecmwf.datastores", datastores)
     monkeypatch.setitem(sys.modules, "ecmwf.datastores.processing", processing)
     monkeypatch.setenv("ECMWF_DATASTORES_KEY", "dummy")
     monkeypatch.setattr(mod, "_open_grib", _fake_grib)
+    monkeypatch.setattr(mod, "_open_hindcast", _fake_hindcast_stores({}).__getitem__)
     return downloads
 
 
@@ -614,3 +639,300 @@ def test_catalog_open_failure_is_clean_error(tmp_path, mod, fetch, capsys):
             )
     assert exc.value.code == 1
     assert "dynamical.org catalog" in capsys.readouterr().err
+
+
+# --- Reforecast (hindcast) routing with fake Sheerwater stores --------------
+
+HC = "gs://sheerwater-public-datalake/hindcasts"
+PL_INITS = ["2010-01-01", "2010-01-03", "2010-01-05", "2015-03-01", "2015-03-03"]
+WB2_INITS = ["2000-01-01", "2000-01-02", "2015-03-02"]
+
+
+def _hc_store(var, inits, value):
+    """Store layout (member, prediction_timedelta, lat, lon, init_time); value + member."""
+    members = np.arange(1, 4)
+    data = value + members[:, None, None, None, None] * np.ones((3, 4, 2, 2, len(inits)))
+    return xr.Dataset(
+        {var: (("member", "prediction_timedelta", "lat", "lon", "init_time"), data)},
+        coords={
+            "member": members,
+            "prediction_timedelta": np.arange(4).astype("timedelta64[D]").astype("timedelta64[ns]"),
+            "lat": [0.0, 1.5],
+            "lon": [34.5, 36.0],
+            "init_time": np.array(inits, dtype="datetime64[ns]"),
+        },
+    )
+
+
+def _fake_hindcast_stores(overrides):
+    stores = {
+        f"{HC}/ecmwf_planette_precip.zarr": _hc_store("precip", PL_INITS, 3.0),
+        f"{HC}/ecmwf_planette_tmp2m.zarr": _hc_store("tmp2m", PL_INITS, 20.0),
+        f"{HC}/ecmwf_planette_sst.zarr": _hc_store("sst", PL_INITS, 27.0),
+        f"{HC}/ecmwf_ifs_precip.zarr": _hc_store("precip", WB2_INITS, 4.0),
+        f"{HC}/ecmwf_ifs_tmp2m.zarr": _hc_store("tmp2m", WB2_INITS, 21.0),
+    }
+    stores.update(overrides)
+    return stores
+
+
+@pytest.fixture
+def hindcast(monkeypatch, mod):
+    opened = []
+    stores = _fake_hindcast_stores({})
+
+    def fake_open(path):
+        opened.append(path.removeprefix(HC + "/"))
+        return stores[path]
+
+    monkeypatch.setattr(mod, "_open_hindcast", fake_open)
+    return types.SimpleNamespace(stores=stores, opened=opened)
+
+
+def _run_hc(fetch, out, *args):
+    run_skill(fetch, "--bbox", "2/34/-1/37", *args, "-o", str(out))
+    return xr.open_zarr(out, consolidated=True)
+
+
+def test_hindcast_window_reads_planette_members(tmp_path, fetch, hindcast, capsys):
+    ds = _run_hc(fetch, tmp_path / "o.zarr", "--start-time", "2010-01-01", "--end-time",
+                 "2010-01-04", "-v", "precip", "t2m", "--max-lead", "48h")  # fmt: skip
+    assert hindcast.opened == ["ecmwf_planette_precip.zarr", "ecmwf_planette_tmp2m.zarr"]
+    assert ds["precip"].dims == ("time", "number", "step", "latitude", "longitude")
+    assert ds["time"].values.astype("datetime64[D]").astype(str).tolist() == [
+        "2010-01-01",
+        "2010-01-03",
+    ]
+    # The perturbed members keep their numbers 1..N, as on the live 0..100 axis.
+    assert ds["number"].values.tolist() == [1, 2, 3]
+    np.testing.assert_allclose(
+        ds["precip"].isel(time=0, step=0, latitude=0, longitude=0), [4, 5, 6]
+    )
+    assert np.asarray(ds["step"].values).astype("timedelta64[D]").astype(int).tolist() == [0, 1, 2]
+    assert ds["precip"].attrs["units"] == "mm day-1"
+    assert ds["t2m"].attrs["units"] == "degree_Celsius"
+    assert ds["precip"].attrs["data_interval"] == "1 day"
+    assert ds.attrs["weather_skills_source"] == "sheerwater-hindcast:ecmwf_planette"
+    err = capsys.readouterr().err
+    assert "sheerwater-hindcast:ecmwf_planette" in err
+    assert "WeatherBench2" not in err
+
+
+def test_hindcast_date_before_planette_reads_wb2_with_warning(tmp_path, fetch, hindcast, capsys):
+    ds = _run_hc(fetch, tmp_path / "o.zarr", "--date", "2000-01-02", "-v", "precip")
+    assert ds["precip"].dims == ("number", "step", "latitude", "longitude")
+    assert ds["time"].values.astype("datetime64[D]").astype(str) == "2000-01-02"
+    assert ds.attrs["weather_skills_source"] == "sheerwater-hindcast:ecmwf_wb2"
+    assert "WARNING: 1 init(s)" in capsys.readouterr().err
+
+
+def test_hindcast_missing_init_of_one_variable_is_nan_with_warning(
+    tmp_path, fetch, hindcast, capsys
+):
+    path = f"{HC}/ecmwf_planette_tmp2m.zarr"
+    hindcast.stores[path] = hindcast.stores[path].isel(init_time=[0, 2, 3, 4])
+    ds = _run_hc(fetch, tmp_path / "o.zarr", "--start-time", "2010-01-01", "--end-time",
+                 "2010-01-05", "-v", "precip", "t2m")  # fmt: skip
+    assert ds.sizes["time"] == 3
+    assert bool(ds["t2m"].isel(time=1).isnull().all())
+    assert bool(ds["precip"].isel(time=1).notnull().all())
+    assert "reforecast t2m has no run for 1 init(s), left NaN: 2010-01-03" in (
+        capsys.readouterr().err
+    )
+
+
+def test_live_init_reads_catalog_not_hindcast(tmp_path, mod, fetch, hindcast):
+    with patch.object(mod, "_open_catalog", return_value=_catalog_surface_ds()):
+        run_skill(fetch, "--date", "2026-01-01", "--bbox", "3/10/0/13", "-o", str(tmp_path / "o"))
+    assert hindcast.opened == []
+    ds = xr.open_zarr(tmp_path / "o", consolidated=True)
+    assert ds.attrs["weather_skills_source"] == "ecmwf-s2s"
+
+
+@pytest.mark.parametrize(
+    ("args", "code", "message"),
+    [
+        (("--start-time", "2025-12-01", "--end-time", "2026-01-10"), 2, "split the request"),
+        (
+            ("--start-time", "2005-01-01", "--end-time", "2005-01-31"),
+            1,
+            "ecmwf_planette 2010-01-01..2015-03-03",
+        ),
+    ],
+)
+def test_hindcast_window_errors(tmp_path, fetch, hindcast, capsys, args, code, message):
+    with pytest.raises(SystemExit) as exc:
+        _run_hc(fetch, tmp_path / "o.zarr", *args)
+    assert exc.value.code == code
+    assert message in capsys.readouterr().err
+
+
+def test_date_that_is_not_a_hindcast_init_uses_ecds(tmp_path, fetch, fake_ecds, hindcast, capsys):
+    # 2015-03-02 is a WeatherBench2 init, but after Planette starts only Planette is read.
+    ds = _run_hc(fetch, tmp_path / "o.zarr", "--date", "2015-03-02", "-v", "precip")
+    assert ds.attrs["weather_skills_source"] == "ecmwf-s2s"
+    assert ds.sizes["number"] == 3  # control + the fake GRIB's 2 members
+    assert "not an ECMWF reforecast init" in capsys.readouterr().err
+
+
+def test_ocean_field_before_2026_uses_ecds(tmp_path, fetch, hindcast, capsys):
+    env = {k: v for k, v in os.environ.items() if k != "ECMWF_DATASTORES_KEY"}
+    with patch.dict(os.environ, env, clear=True):
+        with pytest.raises(SystemExit) as exc:
+            _run_hc(fetch, tmp_path / "o.zarr", "--date", "2010-01-03", "-v", "zos")
+    assert exc.value.code == 2
+    assert hindcast.opened == []
+    assert "ECMWF_DATASTORES_KEY" in capsys.readouterr().err
+
+
+# --- init windows (--start-time / --end-time) ---------------------------------
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["--date", "2026-01-01", "--start-time", "2026-01-01", "--end-time", "2026-01-02"],
+    ],
+)
+def test_date_or_windows_exactly_one_exits_2(tmp_path, fetch, args):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch, *args, "--bbox", "3/10/0/13", "-o", str(tmp_path / "o.zarr"))
+    assert exc.value.code == 2
+
+
+def test_catalog_windows_stack_inits_on_time(tmp_path, mod, fetch, capsys):
+    """Two windows pick the catalog inits inside them onto a leading `time` axis."""
+    inits = ("2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04")
+    out = tmp_path / "o.zarr"
+    with patch.object(mod, "_open_catalog", return_value=_catalog_surface_ds(inits=inits)):
+        run_skill(
+            fetch,
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "--start-time",
+            "2026-01-04",
+            "--end-time",
+            "2026-01-10",
+            "--bbox",
+            "3/10/0/13",
+            "-o",
+            str(out),
+        )
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds["precip"].dims == ("time", "number", "step", "latitude", "longitude")
+    assert [str(t)[:10] for t in ds["time"].values] == ["2026-01-01", "2026-01-02", "2026-01-04"]
+    assert ds.sizes["step"] == 2  # empty lead 0 dropped, as with --date
+    assert ds["precip"].attrs["data_interval"] == "1 day"
+    assert "Selected 3 inits." in capsys.readouterr().err
+
+
+def test_catalog_window_skips_empty_init(tmp_path, mod, fetch, capsys):
+    cat = _catalog_surface_ds(inits=("2026-01-01", "2026-01-02"))
+    for name in cat.data_vars:
+        cat[name][1] = np.nan
+    out = tmp_path / "o.zarr"
+    with patch.object(mod, "_open_catalog", return_value=cat):
+        run_skill(
+            fetch,
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "--bbox",
+            "3/10/0/13",
+            "-o",
+            str(out),
+        )
+    ds = xr.open_zarr(out, consolidated=True)
+    assert [str(t)[:10] for t in ds["time"].values] == ["2026-01-01"]
+    assert "WARNING" in capsys.readouterr().err
+
+
+def test_catalog_window_without_init_exits_1(tmp_path, mod, fetch, capsys):
+    with patch.object(mod, "_open_catalog", return_value=_catalog_surface_ds()):
+        with pytest.raises(SystemExit) as exc:
+            run_skill(
+                fetch,
+                "--start-time",
+                "2026-02-01",
+                "--end-time",
+                "2026-02-05",
+                "--bbox",
+                "3/10/0/13",
+                "-o",
+                str(tmp_path / "o.zarr"),
+            )
+    assert exc.value.code == 1
+    assert "no 00 UTC init" in capsys.readouterr().err
+
+
+def _run_ecds_window(fetch, out, start, end, *variables):
+    run_skill(
+        fetch,
+        "--start-time",
+        start,
+        "--end-time",
+        end,
+        "--bbox",
+        "1/34/0/35",
+        "-v",
+        *variables,
+        "-o",
+        str(out),
+    )
+    return xr.open_zarr(out, consolidated=True)
+
+
+def test_pre_2026_window_with_a_field_the_reforecast_lacks_uses_ecds(
+    tmp_path, fetch, fake_ecds, capsys
+):
+    ds = _run_ecds_window(fetch, tmp_path / "o.zarr", "2025-06-02", "2025-06-03", "t")
+    assert ds["t"].dims[:3] == ("time", "number", "step")
+    assert [str(t)[:10] for t in ds["time"].values] == ["2025-06-02", "2025-06-03"]
+    steps = np.asarray(ds["step"].values).astype("timedelta64[h]").astype(int)
+    assert steps.tolist() == [0, 24, 48, 72, 96]
+    point = ds["t"].isel(latitude=0, longitude=0, vertical=0).sel(number=0)
+    np.testing.assert_allclose(point.values, [250.0 + np.arange(5) - 273.15] * 2, rtol=1e-5)
+    assert ds["t"].attrs["data_interval"] == "1 day"
+    assert ds.attrs["weather_skills_source"] == "ecmwf-s2s"
+    days = sorted({r["day"][0] for r in fake_ecds["requests"]})
+    assert days == ["02", "03"]
+
+
+def test_ecds_window_before_daily_inits_takes_mondays_and_thursdays(tmp_path, fetch, fake_ecds):
+    # 2023-01-02 is a Monday; 2023-01-05 the Thursday.
+    ds = _run_ecds_window(fetch, tmp_path / "o.zarr", "2023-01-02", "2023-01-08", "pv")
+    assert [str(t)[:10] for t in ds["time"].values] == ["2023-01-02", "2023-01-05"]
+
+
+def test_ecds_window_without_init_exits_1(tmp_path, fetch, fake_ecds, capsys):
+    # A Tuesday and Wednesday before inits were daily.
+    with pytest.raises(SystemExit) as exc:
+        _run_ecds_window(fetch, tmp_path / "o.zarr", "2023-01-03", "2023-01-04", "pv")
+    assert exc.value.code == 1
+    assert fake_ecds["requests"] == []
+
+
+def test_ecds_window_skips_init_without_data(tmp_path, fetch, fake_ecds, capsys):
+    fake_ecds["no_data"].add("2025-06-03")
+    ds = _run_ecds_window(fetch, tmp_path / "o.zarr", "2025-06-02", "2025-06-04", "pv")
+    assert [str(t)[:10] for t in ds["time"].values] == ["2025-06-02", "2025-06-04"]
+    err = capsys.readouterr().err
+    assert "WARNING: ECDS init 2025-06-03" in err
+
+
+def test_ecds_window_skips_embargoed_inits(tmp_path, fetch, fake_ecds, capsys):
+    from datetime import UTC, datetime, timedelta
+
+    today = datetime.now(UTC).date()
+    start = today - timedelta(days=3)
+    ds = _run_ecds_window(fetch, tmp_path / "o.zarr", start.isoformat(), today.isoformat(), "pv")
+    # today - 3 and today - 2 are past the embargo; the two newest days are skipped.
+    assert [str(t)[:10] for t in ds["time"].values] == [
+        start.isoformat(),
+        (start + timedelta(days=1)).isoformat(),
+    ]
+    assert "embargo" in capsys.readouterr().err

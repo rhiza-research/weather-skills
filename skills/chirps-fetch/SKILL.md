@@ -2,7 +2,7 @@
 name: chirps-fetch
 description: "Fetch CHIRPS daily rainfall observations (0.05° land grid, 1981 to a few days ago) for a date range and optional region from the dynamical.org catalog, as a weather-skills Zarr. Joins the validated final product with the preliminary one for recent days into one `precip` series. Use when a task needs CHIRPS rainfall, recent or historical."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads public Icechunk Zarr from the dynamical.org open catalog (`ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`); no credentials required.
+compatibility: Requires Python 3.12 and uv. Reads public data from the dynamical.org catalog; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.8"
@@ -13,7 +13,7 @@ metadata:
 
 # chirps-fetch
 
-Fetches CHIRPS v3.0 daily precipitation, using the final product where it exists and the preliminary product for later days.
+Fetches CHIRPS v3.0 daily precipitation, using the validated final product where it exists (1981 to a month or two ago) and the preliminary product for later days. Both share one grid, so there is no shift at the join.
 
 ## Usage
 
@@ -38,7 +38,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ### Notes
 - Recent days are published in batches 2 days after each pentad (5-day block ending on the 5th, 10th, 15th, 20th, 25th and last day of the month), so the latest day is 2–7 days old. For "the last N days", run `--probe-latest` and end the window on that day.
 - An `--end-time` past the latest day writes the days available and warns on stderr with the effective end. No published day in the range exits 2. A missing day inside the range exits 2. Missing days are never filled.
-- Always pass `--bbox` for long windows: data is stored in 365-day × 60×60-cell chunks, so each year touched reads every chunk over the bbox.
+- Always pass `--bbox` for long windows: each year touched is read whole over the box, so a small box keeps multi-year fetches fast.
 
 ### Example
 ```bash
@@ -46,7 +46,3 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time 2026-09-01 --end-time 2
   --bbox 5.5/33.5/-5/42.5 -o chirps_kenya_sep.zarr
 ```
 Writes 30 daily CHIRPS rainfall fields over Kenya for September 2026.
-
-## Details
-
-The final product (`ucsb-chc-chirps-analysis-final`) runs from 1981 to the end of a recent month, a month or two behind. The preliminary product (`ucsb-chc-chirps-analysis-preliminary`, from 2025) fills the days after that. Both share one grid, so there is no shift at the join. To read just one of them, fetch it by catalog id from dynamical.org directly.

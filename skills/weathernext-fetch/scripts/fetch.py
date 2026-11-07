@@ -2,6 +2,7 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core>=0.3.6",
+#   "dynamical-catalog==1.0.1",
 #   "pandas",
 #   "gcsfs",
 # ]
@@ -27,7 +28,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.11"
+_SKILL_VERSION = "0.0.10"
 
 _STORE_NAME = "predictions.zarr"
 _STAMP_RE = re.compile(r"^(\d{8})_(\d{2})hr_01_preds$")
@@ -109,6 +110,24 @@ _PRODUCTS = {
 }
 
 _V2_NATIVE_PRECIP = "total_precipitation_6hr"
+
+# dynamical.org copies of the WeatherNext 2 stores: 2025 on (operational) and
+# 2022-2024 (historical), which gs://weathernext's realtime stores do not have.
+_CATALOG_OPERATIONAL = "google-weathernext2-forecast-operational-virtual"
+_CATALOG_HISTORICAL = "google-weathernext2-forecast-historical-virtual"
+_GCS_V2_START = "20250101"
+_STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
+# Catalog name -> the gs://weathernext WeatherNext 2 native name.
+_CATALOG_VARS = {
+    "total_precipitation_surface": _V2_NATIVE_PRECIP,
+    "temperature_2m": "2m_temperature",
+    "sea_surface_temperature": "sea_surface_temperature",
+    "pressure_reduced_to_mean_sea_level": "mean_sea_level_pressure",
+    "wind_u_10m": "10m_u_component_of_wind",
+    "wind_v_10m": "10m_v_component_of_wind",
+    "wind_u_100m": "100m_u_component_of_wind",
+    "wind_v_100m": "100m_v_component_of_wind",
+}
 
 # WeatherNext 3 native name -> output name. Fields WeatherNext 2 / ARCO-ERA5
 # also carry take their ERA5-lineage names, so v2 and v3 outputs line up.
@@ -227,6 +246,9 @@ _VAR_ALIASES = {
     "u1000": "u_component_of_wind_1000hPa",
     "v1000": "v_component_of_wind_1000hPa",
 }
+
+# Output names the catalog can serve (``precip`` for its 6 h totals).
+_CATALOG_FIELDS = {_VAR_ALIASES.get(n, n) for n in _CATALOG_VARS.values()}
 
 _GRID_RE = re.compile(r"^lat_(0p\d+)$")
 # Default WeatherNext 3 field group when no --variable is given: the hourly
@@ -411,6 +433,84 @@ def _open_remote(stamp: str, product: _Product, billing_project: str | None = No
         raise
     except Exception as exc:  # noqa: BLE001
         raise _gcs_error(exc, f"failed to open remote store {url}", product) from None
+
+
+def _catalog_id(day: str) -> str:
+    return _CATALOG_HISTORICAL if day < _GCS_V2_START else _CATALOG_OPERATIONAL
+
+
+def _open_catalog(dataset: str):
+    """Open a dynamical.org WeatherNext 2 store lazily, in the gs://weathernext layout."""
+    import os
+
+    import dynamical_catalog
+
+    if dataset not in dynamical_catalog.list():
+        os.environ["DYNAMICAL_STAC_CATALOG_URL"] = _STAGING_CATALOG
+        dynamical_catalog.clear_cache()
+        if dataset not in dynamical_catalog.list():
+            raise DataError(f"{dataset} is not in the dynamical.org catalog.")
+    ds = dynamical_catalog.open(dataset, chunks=None)
+    ds = ds.drop_vars(["expected_forecast_length", "spatial_ref"], errors="ignore")
+    ds = ds.rename(
+        {
+            "ensemble_member": "sample",
+            "lead_time": "time",
+            "valid_time": "datetime",
+            "y": "lat",
+            "x": "lon",
+            **{k: v for k, v in _CATALOG_VARS.items() if k in ds.data_vars},
+        }
+    )
+    return ds.assign_coords(sample=ds["sample"].values.astype("int64"))
+
+
+def _catalog_inits(stamps, latest=False):
+    """dynamical.org inits for these init stamps, as {stamp: lazy cube}.
+
+    With ``latest`` (stamps newest first) only the first complete init is kept.
+    The catalog lists an init while it still publishes; such an init, or one
+    the catalog lacks, is skipped with a warning (never filled).
+    """
+    import numpy as np
+
+    opened, out = {}, {}
+    for stamp in stamps:
+        day, hour = stamp[:8], stamp[9:11]
+        dataset = _catalog_id(day)
+        if dataset not in opened:
+            opened[dataset] = _open_catalog(dataset)
+        cat = opened[dataset]
+        init = np.datetime64(f"{day[:4]}-{day[4:6]}-{day[6:]}T{hour}:00", "ns")
+        if init not in cat["init_time"].values:
+            if not latest:
+                print(f"WARNING: dynamical.org has no init {stamp}; skipped.", file=sys.stderr)
+            continue
+        one = cat.sel(init_time=init)
+        # One value of the last lead (t2m is defined everywhere) says the init is complete.
+        last = one["2m_temperature"].isel(sample=0, time=-1, lat=0, lon=0).values
+        if np.isnan(float(last)):
+            print(
+                f"WARNING: dynamical.org init {stamp} is still publishing; skipped.",
+                file=sys.stderr,
+            )
+            continue
+        out[stamp] = one
+        if latest:
+            break
+    return out
+
+
+def _latest_candidates(cycle: str | None) -> list[str]:
+    """Init stamps of the last days, newest first, for ``cycle`` (default 00/06/12/18)."""
+    import datetime as dt
+
+    today = dt.datetime.now(dt.UTC).date()
+    return [
+        f"{(today - dt.timedelta(days=n)).strftime('%Y%m%d')}_{hour}hr_01_preds"
+        for n in range(_LATEST_LOOKBACK_DAYS)
+        for hour in reversed((cycle,) if cycle else _SYNOPTIC_CYCLES)
+    ]
 
 
 def _as_hours(values):
@@ -784,7 +884,14 @@ def fetch(
         max_lead = lead.to_timedelta64().astype("timedelta64[ns]")
 
     if probe_latest is not None:
-        stamp = _latest_stamp(product, cycle, billing_project)
+        stamp = None
+        if product.version == "2":
+            try:
+                stamp = next(iter(_catalog_inits(_latest_candidates(cycle), latest=True)), None)
+            except Exception as exc:  # noqa: BLE001 — any catalog failure falls back to GCS
+                print(f"dynamical.org catalog failed ({exc}); probing GCS.", file=sys.stderr)
+        if stamp is None:
+            stamp = _latest_stamp(product, cycle, billing_project)
         print(_stamp_to_date(stamp) if stamp else "none")
         return
 
@@ -794,18 +901,65 @@ def fetch(
         raise UsageError(
             "pass --date for one init, or --start-time/--end-time for a range of inits (not both)."
         )
+    # Init days (YYYYMMDD); None takes the latest init. The windows select init
+    # times, not valid times: the --cycle init (default 00 UTC) of each day.
+    days = None
     if windows:
         import datetime as dt
 
-        # The --cycle init (default 00 UTC) of each day in the windows, as with
-        # --date: the windows select init times, not valid times. One listing
-        # per month in the windows.
+        days = sorted(
+            {
+                (start + dt.timedelta(days=n)).strftime("%Y%m%d")
+                for start, end in windows
+                for n in range((end - start).days + 1)
+            }
+        )
+    elif date is not None:
+        days = [date.strftime("%Y%m%d")]
+
+    # WeatherNext 2 surface fields come from dynamical.org (no credentials)
+    # when it has the inits; anything else from GCS.
+    catalog = None
+    if product.version == "2":
+        historical = bool(days) and days[0] < _GCS_V2_START
+        # No -v means every field, pressure levels included: GCS.
+        fits = bool(variable) and all(_VAR_ALIASES.get(v, v) in _CATALOG_FIELDS for v in variable)
+        gcs = f"gs://{product.bucket}/{product.prefix}/"
+        if not fits:
+            why = "dynamical.org has only " + ", ".join(sorted(_CATALOG_FIELDS))
+            if historical:
+                raise DataError(f"WeatherNext 2 inits before 2025 are not on {gcs}; {why} (-v).")
+        else:
+            try:
+                if days is None:
+                    catalog = _catalog_inits(_latest_candidates(cycle), latest=True)
+                else:
+                    hour = cycle or "00"
+                    catalog = _catalog_inits([f"{day}_{hour}hr_01_preds" for day in days])
+                if not catalog:
+                    raise DataError("no complete init for the requested dates")
+            except Exception as exc:  # noqa: BLE001 — any catalog failure falls back to GCS
+                why = f"dynamical.org failed: {exc}"
+                if historical:
+                    raise DataError(
+                        f"{why}. WeatherNext 2 inits before 2025 are not on {gcs}."
+                    ) from None
+                catalog = None
+        if catalog is not None:
+            ids = sorted({_catalog_id(s[:8]) for s in catalog})
+            print(f"Source: dynamical.org {', '.join(ids)}", file=sys.stderr)
+        else:
+            print(f"Source: {gcs} ({why})", file=sys.stderr)
+
+    if catalog is not None:
+        stamps = sorted(catalog)
+        if windows:
+            print(f"Selected {len(stamps)} inits.", file=sys.stderr)
+        else:
+            print(f"Resolved init: {stamps[0]}", file=sys.stderr)
+    elif windows:
+        # One listing per month in the windows.
         hour = cycle or "00"
-        days = {
-            (start + dt.timedelta(days=n)).strftime("%Y%m%d")
-            for start, end in windows
-            for n in range((end - start).days + 1)
-        }
         stamps = [
             stamp
             for month in sorted({day[:6] for day in days})
@@ -830,14 +984,17 @@ def fetch(
     # One store per init: open each lazily, subset it, and load only that.
     pieces = []
     for stamp in stamps:
-        if windows and not _store_exists(stamp, product, billing_project):
-            print(
-                f"WARNING: no complete store for init {stamp} (still publishing?); skipped.",
-                file=sys.stderr,
-            )
-            continue
-        print(f"Opening {_store_url(stamp, product)}", file=sys.stderr)
-        ds = _open_remote(stamp, product, billing_project)
+        if catalog is not None:
+            ds = catalog[stamp]
+        else:
+            if windows and not _store_exists(stamp, product, billing_project):
+                print(
+                    f"WARNING: no complete store for init {stamp} (still publishing?); skipped.",
+                    file=sys.stderr,
+                )
+                continue
+            print(f"Opening {_store_url(stamp, product)}", file=sys.stderr)
+            ds = _open_remote(stamp, product, billing_project)
         if member:
             n = ds.sizes["sample"]
             bad = [m for m in member if m < -n or m >= n]
@@ -856,7 +1013,17 @@ def fetch(
             ds = bbox_subset(ds, bbox)
         else:
             ds = ensure_normalized_longitude(ds)
-        pieces.append(_prepare_dataset(ds.load(), product))
+        ds = ds.load()
+        if catalog is not None:
+            # The catalog's degC and kg m-2 back to the GCS stores' K and m, no attrs.
+            for name in ds.data_vars:
+                units = ds[name].attrs.get("units")
+                if units == "degree_Celsius":
+                    ds[name] = ds[name] + np.float32(273.15)
+                elif units == "kg m-2":
+                    ds[name] = ds[name] / np.float32(1000)
+            ds = ds.drop_attrs()
+        pieces.append(_prepare_dataset(ds, product))
     if not pieces:
         raise DataError("no complete store for any selected init.")
     if windows:
@@ -874,7 +1041,9 @@ def fetch(
         Conventions="CF-1.13",
         title=product.title,
         institution="Google DeepMind / Google Research (WeatherNext)",
-        source=_store_url(stamps[0], product)
+        source=f"dynamical.org:{_catalog_id(stamps[0][:8])}"
+        if catalog is not None
+        else _store_url(stamps[0], product)
         if not windows
         else f"gs://{product.bucket}/{product.prefix}/",
         weather_skills_source=f"{product.source_tag}:{label}",
