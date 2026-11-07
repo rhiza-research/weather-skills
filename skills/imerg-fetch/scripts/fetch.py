@@ -79,8 +79,8 @@ def _open_catalog(dataset):
     return dynamical_catalog.open(dataset)
 
 
-def _daily_means(ds, spacing):
-    """Mean of each UTC day, read about a month at a time so memory stays at one month.
+def _daily_means(ds, spacing, block_start, block_days):
+    """Mean of each UTC day, read in whole store chunks so each chunk is fetched once.
 
     Stamps `aggregation_coverage` (share of the day's native steps with data) like
     aggregate-temporal; incomplete days are kept and listed, never padded. A cell
@@ -97,10 +97,11 @@ def _daily_means(ds, spacing):
 
     per_day = int(round(np.timedelta64(1, "D") / spacing))
     days = ds["time"].values.astype("datetime64[D]")
-    unique_days = np.unique(days)
+    # Blocks start on the store's own chunk edges (block_start + k * block_days).
+    block_ids = (days - block_start) // np.timedelta64(block_days, "D")
     chunks, coverages = [], []
-    for start in range(0, unique_days.size, 31):
-        block = ds.isel(time=np.nonzero(np.isin(days, unique_days[start : start + 31]))[0]).load()
+    for block_id in np.unique(block_ids):
+        block = ds.isel(time=np.nonzero(block_ids == block_id)[0]).load()
         count = block.notnull().resample(time="1D").sum()
         mean = block.resample(time="1D").mean(keep_attrs=True)
         # Per day, a sample is present when some cell of every variable is finite.
@@ -271,7 +272,11 @@ def fetch(start_time, end_time, version, bbox, daily, probe_latest, **kwargs):
             ds = ensure_normalized_longitude(ds, lon_dim="longitude")
         ds = ds.rename({"precipitation_surface": "precip"}).sortby("latitude")
         if daily:
-            ds = _daily_means(ds, spacing)
+            # Three of the store's time chunks per read: each chunk is fetched once,
+            # several at a time, and a block stays a few hundred MB for a country box.
+            chunk_steps = (ds["precip"].encoding.get("chunks") or (1440,))[0]
+            block_days = max(1, int(3 * chunk_steps * spacing / np.timedelta64(1, "D")))
+            ds = _daily_means(ds, spacing, times[0].astype("datetime64[D]"), block_days)
         ds.attrs.update(
             Conventions="CF-1.13",
             weather_skills_source=f"dynamical:{dataset}",

@@ -38,7 +38,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [early|late|final]
 ### Arguments
 - `--start-time`, `--end-time` — inclusive date range; the end day keeps all its half-hourly steps.
 - `--version` — `early`, `late` or `final` (see the table). Default: `late`.
-- `--daily` — Early and Late: write one mean per UTC day instead of every half hour, reading about a month at a time. Use it for any daily or longer work: 1998 to now is one call at 1/48 of the half-hourly size, so never split IMERG into multi-year pieces and aggregate each. Same values as `aggregate-temporal --period daily` on the half-hourly fetch. Final and the Late fallback are already daily.
+- `--daily` — Early and Late: write one mean per UTC day instead of every half hour, reading whole store chunks (three months) at a time, about 22 s per year for a country box. Use it for any daily or longer work: 1998 to now is one call at 1/48 of the half-hourly size, so never split IMERG into multi-year pieces and aggregate each. Same values as `aggregate-temporal --period daily` on the half-hourly fetch. Final and the Late fallback are already daily.
 - `--bbox` — `N/W/S/E` decimal degrees; W > E crosses the antimeridian. Default: the whole globe.
 - `--probe-latest` — print the latest published day (`YYYY-MM-DD`) on stdout and exit. Optional value `early`, `late` or `final`; without one it uses `--version`. Early and Late read the dynamical.org catalog and note on stderr when that day is still partial; Final asks GES DISC (Earthdata login).
 - `--output`, `-o` — output Zarr, overwritten.
