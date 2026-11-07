@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py *)
 metadata:
-  version: "0.0.9"
+  version: "0.0.10"
   catalog-group: transforms
 ---
 

@@ -21,7 +21,7 @@ from weather_skills_core.region import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.11"
 
 # OSM feature types that name an area but come back from Nominatim as one centre
 # point ("Horn of Africa" is natural/peninsula). Padding that point would print a

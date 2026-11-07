@@ -52,7 +52,7 @@ _OTHER_SUFFIXES = (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.10"
 
 
 def _parent_histories(step: dict) -> list[tuple[str, list]]:
