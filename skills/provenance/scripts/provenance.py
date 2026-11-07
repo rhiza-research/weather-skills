@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.3.6",
 #   "pillow",
 # ]
 # ///
@@ -52,7 +52,7 @@ _OTHER_SUFFIXES = (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.8"
+_SKILL_VERSION = "0.0.10"
 
 
 def _parent_histories(step: dict) -> list[tuple[str, list]]:
@@ -284,11 +284,22 @@ def _command(step: dict, inputs: list, output: str) -> str:
     return line
 
 
+def _recorded_path(item) -> tuple:
+    """``(path, sep, name)`` of a recorded PATH or PATH=NAME arg item."""
+    path, sep, name = str(item).rpartition("=")
+    return (path, sep, name) if sep else (str(item), "", "")
+
+
 def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
     """Emit one command per step; a join step first reproduces each parent subgraph.
 
     A join can sit anywhere on the path (its output feeding later steps), so every
     step is checked, and nested joins recurse.
+
+    A step whose args name every file it read (core records each input's path)
+    is replayed from its args alone: each named file becomes the file the replay
+    makes for it, and a file with no history is read from its recorded path.
+    Older histories, whose args leave inputs out, have their input flags added.
     """
     lines = []
     prev = None
@@ -303,31 +314,20 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
         flags = JOIN_FLAGS.get(skill, [])
         branches = _parent_histories(step)
         args = step.get("args") if isinstance(step.get("args"), dict) else {}
-        read = {
+        read = [
             item.get("basename")
             for item in (step_input if isinstance(step_input, list) else [step_input])
             if isinstance(item, dict)
-        }
-        # A skill that takes a file through its own flag (not a dataset-typed
-        # --input) keeps the path in its recorded args, as PATH or PATH=NAME:
-        # those args carry the inputs, so nothing is appended for them.
-        carried = [
-            dest
-            for dest, value in args.items()
-            if any(
-                Path(str(v).rpartition("=")[0] or str(v)).name in read
-                for v in (value if isinstance(value, list) else [value])
-                if v is not None
-            )
         ]
-        # Files the recorded args name: those args pass them, so no flag is added.
         named = {
-            Path(str(v).rpartition("=")[0] or str(v)).name
-            for dest in carried
-            for v in (args[dest] if isinstance(args[dest], list) else [args[dest]])
+            Path(_recorded_path(v)[0]).name
+            for value in args.values()
+            for v in (value if isinstance(value, list) else [value])
+            if isinstance(v, str)
         }
-        # Basename of each file this step read -> the path it has in the replay.
-        sources = {}
+        recorded = bool(read) and all(name in named for name in read)
+        # Basename of each file this step read -> the file the replay makes for it.
+        replay = {}
 
         if len(branches) >= 2:
             branch_outputs = []
@@ -337,9 +337,8 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
                 lines.append(f"# --- input branch {label} ---")
                 if history:
                     lines += _emit_graph(history, f"{prefix}{label}_", branch_out)
-                    sources[basename] = branch_out
-                elif basename in named:
-                    # A file from outside the skills: read from its recorded path.
+                    replay[basename] = branch_out
+                elif recorded:
                     lines.append(f"# branch {label} is {basename}, read from its recorded path.")
                 else:
                     lines.append(
@@ -350,50 +349,43 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
                 lines.append("")
             lines.append(f"# --- combine the input branches ({skill}) ---")
             inputs = [
-                (flags[j] if j < len(flags) else "--input", out, branches[j][0])
+                (flags[j] if j < len(flags) else "--input", out)
                 for j, out in enumerate(branch_outputs)
             ]
         elif isinstance(step_input, list):
             inputs = []
             for j, item in enumerate(step_input):
                 flag = flags[j] if j < len(flags) else "--input"
-                name = item.get("basename", "?") if isinstance(item, dict) else "?"
                 if j == 0 and prev is not None:
-                    inputs.append((flag, prev, name))
-                    sources[name] = prev
+                    inputs.append((flag, prev))
                 else:
-                    inputs.append((flag, name, name))
+                    name = item.get("basename", "?") if isinstance(item, dict) else "?"
+                    inputs.append((flag, name))
         elif step_input is None:
             inputs = []
         elif prev is not None:
-            name = step_input.get("basename", "?") if isinstance(step_input, dict) else "?"
-            inputs = [("--input", prev, name)]
-            sources[name] = prev
-        elif carried:
+            inputs = [("--input", prev)]
+        elif recorded:
             inputs = []
         else:
             lines.append(f"# step {i} ({skill})'s input is an artifact outside this chain;")
             lines.append("# reproduce it separately and replace <UPSTREAM> below.")
-            inputs = [("--input", "<UPSTREAM>", None)]
+            inputs = [("--input", "<UPSTREAM>")]
 
-        if carried:
-            # Recorded items are PATH or PATH=NAME; a PATH whose basename is a
-            # file this step read takes that file's replay path, keeping =NAME.
-            args = dict(args)
-            for dest in carried:
+        if recorded:
+            if prev is not None and len(branches) < 2:
+                replay[read[0]] = prev
+            relinked = {}
+            for dest, value in args.items():
                 items = []
-                for item in args[dest] if isinstance(args[dest], list) else [args[dest]]:
-                    path, sep, name = str(item).rpartition("=")
-                    if not sep:
-                        path, name = str(item), ""
+                for item in value if isinstance(value, list) else [value]:
+                    path, sep, name = (
+                        _recorded_path(item) if isinstance(item, str) else ("", "", "")
+                    )
                     base = Path(path).name
-                    if base in sources:
-                        items.append(sources[base] + sep + name)
-                    else:
-                        items.append(item)
-                args[dest] = items if isinstance(args[dest], list) else items[0]
-            step = {**step, "args": args}
-        inputs = [(flag, path) for flag, path, name in inputs if name not in named]
+                    items.append(replay[base] + sep + name if base in replay else item)
+                relinked[dest] = items if isinstance(value, list) else items[0]
+            step, inputs = {**step, "args": relinked}, []
 
         lines.append(_command(step, inputs, output))
         prev = output

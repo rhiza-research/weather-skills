@@ -1,6 +1,7 @@
 """Correctness tests for provenance."""
 
 import json
+import re
 
 import pytest
 from conftest import load_skill, make_gridded, run_skill, write_zarr
@@ -272,8 +273,12 @@ def test_script_reproduces_join_before_later_step(tmp_path, clip_region, provena
 
     captured = _script(provenance, final, capsys)
 
-    assert "clip-region --bbox -1/10/-3/13 --input '<UPSTREAM>' --output a.zarr" in captured
-    assert "clip-region --bbox -1/10/-3/13 --input '<UPSTREAM>' --output b.zarr" in captured
+    # a.zarr / b.zarr have no history: read from the path core recorded, or
+    # <UPSTREAM> for a core that leaves inputs out of args.
+    for out in ("a", "b"):
+        assert re.search(
+            rf"clip-region --bbox -1/10/-3/13 --input \S+ --output {out}\.zarr", captured
+        )
     assert "difference --input a.zarr --input b.zarr --output step1.zarr" in captured
     assert "clip-region --bbox -1/10/-2/12 --input step1.zarr --output final.zarr" in captured
 
@@ -443,23 +448,32 @@ def test_script_keeps_imported_join_files_at_recorded_paths(tmp_path, provenance
     assert "yourself" not in captured
 
 
-def test_script_join_mixes_input_and_recorded_flag(tmp_path, provenance, capsys):
-    # coarsen: the main input is a dataset-typed --input (not in args); the
-    # reference grid is a recorded path arg. Each branch reaches its own flag.
+def test_script_relinks_every_input_named_in_args(tmp_path, provenance, capsys):
+    # Core records each input's path in args (here --input and --reference-grid);
+    # the replay swaps each for the file it makes and appends nothing.
     step = {
         "skill": "coarsen",
         "version": "0.0.1",
-        "args": {"method": "conservative", "reference_grid": "/x/imerg_dek.zarr"},
+        "args": {
+            "input": "work/chirps_dek.zarr",
+            "method": "conservative",
+            "reference_grid": "work/imerg_dek.zarr",
+        },
         "input": [
             {"basename": "chirps_dek.zarr", "hash": "h", "history": [_fetch("chirps-fetch")]},
             {"basename": "imerg_dek.zarr", "hash": "h", "history": [_fetch("imerg-fetch")]},
         ],
     }
-    out = _stamp_history(tmp_path / "rep.zarr", [step])
+    later = {**_fetch("drop"), "args": {"input": "work/c.zarr"}}
+    later["input"] = {"basename": "c.zarr", "hash": "h"}
+    out = _stamp_history(tmp_path / "rep.zarr", [step, later])
 
     captured = _script(provenance, out, capsys)
 
     assert "chirps-fetch --output a.zarr" in captured
     assert "imerg-fetch --output b.zarr" in captured
-    assert "coarsen --method conservative --reference-grid b.zarr --input a.zarr" in captured
-    assert captured.count("--input") == 1
+    assert (
+        "coarsen --input a.zarr --method conservative --reference-grid b.zarr --output step1.zarr"
+    ) in captured
+    assert "drop --input step1.zarr --output rep.zarr" in captured
+    assert captured.count("--input") == 2
