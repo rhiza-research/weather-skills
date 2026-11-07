@@ -7,28 +7,7 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.9"
   catalog-group: fetchers
-  variables:
-    - precip
-    - t2m
-    - d2m
-    - msl
-    - u10
-    - v10
-    - gust10
-    - sp
-    - tcwv
-    - mucape
-    - skt
-    - ssrd
-    - strd
-    - str
-    - ttr
-    - t
-    - gh
-    - u
-    - v
-    - q
-    - r
+  variables: "precip t2m d2m msl u10 v10 gust10 sp tcwv mucape skt ssrd strd str ttr t gh u v q r"
 ---
 
 # ecmwf-hres-fetch

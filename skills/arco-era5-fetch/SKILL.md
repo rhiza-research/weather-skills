@@ -7,12 +7,7 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.8"
   catalog-group: fetchers
-  variables:
-    - 2m_temperature
-    - total_precipitation
-    - 2m_dewpoint_temperature
-    - 10m_u_component_of_wind
-    - 10m_v_component_of_wind
+  variables: "2m_temperature total_precipitation 2m_dewpoint_temperature 10m_u_component_of_wind 10m_v_component_of_wind"
 ---
 
 # arco-era5-fetch

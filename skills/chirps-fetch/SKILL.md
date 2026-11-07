@@ -7,8 +7,7 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.7"
   catalog-group: fetchers
-  variables:
-    - precip
+  variables: "precip"
 ---
 
 # chirps-fetch
