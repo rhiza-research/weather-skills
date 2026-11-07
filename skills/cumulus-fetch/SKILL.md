@@ -1,6 +1,6 @@
 ---
 name: cumulus-fetch
-description: "Fetch the Cumulus AI operational ensemble precipitation forecast (Aurora S2S run, 30 members, 46 daily leads, 0.25° or 1° global grid) for one init date or a range of inits and optional region from Cumulus's private Azure storage, as a weather-skills Zarr. Inits from 1996 to 2024 come from Cumulus's own hindcast, which also has 2 m temperature. Needs an Azure read token (AZURE_STORAGE_SAS_TOKEN). Use when a task needs the Cumulus forecast."
+description: "Fetch a Cumulus AI ensemble forecast variable (Aurora S2S run, 30 members, 46 daily leads, 0.25° or 1° global grid): precipitation, and 2 m temperature for hindcast inits, for one init date or a range of inits and optional region, as a weather-skills Zarr. Inits from 1996 to 2024 come from Cumulus's own hindcast automatically. Needs an Azure read token (AZURE_STORAGE_SAS_TOKEN). Use when a task needs the Cumulus forecast."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads private Cumulus data on Azure. Requires AZURE_STORAGE_SAS_TOKEN (a read SAS with list and read, sp=rl).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -22,12 +22,19 @@ metadata:
 
 # cumulus-fetch
 
-Fetches one Cumulus init, or every init in one or more date windows (all leads, all members), and writes daily precipitation rates. Inits before the live record come from Cumulus's hindcast automatically (see Coverage).
+Fetches one variable for one Cumulus init, or every init in one or more date windows (all leads, all members). Inits before the live record come from Cumulus's hindcast automatically (see Coverage).
+
+| `--dataset` | Variable | Grid | Live runs | Hindcast |
+|---|---|---|---|---|
+| `precip` (default) | `precip`, IMERG-trained | 0.25° | yes | yes |
+| `precip_1deg` | `precip`, IMERG-trained | 1° | yes | yes |
+| `precip_era5` | `precip`, ERA5-trained | 1° | yes | yes |
+| `t2m` | `t2m` | 1° | no | yes |
 
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--dataset precip|precip_1deg|precip_era5] [--date YYYY-MM-DD] [--bbox N/W/S/E] [-v precip] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--dataset NAME | -v VAR] [--date YYYY-MM-DD] [--bbox N/W/S/E] -o OUT.zarr
 # Every 00 UTC init in a window, in one call; repeat the pair for several windows
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--start-time ... --end-time ...] --bbox N/W/S/E -o OUT.zarr
 # Latest init date (no download)
@@ -35,26 +42,25 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET]
 ```
 
 ### Arguments
-- `--dataset` — `precip` (IMERG-trained, 0.25°), `precip_1deg` (IMERG-trained, 1°) or `precip_era5` (ERA5-trained, 1°). Anything else exits 2. Default: `precip`.
+- `--dataset` — one of the table rows. Default: the first row holding the `-v` variable, else `precip`. Anything else exits 2.
 - `--date` — init date; takes that day's latest init hour. Default: the latest published init. A date with no init exits 1 and lists the nearest published inits, so pick one of those rather than trying other dates.
 - `--start-time`, `--end-time` — an init window, both days inclusive. Repeat the pair for several windows, one window per pair. Takes every 00 UTC init in the windows with all its leads: like `--date`, the windows select init times, not valid times. Use this instead of one `--date` call per init; not with `--date`. No init in any window exits 1.
 - `--bbox` — `N/W/S/E` decimal degrees; negative longitudes work. Omit for the full global grid (about 5.5 GB per init at 0.25°, 350 MB at 1°).
-- `--variable`, `-v` — `precip` (default; also `tp`, `precipitation`, `total_precipitation`) or `t2m` (also `2t`, `tas`, `temperature_2m`). `t2m` is in the hindcast only, on its 1° grid: it needs a `--date` or windows from 1996–2024, takes no `--dataset`, and is fetched in its own call, not with `precip`. Anything else exits 2.
+- `--variable`, `-v` — the variable to fetch, one per call: `precip` (also `tp`, `precipitation`, `total_precipitation`) or `t2m` (also `2t`, `tas`, `temperature_2m`). A variable the `--dataset` does not hold exits 2. Optional.
 - `--workers` — maximum concurrent chunk requests, at least 1. Default: 8.
 - `--probe-latest` — print the latest live init date (`YYYY-MM-DD`, or `none`) on stdout and exit. Optional value: a `--dataset` id.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- `precip` in `mm day-1`, dims `(number, step, latitude, longitude)`, scalar `time` = init; with windows, `(time, step, number, latitude, longitude)`, one `time` per init.
-- `step` is the start of each 24 h period: `step = 0` is `[init, init + 1 day)`, up to 46 leads.
-- `t2m` (`degree_Celsius`) is the 2 m temperature at `init + step`, an instant rather than a daily mean, so its steps run from 1 to 46 days.
+- The variable, dims `(number, step, latitude, longitude)`, scalar `time` = init; with windows, `(time, step, number, latitude, longitude)`, one `time` per init. `precip` is in `mm day-1`, `t2m` in `degree_Celsius`.
+- 24 h totals (`precip`) are labelled by the period start: `step = 0` is `[init, init + 1 day)`, up to 46 leads. Instants (`t2m`) are the value at `init + step`, so their steps run from 1 to 46 days.
 - `number` is 0–29; members are interchangeable draws (member 0 is not a control).
 - Longitude `[-180, 180)`, `data_interval` `1 day`. `weather_skills_source` is `cumulus:<dataset>` for live inits and `cumulus-hindcast:<dataset>` for hindcast inits.
 - Hindcast output has the same names, dims, units and grid as live output for the same `--dataset`.
 
 ### Coverage
 - Live runs: from 2026-09-01 to the latest init; `--probe-latest` gives the end.
-- Hindcast: every second day from 1996-01-01 to 2024-12-31, all three precip datasets plus `t2m`, read automatically for earlier dates. A `--date` with no hindcast init exits 1 and lists the nearest ones. There are no inits between the two records.
+- Hindcast: every second day from 1996-01-01 to 2024-12-31, for every dataset, read automatically for earlier dates. A dataset with no live runs (`t2m`) needs a `--date` or windows in that range. A `--date` with no hindcast init exits 1 and lists the nearest ones. There are no inits between the two records.
 - One call reads one record. Windows holding inits on both sides of the first live init exit 2 and name the date to split at; make one call per side.
 
 ### Notes

@@ -35,7 +35,11 @@ def _live_store(values=(5.0, 5.0, 5.0), members=3):
             "valid_time": (("init_time", "lead_time"), (init + leads)[None, :]),
         },
     )
-    ds[name].attrs.update(units="mm", long_name="24-hour total precipitation")
+    ds[name].attrs.update(
+        units="mm",
+        long_name="24-hour total precipitation",
+        cell_methods="time: sum (interval: 24 hours)",
+    )
     ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north")
     ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east")
     return ds
@@ -56,7 +60,7 @@ def remote(fetch_mod, monkeypatch):
 
 
 def test_to_standard_maps_live_layout(fetch_mod):
-    out = fetch_mod._to_standard(_live_store())
+    out = fetch_mod._to_standard(_live_store(), "precip")
     assert out["precip"].dims == ("number", "step", "latitude", "longitude")
     assert out["time"].values == np.datetime64("2026-09-18", "ns")
     hours = out["step"].values.astype("timedelta64[h]").astype(int)
@@ -186,9 +190,8 @@ def test_nonpositive_workers_exits_2(tmp_path, fetch_mod, remote, workers):
 
 @pytest.mark.parametrize("flag", ["--dataset", "--probe-latest"])
 def test_unknown_dataset_exits_2(tmp_path, fetch_mod, remote, flag):
-    # Any other folder's field would be renamed to precip and stamped as precipitation.
     with pytest.raises(SystemExit) as exc:
-        run_skill(fetch_mod.fetch, flag, "2m_temperature", "-o", str(tmp_path / "out.zarr"))
+        run_skill(fetch_mod.fetch, flag, "soil_moisture", "-o", str(tmp_path / "out.zarr"))
     assert exc.value.code == 2
 
 
@@ -475,13 +478,13 @@ def t2m_hindcast(fetch_mod, monkeypatch):
             ],
             "init_time",
         ).rename(total_precipitation_24h_acc_imerg_0p25="2m_temperature")
-        ds["2m_temperature"].attrs = {"units": "K", "long_name": "2 metre temperature"}
+        ds["2m_temperature"].attrs = {
+            "units": "K",
+            "long_name": "2 metre temperature",
+        }  # an instant
         return select(ds) if select is not None else ds
 
-    def no_live(folder):
-        raise AssertionError("t2m must not list live stores")
-
-    monkeypatch.setattr(fetch_mod, "_list_stores", no_live)
+    monkeypatch.setattr(fetch_mod, "_list_stores", lambda folder: [])
     monkeypatch.setattr(fetch_mod, "_open_store", fake_open)
     return opened
 
@@ -500,19 +503,25 @@ def test_t2m_reads_temperature_hindcast_as_instants(tmp_path, fetch_mod, t2m_hin
         np.testing.assert_allclose(ds["t2m"].values[:, 0, 0, 0, 0], [6.85, 7.85], atol=1e-4)
 
 
+def test_no_live_runs_without_dates_exits_1(tmp_path, fetch_mod, t2m_hindcast, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "-v", "t2m", "-o", str(tmp_path / "x.zarr"))
+    assert exc.value.code == 1
+    assert "no live t2m runs" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
-    "args, message",
+    "args",
     [
-        (["-v", "t2m"], "only from the Cumulus hindcast"),
-        (["-v", "t2m", "-v", "precip", "--date", "2010-01-03"], "separate calls"),
-        (["-v", "t2m", "--dataset", "precip_era5", "--date", "2010-01-03"], "omit it"),
+        ["-v", "t2m", "-v", "precip", "--date", "2010-01-03"],
+        ["-v", "t2m", "--dataset", "precip_era5", "--date", "2010-01-03"],
     ],
 )
-def test_t2m_misuse_exits_2(tmp_path, fetch_mod, t2m_hindcast, capsys, args, message):
+def test_variable_not_in_dataset_exits_2(tmp_path, fetch_mod, t2m_hindcast, capsys, args):
     with pytest.raises(SystemExit) as exc:
         run_skill(fetch_mod.fetch, *args, "-o", str(tmp_path / "x.zarr"))
     assert exc.value.code == 2
-    assert message in capsys.readouterr().err
+    assert "fetch one per call" in capsys.readouterr().err
 
 
 def test_t2m_live_date_lists_hindcast_inits(tmp_path, fetch_mod, t2m_hindcast, capsys):
