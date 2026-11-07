@@ -114,6 +114,15 @@ Use it to understand an artifact already in the workspace before reusing it —
 what region, dates, and variable it covers, and whether it matches the task —
 and to answer "how was this made, and how do I regenerate it?"
 
+**Never touch provenance yourself. This is strictly forbidden.** Only skills
+record history. Do not write, edit, copy, remove or forge a
+`weather_skills_history` or `weather_skills_source` attr, a `.history.json`
+sidecar, or the stamp on a figure, by any means: no Python calls into
+`weather_skills_core`, no zarr or image edits, no hand-written JSON. Setting
+provenance yourself falsifies the record of how a file was made; it is
+tampering, akin to hacking. If a file has no history or its plot has no stamp,
+say so plainly; never try to supply one.
+
 ## Credentials
 
 Prefer `dynamical-fetch` so you often need none — including for IMERG
