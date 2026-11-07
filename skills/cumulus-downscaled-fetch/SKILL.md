@@ -8,7 +8,7 @@ metadata:
   version: "0.0.1"
   catalog-group: fetchers
   variables:
-    - tp
+    - precip
   openclaw:
     requires:
       env:
@@ -49,14 +49,14 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--source SUBFOLDER] [--date YYYY-MM
 - `--checkpoint` — substring of the checkpoint folder. When an init has several and this is omitted, the skill keeps the one later inits carry on running and warns; if that does not settle it, it exits 1 and lists them.
 - `--date` — init date. Default: the latest init with output for `--model`. A date with no output exits 1.
 - `--bbox` — `N/W/S/E` decimal degrees inside the domain. Omit for the full domain (about 50 MB per init for the mean, ten times that with `--members`).
-- `--variable`, `-v` — the product holds one field, written as `tp`. Accepts `tp`, `precip`, `precipitation`, `total_precipitation` or `precip_24h`; anything else exits 2. Optional.
+- `--variable`, `-v` — the product holds one field, written as `precip`. Accepts `precip`, `tp`, `precipitation`, `total_precipitation` or `precip_24h`; anything else exits 2. Optional.
 - `--workers` — maximum concurrent file downloads, at least 1. Default: 16.
 - `--probe-latest` — print the latest init date (`YYYY-MM-DD`, or `none`) with output on stdout and exit. Optional value: a `--model` name.
 - `--list` — print the `--source` subfolders, the inits of `--source`, and each model folder, checkpoint and target at `--date` (default: the latest init) on stdout, then exit. Use it once, before a fetch, when the source, model or checkpoint name is not known; do not guess names to read them from errors.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- `tp` in `mm day-1`, dims `(step, latitude, longitude)`, or `(number, step, latitude, longitude)` with `--members`; scalar `time` = the 00 UTC init.
+- `precip` in `mm day-1`, dims `(step, latitude, longitude)`, or `(number, step, latitude, longitude)` with `--members`; scalar `time` = the 00 UTC init.
 - `step` is the start of each 24 h period: `step = 0` is `[init, init + 1 day)`, up to 46 leads. Already a rate: do not run `deaccumulate`.
 - `number` is 0–9; members are interchangeable draws (member 0 is not a control).
 - `weather_skills_source=cumulus-downscaled:<source>/<model folder>/<checkpoint>/<target folder>`, `cumulus_downscaled_member_set` (`ensemble_mean` or `members`), `data_interval` `1 day`.

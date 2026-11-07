@@ -87,14 +87,14 @@ def test_fetch_latest_ensemble_mean_as_rates(tmp_path, fetch_mod, remote, capsys
     run_skill(fetch_mod.fetch, "-o", str(out))
     assert all("/2026-10-27/" in p and "member_" not in p for p in remote["read"])
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert list(ds.data_vars) == ["tp"]
-        assert ds["tp"].dims == ("step", "latitude", "longitude")
-        assert ds["tp"].attrs["units"] == "mm day-1"
+        assert list(ds.data_vars) == ["precip"]
+        assert ds["precip"].dims == ("step", "latitude", "longitude")
+        assert ds["precip"].attrs["units"] == "mm day-1"
         days = np.asarray(ds["step"].values).astype("timedelta64[D]").astype(int)
         assert list(days) == [0, 1, 2]
         assert ds["time"].values == np.datetime64("2026-10-27", "ns")
         assert list(ds["latitude"].values) == pytest.approx([0.8, 0.9, 1.0])
-        np.testing.assert_allclose(ds["tp"].values[:, 0, 0], [5.0, 5.0, 5.0])
+        np.testing.assert_allclose(ds["precip"].values[:, 0, 0], [5.0, 5.0, 5.0])
         assert (
             ds.attrs["weather_skills_source"] == f"cumulus-downscaled:aurora/{DIFF}/ckpt-a/{ERA5}"
         )
@@ -108,9 +108,9 @@ def test_members_stack_on_number(tmp_path, fetch_mod, remote):
     out = tmp_path / "members.zarr"
     run_skill(fetch_mod.fetch, "--members", "-o", str(out))
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert ds["tp"].dims == ("number", "step", "latitude", "longitude")
+        assert ds["precip"].dims == ("number", "step", "latitude", "longitude")
         assert list(ds["number"].values) == [0, 1]
-        np.testing.assert_allclose(ds["tp"].values[:, 0, 0, 0], [1.0, 2.0])
+        np.testing.assert_allclose(ds["precip"].values[:, 0, 0, 0], [1.0, 2.0])
 
 
 def test_model_without_latest_init_walks_back(tmp_path, fetch_mod, remote, capsys):
@@ -132,7 +132,7 @@ def test_missing_interior_lead_stays_nan(tmp_path, fetch_mod, remote, capsys):
     run_skill(fetch_mod.fetch, "-o", str(out))
     assert "step(s) 1 d have no file" in capsys.readouterr().err
     with xr.open_zarr(out, consolidated=True) as ds:
-        values = ds["tp"].values[:, 0, 0]
+        values = ds["precip"].values[:, 0, 0]
         assert values[0] == 5.0 and np.isnan(values[1]) and values[2] == 5.0
 
 

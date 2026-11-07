@@ -52,7 +52,7 @@ _TARGETS = {
     "era5": "total_precipitation_24h_acc_era5",
     "imerg": "total_precipitation_24h_acc_imerg",
 }
-_TP_ALIASES = {"tp", "precip", "precipitation", "total_precipitation", "precip_24h"}
+_PRECIP_ALIASES = {"tp", "precip", "precipitation", "total_precipitation", "precip_24h"}
 DEFAULT_WORKERS = 16
 
 
@@ -182,10 +182,10 @@ def fetch(
     root = f"{_BASE}/{source.strip('/')}/{_DOMAIN}"
     if workers < 1:
         raise UsageError(f"--workers must be at least 1 (got {workers}).")
-    unknown = set(variable or ()) - _TP_ALIASES
+    unknown = set(variable or ()) - _PRECIP_ALIASES
     if unknown:
         raise UsageError(
-            f"variable(s) not in this Cumulus product: {', '.join(sorted(unknown))}.\nAvailable: tp"
+            f"variable(s) not in this Cumulus product: {', '.join(sorted(unknown))}.\nAvailable: precip"
         )
     fs = _filesystem()
 
@@ -362,14 +362,14 @@ def fetch(
 
     if members:
         numbers = [int(_MEMBER_RE.fullmatch(d).group(1)) for d in member_dirs]
-        tp = xr.concat(fields, "number", join="outer").assign_coords(number=numbers)
+        precip = xr.concat(fields, "number", join="outer").assign_coords(number=numbers)
     else:
-        tp = fields[0]
+        precip = fields[0]
     # A lead file that is not there stays NaN (never filled); steps end at the last file.
-    days = np.arange(int(tp["step"].max() / np.timedelta64(1, "D")) + 1)
-    tp = tp.reindex(step=(days * np.timedelta64(1, "D")).astype(tp["step"].dtype))
-    tp = tp.sortby("latitude").transpose(..., "step", "latitude", "longitude")
-    empty = days[tp.isnull().all([d for d in tp.dims if d != "step"]).values]
+    days = np.arange(int(precip["step"].max() / np.timedelta64(1, "D")) + 1)
+    precip = precip.reindex(step=(days * np.timedelta64(1, "D")).astype(precip["step"].dtype))
+    precip = precip.sortby("latitude").transpose(..., "step", "latitude", "longitude")
+    empty = days[precip.isnull().all([d for d in precip.dims if d != "step"]).values]
     if len(days) < 46 or len(empty):
         gaps = (
             f"; step(s) {', '.join(map(str, empty))} d have no file (left NaN)"
@@ -382,7 +382,7 @@ def fetch(
             file=sys.stderr,
         )
 
-    tp.attrs = {
+    precip.attrs = {
         "units": "mm",
         "long_name": "24-hour total precipitation",
         "comment": (
@@ -390,7 +390,7 @@ def fetch(
             "(cumulus-downscaled-fetch relabelled file leads from period end to period start)."
         ),
     }
-    ds = tp.to_dataset(name="tp").assign_coords(time=np.datetime64(init, "ns"))
+    ds = precip.to_dataset(name="precip").assign_coords(time=np.datetime64(init, "ns"))
     ds["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
     ds.attrs.update(
         Conventions="CF-1.13",
