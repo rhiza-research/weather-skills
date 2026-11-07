@@ -32,8 +32,9 @@ Prefer small steps over stuffing every filter into one call:
   default source first and falls back to another source of the same product.
   **ECMWF:** `ecmwf-fetch --product s2s` (default, 46-day daily), `ifs-ens`,
   `aifs-ens`, `aifs-single`, `s2s-6h` or `hres`. **GFS/GEFS:** `gfs-fetch`.
-  **IMERG:** `imerg-fetch` (default Late, half-hourly, no login; `--version final`
-  needs Earthdata). **CHIRPS:** `chirps-fetch`. **WeatherNext:** `weathernext-fetch`.
+  **IMERG:** `imerg-fetch` (default Late, half-hourly, no login; `--daily` for daily
+  means in one call; `--version final` needs Earthdata). **CHIRPS:** `chirps-fetch`.
+  **WeatherNext:** `weathernext-fetch`.
   **ICON-EU / MRMS:** `icon-eu-fetch`, `mrms-fetch`. Rainfall is written as `precip`
   (`-v precip`). Use `neuralgcm-fetch` for the Tomorrow
   Now 2026 NeuralGCM ensemble at `gs://neuralgcm-s2s` (GCS credentials; default

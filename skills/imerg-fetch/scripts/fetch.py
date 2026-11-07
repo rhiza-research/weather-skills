@@ -79,6 +79,85 @@ def _open_catalog(dataset):
     return dynamical_catalog.open(dataset)
 
 
+def _daily_means(ds, spacing):
+    """Mean of each UTC day, read about a month at a time so memory stays at one month.
+
+    Stamps `aggregation_coverage` (share of the day's native steps with data) like
+    aggregate-temporal; incomplete days are kept and listed, never padded. A cell
+    with fewer samples that day than the best-covered cell is NaN, not a partial mean.
+    """
+    import numpy as np
+    import xarray as xr
+    from weather_skills_core.units import (
+        AGGREGATION_COVERAGE_COORD,
+        AGGREGATION_PERIOD_ATTR,
+        DATA_INTERVAL_ATTR,
+        format_cell_methods,
+    )
+
+    per_day = int(round(np.timedelta64(1, "D") / spacing))
+    days = ds["time"].values.astype("datetime64[D]")
+    unique_days = np.unique(days)
+    chunks, coverages = [], []
+    for start in range(0, unique_days.size, 31):
+        block = ds.isel(time=np.nonzero(np.isin(days, unique_days[start : start + 31]))[0]).load()
+        count = block.notnull().resample(time="1D").sum()
+        mean = block.resample(time="1D").mean(keep_attrs=True)
+        # Per day, a sample is present when some cell of every variable is finite.
+        present = np.ones(block.sizes["time"])
+        for name in block.data_vars:
+            other = [d for d in block[name].dims if d != "time"]
+            present *= np.isfinite(block[name]).any(other).values
+        present = (
+            xr.DataArray(present, dims="time", coords={"time": block["time"].values})
+            .resample(time="1D")
+            .sum()
+        )
+        for name in mean.data_vars:
+            other = [d for d in count[name].dims if d != "time"]
+            attrs = mean[name].attrs
+            mean[name] = mean[name].where(count[name] >= count[name].max(other))
+            mean[name].attrs = attrs
+        # Days between separate --start-time windows have no samples: skip them.
+        has_data = present.values > 0
+        mean = mean.isel(time=has_data)
+        coverages.extend(np.minimum(present.values[has_data] / per_day, 1.0))
+        chunks.append(mean)
+    out = xr.concat(chunks, dim="time")
+    cov = np.asarray(coverages, dtype=float)
+    out = out.assign_coords({AGGREGATION_COVERAGE_COORD: ("time", cov)})
+    out[AGGREGATION_COVERAGE_COORD].attrs.update(
+        long_name="fraction of native samples with finite data in the interval",
+        units="1",
+        valid_min=0.0,
+        valid_max=1.0,
+    )
+    native = f"{spacing / np.timedelta64(1, 'm'):g} minute"
+    for name in out.data_vars:
+        out[name].attrs.update(
+            {
+                AGGREGATION_PERIOD_ATTR: "1 day",
+                DATA_INTERVAL_ATTR: "1 day",
+                "cell_methods": format_cell_methods("time", "mean", interval=native),
+            }
+        )
+    low = cov < 1.0 - 1e-12
+    if low.any():
+        listed = ", ".join(
+            f"{str(t)[:10]} ({c:.3g})"
+            for t, c in zip(out["time"].values[low][:10], cov[low][:10], strict=True)
+        )
+        listed += ", ..." if low.sum() > 10 else ""
+        print(
+            f"Warning: {int(low.sum())} of {cov.size} day(s) are incomplete "
+            f"(aggregation_coverage < 1): {listed}. convert-to-totals drops them at "
+            "its default --min-coverage 1.0.",
+            file=sys.stderr,
+        )
+    print(f"Averaged {per_day} steps per day into {cov.size} daily means.", file=sys.stderr)
+    return out
+
+
 @weather_skill(
     name="imerg-fetch",
     version=_SKILL_VERSION,
@@ -87,6 +166,11 @@ def _open_catalog(dataset):
 @weather_skill.argument("--end-time", required=True)
 @weather_skill.argument("--version", default="late", choices=VERSIONS)
 @weather_skill.argument("--bbox")
+@weather_skill.argument(
+    "--daily",
+    action="store_true",
+    help="Early/Late: write one mean per UTC day instead of every half hour (Final is daily).",
+)
 @weather_skill.argument(
     "--probe-latest",
     nargs="?",
@@ -99,7 +183,7 @@ def _open_catalog(dataset):
         "(IMERG early, late or final)."
     ),
 )
-def fetch(start_time, end_time, version, bbox, probe_latest, **kwargs):
+def fetch(start_time, end_time, version, bbox, daily, probe_latest, **kwargs):
     """Fetch NASA IMERG precipitation (Early, Late or Final) as a weather-skills Zarr."""
     if probe_latest is not None:
         import numpy as np
@@ -186,15 +270,18 @@ def fetch(start_time, end_time, version, bbox, probe_latest, **kwargs):
         else:
             ds = ensure_normalized_longitude(ds, lon_dim="longitude")
         ds = ds.rename({"precipitation_surface": "precip"}).sortby("latitude")
+        if daily:
+            ds = _daily_means(ds, spacing)
         ds.attrs.update(
             Conventions="CF-1.13",
             weather_skills_source=f"dynamical:{dataset}",
-            source=f"dynamical.org {dataset} (IMERG {version.capitalize()} half-hourly, 0.1 degree)",
+            source=f"dynamical.org {dataset} (IMERG {version.capitalize()} half-hourly, 0.1 degree)"
+            + (", daily means" if daily else ""),
             imerg_version=version,
         )
         stamp_cf_attrs(ds)
         ds = to_standard_units(ds, variables=["precip"])
-        return stamp_data_interval(ds)
+        return stamp_data_interval(ds, period="1 day") if daily else stamp_data_interval(ds)
 
     if fallback:
         print(
