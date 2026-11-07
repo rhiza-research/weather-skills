@@ -1,4 +1,4 @@
-"""Correctness tests for ecmwf-hres-fetch (mocked Open Data client)."""
+"""Correctness tests for ecmwf-fetch --product hres (mocked Open Data client)."""
 
 import datetime as dt
 import sys
@@ -10,7 +10,7 @@ from conftest import load_skill, run_skill
 
 @pytest.fixture(scope="module")
 def mod():
-    return load_skill("ecmwf-hres-fetch", "fetch")
+    return load_skill("ecmwf-fetch", "fetch")
 
 
 def test_probe_latest_prints_date_usable_as_date_flag(mod, monkeypatch, capsys):
@@ -26,7 +26,7 @@ def test_probe_latest_prints_date_usable_as_date_flag(mod, monkeypatch, capsys):
     monkeypatch.setitem(sys.modules, "ecmwf", types.ModuleType("ecmwf"))
     monkeypatch.setitem(sys.modules, "ecmwf.opendata", opendata)
 
-    run_skill(mod.fetch, "--probe-latest")
+    run_skill(mod.fetch, "--product", "hres", "--probe-latest")
     captured = capsys.readouterr()
     assert captured.out.strip() == "2026-10-13"
     assert "--date 2026-10-13 --run 12" in captured.err
@@ -77,7 +77,17 @@ def test_old_init_goes_straight_to_aws_mirror(mod, monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_open_grib", lambda path: _grib_like_t2m())
     out = tmp_path / "hres.zarr"
     run_skill(
-        mod.fetch, "--date", "2026-02-15", "--bbox", "5/34/-5/42", "-v", "t2m", "-o", str(out)
+        mod.fetch,
+        "--product",
+        "hres",
+        "--date",
+        "2026-02-15",
+        "--bbox",
+        "5/34/-5/42",
+        "-v",
+        "t2m",
+        "-o",
+        str(out),
     )
 
     import xarray as xr
@@ -104,6 +114,8 @@ def test_ecmwf_is_tried_for_the_last_4_days_of_inits(
     date = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=days_ago)
     run_skill(
         mod.fetch,
+        "--product",
+        "hres",
         "--date",
         date.isoformat(),
         "--bbox",
@@ -122,6 +134,8 @@ def test_max_lead_limits_requested_steps(mod, monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_open_grib", lambda path: _grib_like_t2m())
     run_skill(
         mod.fetch,
+        "--product",
+        "hres",
         "--date",
         "2026-02-15",
         "--bbox",
@@ -143,6 +157,8 @@ def test_max_lead_0_keeps_a_step_dim(mod, monkeypatch, tmp_path):
     out = tmp_path / "hres.zarr"
     run_skill(
         mod.fetch,
+        "--product",
+        "hres",
         "--date",
         "2026-02-15",
         "--bbox",
@@ -175,6 +191,8 @@ def test_max_lead_fetches_one_more_step_for_precip(mod, monkeypatch, tmp_path):
     out = tmp_path / "hres.zarr"
     run_skill(
         mod.fetch,
+        "--product",
+        "hres",
         "--date",
         "2026-02-15",
         "--bbox",
@@ -197,10 +215,10 @@ def test_max_lead_fetches_one_more_step_for_precip(mod, monkeypatch, tmp_path):
 
 
 def test_resolve_variables_precip_names(mod):
-    assert mod._resolve_variables(None) == ["precip"]
+    assert mod._resolve_variables(None, mod.HRES_VARIABLES) == ["precip"]
     for name in ("precip", "tp", "precipitation"):
-        assert mod._resolve_variables([name]) == ["precip"]
-    assert list(mod.VARIABLES)[0] == "precip"
+        assert mod._resolve_variables([name], mod.HRES_VARIABLES) == ["precip"]
+    assert list(mod.HRES_VARIABLES)[0] == "precip"
 
 
 def test_max_lead_parsing(mod):
@@ -231,6 +249,8 @@ def test_slow_down_is_not_retried_then_aws_is_tried(mod, monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_open_grib", lambda path: _grib_like_t2m())
     run_skill(
         mod.fetch,
+        "--product",
+        "hres",
         "--date",
         dt.datetime.now(dt.UTC).date().isoformat(),
         "--bbox",
@@ -254,6 +274,8 @@ def test_rate_limited_mirror_says_to_try_later(mod, monkeypatch, tmp_path, capsy
     with pytest.raises(SystemExit):
         run_skill(
             mod.fetch,
+            "--product",
+            "hres",
             "--date",
             "2026-02-15",
             "--bbox",
@@ -273,6 +295,8 @@ def test_unpublished_init_reports_both_sources(mod, monkeypatch, tmp_path, capsy
     with pytest.raises(SystemExit):
         run_skill(
             mod.fetch,
+            "--product",
+            "hres",
             "--date",
             dt.datetime.now(dt.UTC).date().isoformat(),
             "--run",
@@ -324,6 +348,8 @@ def test_grib_is_read_one_step_at_a_time(mod, monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_open_grib", lambda path: grib)
     run_skill(
         mod.fetch,
+        "--product",
+        "hres",
         "--date",
         "2026-10-15",
         "--bbox",
@@ -338,9 +364,39 @@ def test_grib_is_read_one_step_at_a_time(mod, monkeypatch, tmp_path):
 
 def test_variables_match_open_data_catalog(mod):
     # Open Data has no `cape` (only `mucape`), and serves 600 hPa.
-    assert "cape" not in mod.VARIABLES
-    req = mod._build_request("2026-10-15", 0, ["mucape"], "sfc", (), [0])
+    assert "cape" not in mod.HRES_VARIABLES
+    req = mod._hres_request("2026-10-15", 0, ["mucape"], "sfc", (), [0])
     assert req["param"] == ["mucape"]
-    req = mod._build_request("2026-10-15", 0, ["t"], "pl", mod.PRESSURE_LEVELS, [0])
+    req = mod._hres_request("2026-10-15", 0, ["t"], "pl", mod.HRES_PRESSURE_LEVELS, [0])
     assert "600" in req["levelist"]
     assert {"1000", "50"} <= set(req["levelist"])
+
+
+def test_run_is_rejected_for_other_products(mod, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            mod.fetch,
+            "--date",
+            "2026-02-15",
+            "--bbox",
+            "5/34/-5/42",
+            "--run",
+            "6",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ("--list-variables",),
+        ("--start-time", "2026-02-15", "--end-time", "2026-02-16", "--bbox", "5/34/-5/42"),
+        ("--date", "2026-02-15"),
+    ],
+)
+def test_hres_rejects_flags_it_cannot_honour(mod, tmp_path, extra):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(mod.fetch, "--product", "hres", *extra, "-o", str(tmp_path / "x.zarr"))
+    assert exc.value.code == 2

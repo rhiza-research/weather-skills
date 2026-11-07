@@ -49,4 +49,4 @@ Writes 30 daily CHIRPS rainfall fields over Kenya for September 2026.
 
 ## Details
 
-The final product (`ucsb-chc-chirps-analysis-final`) runs from 1981 to the end of a recent month, a month or two behind. The preliminary product (`ucsb-chc-chirps-analysis-preliminary`, from 2025) fills the days after that. Both share one grid, so there is no shift at the join. To read just one of them, fetch it by catalog id from dynamical.org directly.
+The final product (`ucsb-chc-chirps-analysis-final`) runs from 1981 to the end of a recent month, a month or two behind. The preliminary product (`ucsb-chc-chirps-analysis-preliminary`, from 2025) fills the days after that. Both share one grid, so there is no shift at the join.

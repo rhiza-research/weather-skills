@@ -116,7 +116,7 @@ def _column_ivt(qu: xr.DataArray, vdim: str) -> xr.DataArray:
         raise UsageError(
             "--integrate needs at least two finite pressure levels; "
             "pass --no-integrate for per-level q*u, or fetch a pressure stack "
-            "(dynamical-fetch -v q -v u)."
+            "(ecmwf-fetch -v q -v u)."
         )
     # Integrate surface-ward over ascending pressure so eastward flux stays
     # positive whichever way the levels are stored (1000→50 or 50→1000 hPa).

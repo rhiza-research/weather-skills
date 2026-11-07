@@ -6,7 +6,7 @@
 #   "pandas",
 # ]
 # ///
-"""Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
+"""Fetch a NOAA GFS or GEFS forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
 
 import re
 import sys
@@ -18,14 +18,18 @@ from weather_skills_core.standard_utils import (
     ensure_normalized_longitude,
     np_to_date,
 )
-from weather_skills_core.units import (
-    precip_amounts_to_rates,
-    stamp_data_interval,
-    to_standard_units,
-)
+from weather_skills_core.units import stamp_data_interval, to_standard_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.11"
+_SKILL_VERSION = "0.0.1"
+
+# --product -> dynamical.org catalog id.
+_PRODUCTS = {
+    "gfs": "noaa-gfs-forecast",
+    "gefs": "noaa-gefs-forecast-35-day",
+    "gfs-analysis": "noaa-gfs-analysis",
+    "gefs-analysis": "noaa-gefs-analysis",
+}
 
 # Forecast bookkeeping / CRS scalar coords dropped from the standard output.
 _DROP_COORDS = (
@@ -36,18 +40,11 @@ _DROP_COORDS = (
 )
 
 # Catalog stores selected pressure-level fields as separate 2-D variables
-# (`temperature_850hpa`). Stack those onto the ontology `vertical` dim.
+# (`geopotential_height_500hpa`). Stack those onto the ontology `vertical` dim.
 _HPA_RE = re.compile(r"^(.+)_(\d+)hpa$")
-_HPA_ALIASES = {
-    "t": "temperature",
-    "gh": "geopotential_height",
-    "u": "wind_u",
-    "v": "wind_v",
-    "w": "vertical_velocity",
-    "q": "specific_humidity",
-}
-# Other fetchers (TAHMO, ARCO, S2S) use these; dynamical.org stores surface precip as
-# precipitation_surface (IMERG, GEFS, IFS-ENS, …).
+_HPA_ALIASES = {"gh": "geopotential_height"}
+# Other fetchers (TAHMO, ARCO, S2S) use these; the catalog stores surface precip as
+# precipitation_surface.
 _PRECIP_ALIASES = {
     "precip": "precipitation_surface",
     "precipitation": "precipitation_surface",
@@ -55,13 +52,10 @@ _PRECIP_ALIASES = {
     "total_precipitation": "precipitation_surface",
     "pr": "precipitation_surface",
 }
-# 46-day S2S/ER daily-mean surface names (and common S2S short names).
 _SURFACE_ALIASES = {
-    "t2m": "average_temperature_2m",
-    "2m_temperature": "average_temperature_2m",
-    "2_m_temperature": "average_temperature_2m",
-    "sst": "sea_surface_temperature",
-    "d2m": "average_dew_point_temperature_2m",
+    "t2m": "temperature_2m",
+    "2m_temperature": "temperature_2m",
+    "2_m_temperature": "temperature_2m",
     "msl": "pressure_reduced_to_mean_sea_level",
     "sp": "pressure_surface",
     "u10": "wind_u_10m",
@@ -69,7 +63,6 @@ _SURFACE_ALIASES = {
     "u100": "wind_u_100m",
     "v100": "wind_v_100m",
 }
-_PRESSURE_GROUP = "pressure_level"
 
 
 def _hpa_by_prefix(data_vars) -> dict[str, list[str]]:
@@ -84,16 +77,12 @@ def _hpa_by_prefix(data_vars) -> dict[str, list[str]]:
 def _resolve_variables(requested, data_vars, dataset: str):
     """Map `-v` tokens onto catalog names.
 
-    Catalog-exact names pass through. A prefix (`temperature`) or short alias
-    (`t`, `gh`) expands to every `*_Nhpa` field of that prefix — not to
-    height-above-ground companions like `temperature_2m`. When the dataset
-    stores a single `temperature` field (46-day `pressure_level` group),
-    `-v t` selects that field. Common precip nicknames
-    (`precip`, `precipitation`, `tp`, `total_precipitation`) map to
-    `precipitation_surface` when that field exists. `t2m` / `d2m` map to
-    the instant `*_2m` field, else the 46-day daily mean (`average_*_2m`); `sst` to
-    `sea_surface_temperature`; `msl` / `sp` to the sea-level / surface pressure;
-    `u10` / `v10` / `u100` / `v100` to `wind_{u,v}_{10,100}m`.
+    Catalog-exact names pass through. A prefix (`geopotential_height`) or short
+    alias (`gh`) expands to every `*_Nhpa` field of that prefix. Common precip
+    nicknames (`precip`, `precipitation`, `tp`, `total_precipitation`, `pr`) map
+    to `precipitation_surface`. `t2m` maps to `temperature_2m`; `msl` / `sp` to
+    the sea-level / surface pressure; `u10` / `v10` / `u100` / `v100` to
+    `wind_{u,v}_{10,100}m`. `NAME` also matches `NAME_surface`.
     """
     if not requested:
         return None
@@ -118,17 +107,7 @@ def _resolve_variables(requested, data_vars, dataset: str):
             for kid in sorted(kids, key=lambda n: -int(_HPA_RE.match(n).group(2))):
                 _take(kid)
             continue
-        if prefix in name_set:
-            _take(prefix)
-            continue
         aliased = _PRECIP_ALIASES.get(token) or _SURFACE_ALIASES.get(token)
-        # `t2m` / `d2m` are the instant `temperature_2m` / `dew_point_temperature_2m`
-        # where a store has them (GFS, GEFS, IFS 15-day); else the 46-day daily mean.
-        if aliased and aliased.removeprefix("average_") in name_set:
-            aliased = aliased.removeprefix("average_")
-        # WeatherNext 2 stores 6-hour precip totals as total_precipitation_surface.
-        if aliased and f"total_{aliased}" in name_set:
-            aliased = f"total_{aliased}"
         if aliased in name_set:
             _take(aliased)
             continue
@@ -141,7 +120,7 @@ def _resolve_variables(requested, data_vars, dataset: str):
         raise UsageError(
             f"variable(s) not in {dataset}: {', '.join(missing)}.\n"
             f"Available: {', '.join(sorted(data_vars))}\n"
-            "Run with --list-variables to see them with units and pressure levels."
+            "Run with --list-variables to see them with units."
         )
     return resolved
 
@@ -178,89 +157,29 @@ def _stack_pressure_levels(ds):
     return xr.merge(pieces)
 
 
-def _promote_pressure_dim(ds):
-    if "pressure_level" not in ds.dims:
-        return ds
-    ds = ds.rename({"pressure_level": "vertical"})
-    ds["vertical"].attrs.update(
-        units="hPa",
-        standard_name="air_pressure",
-        long_name="pressure",
-        positive="down",
-        axis="Z",
-    )
-    return ds
-
-
-def _merge_pressure_if_needed(ds, dataset, requested):
-    """Open `group=pressure_level` when `-v` tokens are not on the root store."""
-    if not requested:
-        return ds
-    try:
-        _resolve_variables(requested, ds.data_vars, dataset)
-        return ds
-    except UsageError:
-        pass
+def _open_dataset(dataset) -> dict:
+    """Open the catalog dataset and detect its shape from its dims."""
     import dynamical_catalog
-    import xarray as xr
 
-    try:
-        pds = dynamical_catalog.open(dataset, group=_PRESSURE_GROUP, chunks=None)
-    except Exception:
-        return ds
-    return xr.merge([ds, _promote_pressure_dim(pds)], compat="override")
-
-
-_STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
-
-
-def _open_dataset(state, dataset) -> dict:
-    """Validate the dataset id, open it, and detect its shape, at most once per run."""
-    if "ds" not in state:
-        import os
-
-        import dynamical_catalog
-
-        catalog = dynamical_catalog.list()
-        if dataset not in catalog:
-            os.environ["DYNAMICAL_STAC_CATALOG_URL"] = _STAGING_CATALOG
-            dynamical_catalog.clear_cache()
-            catalog = dynamical_catalog.list()
-        if dataset not in catalog:
-            raise UsageError(
-                f"unknown dataset {dataset!r}. Available datasets:\n  " + "\n  ".join(catalog)
-            )
-        ds = dynamical_catalog.open(dataset)
-        # WeatherNext 2 names its regular lat/lon axes y/x. HRRR also has y/x,
-        # but in meters with a 2-D `latitude`, so it is still rejected below.
-        if {"y", "x"} <= set(ds.dims) and "latitude" not in ds.variables:
-            ds = ds.rename({"y": "latitude", "x": "longitude"})
-
-        if "latitude" not in ds.dims or "longitude" not in ds.dims:
-            raise UsageError(
-                f"{dataset} is on a projected grid (dims {tuple(ds.dims)}); this "
-                "fetcher only handles regular 1-D latitude/longitude grids."
-            )
-
-        if "ensemble_member" in ds.dims:
-            shape = "ensemble"
-        elif "lead_time" in ds.dims:
-            shape = "forecast"
-        elif "time" in ds.dims:
-            shape = "analysis"
-        else:
-            raise UsageError(
-                f"{dataset} has an unrecognized shape (dims {tuple(ds.dims)}); "
-                "expected an ensemble/deterministic forecast (lead_time) or an analysis (time)."
-            )
-        state["ds"] = ds
-        state["shape"] = shape
-    return state
+    ds = dynamical_catalog.open(dataset)
+    if "ensemble_member" in ds.dims:
+        shape = "ensemble"
+    elif "lead_time" in ds.dims:
+        shape = "forecast"
+    else:
+        shape = "analysis"
+    return {"ds": ds, "shape": shape}
 
 
 @weather_skill(
-    name="dynamical-fetch",
+    name="gfs-fetch",
     version=_SKILL_VERSION,
+)
+@weather_skill.argument(
+    "--product",
+    choices=tuple(_PRODUCTS),
+    default="gefs",
+    help="gfs, gefs (35-day ensemble), gfs-analysis or gefs-analysis. Default: gefs.",
 )
 @weather_skill.argument("--date")
 @weather_skill.argument(
@@ -272,20 +191,12 @@ def _open_dataset(state, dataset) -> dict:
 @weather_skill.argument("--bbox")
 @weather_skill.argument("--variable", "-v", action="append")
 @weather_skill.argument(
-    "--dataset",
-    required=True,
-    help="Catalog dataset id (validated against dynamical_catalog.list()).",
-)
-@weather_skill.argument(
     "--probe-latest",
-    nargs="?",
-    const="",
-    metavar="IDENT",
+    action="store_true",
     probe=True,
     help=(
-        "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Print the --product's latest init or analysis day (YYYY-MM-DD) on stdout and exit. "
+        "Does not download fields."
     ),
 )
 @weather_skill.argument(
@@ -293,8 +204,8 @@ def _open_dataset(state, dataset) -> dict:
     action="store_true",
     probe=True,
     help=(
-        "Print the --dataset's variables (name, units, long name; pressure levels for "
-        "the pressure-level group) on stdout and exit. Does not download fields."
+        "Print the --product's variables (name, units, long name) on stdout and exit. "
+        "Does not download fields."
     ),
 )
 @weather_skill.argument(
@@ -303,7 +214,7 @@ def _open_dataset(state, dataset) -> dict:
 )
 def fetch(
     bbox,
-    dataset,
+    product,
     date,
     start_time,
     end_time,
@@ -313,34 +224,19 @@ def fetch(
     max_lead,
     **kwargs,
 ):
-    """Fetch a forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
+    """Fetch a NOAA GFS or GEFS forecast or analysis from the dynamical.org catalog."""
+    dataset = _PRODUCTS[product]
     if list_variables:
-        if not dataset:
-            raise UsageError("--list-variables needs --dataset.")
-        ds = _open_dataset({}, dataset)["ds"]
-        print(f"{dataset} variables (pass the name to -v):")
+        ds = _open_dataset(dataset)["ds"]
+        print(f"{product} ({dataset}) variables (pass the name to -v):")
         for name in sorted(ds.data_vars):
             attrs = ds[name].attrs
             print(f"  {name}\t{attrs.get('units', '')}\t{attrs.get('long_name', '')}")
-        import dynamical_catalog
-
-        try:
-            pds = dynamical_catalog.open(dataset, group=_PRESSURE_GROUP, chunks=None)
-        except Exception:  # noqa: BLE001 — most stores have no pressure-level group
-            return
-        levels = ", ".join(f"{float(v):g}" for v in pds["pressure_level"].values)
-        print(f"{_PRESSURE_GROUP} group, levels {levels} hPa (-v NAME takes every level):")
-        for name in sorted(pds.data_vars):
-            attrs = pds[name].attrs
-            print(f"  {name}\t{attrs.get('units', '')}\t{attrs.get('long_name', '')}")
         return
-    if probe_latest is not None:
+    if probe_latest:
         import numpy as np
 
-        dsid = probe_latest or dataset
-        if not dsid:
-            raise UsageError("--dataset is required (or pass it as --probe-latest <id>).")
-        state = _open_dataset({}, dsid)
+        state = _open_dataset(dataset)
         is_fc = state["shape"] in ("ensemble", "forecast")
         latest = np.max(state["ds"]["init_time" if is_fc else "time"].values)
         if is_fc:
@@ -364,33 +260,27 @@ def fetch(
 
     import numpy as np
 
-    state = _open_dataset({}, dataset)
+    state = _open_dataset(dataset)
     ds = state["ds"]
     shape = state["shape"]
     is_forecast = shape in ("ensemble", "forecast")
-    if variable:
-        ds = _merge_pressure_if_needed(ds, dataset, variable)
 
     # One (start, end) pair per window; --end-time is an inclusive calendar day.
     windows = list(zip(start_time or [], end_time or [], strict=True))
     if is_forecast:
         if (date is None) == (not windows):
             raise UsageError(
-                f"{dataset} is a forecast dataset; pass --date for one init, or "
+                f"{product} is a forecast; pass --date for one init, or "
                 "--start-time/--end-time for a range of inits (not both)."
             )
         when = date.isoformat() if date is not None else "selected"
     else:
         if max_lead is not None:
-            raise UsageError(f"{dataset} is an analysis dataset; --max-lead is for forecasts.")
+            raise UsageError(f"{product} is an analysis; --max-lead is for forecasts.")
         if not windows:
-            raise UsageError(
-                f"{dataset} is an analysis dataset; --start-time and --end-time are required."
-            )
+            raise UsageError(f"{product} is an analysis; --start-time and --end-time are required.")
         if date is not None:
-            raise UsageError(
-                f"{dataset} is an analysis dataset; use --start-time/--end-time, not --date."
-            )
+            raise UsageError(f"{product} is an analysis; use --start-time/--end-time, not --date.")
     spans = [
         (np.datetime64(start.isoformat()), np.datetime64(end.isoformat()) + np.timedelta64(1, "D"))
         for start, end in windows
@@ -399,6 +289,9 @@ def fetch(
 
     if variable:
         ds = ds[_resolve_variables(variable, ds.data_vars, dataset)]
+    # Every fetcher writes rainfall as `precip`.
+    if "precipitation_surface" in ds:
+        ds = ds.rename({"precipitation_surface": "precip"})
 
     if is_forecast:
         inits = ds["init_time"].values
@@ -448,8 +341,8 @@ def fetch(
         # One init: scalar `time`. A range of inits: a `time` axis (the init).
         ds = ds.rename({"init_time": "time"})
     else:
-        # Each window keeps every sub-daily step of its end day (IMERG
-        # half-hourly), not just its 00:00 instant. Windows may overlap.
+        # Each window keeps every sub-daily step of its end day, not just its
+        # 00:00 instant. Windows may overlap.
         times = ds["time"].values
         spacing = times[1] - times[0] if len(times) > 1 else np.timedelta64(1, "D")
         keep = np.zeros(times.size, dtype=bool)
@@ -480,18 +373,18 @@ def fetch(
     else:
         ds = ensure_normalized_longitude(ds, lon_dim="longitude")
 
-    # Catalog averaged fields (precip, 46-day daily means) are labelled at the END
-    # of their interval, so lead 0 is all-NaN. When every selected field is NaN
-    # there (same rule as ecmwf-fetch), drop lead 0 and relabel each remaining
-    # step to the previous step value: step = interval start. Using the previous
-    # value (not a fixed spacing) stays correct for GEFS 3 h -> 6 h leads.
-    # Instant fields (t2m on GEFS, winds, pressure levels) keep lead 0.
+    # Catalog averaged fields (precip, radiation) are labelled at the END of their
+    # interval, so lead 0 is all-NaN. When every selected field is NaN there
+    # (same rule as ecmwf-fetch), drop lead 0 and relabel each remaining step to
+    # the previous step value: step = interval start. Using the previous value
+    # (not a fixed spacing) stays correct for 1 h -> 3 h and 3 h -> 6 h leads.
+    # Instant fields (t2m, winds, 500 hPa height) keep lead 0.
     if is_forecast and len(ds.data_vars) > 0:
         # Read the subset once: the NaN checks below would otherwise re-read it.
         ds = ds.load()
-        # GEFS and WeatherNext 2 store members before leads; put every
-        # forecast in one order. Only after the load: without dask, a lazy
-        # transpose makes the read take gigabytes for a small bbox.
+        # GEFS stores members before leads; put every forecast in one order.
+        # Only after the load: without dask, a lazy transpose makes the read
+        # take gigabytes for a small bbox.
         ds = ds.transpose(*[d for d in ("time", "step", "number") if d in ds.dims], ...)
         empty = np.ones(ds.sizes["step"], dtype=bool)
         for name in ds.data_vars:
@@ -539,17 +432,14 @@ def fetch(
         if all(bool(first[name].isnull().all()) for name in ds.data_vars):
             leads = ds["step"].values
             ds = ds.isel(step=slice(1, None)).assign_coords(step=leads[:-1])
-            # GEFS / IFS ENS go 3- to 6-hourly. Write each cell's [start, end]
+            # GFS / GEFS change lead spacing. Write each cell's [start, end]
             # here: stamp_data_interval would infer bounds as if steps were ends.
             if len(set(np.diff(leads))) > 1:
                 pairs = np.stack([leads[:-1], leads[1:]], axis=1)
                 ds = ds.assign_coords(step_bounds=(("step", "nv"), pairs))
                 ds["step"].attrs["bounds"] = "step_bounds"
             for name in ds.data_vars:
-                note = (
-                    "dynamical-fetch relabelled steps to interval start: "
-                    "step s covers [s, next lead)."
-                )
+                note = "gfs-fetch relabelled steps to interval start: step s covers [s, next lead)."
                 ds[name].attrs["comment"] = f"{ds[name].attrs.get('comment', '')} {note}".strip()
             print(
                 "Dropped all-NaN lead 0 and relabelled steps to interval start.",
@@ -566,35 +456,6 @@ def fetch(
                 pairs = np.stack([leads, ends], axis=1)
                 ds = ds.assign_coords(step_bounds=(("step", "nv"), pairs))
                 ds["step"].attrs["bounds"] = "step_bounds"
-    # WeatherNext 2 has no lead 0: its first lead ends the first 6 h total. When
-    # every field is such a total (step_type accum), relabel to interval start.
-    # Small negative totals are model artifacts; the catalog says to zero them.
-    accum = [name for name in ds.data_vars if ds[name].attrs.get("step_type") == "accum"]
-    for name in accum:
-        ds[name] = ds[name].clip(min=0, keep_attrs=True)
-    leads = ds["step"].values if is_forecast else None
-    # Each total covers the gap since the previous lead (from 0 for the first).
-    # Read it from the catalog leads now: --max-lead can leave a single step,
-    # and then nothing is left to infer the cell length from.
-    accum_interval = None
-    if is_forecast and accum:
-        gaps = np.diff(np.concatenate([[np.timedelta64(0, "ns")], leads]))
-        gaps = gaps[gaps > np.timedelta64(0, "ns")]
-        if len(set(gaps.tolist())) == 1:
-            accum_interval = f"{gaps[0] / np.timedelta64(1, 'h'):g} hour"
-    if (
-        is_forecast
-        and accum
-        and len(accum) == len(ds.data_vars)
-        and leads[0] > np.timedelta64(0, "ns")
-    ):
-        ds = ds.assign_coords(step=np.concatenate([[np.timedelta64(0, "ns")], leads[:-1]]))
-        for name in ds.data_vars:
-            note = (
-                "dynamical-fetch relabelled steps to interval start: step s covers [s, next lead)."
-            )
-            ds[name].attrs["comment"] = f"{ds[name].attrs.get('comment', '')} {note}".strip()
-        print("Relabelled steps to interval start (catalog has no lead 0).", file=sys.stderr)
     if is_forecast and max_lead is not None:
         ds = ds.sel(step=slice(None, limit))
         # Mixed with instant fields, an end-labelled field has no value at step 0.
@@ -615,23 +476,18 @@ def fetch(
         Conventions="CF-1.13",
     )
     stamp_cf_attrs(ds)
-    # Catalog datasets mix precip with dimensionless companions (e.g. IMERG
-    # precipitation_quality_index_surface, units "1"). Convert each variable
-    # independently so one inconvertible field does not abort the fetch.
+    # The stores mix precip and temperature with dimensionless fields (categorical
+    # rain, units "1"). Convert each variable independently so one inconvertible
+    # field does not abort the fetch.
     out = ds
     for name in list(ds.data_vars):
         try:
             out = to_standard_units(out, variables=[name])
         except UsageError:
             continue
-    # Stamp the lead spacing first: with an init window, `time` is the init axis
-    # and its 1-day gaps are not the cell length the rate conversion needs.
-    if accum_interval:
-        out = stamp_data_interval(out, period=accum_interval)
-    else:
-        out = stamp_data_interval(out, dim="step" if is_forecast else None)
-    # Period totals (WeatherNext 2 6 h precip in mm) become mm day-1 rates.
-    return precip_amounts_to_rates(out, deaccumulate=False)
+    # Stamp the lead spacing: with an init window, `time` is the init axis and
+    # its 1-day gaps are not the cell length.
+    return stamp_data_interval(out, dim="step" if is_forecast else None)
 
 
 if __name__ == "__main__":
