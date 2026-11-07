@@ -2,56 +2,70 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "weather-skills-core>=0.3.4",
+#   "adlfs",
 #   "gcsfs",
 # ]
 # ///
 """Fetch ECMWF, GEFS or Cumulus subseasonal hindcasts for a range of init dates as a weather-skills Zarr."""
-# Every source is a Sheerwater hindcast Zarr, one variable per store, dims
-# (init_time, member, prediction_timedelta, lat, lon) in some order:
-#   ecmwf — public. Planette's ECMWF IFS CY49R1 reforecast, inits every second day 2006-2025.
-#   ecmwf_wb2 — public. WeatherBench2's IFS reforecast, one run per init date 1996-2021
-#     from the newest issue that re-ran that date.
-#   gefs — public. CHC's GEFSv12 reforecast, Wednesday inits 1998-2019.
-#   cumulus — private. The gratis-czajkowski Cumulus run at 1°, inits every second
-#     day 2016-2024; member 0 is the cf run.
+# One variable per store, opened as dims (init_time, member, prediction_timedelta, lat, lon)
+# in some order:
+#   ecmwf — public Sheerwater store. Planette's ECMWF IFS CY49R1 reforecast, inits every
+#     second day 2006-2025.
+#   ecmwf_wb2 — public Sheerwater store. WeatherBench2's IFS reforecast, one run per init
+#     date 1996-2021 from the newest issue that re-ran that date.
+#   gefs — public Sheerwater store. CHC's GEFSv12 reforecast, Wednesday inits 1998-2019.
+#   cumulus — Cumulus's own Azure Zarr of its gratis-czajkowski-era5 Aurora hindcast,
+#     1° IMERG-trained precip and 2 m temperature, 186 inits a year 1996-2024, 30
+#     exchangeable members; read with the AZURE_STORAGE_SAS_TOKEN cumulus-fetch uses.
 
 from __future__ import annotations
 
-import json
-import os
+import re
 import sys
+import weakref
 
 import numpy as np
 import xarray as xr
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
-from weather_skills_core.standard_utils import bbox_subset, ensure_normalized_longitude, np_to_date
+from weather_skills_core.standard_utils import (
+    bbox_subset,
+    ensure_normalized_longitude,
+    np_to_date,
+    require_env,
+)
 from weather_skills_core.units import stamp_data_interval, to_standard_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
 
 _PUBLIC = "gs://sheerwater-public-datalake/hindcasts"
-_PRIVATE = "gs://sheerwater-datalake/hindcasts"
-# --dataset -> variable -> (store, units). The stores' own unit strings ("C",
-# "mm" for a daily rate) are not all right or pint-readable, so units are set here.
+_AZURE_ACCOUNT = "italynorthdata"
+_AZURE = "az://data/ml_reforecasts/gratis-czajkowski-era5/zarr"
+_SAS_ENV = "AZURE_STORAGE_SAS_TOKEN"
+# --dataset -> variable -> (store, variable in the store, units). The stores' own unit
+# strings ("C", "mm" for a daily rate) are not all right or pint-readable, so units are set here.
 _STORES = {
     "ecmwf": {
-        "precip": (f"{_PUBLIC}/ecmwf_planette_precip.zarr", "mm day-1"),
-        "tmp2m": (f"{_PUBLIC}/ecmwf_planette_tmp2m.zarr", "degree_Celsius"),
-        "sst": (f"{_PUBLIC}/ecmwf_planette_sst.zarr", "degree_Celsius"),
+        "precip": (f"{_PUBLIC}/ecmwf_planette_precip.zarr", "precip", "mm day-1"),
+        "tmp2m": (f"{_PUBLIC}/ecmwf_planette_tmp2m.zarr", "tmp2m", "degree_Celsius"),
+        "sst": (f"{_PUBLIC}/ecmwf_planette_sst.zarr", "sst", "degree_Celsius"),
     },
     "ecmwf_wb2": {
-        "precip": (f"{_PUBLIC}/ecmwf_ifs_precip.zarr", "mm day-1"),
-        "tmp2m": (f"{_PUBLIC}/ecmwf_ifs_tmp2m.zarr", "degree_Celsius"),
+        "precip": (f"{_PUBLIC}/ecmwf_ifs_precip.zarr", "precip", "mm day-1"),
+        "tmp2m": (f"{_PUBLIC}/ecmwf_ifs_tmp2m.zarr", "tmp2m", "degree_Celsius"),
     },
     "gefs": {
-        "precip": (f"{_PUBLIC}/gefs_precip.zarr", "mm day-1"),
-        "tmp2m": (f"{_PUBLIC}/gefs_tmp2m.zarr", "degree_Celsius"),
+        "precip": (f"{_PUBLIC}/gefs_precip.zarr", "precip", "mm day-1"),
+        "tmp2m": (f"{_PUBLIC}/gefs_tmp2m.zarr", "tmp2m", "degree_Celsius"),
     },
     "cumulus": {
-        "precip": (f"{_PRIVATE}/cumulus_precip.zarr", "mm day-1"),
-        "tmp2m": (f"{_PRIVATE}/cumulus_tmp2m.zarr", "K"),
+        "precip": (
+            f"{_AZURE}/total_precipitation_24h_acc_imerg.zarr",
+            "total_precipitation_24h_acc_imerg",
+            "mm day-1",
+        ),
+        "tmp2m": (f"{_AZURE}/2m_temperature.zarr", "2m_temperature", "K"),
     },
 }
 _ALIASES = {"tp": "precip", "precipitation": "precip", "t2m": "tmp2m"}
@@ -60,36 +74,74 @@ _STANDARD_NAMES = {
     "tmp2m": "air_temperature",
     "sst": "sea_surface_temperature",
 }
-_AUTH_MSG = (
-    f"{_PRIVATE} is private. Set GCLOUD_SERVICE_CREDENTIALS to the full service-account "
-    "key JSON, GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON file path, or run "
-    "`gcloud auth application-default login`."
-)
+# Azure filesystems opened by this run, closed once their data is loaded.
+_AZURE_FS = []
+
+
+def _sas_options() -> dict[str, str]:
+    """adlfs options from the SAS in the env (raw query, leading ``?``, or full blob URL)."""
+    (raw,) = require_env(
+        _SAS_ENV,
+        message=(
+            f"{_SAS_ENV} is not set, so the Cumulus hindcast cannot be read. It needs a read "
+            f"SAS for Azure container {_AZURE_ACCOUNT}/data (list and read: sp=rl)."
+        ),
+    )
+    token = raw.strip().strip("'\"").split("?", 1)[-1]
+    if "sig=" not in token.lower():
+        raise UsageError(f"{_SAS_ENV} is set but does not look like an Azure SAS (no sig=).")
+    return {"account_name": _AZURE_ACCOUNT, "sas_token": token}
+
+
+def _redact(exc: Exception) -> str:
+    """The error text with any SAS signature (sig=..., sig%3D...) removed."""
+    return re.sub(r"(sig(?:=|%3D))[^&\s'\"<>]+", r"\1REDACTED", f"{exc}", flags=re.I)
 
 
 def _open_store(path: str) -> xr.Dataset:
-    """Open a hindcast store: public ones anonymously, private ones with Google credentials."""
-    # Most stores keep prediction_timedelta as integer days with units "days".
+    """Open a hindcast store lazily as (init_time, member, prediction_timedelta, lat, lon)."""
     if path.startswith(_PUBLIC):
+        # Most stores keep prediction_timedelta as integer days with units "days".
         try:
             return xr.open_zarr(path, storage_options={"token": "anon"}, decode_timedelta=True)
         except Exception as exc:  # noqa: BLE001
             raise DataError(f"failed to open {path} ({exc}).") from None
 
-    import gcsfs
+    import zarr
 
-    creds_json = os.environ.get("GCLOUD_SERVICE_CREDENTIALS")
     try:
-        token = json.loads(creds_json) if creds_json else None
-    except json.JSONDecodeError as exc:
-        raise DataError(f"GCLOUD_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
-    try:
-        return xr.open_zarr(
-            gcsfs.GCSFileSystem(token=token).get_mapper(path.removeprefix("gs://")),
-            decode_timedelta=True,
+        store = zarr.storage.FsspecStore.from_url(
+            path, storage_options={**_sas_options(), "skip_instance_cache": True}, read_only=True
         )
-    except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
-        raise DataError(f"{_AUTH_MSG} Opening {path} failed: {exc}") from None
+        ds = xr.open_zarr(store, chunks=None)
+    except (DataError, UsageError):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise DataError(f"failed to open {path} ({_redact(exc)}). Check {_SAS_ENV}.") from None
+    _AZURE_FS.append(store.fs)
+    ds = ds.drop_vars("valid_time", errors="ignore").rename(
+        ensemble_member="member", lead_time="prediction_timedelta", latitude="lat", longitude="lon"
+    )
+    # lead_time labels the 24 h window by its end; the other stores label it by its start.
+    return ds.assign_coords(
+        prediction_timedelta=ds["prediction_timedelta"] - np.timedelta64(1, "D")
+    )
+
+
+def _close_azure() -> None:
+    """Close the Azure sessions on zarr's event loop and drop adlfs's exit finalizer,
+    which would otherwise fail with "Loop is not running"."""
+    if not _AZURE_FS:
+        return
+    from adlfs.utils import close_service_client
+    from zarr.core.sync import sync
+
+    for fs in _AZURE_FS:
+        sync(close_service_client(fs))
+        for finalizer in list(weakref.finalize._registry):
+            if (finalizer.peek() or (None,))[0] is fs:
+                finalizer.detach()
+    _AZURE_FS.clear()
 
 
 @weather_skill(name="hindcast-fetch", version=_SKILL_VERSION)
@@ -127,6 +179,7 @@ def fetch(dataset, start_time, end_time, variable, bbox, members, probe_latest, 
                 f"--probe-latest takes one of {', '.join(_STORES)}; got {probe_latest!r}."
             )
         inits = _open_store(_STORES[probe_latest]["precip"][0])["init_time"].values
+        _close_azure()
         print(np_to_date(inits.max()).isoformat())
         return
 
@@ -144,8 +197,8 @@ def fetch(dataset, start_time, end_time, variable, bbox, members, probe_latest, 
 
     parts = []
     for v in variables:
-        path, units = table[v]
-        ds = _open_store(path)[[v]].drop_vars("time", errors="ignore")
+        path, name, units = table[v]
+        ds = _open_store(path)[[name]].rename({name: v}).drop_vars("time", errors="ignore")
         # Core pairs the Nth --start-time with the Nth --end-time; an init in any window is kept once.
         day = ds["init_time"].values.astype("datetime64[D]")
         keep = np.any(
@@ -163,7 +216,11 @@ def fetch(dataset, start_time, end_time, variable, bbox, members, probe_latest, 
         ds = ds.isel(init_time=keep)
         ds = bbox_subset(ds, bbox) if bbox is not None else ensure_normalized_longitude(ds)
         ds[v].attrs = {"units": units, "standard_name": _STANDARD_NAMES[v]}
-        parts.append(ds)
+        try:
+            parts.append(ds.load())
+        except Exception as exc:  # noqa: BLE001
+            raise DataError(f"failed to read {path} ({_redact(exc)}).") from None
+    _close_azure()
 
     # Stores of one model can skip different inits: keep every init, NaN where a store has none.
     inits = np.unique(np.concatenate([p["init_time"].values for p in parts]))
@@ -195,8 +252,7 @@ def fetch(dataset, start_time, end_time, variable, bbox, members, probe_latest, 
     cube = to_standard_units(cube, variables=variables)
     cube.attrs = {
         "Conventions": "CF-1.13",
-        "weather_skills_source": "sheerwater:"
-        + "+".join(table[v][0].removeprefix("gs://") for v in variables),
+        "weather_skills_source": "+".join(table[v][0] for v in variables),
         "hindcast_dataset": dataset,
     }
     cube["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
