@@ -52,13 +52,33 @@ mean in `W m-2`).
 | `ro` / `sro` | `runoff_water_equivalent_surface` / `runoff_surface` |
 | `gh` / `t` / `u` / `v` / `w` / `q` | `geopotential_height`, `temperature`, `wind_u`, `wind_v`, `vertical_velocity`, `specific_humidity` (every level) |
 
-`s2s` uses the Data Store instead for inits before 2026-01-01 and for
-fields with no catalog equivalent: `mx2t6`, `mn2t6` (the catalog 24 h
+Before 2026-01-01, `s2s` reads `precip`, `t2m` and `sst` from the ECMWF
+reforecast (below). It uses the Data Store for a `--date` the reforecast
+lacks and for fields with neither a catalog nor a reforecast equivalent: `mx2t6`, `mn2t6` (the catalog 24 h
 max/min is a different statistic), accumulated fluxes (`sshf`, `slhf`,
 `ssr`, `ssrd`, `str`, `strd`, `ttr`; the catalog means in `W m-2` are
 reachable by their catalog names), static fields (`lsm`, `orog`, `slt`),
 `pv`, and ocean parameters. A call mixing those with catalog fields also
 uses the Data Store.
+
+## ECMWF reforecast stores
+
+Public Sheerwater Zarr stores, read anonymously with gcsfs from
+`gs://sheerwater-public-datalake/hindcasts/`. Each holds one variable with
+dims `member, prediction_timedelta, lat, lon, init_time` on a 1.5° global
+grid, `prediction_timedelta` 0..45 days labelling the day that starts there.
+
+| `-v` | `ecmwf_planette` store (inits 2006-01-03..2025-06-01, every second day) | `ecmwf_wb2` store (inits 1996-01-04..2021-12-29) | Stored as |
+|---|---|---|---|
+| `precip` | `ecmwf_planette_precip.zarr` | `ecmwf_ifs_precip.zarr` | `precip`, daily mean rate, written `mm day-1` |
+| `t2m` | `ecmwf_planette_tmp2m.zarr` | `ecmwf_ifs_tmp2m.zarr` | `tmp2m`, daily mean, `degree_Celsius` |
+| `sst` | `ecmwf_planette_sst.zarr` | none | `sst`, daily mean, `degree_Celsius`, NaN over land |
+
+The Planette stores are read first; the WeatherBench2 stores serve only inits
+before Planette's first. Only the selected inits, leads up to `--max-lead`
+and the bbox are read. `init_time` becomes `time`, `member` becomes `number`
+(1..10), `prediction_timedelta` becomes `step`, `lat`/`lon` become
+`latitude`/`longitude`.
 
 ## ECDS request
 

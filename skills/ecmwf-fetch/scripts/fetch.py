@@ -14,6 +14,7 @@
 #   # eccodes drops this as a transitive dep via PyPI metadata (ecmwf/eccodes-python#150),
 #   # so it is declared directly. Windows bundles the library in eccodes itself.
 #   "eccodeslib",
+#   "gcsfs",
 # ]
 # ///
 """Fetch an ECMWF forecast product (S2S, IFS-ENS, AIFS, HRES) as a weather-skills Zarr."""
@@ -686,6 +687,152 @@ def _fetch_catalog(dataset, tokens, bbox, date, windows, max_lead_h, source):
     return stamp_data_interval(ds, dim="step")
 
 
+# --- Sheerwater reforecast (hindcast) stores ------------------------------------
+
+_HINDCAST_ROOT = "gs://sheerwater-public-datalake/hindcasts"
+# Label -> (store file prefix, short names it has). Planette (IFS CY49R1, one model
+# cycle, every second day 2006-2025) first; WeatherBench2 (mixed cycles, 1996-2021)
+# serves only inits before Planette's first, so one window never mixes the two.
+_HINDCAST_STORES = {
+    "ecmwf_planette": ("ecmwf_planette", ("precip", "t2m", "sst")),
+    "ecmwf_wb2": ("ecmwf_ifs", ("precip", "t2m")),
+}
+# Short name -> (variable in the store, units, standard_name). The stores' own unit
+# strings ("mm" for a daily rate, "C") are not all right, so units are set here.
+_HINDCAST_VARS = {
+    "precip": ("precip", "mm day-1", "precipitation_flux"),
+    "t2m": ("tmp2m", "degree_Celsius", "air_temperature"),
+    "sst": ("sst", "degree_Celsius", "sea_surface_temperature"),
+}
+
+
+def _open_hindcast(path: str):
+    """Open a public reforecast store lazily: (member, prediction_timedelta, lat, lon, init_time)."""
+    import xarray as xr
+
+    try:
+        return xr.open_zarr(
+            path, storage_options={"token": "anon"}, decode_timedelta=True, chunks=None
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise DataError(f"failed to open {path} ({exc}).") from None
+
+
+def _fetch_hindcast(names, bbox, date, windows, max_lead_h):
+    """Read ECMWF reforecast inits from the Sheerwater stores on the live s2s output contract.
+
+    Returns None when --date is not a reforecast init for every requested field.
+    """
+    import numpy as np
+    import xarray as xr
+
+    spans = [(date, date)] if date is not None else windows
+    parts: dict[str, list] = {name: [] for name in names}
+    taken = np.array([], dtype="datetime64[D]")
+    first = np.datetime64("9999-12-31", "D")  # first init of the stores read so far
+    used, ranges = [], {}
+    wb2_days = np.array([], dtype="datetime64[D]")
+    for label, (prefix, served) in _HINDCAST_STORES.items():
+        if all(np.datetime64(start, "D") >= first for start, _ in spans):
+            continue
+        new = []
+        store_first = first
+        for name in [n for n in names if n in served]:
+            var = _HINDCAST_VARS[name][0]
+            path = f"{_HINDCAST_ROOT}/{prefix}_{var}.zarr"
+            ds = _open_hindcast(path)[[var]].drop_vars("time", errors="ignore")
+            day = ds["init_time"].values.astype("datetime64[D]")
+            ranges.setdefault(label, f"{label} {day.min()}..{day.max()}")
+            keep = np.any(
+                [(day >= np.datetime64(s, "D")) & (day <= np.datetime64(e, "D")) for s, e in spans],
+                axis=0,
+            ) & (day < first)
+            store_first = min(store_first, day.min())
+            if not keep.any():
+                continue
+            new.append(day[keep])
+            # Still lazy: only the chunks inside the inits, leads and bbox are read.
+            ds = ds.isel(init_time=keep).rename(
+                {
+                    var: name,
+                    "init_time": "time",
+                    "member": "number",
+                    "prediction_timedelta": "step",
+                    "lat": "latitude",
+                    "lon": "longitude",
+                }
+            )
+            if max_lead_h is not None:
+                ds = ds.sel(step=slice(None, np.timedelta64(round(max_lead_h * 3600), "s")))
+            ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
+            try:
+                parts[name].append(ds.load())
+            except Exception as exc:  # noqa: BLE001
+                raise DataError(f"failed to read {path} ({exc}).") from None
+        first = store_first
+        if new:
+            used.append(label)
+            days = np.unique(np.concatenate(new))
+            taken = np.union1d(taken, days)
+            if label == "ecmwf_wb2":
+                wb2_days = days
+
+    if date is not None and any(not parts[name] for name in names):
+        return None
+    if not taken.size:
+        window_text = ", ".join(f"{s}..{e}" for s, e in windows)
+        raise DataError(
+            f"no ECMWF reforecast init in {window_text}; the stores run {'; '.join(ranges.values())}."
+        )
+    absent = [name for name in names if not parts[name]]
+    if absent:
+        raise DataError(
+            f"no ECMWF reforecast {', '.join(absent)} for the inits in the window "
+            "(sst is in ecmwf_planette only, inits 2006-01-03..2025-06-01)."
+        )
+
+    source = "+".join(f"sheerwater-hindcast:{label}" for label in used)
+    print(
+        f"Fetching ECMWF s2s reforecast from {source}: {taken.size} init(s), 10 members, "
+        f"variables={','.join(names)}",
+        file=sys.stderr,
+    )
+    if wb2_days.size:
+        print(
+            f"WARNING: {wb2_days.size} init(s) ({wb2_days[0]}..{wb2_days[-1]}) come from the "
+            "WeatherBench2 IFS reforecast, whose model cycle changes from init to init; a trend "
+            "across them can be a model change.",
+            file=sys.stderr,
+        )
+    times = taken.astype("datetime64[ns]")
+    fields = []
+    for name in names:
+        da = xr.concat(parts[name], "time", join="exact")[name]
+        missing = np.setdiff1d(taken, da["time"].values.astype("datetime64[D]"))
+        if missing.size:
+            print(
+                f"WARNING: reforecast {name} has no run for {missing.size} init(s), left NaN: "
+                + ", ".join(str(d) for d in missing),
+                file=sys.stderr,
+            )
+        da = da.reindex(time=times)
+        da.attrs = {"units": _HINDCAST_VARS[name][1], "standard_name": _HINDCAST_VARS[name][2]}
+        fields.append(da)
+    try:
+        ds = xr.merge(fields, join="exact")
+    except ValueError as exc:
+        raise DataError(f"reforecast stores are on different grids ({exc}).") from None
+    ds = ds.transpose("time", "number", "step", "latitude", "longitude")
+    if date is not None:
+        ds = ds.isel(time=0)
+    ds.attrs = {"Conventions": "CF-1.13", "weather_skills_source": source}
+    stamp_cf_attrs(ds)
+    if "precip" in ds.data_vars:
+        ds["precip"].attrs["long_name"] = "Total precipitation"
+    # Step d is the day [init + d, init + d + 1).
+    return stamp_data_interval(ds, period="1 day", dim="step")
+
+
 # --- ECDS ---------------------------------------------------------------------
 
 
@@ -1193,6 +1340,33 @@ def fetch(
             ds.attrs.update(Conventions="CF-1.13", weather_skills_source="ecmwf-hres")
             return _standardize(ds).load()
 
+    if product == "s2s":
+        starts = [date] if date is not None else [start for start, _ in windows]
+        ends = [date] if date is not None else [end for _, end in windows]
+        if min(starts) < _CATALOG_START <= max(ends):
+            raise UsageError(
+                f"split the request at {_CATALOG_START}: inits before it come from the ECMWF "
+                "reforecast (10 members, 1..10) and inits from it from the live forecast "
+                "(101 members, 0..100), so they do not stack on one number axis. Fetch "
+                f"--end-time {_CATALOG_START - dt.timedelta(days=1)} and "
+                f"--start-time {_CATALOG_START} in two calls."
+            )
+        names = [_canonical_name(token) for token in tokens]
+        in_hindcast = all(name in _HINDCAST_VARS for name in names)
+        if windows and max(ends) < _CATALOG_START and not in_hindcast:
+            raise UsageError(
+                f"init windows before {_CATALOG_START} read the ECMWF reforecast, which has "
+                "precip, t2m and sst only; fetch other fields one --date at a time."
+            )
+        if max(ends) < _CATALOG_START and in_hindcast:
+            ds = _fetch_hindcast(list(dict.fromkeys(names)), bbox, date, windows, max_lead_h)
+            if ds is not None:
+                return ds
+            print(
+                f"{date} is not an ECMWF reforecast init for every requested field; using the ECMWF Data Store.",
+                file=sys.stderr,
+            )
+
     if product != "s2s" or windows or _catalog_covers(date, tokens):
         source = "ecmwf-s2s" if product == "s2s" else f"dynamical:{dataset}"
         print(
@@ -1202,7 +1376,8 @@ def fetch(
         )
         return _fetch_catalog(dataset, tokens, bbox, date, windows, max_lead_h, source)
 
-    # S2S from the ECMWF Data Store: inits before 2026, or fields the catalog lacks.
+    # S2S from the ECMWF Data Store: a pre-2026 --date the reforecast lacks, or fields
+    # neither the catalog nor the reforecast has.
     date_iso = date.isoformat()
     area = list(bbox)
     names = _resolve_variables(tokens)

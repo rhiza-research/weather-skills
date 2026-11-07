@@ -123,7 +123,7 @@ def test_unknown_variable_exits_2(tmp_path, fetch_mod, remote):
 
 def test_missing_date_exits_1(tmp_path, fetch_mod, remote, capsys):
     with pytest.raises(SystemExit) as exc:
-        run_skill(fetch_mod.fetch, "--date", "2020-01-01", "-o", str(tmp_path / "unused.zarr"))
+        run_skill(fetch_mod.fetch, "--date", "2026-09-10", "-o", str(tmp_path / "unused.zarr"))
     assert exc.value.code == 1
     assert "Nearest published inits: 2026-09-07, 2026-09-18" in capsys.readouterr().err
 
@@ -192,10 +192,10 @@ def test_unknown_dataset_exits_2(tmp_path, fetch_mod, remote, flag):
     assert exc.value.code == 2
 
 
-def test_hindcast_run_name_says_only_live_runs(tmp_path, fetch_mod, remote, capsys):
+def test_hindcast_run_name_says_dates_route_automatically(tmp_path, fetch_mod, remote, capsys):
     with pytest.raises(SystemExit):
         run_skill(fetch_mod.fetch, "--dataset", "gratis-czajkowski", "--probe-latest")
-    assert "hindcast (reforecast) runs are not served here" in capsys.readouterr().err
+    assert "read from the Cumulus hindcast automatically" in capsys.readouterr().err
 
 
 def test_folder_name_accepted_as_dataset(tmp_path, fetch_mod, remote):
@@ -246,7 +246,9 @@ _WINDOW_STORES = [
 def _mock_windows(monkeypatch, fetch_mod, opened=None, short=()):
     """Per-init stores whose precip is the init's day of month; ``short`` inits lack leads 2+."""
 
-    def fake_open(url, bbox, workers):
+    def fake_open(url, bbox, workers, select=None):
+        if "/ml_reforecasts/" in url:  # a hindcast with no init in these windows
+            return xr.Dataset(coords={"init_time": np.array([], "datetime64[ns]")})
         name = url.rsplit("/", 1)[-1]
         if opened is not None:
             opened.append(name)
@@ -333,10 +335,111 @@ def test_init_window_with_no_init_exits_1(tmp_path, fetch_mod, monkeypatch):
         run_skill(
             fetch_mod.fetch,
             "--start-time",
-            "2024-06-01",
+            "2025-06-01",
             "--end-time",
-            "2024-06-30",
+            "2025-06-30",
             "-o",
             str(tmp_path / "x.zarr"),
         )
     assert exc.value.code == 1
+
+
+# The hindcast: one store of every init (2010-01-01, -03, -05), same layout as a live store.
+_HINDCAST_INITS = ["2010-01-01", "2010-01-03", "2010-01-05"]
+
+
+@pytest.fixture
+def hindcast(fetch_mod, monkeypatch):
+    """Live stores from 2026-09-07 (STORES) plus a mocked hindcast; records the opened urls."""
+    opened = []
+
+    def fake_open(url, bbox, workers, select=None):
+        opened.append(url)
+        if "/ml_reforecasts/" not in url:
+            return _live_store()
+        ds = xr.concat(
+            [
+                _live_store(values=(i, i, i)).assign_coords(
+                    init_time=[np.datetime64(d, "ns")],
+                    valid_time=(("init_time", "lead_time"), [[np.datetime64(d, "ns")] * 3]),
+                )
+                for i, d in enumerate(_HINDCAST_INITS)
+            ],
+            "init_time",
+        ).rename(total_precipitation_24h_acc_imerg_0p25="total_precipitation_24h_acc_imerg")
+        return select(ds) if select is not None else ds
+
+    monkeypatch.setattr(fetch_mod, "_list_stores", lambda folder: list(STORES))
+    monkeypatch.setattr(fetch_mod, "_open_store", fake_open)
+    return opened
+
+
+def test_live_init_reads_live_store(tmp_path, fetch_mod, hindcast):
+    run_skill(fetch_mod.fetch, "--date", "2026-09-18", "-o", str(tmp_path / "live.zarr"))
+    assert [u for u in hindcast if "/ml_reforecasts/" in u] == []
+
+
+def test_historical_window_reads_hindcast(tmp_path, fetch_mod, hindcast, capsys):
+    out = tmp_path / "h.zarr"
+    run_skill(fetch_mod.fetch, "--dataset", "precip_1deg", "--start-time", "2010-01-01",
+              "--end-time", "2010-01-04", "-o", str(out))  # fmt: skip
+    err = capsys.readouterr().err
+    assert "Cumulus hindcast gratis-czajkowski-era5" in err
+    assert "WARNING" not in err
+    assert all("/ml_reforecasts/gratis-czajkowski-era5/" in u for u in hindcast)
+    live = tmp_path / "live.zarr"
+    run_skill(fetch_mod.fetch, "--start-time", "2026-09-01", "--end-time", "2026-09-30",
+              "-o", str(live))  # fmt: skip
+    with xr.open_zarr(out) as ds, xr.open_zarr(live) as ref:
+        assert ds.attrs["weather_skills_source"] == "cumulus-hindcast:gratis-czajkowski-era5"
+        assert ds["precip"].dims == ref["precip"].dims
+        assert sorted(ds.coords) == sorted(ref.coords)
+        assert ds["precip"].attrs["units"] == ref["precip"].attrs["units"] == "mm day-1"
+        assert ds["time"].values.astype("datetime64[D]").astype(str).tolist() == _HINDCAST_INITS[:2]
+        # Leads relabelled from the window end to its start.
+        days = ds["step"].values.astype("timedelta64[D]").astype(int).tolist()
+        assert days == [0, 1, 2]
+        np.testing.assert_allclose(ds["precip"].values[:, 0, 0, 0, 0], [0.0, 1.0])
+
+
+def test_historical_date_matches_live_layout(tmp_path, fetch_mod, hindcast):
+    out, live = tmp_path / "h.zarr", tmp_path / "live.zarr"
+    run_skill(fetch_mod.fetch, "--date", "2010-01-03", "--dataset", "precip_1deg", "-o", str(out))
+    run_skill(fetch_mod.fetch, "--date", "2026-09-18", "-o", str(live))
+    with xr.open_zarr(out) as ds, xr.open_zarr(live) as ref:
+        assert (
+            ds["precip"].dims == ref["precip"].dims == ("number", "step", "latitude", "longitude")
+        )
+        assert ds["time"].ndim == 0 and str(ds["time"].values)[:10] == "2010-01-03"
+        assert ds["number"].values.tolist() == ref["number"].values.tolist()
+        np.testing.assert_allclose(ds["precip"].values[0, :, 0, 0], [1.0, 1.0, 1.0])
+
+
+def test_historical_precip_warns_and_serves_1deg(tmp_path, fetch_mod, hindcast, capsys):
+    run_skill(fetch_mod.fetch, "--date", "2010-01-03", "-o", str(tmp_path / "h.zarr"))
+    assert "1° grid (not 0.25°)" in capsys.readouterr().err
+    assert all("/ml_reforecasts/" in u for u in hindcast)
+
+
+def test_historical_date_without_init_lists_nearest(tmp_path, fetch_mod, hindcast, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--date", "2010-01-02", "--dataset", "precip_1deg",
+                  "-o", str(tmp_path / "x.zarr"))  # fmt: skip
+    assert exc.value.code == 1
+    assert "Nearest published inits: 2010-01-01, 2010-01-03, 2010-01-05" in capsys.readouterr().err
+
+
+def test_historical_era5_exits_2(tmp_path, fetch_mod, hindcast):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--dataset", "precip_era5", "--date", "2010-01-03",
+                  "-o", str(tmp_path / "x.zarr"))  # fmt: skip
+    assert exc.value.code == 2
+
+
+def test_windows_crossing_live_start_exit_2(tmp_path, fetch_mod, hindcast, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--start-time", "2010-01-01", "--end-time", "2010-01-31",
+                  "--start-time", "2026-09-01", "--end-time", "2026-09-30",
+                  "-o", str(tmp_path / "x.zarr"))  # fmt: skip
+    assert exc.value.code == 2
+    assert "split the request at 2026-09-07" in capsys.readouterr().err

@@ -36,6 +36,12 @@ _SAS_ENV = "AZURE_STORAGE_SAS_TOKEN"
 # One Zarr store per init: <_ROOT>/<folder>/YYYY-MM-DD-HH.zarr
 _ROOT = f"{_CONTAINER}/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr"
 _STORE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}\.zarr$")
+# Inits before the first live store come from Cumulus's own Aurora hindcast: one Zarr
+# of every init, same layout as a live store, IMERG-trained precip on the native 1° grid.
+_HINDCAST_RUN = "gratis-czajkowski-era5"
+_HINDCAST = (
+    f"{_CONTAINER}/ml_reforecasts/{_HINDCAST_RUN}/zarr/total_precipitation_24h_acc_imerg.zarr"
+)
 
 # --dataset name → variable folder. Each folder's stores hold that one variable.
 _DATASETS = {
@@ -100,8 +106,8 @@ def _list_stores(folder: str) -> list[str]:
     return sorted(name for name in names if _STORE_RE.fullmatch(name))
 
 
-def _open_store(url: str, bbox, workers: int):
-    """Open one init's store and load it, subset to ``bbox``."""
+def _open_store(url: str, bbox, workers: int, select=None):
+    """Open a store and load it, after ``select`` (lazy dataset -> dataset) and the ``bbox`` cut."""
     import weakref
 
     import xarray as xr
@@ -119,6 +125,7 @@ def _open_store(url: str, bbox, workers: int):
                 read_only=True,
             )
             with xr.open_zarr(store, chunks=None) as ds:
+                ds = select(ds) if select is not None else ds
                 ds = (bbox_subset(ds, bbox) if bbox is not None else ds).load()
     except (DataError, UsageError):
         raise
@@ -205,8 +212,8 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
     if folder not in _DATASETS.values():
         raise UsageError(
             f"unknown Cumulus dataset {name!r}. Available: {', '.join(_DATASETS)} "
-            f"(or a folder name: {', '.join(_DATASETS.values())}). cumulus-fetch reads "
-            "only the live forecast runs; hindcast (reforecast) runs are not served here."
+            f"(or a folder name: {', '.join(_DATASETS.values())}). Inits before the live "
+            "record are read from the Cumulus hindcast automatically: just pass the date."
         )
     if workers < 1:
         raise UsageError(f"--workers must be at least 1 (got {workers}).")
@@ -232,6 +239,45 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
 
     # Names sort by init date then hour, so the last match is the latest init.
     stores = _list_stores(folder)
+    # Inits before the first live store are read from the hindcast; one call reads one source.
+    first_live = stores[0][:10] if stores else "9999-12-31"
+    hindcast = date is not None and date.isoformat() < first_live
+    if windows:
+        hindcast = any(a.isoformat() < first_live for a, _ in windows)
+    if hindcast:
+        # Just the coordinates: list the hindcast inits under the live store names.
+        inits = _open_store(
+            f"az://{_HINDCAST}", None, workers, lambda ds: ds.drop_vars(list(ds.data_vars))
+        )["init_time"].values
+        hindcast_stores = [f"{str(t)[:10]}-{str(t)[11:13]}.zarr" for t in inits]
+        if windows and any(b.isoformat() >= first_live for _, b in windows):
+            if any(
+                a.isoformat() <= s[:10] <= b.isoformat()
+                for s in hindcast_stores
+                for a, b in windows
+            ):
+                raise UsageError(
+                    f"the init windows cross {first_live}, where the live Cumulus runs start. "
+                    f"Earlier inits come from the Cumulus hindcast ({_HINDCAST_RUN}, 1° grid, "
+                    "a different store), so one call reads only one side: "
+                    f"split the request at {first_live} into two calls."
+                )
+            hindcast = False  # the windows hold no hindcast init: read the live side only
+    if hindcast:
+        if folder == _DATASETS["precip_era5"]:
+            raise UsageError(
+                f"no ERA5-trained Cumulus hindcast: inits before {first_live} exist only for "
+                "precip_1deg (IMERG-trained, 1°). Use --dataset precip_1deg, or inits from "
+                f"{first_live}."
+            )
+        if folder == _DATASETS["precip"]:
+            print(
+                f"WARNING: inits before {first_live} come from the Cumulus hindcast, which is "
+                "on a 1° grid (not 0.25°); writing 1°.",
+                file=sys.stderr,
+            )
+        prefix = f"az://{_ACCOUNT}/{_HINDCAST}"
+        stores = hindcast_stores
     published = stores
     if windows:
         # 00 UTC inits only: the windows select init times, not valid times.
@@ -275,7 +321,16 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
         stores = stores[-1:]
     # One store per init: each is opened, cut to the bbox and loaded on its own.
     pieces = []
-    for store in stores:
+    if hindcast:
+        print(
+            f"Reading {len(stores)} init(s) from the Cumulus hindcast {_HINDCAST_RUN} "
+            f"(IMERG-trained, 1°) at az://{_ACCOUNT}/{_HINDCAST}",
+            file=sys.stderr,
+        )
+        times = [np.datetime64(f"{s[:10]}T{s[11:13]}", "ns") for s in stores]
+        ds = _open_store(f"az://{_HINDCAST}", bbox, workers, lambda ds: ds.sel(init_time=times))
+        pieces = [_to_standard(ds.isel(init_time=[i])) for i in range(len(times))]
+    for store in [] if hindcast else stores:
         print(f"Opening {prefix}{store}", file=sys.stderr)
         pieces.append(_to_standard(_open_store(f"az://{_ROOT}/{folder}/{store}", bbox, workers)))
     if windows:
@@ -308,14 +363,14 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
         empty = ds["precip"].isnull().all(("number", "latitude", "longitude")).values
         if empty.all():
             raise DataError(
-                f"Cumulus init {store} has no data in the requested bbox (still publishing?). "
+                f"Cumulus init {stores[-1]} has no data in the requested bbox (still publishing?). "
                 "Pass --date with an earlier init."
             )
         last = int(np.nonzero(~empty)[0][-1])
         if last < ds.sizes["step"] - 1:
             days = ds["step"].values / np.timedelta64(1, "D")
             print(
-                f"WARNING: Cumulus init {store} has no data from step {days[last + 1]:g} d "
+                f"WARNING: Cumulus init {stores[-1]} has no data from step {days[last + 1]:g} d "
                 f"(of {days[-1]:g} d; still publishing?). Dropped the empty leads (not padded); "
                 "pass --date with an earlier init for every lead.",
                 file=sys.stderr,
@@ -324,7 +379,8 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
     if bbox is None:
         ds = ensure_normalized_longitude(ds)
 
-    ds.attrs.update(Conventions="CF-1.13", weather_skills_source=f"cumulus:{folder}")
+    source = f"cumulus-hindcast:{_HINDCAST_RUN}" if hindcast else f"cumulus:{folder}"
+    ds.attrs.update(Conventions="CF-1.13", weather_skills_source=source)
     stamp_cf_attrs(ds)
     stamp_precip_amounts(ds)
     ds = to_standard_units(ds)

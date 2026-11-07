@@ -1,6 +1,7 @@
 """Correctness tests for ecmwf-fetch (no network; helpers + missing creds)."""
 
 import os
+import types
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -538,6 +539,7 @@ def fake_ecds(monkeypatch, mod):
     monkeypatch.setitem(sys.modules, "ecmwf.datastores.processing", processing)
     monkeypatch.setenv("ECMWF_DATASTORES_KEY", "dummy")
     monkeypatch.setattr(mod, "_open_grib", _fake_grib)
+    monkeypatch.setattr(mod, "_open_hindcast", _fake_hindcast_stores({}).__getitem__)
     return downloads
 
 
@@ -624,3 +626,148 @@ def test_catalog_open_failure_is_clean_error(tmp_path, mod, fetch, capsys):
             )
     assert exc.value.code == 1
     assert "dynamical.org catalog" in capsys.readouterr().err
+
+
+# --- Reforecast (hindcast) routing with fake Sheerwater stores --------------
+
+HC = "gs://sheerwater-public-datalake/hindcasts"
+PL_INITS = ["2010-01-01", "2010-01-03", "2010-01-05", "2015-03-01", "2015-03-03"]
+WB2_INITS = ["2000-01-01", "2000-01-02", "2015-03-02"]
+
+
+def _hc_store(var, inits, value):
+    """Store layout (member, prediction_timedelta, lat, lon, init_time); value + member."""
+    members = np.arange(1, 4)
+    data = value + members[:, None, None, None, None] * np.ones((3, 4, 2, 2, len(inits)))
+    return xr.Dataset(
+        {var: (("member", "prediction_timedelta", "lat", "lon", "init_time"), data)},
+        coords={
+            "member": members,
+            "prediction_timedelta": np.arange(4).astype("timedelta64[D]").astype("timedelta64[ns]"),
+            "lat": [0.0, 1.5],
+            "lon": [34.5, 36.0],
+            "init_time": np.array(inits, dtype="datetime64[ns]"),
+        },
+    )
+
+
+def _fake_hindcast_stores(overrides):
+    stores = {
+        f"{HC}/ecmwf_planette_precip.zarr": _hc_store("precip", PL_INITS, 3.0),
+        f"{HC}/ecmwf_planette_tmp2m.zarr": _hc_store("tmp2m", PL_INITS, 20.0),
+        f"{HC}/ecmwf_planette_sst.zarr": _hc_store("sst", PL_INITS, 27.0),
+        f"{HC}/ecmwf_ifs_precip.zarr": _hc_store("precip", WB2_INITS, 4.0),
+        f"{HC}/ecmwf_ifs_tmp2m.zarr": _hc_store("tmp2m", WB2_INITS, 21.0),
+    }
+    stores.update(overrides)
+    return stores
+
+
+@pytest.fixture
+def hindcast(monkeypatch, mod):
+    opened = []
+    stores = _fake_hindcast_stores({})
+
+    def fake_open(path):
+        opened.append(path.removeprefix(HC + "/"))
+        return stores[path]
+
+    monkeypatch.setattr(mod, "_open_hindcast", fake_open)
+    return types.SimpleNamespace(stores=stores, opened=opened)
+
+
+def _run_hc(fetch, out, *args):
+    run_skill(fetch, "--bbox", "2/34/-1/37", *args, "-o", str(out))
+    return xr.open_zarr(out, consolidated=True)
+
+
+def test_hindcast_window_reads_planette_members(tmp_path, fetch, hindcast, capsys):
+    ds = _run_hc(fetch, tmp_path / "o.zarr", "--start-time", "2010-01-01", "--end-time",
+                 "2010-01-04", "-v", "precip", "t2m", "--max-lead", "48h")  # fmt: skip
+    assert hindcast.opened == ["ecmwf_planette_precip.zarr", "ecmwf_planette_tmp2m.zarr"]
+    assert ds["precip"].dims == ("time", "number", "step", "latitude", "longitude")
+    assert ds["time"].values.astype("datetime64[D]").astype(str).tolist() == [
+        "2010-01-01",
+        "2010-01-03",
+    ]
+    # The perturbed members keep their numbers 1..N, as on the live 0..100 axis.
+    assert ds["number"].values.tolist() == [1, 2, 3]
+    np.testing.assert_allclose(
+        ds["precip"].isel(time=0, step=0, latitude=0, longitude=0), [4, 5, 6]
+    )
+    assert np.asarray(ds["step"].values).astype("timedelta64[D]").astype(int).tolist() == [0, 1, 2]
+    assert ds["precip"].attrs["units"] == "mm day-1"
+    assert ds["t2m"].attrs["units"] == "degree_Celsius"
+    assert ds["precip"].attrs["data_interval"] == "1 day"
+    assert ds.attrs["weather_skills_source"] == "sheerwater-hindcast:ecmwf_planette"
+    err = capsys.readouterr().err
+    assert "sheerwater-hindcast:ecmwf_planette" in err
+    assert "WeatherBench2" not in err
+
+
+def test_hindcast_date_before_planette_reads_wb2_with_warning(tmp_path, fetch, hindcast, capsys):
+    ds = _run_hc(fetch, tmp_path / "o.zarr", "--date", "2000-01-02", "-v", "precip")
+    assert ds["precip"].dims == ("number", "step", "latitude", "longitude")
+    assert ds["time"].values.astype("datetime64[D]").astype(str) == "2000-01-02"
+    assert ds.attrs["weather_skills_source"] == "sheerwater-hindcast:ecmwf_wb2"
+    assert "WARNING: 1 init(s)" in capsys.readouterr().err
+
+
+def test_hindcast_missing_init_of_one_variable_is_nan_with_warning(
+    tmp_path, fetch, hindcast, capsys
+):
+    path = f"{HC}/ecmwf_planette_tmp2m.zarr"
+    hindcast.stores[path] = hindcast.stores[path].isel(init_time=[0, 2, 3, 4])
+    ds = _run_hc(fetch, tmp_path / "o.zarr", "--start-time", "2010-01-01", "--end-time",
+                 "2010-01-05", "-v", "precip", "t2m")  # fmt: skip
+    assert ds.sizes["time"] == 3
+    assert bool(ds["t2m"].isel(time=1).isnull().all())
+    assert bool(ds["precip"].isel(time=1).notnull().all())
+    assert "reforecast t2m has no run for 1 init(s), left NaN: 2010-01-03" in (
+        capsys.readouterr().err
+    )
+
+
+def test_live_init_reads_catalog_not_hindcast(tmp_path, mod, fetch, hindcast):
+    with patch.object(mod, "_open_catalog", return_value=_catalog_surface_ds()):
+        run_skill(fetch, "--date", "2026-01-01", "--bbox", "3/10/0/13", "-o", str(tmp_path / "o"))
+    assert hindcast.opened == []
+    ds = xr.open_zarr(tmp_path / "o", consolidated=True)
+    assert ds.attrs["weather_skills_source"] == "ecmwf-s2s"
+
+
+@pytest.mark.parametrize(
+    ("args", "code", "message"),
+    [
+        (("--start-time", "2025-12-01", "--end-time", "2026-01-10"), 2, "split the request"),
+        (("--start-time", "2010-01-01", "--end-time", "2010-01-05", "-v", "u10"), 2, "t2m and sst"),
+        (
+            ("--start-time", "2005-01-01", "--end-time", "2005-01-31"),
+            1,
+            "ecmwf_planette 2010-01-01..2015-03-03",
+        ),
+    ],
+)
+def test_hindcast_window_errors(tmp_path, fetch, hindcast, capsys, args, code, message):
+    with pytest.raises(SystemExit) as exc:
+        _run_hc(fetch, tmp_path / "o.zarr", *args)
+    assert exc.value.code == code
+    assert message in capsys.readouterr().err
+
+
+def test_date_that_is_not_a_hindcast_init_uses_ecds(tmp_path, fetch, fake_ecds, hindcast, capsys):
+    # 2015-03-02 is a WeatherBench2 init, but after Planette starts only Planette is read.
+    ds = _run_hc(fetch, tmp_path / "o.zarr", "--date", "2015-03-02", "-v", "precip")
+    assert ds.attrs["weather_skills_source"] == "ecmwf-s2s"
+    assert ds.sizes["number"] == 3  # control + the fake GRIB's 2 members
+    assert "not an ECMWF reforecast init" in capsys.readouterr().err
+
+
+def test_ocean_field_before_2026_uses_ecds(tmp_path, fetch, hindcast, capsys):
+    env = {k: v for k, v in os.environ.items() if k != "ECMWF_DATASTORES_KEY"}
+    with patch.dict(os.environ, env, clear=True):
+        with pytest.raises(SystemExit) as exc:
+            _run_hc(fetch, tmp_path / "o.zarr", "--date", "2010-01-03", "-v", "zos")
+    assert exc.value.code == 2
+    assert hindcast.opened == []
+    assert "ECMWF_DATASTORES_KEY" in capsys.readouterr().err

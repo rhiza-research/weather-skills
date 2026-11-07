@@ -4,9 +4,14 @@
 #   "weather-skills-core>=0.3.4",
 #   "dynamical-catalog==1.0.1",
 #   "pandas",
+#   "gcsfs",
 # ]
 # ///
-"""Fetch a NOAA GFS or GEFS forecast or analysis from the dynamical.org catalog as a weather-skills Zarr."""
+"""Fetch a NOAA GFS or GEFS forecast or analysis from the dynamical.org catalog as a weather-skills Zarr.
+
+GEFS inits before the catalog's first (2020-10-01) come from Sheerwater's public GEFSv12
+reforecast Zarr instead.
+"""
 
 import re
 import sys
@@ -63,6 +68,126 @@ _SURFACE_ALIASES = {
     "u100": "wind_u_100m",
     "v100": "wind_v_100m",
 }
+
+# First 00 UTC init of noaa-gefs-forecast-35-day; earlier --product gefs inits come
+# from the GEFSv12 reforecast: 11 members (0 = control), Wednesday inits
+# 1998-12-30..2019-08-28, daily leads 0-34 days at 1°, one variable per store.
+_GEFS_LIVE_START = "2020-10-01"
+_HINDCAST = "gs://sheerwater-public-datalake/hindcasts"
+# Output name -> (store, variable in the store, units, standard_name). The stores'
+# unit strings ("mm / day", "degC") are replaced by pint-readable ones here.
+_HINDCAST_STORES = {
+    "precip": (f"{_HINDCAST}/gefs_precip.zarr", "precip", "mm day-1", "lwe_precipitation_rate"),
+    "temperature_2m": (
+        f"{_HINDCAST}/gefs_tmp2m.zarr",
+        "tmp2m",
+        "degree_Celsius",
+        "air_temperature",
+    ),
+}
+
+
+def _open_hindcast(path):
+    """Open one reforecast store lazily: (init_time, member, prediction_timedelta, lat, lon)."""
+    import xarray as xr
+
+    try:
+        return xr.open_zarr(path, storage_options={"token": "anon"}, decode_timedelta=True)
+    except Exception as exc:  # noqa: BLE001
+        raise DataError(f"failed to open {path} ({exc}).") from None
+
+
+def _fetch_hindcast(date, windows, variable, bbox, limit):
+    """GEFS inits before 2020-10-01 from the GEFSv12 reforecast, shaped like the live output."""
+    import numpy as np
+    import xarray as xr
+
+    names = []
+    missing = []
+    for token in variable or list(_HINDCAST_STORES):
+        if token in _PRECIP_ALIASES or token == "precipitation_surface":
+            name = "precip"
+        else:
+            name = _SURFACE_ALIASES.get(token, token)
+        if name not in _HINDCAST_STORES:
+            missing.append(token)
+        elif name not in names:
+            names.append(name)
+    if missing:
+        raise UsageError(
+            f"variable(s) not in the GEFSv12 reforecast: {', '.join(missing)}. GEFS inits "
+            f"before {_GEFS_LIVE_START} offer only precip (precip, tp, pr) and "
+            "temperature_2m (t2m)."
+        )
+
+    days = [(date, date)] if date is not None else windows
+    parts = []
+    span = None
+    for name in names:
+        path, store_name, units, standard_name = _HINDCAST_STORES[name]
+        ds = _open_hindcast(path)[[store_name]].rename({store_name: name})
+        init_day = ds["init_time"].values.astype("datetime64[D]")
+        if span is None:
+            span = f"{init_day.min()}..{init_day.max()}"
+        keep = np.zeros(init_day.size, dtype=bool)
+        for start, end in days:
+            keep |= (init_day >= np.datetime64(start.isoformat())) & (
+                init_day <= np.datetime64(end.isoformat())
+            )
+        # Still lazy: only the chunks inside the kept inits and the bbox are read.
+        ds = ds.isel(init_time=np.nonzero(keep)[0]).rename(
+            init_time="time",
+            member="number",
+            prediction_timedelta="step",
+            lat="latitude",
+            lon="longitude",
+        )
+        if limit is not None:
+            ds = ds.sel(step=slice(None, limit))
+        if bbox is not None:
+            ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
+        else:
+            ds = ensure_normalized_longitude(ds, lon_dim="longitude")
+        ds[name].attrs = {"units": units, "standard_name": standard_name}
+        try:
+            parts.append(ds.load())
+        except Exception as exc:  # noqa: BLE001
+            raise DataError(f"failed to read {path} ({exc}).") from None
+
+    inits = np.unique(np.concatenate([p["time"].values for p in parts]))
+    if inits.size == 0:
+        when = date.isoformat() if date is not None else ", ".join(f"{s}..{e}" for s, e in days)
+        raise DataError(
+            f"the GEFSv12 reforecast has no init in {when}. It covers Wednesday 00 UTC "
+            f"inits {span}; --product gefs reads the live catalog from {_GEFS_LIVE_START}."
+        )
+    # The stores skip different inits: keep every init, NaN where a store has none.
+    for p, name in zip(parts, names, strict=True):
+        absent = np.setdiff1d(inits, p["time"].values)
+        if absent.size:
+            print(
+                f"WARNING: GEFSv12 reforecast {name} has no run for {absent.size} init(s), "
+                "left NaN (not filled): " + ", ".join(str(np_to_date(t)) for t in absent),
+                file=sys.stderr,
+            )
+    try:
+        cube = xr.merge([p.reindex(time=inits) for p in parts], join="exact")
+    except ValueError as exc:
+        raise DataError(f"GEFSv12 reforecast stores are on different grids ({exc}).") from None
+    # Same dim order as the live GEFS output.
+    cube = cube.transpose("time", "step", "number", "latitude", "longitude")
+    if date is not None:
+        cube = cube.isel(time=0)
+    print(
+        f"Fetching sheerwater-hindcast:gefs ({_HINDCAST}, GEFSv12 reforecast) for "
+        f"{inits.size} init(s): 11 members, daily steps.",
+        file=sys.stderr,
+    )
+    cube.attrs = {"weather_skills_source": "sheerwater-hindcast:gefs", "Conventions": "CF-1.13"}
+    stamp_cf_attrs(cube)
+    cube = to_standard_units(cube, variables=names)
+    # Step d is the day [init + d, init + d + 1).
+    return stamp_data_interval(cube, period="1 day", dim="step")
 
 
 def _hpa_by_prefix(data_vars) -> dict[str, list[str]]:
@@ -260,13 +385,39 @@ def fetch(
 
     import numpy as np
 
+    # One (start, end) pair per window; --end-time is an inclusive calendar day.
+    windows = list(zip(start_time or [], end_time or [], strict=True))
+    limit = None
+    if max_lead is not None:
+        import pandas as pd
+
+        try:
+            limit = pd.Timedelta(max_lead).to_timedelta64()
+        except ValueError:
+            raise UsageError(f"--max-lead {max_lead!r} is not a timedelta (240h, 10D)") from None
+        if limit < np.timedelta64(0, "ns"):
+            raise UsageError("--max-lead must not be negative")
+
+    # GEFS inits before the catalog's first come from the GEFSv12 reforecast.
+    if product == "gefs" and (date is None) != (not windows):
+        pairs = windows or [(date, date)]
+        first = min(start.isoformat()[:10] for start, _ in pairs)
+        last = max(end.isoformat()[:10] for _, end in pairs)
+        if first < _GEFS_LIVE_START <= last:
+            raise UsageError(
+                f"the requested GEFS inits span {_GEFS_LIVE_START}; split the request there. "
+                f"Inits before it come from the GEFSv12 reforecast (11 members, daily steps), "
+                "inits from it from the live catalog (31 members, 3- then 6-hourly steps), "
+                "so the two do not stack."
+            )
+        if last < _GEFS_LIVE_START:
+            return _fetch_hindcast(date, windows, variable, bbox, limit)
+
     state = _open_dataset(dataset)
     ds = state["ds"]
     shape = state["shape"]
     is_forecast = shape in ("ensemble", "forecast")
 
-    # One (start, end) pair per window; --end-time is an inclusive calendar day.
-    windows = list(zip(start_time or [], end_time or [], strict=True))
     if is_forecast:
         if (date is None) == (not windows):
             raise UsageError(
@@ -298,16 +449,6 @@ def fetch(
         init_range = f"{np_to_date(inits.min()).isoformat()}..{np_to_date(inits.max()).isoformat()}"
 
         if max_lead is not None:
-            import pandas as pd
-
-            try:
-                limit = pd.Timedelta(max_lead).to_timedelta64()
-            except ValueError:
-                raise UsageError(
-                    f"--max-lead {max_lead!r} is not a timedelta (240h, 10D)"
-                ) from None
-            if limit < np.timedelta64(0, "ns"):
-                raise UsageError("--max-lead must not be negative")
             # One catalog lead past the limit: end-labelled fields move back one
             # step below, and the extra lead is trimmed after that.
             n = int((ds["lead_time"].values <= limit).sum())
