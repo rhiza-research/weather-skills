@@ -54,12 +54,15 @@ mean in `W m-2`).
 
 Before 2026-01-01, `s2s` reads `precip`, `t2m` and `sst` from the ECMWF
 reforecast (below). It uses the Data Store for a `--date` the reforecast
-lacks and for fields with neither a catalog nor a reforecast equivalent: `mx2t6`, `mn2t6` (the catalog 24 h
+lacks and, for one `--date` or an init window, for fields with neither a catalog nor a reforecast equivalent: `mx2t6`, `mn2t6` (the catalog 24 h
 max/min is a different statistic), accumulated fluxes (`sshf`, `slhf`,
 `ssr`, `ssrd`, `str`, `strd`, `ttr`; the catalog means in `W m-2` are
 reachable by their catalog names), static fields (`lsm`, `orog`, `slt`),
 `pv`, and ocean parameters. A call mixing those with catalog fields also
-uses the Data Store.
+uses the Data Store. With a window, the Data Store gets one set of requests
+(control and members, per field group) for every published init day in the
+windows; inits inside the embargo or with no data are skipped with a
+`WARNING`, and the inits stack on a leading `time` axis.
 
 ## ECMWF reforecast stores
 
@@ -189,7 +192,7 @@ ECDS retrievals are queued and can take from a few minutes to over an hour. Bigg
 
 | Key | Value |
 |---|---|
-| date / time | `--date` / `--run` (0, 6, 12, 18) |
+| date / time | `--date` (or each day of the `--start-time`/`--end-time` windows) / `--run` (0, 6, 12, 18) |
 | type | `fc` (stream left to the client, which maps 06/18 UTC runs by IFS cycle) |
 | step | 0–144 h every 3 h, then 150–360 h every 6 h (06/18 UTC: 0–144 h every 3 h), cut at `--max-lead` |
 | levtype | `sfc` or `pl` |
@@ -209,3 +212,5 @@ ECDS retrievals are queued and can take from a few minutes to over an hour. Bigg
 Inits from the last 4 days try `data.ecmwf.int`, then the AWS mirror;
 older inits (from 2023) use the AWS mirror only. Each source gets one
 attempt. The GRIB is read one step at a time and clipped to the bbox.
+With windows, inits are fetched one after another and stacked on a leading
+`time` axis; an init neither source has is skipped with a `WARNING`.

@@ -49,7 +49,7 @@ Fetches one ECMWF forecast product as a weather-skills standard dataset Zarr. Pi
 
 | `--product` | Default source | Fallback | Members / leads / grid | Credentials |
 |---|---|---|---|---|
-| `s2s` (default) | dynamical.org `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` (inits from 2026-01-01) | ECMWF reforecast on public GCS (inits before 2026; `precip`, `t2m`, `sst`), then ECMWF Data Store (ECDS): one `--date` neither has | 101 (control + 100), 46 daily steps, 1.5° (reforecast 10 members; ocean 1.0° on ECDS) | none; ECDS needs `ECMWF_DATASTORES_KEY` |
+| `s2s` (default) | dynamical.org `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` (inits from 2026-01-01) | ECMWF reforecast on public GCS (inits before 2026; `precip`, `t2m`, `sst`), then ECMWF Data Store (ECDS): inits or fields neither has | 101 (control + 100), 46 daily steps, 1.5° (reforecast 10 members; ocean 1.0° on ECDS) | none; ECDS needs `ECMWF_DATASTORES_KEY` |
 | `s2s-6h` | dynamical.org `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` (inits from 2026-01-01) | none | 101, 6-hourly to 46 days, 1.5° | none |
 | `ifs-ens` | dynamical.org `ecmwf-ifs-ens-forecast-15-day-0-25-degree` (inits from 2024-04-01) | none | 51 (control + 50), 3-hourly to 144 h then 6-hourly to 15 days, 0.25° | none |
 | `aifs-ens` | dynamical.org `ecmwf-aifs-ens-forecast` (inits from 2025-07-02) | none | 51, 6-hourly to 15 days, 0.25° | none |
@@ -61,9 +61,9 @@ Fetches one ECMWF forecast product as a weather-skills standard dataset Zarr. Pi
 ```bash
 # One 00 UTC init
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--product P] --date YYYY-MM-DD --bbox N/W/S/E [-v VAR ...] [--max-lead 10D] -o OUT.zarr
-# Every 00 UTC init in one or more windows (dynamical.org products)
+# Every init in one or more windows
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --product P --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--start-time ... --end-time ...] --bbox N/W/S/E -v VAR -o OUT.zarr
-# HRES run hour
+# HRES run hour (also with windows: that run of every day in them)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --product hres --date YYYY-MM-DD --run 12 --bbox N/W/S/E -v precip --max-lead 72h -o OUT.zarr
 # Latest init of a product; catalog variables of a product (no download)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --product P --probe-latest
@@ -73,7 +73,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --product P --list-variables
 ### Arguments
 - `--product` — one of the table above. Default `s2s`.
 - `--date` — init date; the 00 UTC run (for `hres`, the run set by `--run`). S2S inits are daily from 2023-06-27, Mondays and Thursdays before.
-- `--start-time`, `--end-time` — a window of inits; `--end-time` is inclusive. Repeat the pair for several windows. Takes every 00 UTC init in them with all their leads (the windows select init times, not valid times). Not with `--date`; not for `hres`. With `s2s`, windows read the catalog (from 2026-01-01) or the reforecast (before it), never the Data Store.
+- `--start-time`, `--end-time` — a window of inits; `--end-time` is inclusive. Repeat the pair for several windows. Takes every 00 UTC init in them (for `hres`, the `--run` init of every day) with all their leads: the windows select init times, not valid times. Not with `--date`. Windows pick sources as `--date` does; an init a source lacks or has no data for is skipped with a `WARNING` (never filled), and no init in any window exits 1.
 - `--bbox` — `N/W/S/E` decimal degrees; W > E crosses the antimeridian. Required for `s2s` and `hres`; omit it on the other products for the whole globe.
 - `--variable`, `-v` — several per flag, repeated, or comma-separated (`-v precip t2m`). Default `precip`. Short names: `precip`, `t2m`, `d2m`, `sst`, `msl`, `sp`, `u10`, `v10`, `u100`, `v100`, `gust10`, `tcc`, `skt`, `cape`, `tcw`; pressure levels `t`, `gh`, `u`, `v`, `w`, `q` (every level the product has). GRIB and ECDS names (`tp`, `2t`, `wtmp`, `z`, `2_m_temperature`) and `precipitation` are accepted. The dynamical.org products also take any catalog name (`net_long_wave_radiation_flux_top_of_atmosphere`, `temperature_850hpa`); see `--list-variables`. S2S Data Store-only fields: `mx2t6`, `mn2t6`, accumulated fluxes (`sshf`, `slhf`, `ssr`, `ssrd`, `str`, `strd`, `ttr`), static fields (`lsm`, `orog`, `slt`), `pv` (320 K), and ocean fields (`t20d`, `zos`, `ocu`, …). HRES fields: `precip`, `t2m`, `d2m`, `msl`, `u10`, `v10`, `gust10`, `sp`, `tcwv`, `mucape`, `skt`, `ssrd`, `strd`, `str`, `ttr`, and `t`, `gh`, `u`, `v`, `q`, `r` on 13 levels (1000–50 hPa). An unknown name exits 2 and lists what is available.
 - `--max-lead` — keep output steps up to this lead: `24`, `24h`, `10D` (bare numbers are hours); `0` is the first step only. Default: every step.
@@ -82,17 +82,17 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --product P --list-variables
 - `--list-variables` — dynamical.org products: print each catalog variable (name, units, long name) and the `pressure_level` group's fields and levels where the store has one, then exit. `s2s` also lists its Data Store-only fields.
 - `--output`, `-o` — output Zarr, overwritten.
 
-Flags a product cannot honour (`--run` off `hres`; windows or `--list-variables` on `hres`) exit 2.
+Flags a product cannot honour (`--run` off `hres`; `--list-variables` on `hres`) exit 2.
 
 ### Output
 - Ensembles: dims `(number, step, latitude, longitude)` from every source; `number=0` is the control. Deterministic: `(step, latitude, longitude)`. Level fields add `vertical` (hPa; K for `pv`). One init gives a scalar `time`; init windows give a leading `time` axis, one per init.
 - Variables carry the short names above; catalog fields with no short name keep their catalog name.
 - `precip` is a rate in `mm day-1`; temperatures (`t2m`, `d2m`, `sst`, `skt`, `t`, …) are `degree_Celsius`; other units as published (catalog fluxes such as OLR stay `W m-2` means).
 - `weather_skills_source`: `ecmwf-s2s` for `s2s` from the catalog or ECDS, `sheerwater-hindcast:ecmwf_planette` and/or `sheerwater-hindcast:ecmwf_wb2` (joined by `+`) for the reforecast, `ecmwf-hres` for `hres`, `dynamical:<dataset id>` for the others.
-- Longitude is `[-180, 180)`. Missing leads or members are never padded: published leads are written as available with a `WARNING`, and an init with no data exits 1.
+- Longitude is `[-180, 180)`. Missing leads or members are never padded: published leads are written as available with a `WARNING`. A `--date` with no data exits 1; in a window that init is skipped with a `WARNING`.
 
 ### S2S before 2026: the reforecast
-`s2s` picks a source per request: inits from 2026-01-01 read the live catalog; earlier inits of `precip`, `t2m` and `sst` read the ECMWF subseasonal reforecast (hindcast) from public Sheerwater Zarr stores on Google Cloud (no credentials); the Data Store serves only a `--date` neither has, such as a pre-2026 date that is not a reforecast init or a field the reforecast lacks (ocean fields, `d2m`, winds, …). stderr names the source used.
+`s2s` picks a source per request: inits from 2026-01-01 read the live catalog; earlier inits of `precip`, `t2m` and `sst` read the ECMWF subseasonal reforecast (hindcast) from public Sheerwater Zarr stores on Google Cloud (no credentials); the Data Store serves what neither has: a pre-2026 `--date` that is not a reforecast init, or a field the reforecast lacks (ocean fields, `d2m`, winds, …), for one `--date` or a window. stderr names the source used.
 
 | Store | Inits | Members | Model | Fields |
 |---|---|---|---|---|
@@ -100,7 +100,7 @@ Flags a product cannot honour (`--run` off `hres`; windows or `--list-variables`
 | `ecmwf_wb2` | about daily, 1996-01-04 to 2021-12-29; read only for inits before 2006-01-03 | 10 perturbed (1..10) | mixed cycles (WARNING on stderr) | `precip`, `t2m` |
 
 - Output matches the live `s2s` output: same names, dims, units and interval-start daily `step` from 0 (46 leads, 1.5°). `number` holds the 10 perturbed members as 1..10, with no control (0), so they line up with live members 1..100; no ensemble mean is taken.
-- A request whose inits fall on both sides of 2026-01-01 exits 2: the reforecast has 10 members and the live forecast 101, so split it at 2026-01-01 into two calls. A pre-2026 window asking for a field other than `precip`, `t2m` or `sst` exits 2; a window with no reforecast init exits 1 and lists the stores' ranges.
+- A request whose inits fall on both sides of 2026-01-01 exits 2: the reforecast has 10 members and the live forecast 101, so split it at 2026-01-01 into two calls. A pre-2026 window of `precip`, `t2m` or `sst` with no reforecast init exits 1 and lists the stores' ranges.
 - A reforecast field missing for some inits stays NaN there, with a `WARNING` listing them; nothing is filled. A window with no `sst` init (before 2006) exits 1.
 - `ecmwf_wb2` changes model cycle from init to init, so a trend across its inits can be a model change.
 
@@ -112,9 +112,10 @@ Example: AIFS `precip` after fetch, `step=s` covers `[s, s+6h)`. After `aggregat
 ### Notes
 - **Pressure levels.** `ifs-ens` and the AIFS products have `t` (850, 925 hPa) and `gh` (500, 850, 925 hPa) only, stacked onto `vertical`. `s2s` has `t`, `gh`, `u`, `v`, `w`, `q` on 10 levels (1000–10 hPa; `q` NaN above 200 hPa), all members. `hres` has 13 levels and also `q`, `r`, `u`, `v`. `s2s-6h` has none.
 - **HRES is slow.** Open Data serves global GRIB files, so every lead is a whole-globe download clipped locally (`precip` for a 00 UTC run is ~80 MB; a pressure-level field ~13×); a small bbox saves memory, not time. Keep `--max-lead` short. Since IFS Cycle 48r1 the ensemble runs at HRES resolution, so the `ifs-ens` control member (`select` member 0) stands in for HRES and reads in seconds; the ensemble mean is usually the better forecast. Use `hres` when a task names HRES or needs a field or level only it has (`q`, `r`, `u`, `v` on levels, `mucape`, `tcwv`, `skt`, radiation), or a 06/12/18 UTC run.
+- **HRES windows.** Every init downloads the whole globe for every step, one init after another, so a window costs inits × the single-init download. Each init tries its sources once; an init neither has is skipped with a `WARNING`. Keep windows to about a week of inits with a short `--max-lead`, or a few inits at full lead; for longer runs of inits use `ifs-ens` (control member or ensemble mean).
 - **HRES 503s.** Under load either source answers `503 Slow Down`. Each source gets one attempt with no waiting; if every source is rate-limiting the skill exits 1 saying so. Fetch one init at a time and try again in a few minutes. New runs publish about 6–9 h after their init hour.
 - `hres` `ssrd`, `strd`, `str`, `ttr` stay cumulative since init (J m-2); `gust10` is the maximum since the previous step; `tcwv` is water vapour only; `mucape` is most-unstable CAPE (no plain `cape`).
-- **S2S Data Store.** It refuses inits newer than today − 2 days (real-time embargo); the skill exits 1 before contacting it. Requests are queued and take minutes to over an hour. Pressure-level fields and `pv` are control only there (NaN for members 1..100). Accumulated fields other than `precip` stay cumulative since init in native units; requesting them with `precip` exits 2. Ocean fields are on a 1.0° grid; fetch them in a separate call.
+- **S2S Data Store.** It refuses inits newer than today − 2 days (real-time embargo); for a `--date` the skill exits 1 before contacting it, and in a window those inits are skipped with a `WARNING`. A window takes every published init day in it (daily from 2023-06-27, Mondays and Thursdays before) as its own queued request per field group (control and members apart), so keep Data Store windows to about 10 inits per call; an init the Data Store has no data for is skipped with a `WARNING`. Requests are queued and take minutes to over an hour. Pressure-level fields and `pv` are control only there (NaN for members 1..100). Accumulated fields other than `precip` stay cumulative since init in native units; requesting them with `precip` exits 2. Ocean fields are on a 1.0° grid; fetch them in a separate call.
 - The dynamical.org products read 00 UTC inits only (the AIFS stores also hold 06/12/18 UTC runs).
 - A fresh catalog init publishes its long leads over several hours; use the previous day's init for every lead.
 
@@ -123,8 +124,10 @@ Example: AIFS `precip` after fetch, `step=s` covers `[s, s+6h)`. After `aggregat
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-10-12 --bbox 5.5/33.5/-5/42.5 -v precip t2m -o ecmwf_s2s_kenya.zarr
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --product aifs-ens --start-time 2025-07-16 --end-time 2026-07-15 \
   --bbox 0.3/129.4/-2.4/131.65 -v precip --max-lead 14D18h -o aifs_year.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --product hres --start-time 2026-10-12 --end-time 2026-10-18 \
+  --bbox 5.5/33.5/-5/42.5 -v precip --max-lead 24 -o hres_kenya_week.zarr
 ```
-The first writes 101-member daily precip rates and 2 m temperature for 46 days over Kenya; the second a year of daily AIFS ensemble inits to 14 days in one call.
+The first writes 101-member daily precip rates and 2 m temperature for 46 days over Kenya; the second a year of daily AIFS ensemble inits to 14 days in one call; the third the first 24 h of precip from each 00 UTC HRES run of one week, one `time` per init.
 
 ## Details
 

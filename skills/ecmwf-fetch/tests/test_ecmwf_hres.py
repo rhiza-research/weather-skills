@@ -388,15 +388,108 @@ def test_run_is_rejected_for_other_products(mod, tmp_path):
     assert exc.value.code == 2
 
 
-@pytest.mark.parametrize(
-    "extra",
-    [
-        ("--list-variables",),
-        ("--start-time", "2026-02-15", "--end-time", "2026-02-16", "--bbox", "5/34/-5/42"),
-        ("--date", "2026-02-15"),
-    ],
-)
+@pytest.mark.parametrize("extra", [("--list-variables",), ("--date", "2026-02-15")])
 def test_hres_rejects_flags_it_cannot_honour(mod, tmp_path, extra):
     with pytest.raises(SystemExit) as exc:
         run_skill(mod.fetch, "--product", "hres", *extra, "-o", str(tmp_path / "x.zarr"))
     assert exc.value.code == 2
+
+
+def _mock_inits(monkeypatch, mod, published, requested=None):
+    """Open Data mock serving t2m for the `published` init dates (YYYY-MM-DD)."""
+    import numpy as np
+
+    last = {}
+
+    def retrieve(source, request, target):
+        if requested is not None:
+            requested.append(request["date"].isoformat())
+        if request["date"].isoformat() not in published:
+            raise RuntimeError(f"404 from {source}")
+        last["date"] = request["date"]
+
+    def open_grib(path):
+        # Each init's value is its day of month, so inits stay distinguishable.
+        ds = _grib_like_t2m().assign_coords(time=np.datetime64(last["date"], "ns"))
+        return ds.assign(t2m=ds["t2m"] * 0 + 273.15 + last["date"].day)
+
+    _fake_opendata(monkeypatch, retrieve)
+    monkeypatch.setattr(mod, "_open_grib", open_grib)
+
+
+def _run_hres(mod, out, *args):
+    run_skill(mod.fetch, "--product", "hres", *args, "--bbox", "5/34/-5/42", "-o", str(out))
+
+
+def test_init_windows_add_a_time_axis_of_inits(mod, monkeypatch, tmp_path):
+    import numpy as np
+    import xarray as xr
+
+    requested = []
+    _mock_inits(monkeypatch, mod, {"2026-02-14", "2026-02-15", "2026-03-01"}, requested)
+    out = tmp_path / "hres.zarr"
+    _run_hres(mod, out, "--start-time", "2026-02-14", "--end-time", "2026-02-15",
+              "--start-time", "2026-03-01", "--end-time", "2026-03-01", "-v", "t2m")  # fmt: skip
+    # Old inits go straight to the AWS mirror: one request per init.
+    assert requested == ["2026-02-14", "2026-02-15", "2026-03-01"]
+    ds = xr.open_zarr(out)
+    assert ds["t2m"].dims == ("time", "step", "latitude", "longitude")
+    days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
+    assert days == ["2026-02-14", "2026-02-15", "2026-03-01"]
+    np.testing.assert_allclose(ds["t2m"].values[:, 0, 0, 0], [14.0, 15.0, 1.0], rtol=1e-5)
+    assert ds["t2m"].attrs["data_interval"] == "3 hour"
+
+
+def test_overlapping_init_windows_fetch_each_init_once(mod, monkeypatch, tmp_path):
+    requested = []
+    _mock_inits(monkeypatch, mod, {"2026-02-14", "2026-02-15", "2026-02-16"}, requested)
+    _run_hres(mod, tmp_path / "hres.zarr", "--start-time", "2026-02-14", "--end-time",
+              "2026-02-15", "--start-time", "2026-02-15", "--end-time", "2026-02-16",
+              "-v", "t2m")  # fmt: skip
+    assert requested == ["2026-02-14", "2026-02-15", "2026-02-16"]
+
+
+def test_init_window_skips_an_unpublished_init_with_a_warning(mod, monkeypatch, tmp_path, capsys):
+    import xarray as xr
+
+    _mock_inits(monkeypatch, mod, {"2026-02-14", "2026-02-16"})
+    out = tmp_path / "hres.zarr"
+    _run_hres(mod, out, "--start-time", "2026-02-14", "--end-time", "2026-02-16", "-v", "t2m")
+    assert "WARNING: HRES init 2026-02-15 00Z skipped" in capsys.readouterr().err
+    days = xr.open_zarr(out)["time"].values.astype("datetime64[D]").astype(str).tolist()
+    assert days == ["2026-02-14", "2026-02-16"]
+
+
+def test_single_date_keeps_a_scalar_init(mod, monkeypatch, tmp_path):
+    import xarray as xr
+
+    _mock_inits(monkeypatch, mod, {"2026-02-15"})
+    out = tmp_path / "hres.zarr"
+    _run_hres(mod, out, "--date", "2026-02-15", "-v", "t2m")
+    ds = xr.open_zarr(out)
+    assert ds["t2m"].dims == ("step", "latitude", "longitude")
+    assert ds["time"].ndim == 0
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ("--date", "2026-02-15", "--start-time", "2026-02-14", "--end-time", "2026-02-15"),
+        (),
+    ],
+)
+def test_date_or_init_window_exactly_one_exits_2(mod, monkeypatch, tmp_path, extra):
+    _mock_inits(monkeypatch, mod, {"2026-02-15"})
+    with pytest.raises(SystemExit) as exc:
+        _run_hres(mod, tmp_path / "x.zarr", *extra)
+    assert exc.value.code == 2
+
+
+def test_init_window_with_no_init_exits_1(mod, monkeypatch, tmp_path):
+    _mock_inits(monkeypatch, mod, set())
+    with pytest.raises(SystemExit) as exc:
+        _run_hres(
+            mod, tmp_path / "x.zarr", "--start-time", "2026-02-14", "--end-time", "2026-02-15"
+        )
+    assert exc.value.code == 1
+    assert not (tmp_path / "x.zarr").exists()

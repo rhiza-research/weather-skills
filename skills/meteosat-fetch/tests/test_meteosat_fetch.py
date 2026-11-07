@@ -258,3 +258,75 @@ def test_probe_latest_prints_the_newest_scan_day(tmp_path, fake, capsys):
     assert out.out.strip() == f"{newest:%Y-%m-%d}"
     # Floored to the 10-minute FCI cycle.
     assert f"latest scan {newest:%Y-%m-%d %H}:10 UTC" in out.err
+
+
+def test_windows_fetch_each_time_on_every_day(tmp_path, fake):
+    # Two windows (one of two days, one of one day) x two times, on one time axis.
+    days = [datetime(2026, 10, 6), datetime(2026, 10, 7), datetime(2026, 10, 10)]
+    slots = [d + timedelta(hours=h) for d in days for h in (12, 13)]
+    starts = [s + timedelta(seconds=5) for s in slots]
+    calls = fake(tmp_path, "--start-time", "2026-10-06", "--end-time", "2026-10-07", "--start-time", "2026-10-10", "--end-time", "2026-10-10", "--time", "12:00,13:00", "--bbox", KENYA_BBOX, "-v", "ir_105", starts=starts)  # fmt: skip
+    assert len(calls["processed"]) == 6
+    ds = xr.open_zarr(tmp_path / "out.zarr")
+    np.testing.assert_array_equal(ds["time"].values, pd.DatetimeIndex(slots).values)
+    np.testing.assert_array_equal(ds["scan_start"].values, pd.DatetimeIndex(starts).values)
+
+
+def test_window_skips_missing_slot_with_warning(tmp_path, fake, capsys):
+    starts = [datetime(2026, 10, 6, 12, 0, 5), datetime(2026, 10, 8, 12, 0, 5)]
+    fake(tmp_path, "--start-time", "2026-10-06", "--end-time", "2026-10-08", "--time", "12:00", "--bbox", KENYA_BBOX, "-v", "ir_105", starts=starts)  # fmt: skip
+    assert "WARNING: no fci scan for 2026-10-07 12:00 UTC" in capsys.readouterr().err
+    ds = xr.open_zarr(tmp_path / "out.zarr")
+    expected = pd.DatetimeIndex(["2026-10-06 12:00", "2026-10-08 12:00"])
+    np.testing.assert_array_equal(ds["time"].values, expected.values)
+
+
+def test_window_with_no_scans_exits_1(tmp_path, fake, capsys):
+    with pytest.raises(SystemExit) as exc:
+        fake(tmp_path, "--start-time", "2026-10-06", "--end-time", "2026-10-07", "--time", "12:00", "--bbox", KENYA_BBOX, "-v", "ir_105")  # fmt: skip
+    assert exc.value.code == 1
+    assert "no fci scan for any of 2026-10-06 12:00, 2026-10-07 12:00" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("dates", "message"),
+    [
+        ([], "pass --date for one day, or --start-time/--end-time"),
+        (
+            ["--date", "2026-10-06", "--start-time", "2026-10-06", "--end-time", "2026-10-07"],
+            "not both",
+        ),
+        (["--start-time", "2026-10-08", "--end-time", "2026-10-07"], "is after --end-time"),
+        (["--start-time", "2026-10-06"], "pass them in pairs"),
+        (
+            ["--start-time", "2026-10-01", "--end-time", "2026-10-13"],
+            "13 scans requested (13 day(s) x 1 time(s))",
+        ),
+        (
+            ["--instrument", "fci", "--start-time", "2024-09-20", "--end-time", "2024-09-25"],
+            "FCI L1c starts",
+        ),
+    ],
+)
+def test_bad_day_arguments_exit_2(tmp_path, fake, capsys, dates, message):
+    with pytest.raises(SystemExit) as exc:
+        fake(tmp_path, *dates, "--time", "12:00", "--bbox", KENYA_BBOX, "-v", "ir_105")
+    assert exc.value.code == 2
+    assert message in _usage_error(capsys)
+
+
+def test_window_before_fci_start_defaults_to_seviri(tmp_path, fake):
+    starts = [datetime(2024, 9, 23, 12, 0, 5), datetime(2024, 9, 24, 12, 0, 5)]
+    calls = fake(tmp_path, "--start-time", "2024-09-23", "--end-time", "2024-09-24", "--time", "12:00", "--bbox", KENYA_BBOX, "-v", "ir_108", instrument="seviri", starts=starts)  # fmt: skip
+    assert calls["collection"] == ["EO:EUM:DAT:MSG:HRSEVIRI"]
+    assert len(calls["processed"]) == 2
+
+
+def test_date_with_one_missing_slot_exits_1(tmp_path, fake, capsys):
+    # With --date, a missing slot fails the call even when another slot has a scan.
+    with pytest.raises(SystemExit) as exc:
+        fake(tmp_path, "--date", "2026-10-06", "--time", "12:00,13:00", "--bbox", KENYA_BBOX, "-v", "ir_105", starts=[datetime(2026, 10, 6, 12, 0, 5)])  # fmt: skip
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "no fci scan for 2026-10-06 13:00 UTC" in err
+    assert "WARNING" not in err
