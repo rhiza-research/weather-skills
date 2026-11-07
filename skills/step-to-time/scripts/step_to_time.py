@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.3.6",
 # ]
 # ///
 """Relabel a forecast by valid date: time = init + step, for one init or many inits at one lead."""
@@ -9,7 +9,7 @@
 from weather_skills_core import Dataset, UsageError, weather_skill
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.8"
+_SKILL_VERSION = "0.0.9"
 
 
 @weather_skill(

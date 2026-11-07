@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.3.6",
 # ]
 # ///
 """Combine the variables of two or more Zarrs into one dataset on their shared coordinates."""
@@ -13,7 +13,7 @@ from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import cf_dim
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.8"
+_SKILL_VERSION = "0.0.9"
 
 
 @weather_skill(name="merge", version=_SKILL_VERSION)

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.3.6",
 #   "shapely",
 # ]
 # ///
@@ -19,7 +19,7 @@ from weather_skills_core.region import LEVELS, level_features
 from weather_skills_core.standard_dataset import detect_spatial_dims, names_for
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.5"
+_SKILL_VERSION = "0.0.6"
 
 _TIME_PARTS = ("month", "year", "dayofyear")
 _INITIALS = "JFMAMJJASOND"

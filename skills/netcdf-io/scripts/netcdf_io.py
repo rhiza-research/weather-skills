@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.3.6",
 #   "cftime>=1.6",
 #   "netcdf4>=1.7",
 # ]
@@ -20,7 +20,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.6"
+_SKILL_VERSION = "0.0.7"
 
 NETCDF_SUFFIXES = (".nc", ".nc4", ".netcdf")
 
