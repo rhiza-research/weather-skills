@@ -36,7 +36,9 @@ def _coerce(values):
 )
 @weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=True)
 @weather_skill.argument("--dim", required=True)
-@weather_skill.argument("--coords", help="Comma-separated coord values for the new dim")
+@weather_skill.argument(
+    "--coords", help="Comma-separated labels, one per input, for a new dim or a one-entry dim"
+)
 def concat(ds, dim, coords, **kwargs):
     """Join two or more Zarrs into one along a named dimension."""
     import pint
@@ -55,9 +57,14 @@ def concat(ds, dim, coords, **kwargs):
             f"{dim!r} is a dim on some inputs but not others; concat needs it on all or none"
         )
     if all(has_dim) and coords:
-        raise UsageError(
-            f"--coords labels a new dim; {dim!r} already exists on the inputs, so its own labels are kept"
-        )
+        if any(item.sizes[dim] != 1 for item in dss):
+            raise UsageError(
+                f"--coords labels a new dim, or relabels {dim!r} when every input holds one "
+                f"entry along it; sizes here are {[item.sizes[dim] for item in dss]}"
+            )
+        # One entry per input: replace its label with the given one.
+        dss = [item.isel({dim: 0}, drop=True) for item in dss]
+        has_dim = [False] * len(dss)
 
     # xr.concat pads a variable missing from some inputs with NaN, which looks
     # like missing data; refuse instead.

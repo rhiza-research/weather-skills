@@ -229,3 +229,18 @@ def test_concat_single_time_inputs_keep_dates(tmp_path, concat):
     ds = xr.open_zarr(out, consolidated=True)
     assert [str(t)[:10] for t in ds["time"].values] == ["2026-09-14", "2026-09-21"]
     assert "step" not in ds.coords
+
+
+def test_concat_coords_relabel_one_entry_dims(tmp_path, concat):
+    # Both inputs carry the same single date; --coords gives each its own.
+    d1 = write_zarr(make_gridded(n_time=1, fill=1.0), tmp_path / "d1.zarr")
+    d2 = write_zarr(make_gridded(n_time=1, fill=2.0), tmp_path / "d2.zarr")
+    out = _run(
+        concat, tmp_path, d1, d2, extra=("--dim", "time", "--coords", "2026-11-06,2026-11-13")
+    )
+    ds = xr.open_zarr(out)
+    assert list(ds["time"].values.astype("datetime64[D]")) == [
+        np.datetime64("2026-11-06"),
+        np.datetime64("2026-11-13"),
+    ]
+    assert float(ds["precip"].isel(time=1).mean()) == pytest.approx(2.0)

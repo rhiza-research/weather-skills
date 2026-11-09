@@ -22,7 +22,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/concat.py -i A.zarr -i B.zarr [-i ...] --dim 
 ### Arguments
 - `--input`, `-i` — input Zarr; repeat once per input, at least two. Order is kept.
 - `--dim` — dim to concatenate along. If no input has it, a new dim is created.
-- `--coords` — new dim only: comma-separated labels, one per input. Each parses as int, float, ISO date (`2026-10-01`), else text. Default: no labels.
+- `--coords` — comma-separated labels, one per input, for a new dim or for an existing dim where every input holds exactly one entry (the labels replace theirs). Each parses as int, float, ISO date (`2026-10-01`), else text. Default: no labels.
 - `--output`, `-o` — output Zarr.
 
 ### Output
@@ -32,7 +32,7 @@ One dataset with `--dim` extended, sorted ascending when the inputs came out of 
 - Every other coordinate must match exactly: same grid, same times, same stations. Put inputs on one grid and window first.
 - These exit 2 with no output:
   - a label repeated along an existing dim (overlapping windows such as Oct 1–7 and Oct 5–10);
-  - `--dim` on some inputs but not others, or `--coords` with a dim that already exists;
+  - `--dim` on some inputs but not others, or `--coords` with an existing dim where some input holds more than one entry;
   - inputs with different variables, or a variable whose `data_interval` or `aggregation_period` differs between inputs;
   - incompatible units (`K` against `mm day-1`);
   - dates on different calendars (standard against `noleap`; use convert-calendar);
