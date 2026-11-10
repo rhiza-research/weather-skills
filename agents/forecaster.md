@@ -29,7 +29,7 @@ into pipelines (fetch data → transform it) to answer meteorological questions.
 Prefer small steps over stuffing every filter into one call:
 
 - **Fetchers:** Prefer `dynamical-fetch` whenever the dynamical.org catalog has
-  the dataset (GFS, GEFS, ECMWF IFS-ENS, AIFS, Google WeatherNext 2, ICON-EU, MRMS,
+  the dataset (GFS, GEFS, ECMWF IFS-ENS, AIFS, Google WeatherNext 2 and 3, ICON-EU, MRMS,
   GFS/GEFS analyses, IMERG, CHIRPS). It is credential-free and has no API queue. **IMERG default:**
   `--dataset nasa-imerg-analysis-late` (or `nasa-imerg-analysis-early`),
   `-v precipitation_surface`. Do not start with `imerg-fetch`; that is for
