@@ -141,6 +141,19 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
     # The dims a label spans collapse into one entry per label.
     group_dims = list(dict.fromkeys(d for b in by for d in ds[b].dims))
     dims = list(dict.fromkeys([*group_dims, *dims]))
+    if time_by:
+        # Steps are taken to start at their time labels; CF bounds that start elsewhere
+        # (a week labelled by its last day) would put each step in the wrong group.
+        attrs, encoding = ds["time"].attrs, ds["time"].encoding
+        bounds = attrs.get("bounds") or encoding.get("bounds") or "time_bounds"
+        if bounds in ds.variables and not np.array_equal(
+            ds[bounds].values[:, 0], ds["time"].values
+        ):
+            raise UsageError(
+                f"time labels are not the starts of their {bounds!r} cells, so the --by "
+                "groups would take in the wrong time; aggregate-temporal --period monthly "
+                "first, which splits each cell by its overlap with each month"
+            )
     # Other label coords on the grouped dims (admin_1_name, ...) cannot survive the collapse.
     ds = ds.drop_vars(
         [c for c in ds.coords if c not in (*by, *ds.dims) and set(ds[c].dims) & set(group_dims)]

@@ -608,6 +608,33 @@ def test_weekly_steps_crossing_a_season_are_refused(tmp_path, summarize_dim, cap
     assert "runs into the next --by" in capsys.readouterr().err
 
 
+def test_bounds_not_starting_at_labels_are_refused(tmp_path, summarize_dim, capsys):
+    """Weeks labelled by their last day: the label's month is not every day's month."""
+    import numpy as np
+
+    ds = _weekly("2020-01-05")
+    ends = ds["time"].values + np.timedelta64(1, "D")
+    ds = ds.assign_coords(
+        time_bounds=(("time", "nv"), np.stack([ends - np.timedelta64(7, "D"), ends], axis=1))
+    )
+    ds["time"].attrs["bounds"] = "time_bounds"
+    ds["precip"].attrs.update(units="mm")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "year",
+            "--method",
+            "sum",
+        )
+    assert "aggregate-temporal --period monthly" in capsys.readouterr().err
+
+
 def test_daily_steps_stamped_at_noon_are_kept(tmp_path, summarize_dim):
     """A daily step belongs to the day it is stamped on, whatever the hour."""
     import pandas as pd
