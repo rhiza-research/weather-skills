@@ -141,6 +141,7 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
     # The dims a label spans collapse into one entry per label.
     group_dims = list(dict.fromkeys(d for b in by for d in ds[b].dims))
     dims = list(dict.fromkeys([*group_dims, *dims]))
+    bounds_period = None
     if time_by:
         # Steps are taken to start at their time labels; CF bounds that start elsewhere
         # (a week labelled by its last day) would put each step in the wrong group.
@@ -154,6 +155,13 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                 "groups would take in the wrong time; aggregate-temporal --period monthly "
                 "first, which splits each cell by its overlap with each month"
             )
+        if bounds in ds.variables and ds[bounds].dtype.kind == "M":
+            # Cells of whole calendar months have no fixed length: read their step as months.
+            months = ds[bounds].values.astype("datetime64[M]")
+            spans = (months[:, 1] - months[:, 0]).astype(int)
+            on_month_starts = (months.astype(ds[bounds].dtype) == ds[bounds].values).all()
+            if on_month_starts and spans.min() == spans.max() > 0:
+                bounds_period = f"{spans[0]} month"
     # Other label coords on the grouped dims (admin_1_name, ...) cannot survive the collapse.
     ds = ds.drop_vars(
         [c for c in ds.coords if c not in (*by, *ds.dims) and set(ds[c].dims) & set(group_dims)]
@@ -214,14 +222,18 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                 "toward a --by group; drop the repeated steps first"
             )
         first = times[0]
-        period = next(
-            (
-                ds[v].attrs[AGGREGATION_PERIOD_ATTR]
-                for v in ds.data_vars
-                if isinstance(ds[v].attrs.get(AGGREGATION_PERIOD_ATTR), str)
-            ),
-            None,
-        ) or data_interval_of(ds)
+        period = (
+            next(
+                (
+                    ds[v].attrs[AGGREGATION_PERIOD_ATTR]
+                    for v in ds.data_vars
+                    if isinstance(ds[v].attrs.get(AGGREGATION_PERIOD_ATTR), str)
+                ),
+                None,
+            )
+            or data_interval_of(ds)
+            or bounds_period
+        )
         calendar = re.fullmatch(r"\s*(\d+)\s*(month|year)s?\s*", period or "")
         if calendar or (period or "").strip() == "1 dekad":
             # Calendar steps: labels must be month starts (dekads on days 1, 11, 21).
