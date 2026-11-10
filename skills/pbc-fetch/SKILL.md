@@ -7,18 +7,8 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.10"
   catalog-group: fetchers
-  variables:
-    - pr
-  openclaw:
-    requires:
-      env:
-        - GCLOUD_SERVICE_CREDENTIALS
-    primaryEnv: GCLOUD_SERVICE_CREDENTIALS
-    envVars:
-      - name: GCLOUD_SERVICE_CREDENTIALS
-        description: Full contents of a GCP service-account key JSON with read access to gs://sheerwater-datalake/pbc-data. Use this when the runtime can only inject secret values, not files.
-      - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON file that can read gs://sheerwater-datalake/pbc-data. Used only if GCLOUD_SERVICE_CREDENTIALS is unset.
+  variables: "pr"
+  required-env: "GCLOUD_SERVICE_CREDENTIALS"
 ---
 
 # pbc-fetch

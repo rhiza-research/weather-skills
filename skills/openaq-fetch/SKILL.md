@@ -7,21 +7,8 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.8"
   catalog-group: fetchers
-  variables:
-    - pm25
-    - pm10
-    - no2
-    - o3
-    - so2
-    - co
-  openclaw:
-    requires:
-      env:
-        - OPENAQ_API_KEY
-    primaryEnv: OPENAQ_API_KEY
-    envVars:
-      - name: OPENAQ_API_KEY
-        description: Free personal token from https://explore.openaq.org/register
+  variables: "pm25 pm10 no2 o3 so2 co"
+  required-env: "OPENAQ_API_KEY"
 ---
 
 # openaq-fetch

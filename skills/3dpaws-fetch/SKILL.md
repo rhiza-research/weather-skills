@@ -7,21 +7,8 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.6"
   catalog-group: fetchers
-  variables:
-    - precip
-    - temperature
-    - tmax
-    - tmin
-    - humidity
-    - pressure
-    - wind_speed
-    - wind_gust
-  openclaw:
-    requires:
-      env:
-        - CHORDS_EMAIL
-        - CHORDS_API_KEY
-    primaryEnv: CHORDS_API_KEY
+  variables: "precip temperature tmax tmin humidity pressure wind_speed wind_gust"
+  required-env: "CHORDS_EMAIL CHORDS_API_KEY"
 ---
 
 # 3dpaws-fetch

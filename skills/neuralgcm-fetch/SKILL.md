@@ -7,20 +7,8 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.11"
   catalog-group: fetchers
-  variables:
-    - precip
-    - t2m
-    - d2m
-  openclaw:
-    requires:
-      env:
-        - GCLOUD_SERVICE_CREDENTIALS
-    primaryEnv: GCLOUD_SERVICE_CREDENTIALS
-    envVars:
-      - name: GCLOUD_SERVICE_CREDENTIALS
-        description: Full contents of a GCP service-account key JSON with read access to gs://neuralgcm-s2s. Use this when the runtime can only inject secret values, not files.
-      - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON file with read access to gs://neuralgcm-s2s. Used only if GCLOUD_SERVICE_CREDENTIALS is unset.
+  variables: "precip t2m d2m"
+  required-env: "GCLOUD_SERVICE_CREDENTIALS"
 ---
 
 # neuralgcm-fetch

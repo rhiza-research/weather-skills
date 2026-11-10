@@ -7,42 +7,8 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.7"
   catalog-group: fetchers
-  variables:
-    - precip
-    - t2m
-    - d2m
-    - msl
-    - u10
-    - v10
-    - u100
-    - v100
-    - ws10
-    - ws100
-    - tmax
-    - tmin
-    - sp
-    - tcwv
-    - cape
-    - tcc
-    - ssrd
-    - skt
-    - t
-    - z
-    - q
-    - u
-    - v
-    - td
-    - gh
-    - text
-    - conditions
-    - hdd
-    - cdd
-  openclaw:
-    requires:
-      env:
-        - WB_CLIENT_ID
-        - WB_API_KEY
-    primaryEnv: WB_API_KEY
+  variables: "precip t2m d2m msl u10 v10 u100 v100 ws10 ws100 tmax tmin sp tcwv cape tcc ssrd skt t z q u v td gh text conditions hdd cdd"
+  required-env: "WB_CLIENT_ID WB_API_KEY"
 ---
 
 # windborne-fetch

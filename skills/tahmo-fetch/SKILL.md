@@ -7,19 +7,8 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.10"
   catalog-group: fetchers
-  variables:
-    - precip
-    - temperature
-    - tmax
-    - tmin
-    - humidity
-    - pressure
-  openclaw:
-    requires:
-      env:
-        - TAHMO_API_USERNAME
-        - TAHMO_API_PASSWORD
-    primaryEnv: TAHMO_API_USERNAME
+  variables: "precip temperature tmax tmin humidity pressure"
+  required-env: "TAHMO_API_USERNAME TAHMO_API_PASSWORD"
 ---
 
 # tahmo-fetch

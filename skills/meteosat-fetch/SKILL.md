@@ -7,21 +7,8 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.6"
   catalog-group: fetchers
-  variables:
-    - ir
-    - vis
-    - ir_105
-    - vis_06
-    - wv_63
-    - IR_108
-    - VIS006
-    - WV_062
-  openclaw:
-    requires:
-      env:
-        - EUMETSAT_CONSUMER_KEY
-        - EUMETSAT_CONSUMER_SECRET
-    primaryEnv: EUMETSAT_CONSUMER_KEY
+  variables: "ir vis ir_105 vis_06 wv_63 IR_108 VIS006 WV_062"
+  required-env: "EUMETSAT_CONSUMER_KEY EUMETSAT_CONSUMER_SECRET"
 ---
 
 # meteosat-fetch

@@ -7,14 +7,8 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.10"
   catalog-group: fetchers
-  variables:
-    - soil_moisture
-  openclaw:
-    requires:
-      env:
-        - EARTHDATA_USERNAME
-        - EARTHDATA_PASSWORD
-    primaryEnv: EARTHDATA_USERNAME
+  variables: "soil_moisture"
+  required-env: "EARTHDATA_USERNAME EARTHDATA_PASSWORD"
 ---
 
 # smap-fetch

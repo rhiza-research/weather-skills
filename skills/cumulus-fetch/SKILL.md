@@ -7,16 +7,8 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.10"
   catalog-group: fetchers
-  variables:
-    - precip
-  openclaw:
-    requires:
-      env:
-        - AZURE_STORAGE_SAS_TOKEN
-    primaryEnv: AZURE_STORAGE_SAS_TOKEN
-    envVars:
-      - name: AZURE_STORAGE_SAS_TOKEN
-        description: Read SAS (list and read, sp=rl) for Azure container italynorthdata/data
+  variables: "precip"
+  required-env: "AZURE_STORAGE_SAS_TOKEN"
 ---
 
 # cumulus-fetch

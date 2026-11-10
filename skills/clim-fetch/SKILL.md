@@ -7,9 +7,7 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.8"
   catalog-group: fetchers
-  variables:
-    - precip
-    - sst
+  variables: "precip sst"
 ---
 
 # clim-fetch
