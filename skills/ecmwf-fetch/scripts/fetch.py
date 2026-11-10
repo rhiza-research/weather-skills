@@ -40,7 +40,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.10"
 
 _PROBE_POLL_SECONDS = 30
 _PROBE_POLL_MAX_SECONDS = 3600
@@ -210,8 +210,8 @@ _DROP_COORDS = (
     "spatial_ref",
 )
 
-# S2S short name → catalog field. Fluxes (ECDS accumulated J m-2 vs catalog
-# mean W m-2), 6-hour max/min, static masks, ocean, and pv stay on ECDS.
+# S2S short name → catalog field. Catalog fluxes are daily-mean W m-2 (ECDS: J m-2
+# since init). 6-hour max/min, static masks, ocean, and pv stay on ECDS.
 _CATALOG_SURFACE = {
     "precip": "precipitation_surface",
     "t2m": "average_temperature_2m",
@@ -220,7 +220,7 @@ _CATALOG_SURFACE = {
     "u10": "wind_u_10m",
     "v10": "wind_v_10m",
     "msl": "pressure_reduced_to_mean_sea_level",
-    "cape": "average_convective_available_potential_energy_atmosphere",
+    "cape": "average_convective_available_potential_energy_surface",
     "tcw": "total_column_water_atmosphere",
     "skt": "skin_temperature_surface",
     "tcc": "total_cloud_cover_atmosphere",
@@ -239,6 +239,13 @@ _CATALOG_SURFACE = {
     "nsss": "northward_turbulent_surface_stress",
     "ro": "runoff_water_equivalent_surface",
     "sro": "runoff_surface",
+    "ssrd": "downward_short_wave_radiation_flux_surface",
+    "ssr": "net_short_wave_radiation_flux_surface",
+    "strd": "downward_long_wave_radiation_flux_surface",
+    "str": "net_long_wave_radiation_flux_surface",
+    "ttr": "net_long_wave_radiation_flux_top_of_atmosphere",
+    "sshf": "downward_sensible_heat_flux_surface",
+    "slhf": "downward_latent_heat_flux_surface",
 }
 _CATALOG_PRESSURE = {
     "gh": "geopotential_height",
