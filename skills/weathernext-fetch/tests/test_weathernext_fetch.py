@@ -945,7 +945,11 @@ def _mock_catalog(monkeypatch, ds, opened=None):
             return [
                 "google-weathernext2-forecast-operational-virtual",
                 "google-weathernext2-forecast-historical-virtual",
-                "google-weathernext3-forecast-15-day-0-1-degree-virtual",
+                *(
+                    f"google-weathernext3-forecast-{length}-{res}-degree-virtual"
+                    for length in ("15-day", "48-hour")
+                    for res in ("0-1", "0-05")
+                ),
             ]
 
         @staticmethod
@@ -1118,42 +1122,122 @@ def test_v2_catalog_window_warns_on_each_missing_init(tmp_path, fetch_mod, monke
 
 # --- WeatherNext 3 statistics from the dynamical.org catalog -------------------
 
+_CAT_15D = "google-weathernext3-forecast-15-day-0-1-degree-virtual"
+_CAT_48H = "google-weathernext3-forecast-48-hour-0-1-degree-virtual"
+_CAT_15D_005 = "google-weathernext3-forecast-15-day-0-05-degree-virtual"
 
-def _catalog_v3_like(init="2026-10-02T00:00", n_lead=3):
-    """The dynamical.org WeatherNext 3 statistics store: a statistic dim, y/x, 1 h means."""
+# catalog name -> (GCS native name, catalog units, GCS units, catalog -> GCS)
+_V3_FIELDS = {
+    "precipitation_surface": ("total_precipitation_1hr", "kg m-2 s-1", "m", lambda v: v * 3.6),
+    "temperature_2m": ("temperature_2m", "degree_Celsius", "K", lambda v: v + 273.15),
+    "total_cloud_cover_atmosphere": ("total_cloud_cover", "percent", "(0 - 1)", lambda v: v / 100),
+    "downward_short_wave_radiation_flux_surface": (
+        "surface_solar_radiation_downwards_1hr",
+        "W m-2",
+        "J m**-2",
+        lambda v: v * 3600,
+    ),
+    "wind_u_10m": ("u_component_of_wind_10m", "m s-1", "m s**-1", lambda v: v),
+}
+
+
+def _catalog_v3_like(init="2026-10-02T00:00", n_lead=3, stats=("mean", "p90"), seed=0):
+    """The dynamical.org WeatherNext 3 statistics store: a statistic dim, y/x (float64), 1 h means."""
+    rng = np.random.default_rng(seed)
     inits = np.array([init], dtype="datetime64[ns]")
     lead = (np.arange(1, n_lead + 1) * np.timedelta64(1, "h")).astype("timedelta64[ns]")
     dims = ("init_time", "statistic", "lead_time", "y", "x")
-    shape = (1, 2, n_lead, 2, 2)
+    x = np.array([0.0, 0.1, 0.2, 359.8, 359.9])
+    shape = (1, len(stats), n_lead, 3, len(x))
+    scale = {"kg m-2 s-1": 1e-3, "degree_Celsius": 30, "percent": 100, "W m-2": 800, "m s-1": 10}
     return xr.Dataset(
         {
-            "precipitation_surface": (
+            name: (
                 dims,
-                np.full(shape, 1 / 3600, dtype=np.float32),  # 1 mm h-1
-                {"units": "kg m-2 s-1", "step_type": "avg"},
-            ),
-            "temperature_2m": (
-                dims,
-                np.full(shape, 10.0, dtype=np.float32),
-                {"units": "degree_Celsius", "step_type": "instant"},
-            ),
-            "total_cloud_cover_atmosphere": (
-                dims,
-                np.full(shape, 50.0, dtype=np.float32),
-                {"units": "percent", "step_type": "instant"},
-            ),
+                (rng.random(shape) * scale[units]).astype(np.float32),
+                {"units": units, "step_type": "instant", "long_name": "dropped"},
+            )
+            for name, (_, units, _, _) in _V3_FIELDS.items()
         },
         coords={
             "init_time": inits,
-            "statistic": ["mean", "p90"],
+            "statistic": list(stats),
             "lead_time": lead,
             "valid_time": (("init_time", "lead_time"), inits[:, None] + lead[None]),
             "expected_forecast_length": ("init_time", [np.timedelta64(360, "h")]),
-            "y": [0.0, 0.1],
-            "x": [10.0, 10.1],
+            "y": [-0.1, 0.0, 0.1],
+            "x": x,
             "spatial_ref": 0,
         },
     )
+
+
+def _gcs_v3_like(cat):
+    """The GCS statistics store holding the same values as ``cat``: <name>_<stat>, native units."""
+    one = cat.isel(init_time=0)
+    data_vars = {}
+    for name, (gcs_name, _, units, convert) in _V3_FIELDS.items():
+        for stat in one["statistic"].values:
+            values = convert(one[name].sel(statistic=stat).values).astype(np.float32)
+            attrs = {"units": units, "grid_degrees": 0.1, "parameter_conversion_statistic": stat}
+            data_vars[f"{gcs_name}_{stat}"] = (("lead_time", "lat_0p1", "lon_0p1"), values, attrs)
+    return xr.Dataset(
+        data_vars,
+        coords={
+            "lead_time": one["lead_time"].values,
+            "datetime": ("lead_time", one["valid_time"].values),
+            "init_time": xr.Variable((), one["init_time"].values, {"long_name": "init"}),
+            "lat_0p1": one["y"].values.astype(np.float32),
+            "lon_0p1": one["x"].values.astype(np.float32),
+        },
+    )
+
+
+def test_v3_statistics_catalog_and_gcs_write_the_same_dataset(tmp_path, fetch_mod, monkeypatch):
+    cat = _catalog_v3_like(stats=("mean", "p10", "p90"))
+    argv = [
+        "--version", "3", "--product", "statistics", "--date", "2026-10-02",
+        "-v", "precip", "-v", "t2m", "-v", "tcc", "-v", "ssrd", "-v", "u10",
+        "--statistic", "mean", "--statistic", "p90", "--bbox", "0.1/-0.15/-0.1/0.15",
+    ]  # fmt: skip
+
+    _mock_catalog(monkeypatch, cat)
+    _no_gcs(monkeypatch, fetch_mod)
+    run_skill(fetch_mod.fetch, *argv, "-o", str(tmp_path / "cat.zarr"))
+
+    monkeypatch.undo()  # restore GCS functions, then re-mock the store
+    monkeypatch.setitem(sys.modules, "dynamical_catalog", _NoCatalog)
+    _mock_v3(monkeypatch, fetch_mod, _gcs_v3_like(cat))
+    run_skill(fetch_mod.fetch, *argv, "-o", str(tmp_path / "gcs.zarr"))
+
+    a = xr.open_zarr(tmp_path / "cat.zarr", consolidated=True)
+    b = xr.open_zarr(tmp_path / "gcs.zarr", consolidated=True)
+    assert (
+        set(a.data_vars)
+        == set(b.data_vars)
+        == {
+            f"{name}_{stat}"
+            for name in (
+                "precip",
+                "2m_temperature",
+                "total_cloud_cover",
+                "surface_solar_radiation_downwards_1hr",
+                "10m_u_component_of_wind",
+            )
+            for stat in ("mean", "p90")
+        }
+    )
+    assert dict(a.sizes) == dict(b.sizes) == {"step": 4, "lat": 3, "lon": 3}
+    assert set(a.coords) == set(b.coords)
+    assert _lead_hours(a) == _lead_hours(b) == [0, 1, 2, 3]
+    for name in [*a.data_vars, *a.coords]:
+        assert a[name].dims == b[name].dims, name
+        assert a[name].dtype == b[name].dtype, name
+        assert a[name].attrs == b[name].attrs, name
+        np.testing.assert_array_equal(a[name].values, b[name].values, err_msg=name)
+    assert a.attrs["weather_skills_source"] == b.attrs["weather_skills_source"]
+    assert a.attrs["source"] == f"dynamical.org:{_CAT_15D}"
+    assert "step_type" not in b["precip_mean"].attrs  # native attrs dropped on both paths
 
 
 def test_v3_statistics_come_from_catalog_without_gcs(tmp_path, fetch_mod, monkeypatch, capsys):
@@ -1163,28 +1247,120 @@ def test_v3_statistics_come_from_catalog_without_gcs(tmp_path, fetch_mod, monkey
     run_skill(
         fetch_mod.fetch,
         "--version", "3", "--product", "statistics", "--date", "2026-10-02",
-        "-v", "precip", "-v", "t2m_mean", "-v", "tcc", "--statistic", "mean",
-        "-o", str(out),
+        "-v", "precip", "-v", "t2m_mean", "--statistic", "mean", "-o", str(out),
     )  # fmt: skip
-    assert opened == [fetch_mod._CATALOG_V3]
-    assert f"Source: dynamical.org {fetch_mod._CATALOG_V3}" in capsys.readouterr().err
+    assert opened == [_CAT_15D]
+    assert f"Source: dynamical.org {_CAT_15D}" in capsys.readouterr().err
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert set(ds.data_vars) == {"precip_mean", "2m_temperature_mean", "total_cloud_cover_mean"}
-        assert set(ds.coords) == {"step", "lat", "lon", "time", "valid_time"}
-        # 1 mm h-1 is 24 mm day-1, relabelled to period start like the GCS path.
-        np.testing.assert_allclose(ds["precip_mean"].values[:-1], 24.0, rtol=1e-5)
-        np.testing.assert_allclose(ds["2m_temperature_mean"].values[1:], 10.0, rtol=1e-5)
-        np.testing.assert_allclose(ds["total_cloud_cover_mean"].values[1:], 0.5, rtol=1e-5)
+        assert set(ds.data_vars) == {"precip_mean", "2m_temperature_mean"}
         assert ds.attrs["weather_skills_source"] == "weathernext3-statistics:20261002_00hr_01_preds"
 
 
-def test_v3_statistics_interim_cycle_reads_gcs(tmp_path, fetch_mod, monkeypatch):
-    opened = _mock_catalog(monkeypatch, _catalog_v3_like())
-    seen = _mock_v3(monkeypatch, fetch_mod, _native_v3_statistics())
+def test_v3_statistics_interim_cycle_reads_the_48_hour_store(tmp_path, fetch_mod, monkeypatch):
+    opened = _mock_catalog(monkeypatch, _catalog_v3_like(init="2026-10-02T01:00"))
+    _no_gcs(monkeypatch, fetch_mod)
+    out = tmp_path / "x.zarr"
     run_skill(
         fetch_mod.fetch,
         "--version", "3", "--product", "statistics", "--date", "2026-10-02", "--cycle", "01",
-        "-v", "t2m", "-o", str(tmp_path / "x.zarr"),
+        "-v", "t2m", "-o", str(out),
     )  # fmt: skip
-    assert opened == []
-    assert seen["open"][1] == "weathernext3_statistics_spatial"
+    assert opened == [_CAT_48H]
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds.attrs["weather_skills_source"] == "weathernext3-statistics:20261002_01hr_01_preds"
+
+
+def test_v3_station_head_reads_the_005_store(tmp_path, fetch_mod, monkeypatch):
+    cat = _catalog_v3_like()[["temperature_2m"]]
+    cat["dew_point_temperature_2m"] = cat["temperature_2m"] - 5
+    opened = _mock_catalog(monkeypatch, cat)
+    _no_gcs(monkeypatch, fetch_mod)
+    out = tmp_path / "sh.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--version", "3", "--product", "statistics", "--date", "2026-10-02",
+        "-v", "station_head_temperature_2m_p90", "-o", str(out),
+    )  # fmt: skip
+    assert opened == [_CAT_15D_005]
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert list(ds.data_vars) == ["station_head_temperature_2m_p90"]
+        assert ds["station_head_temperature_2m_p90"].attrs["units"] == "degree_Celsius"
+
+
+@pytest.mark.parametrize(
+    ("argv", "catalog", "catalog_opened", "exit_code"),
+    [
+        # The ensemble is GCS only.
+        (["--billing-project", "p", "-v", "t2m"], True, [], None),
+        # 0.1deg and 0.05deg fields in one run: no single catalog store (GCS exits 2).
+        (
+            ["--product", "statistics", "-v", "t2m", "-v", "station_head_temperature_2m"],
+            True,
+            [],
+            2,
+        ),
+        # The catalog fails to read.
+        (["--product", "statistics", "-v", "t2m"], False, [_CAT_15D], None),
+    ],
+)
+def test_v3_falls_back_to_gcs(
+    tmp_path, fetch_mod, monkeypatch, capsys, argv, catalog, catalog_opened, exit_code
+):
+    opened = _mock_catalog(monkeypatch, _catalog_v3_like() if catalog else None)
+    remote = _native_v3_ensemble() if "--billing-project" in argv else _native_v3_statistics()
+    if "station_head_temperature_2m" in argv:
+        remote["station_head_temperature_2m_mean"] = xr.DataArray(
+            np.zeros((3, 2, 2), np.float32), dims=("lead_time", "lat_0p05", "lon_0p05")
+        )
+    seen = _mock_v3(monkeypatch, fetch_mod, remote)
+    args = ["--version", "3", "--date", "2026-10-02", *argv, "-o", str(tmp_path / "g.zarr")]
+    if exit_code:
+        with pytest.raises(SystemExit) as exc:
+            run_skill(fetch_mod.fetch, *args)
+        assert exc.value.code == exit_code
+    else:
+        run_skill(fetch_mod.fetch, *args)
+    assert opened == catalog_opened
+    assert seen["open"][0] == "20261002_00hr_01_preds"
+    err = capsys.readouterr().err
+    assert ("catalog read failed" in err) == (not catalog)
+    if "statistics" in argv:
+        assert "Source: gs://weathernext3_statistics_spatial/" in err
+
+
+def test_v3_statistic_narrows_the_catalog_read(tmp_path, fetch_mod, monkeypatch):
+    from xarray.core import indexing
+
+    read = []
+
+    class _Recorder(xr.backends.BackendArray):
+        """A lazy array that records which statistic indices are read."""
+
+        def __init__(self, data):
+            self.data, self.shape, self.dtype = data, data.shape, data.dtype
+
+        def __deepcopy__(self, memo):
+            return self
+
+        def __getitem__(self, key):
+            return indexing.explicit_indexing_adapter(
+                key, self.shape, indexing.IndexingSupport.BASIC, self._raw
+            )
+
+        def _raw(self, key):
+            read.extend(np.atleast_1d(np.arange(self.shape[1])[key[1]]).tolist())
+            return self.data[key]
+
+    cat = _catalog_v3_like(stats=("mean", "p10", "p90"))
+    precip = cat["precipitation_surface"]
+    cat["precipitation_surface"] = xr.Variable(
+        precip.dims, indexing.LazilyIndexedArray(_Recorder(precip.values)), precip.attrs
+    )
+    _mock_catalog(monkeypatch, cat)
+    _no_gcs(monkeypatch, fetch_mod)
+    run_skill(
+        fetch_mod.fetch,
+        "--version", "3", "--product", "statistics", "--date", "2026-10-02",
+        "-v", "precip", "--statistic", "p90", "-o", str(tmp_path / "p.zarr"),
+    )  # fmt: skip
+    assert read and set(read) == {2}  # only p90 of mean/p10/p90

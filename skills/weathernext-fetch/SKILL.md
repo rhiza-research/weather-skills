@@ -1,8 +1,8 @@
 ---
 name: weathernext-fetch
-description: "Fetch a Google WeatherNext AI forecast for one init or a range of inits over an optional lat/lon box, as a weather-skills Zarr: WeatherNext 2 (64-member ensemble, 6-hourly leads to 15 days, 0.25° global, from 2022) or WeatherNext 3 (64-member ensemble or its precomputed mean and percentiles, hourly leads to 15 days, 0.1° global, from 2026). Precipitation, 2 m temperature (and dewpoint, WeatherNext 3 only), winds, sea-level pressure, SST, cloud, radiation and pressure-level fields. WeatherNext 2 surface fields and WeatherNext 3 0.1° statistics come from dynamical.org with no login; everything else reads Google Cloud with a Google login. Use for any WeatherNext forecast."
+description: "Fetch a Google WeatherNext AI forecast for one init or a range of inits over an optional lat/lon box, as a weather-skills Zarr: WeatherNext 2 (64-member ensemble, 6-hourly leads to 15 days, 0.25° global, from 2022) or WeatherNext 3 (64-member ensemble or its precomputed mean and percentiles, hourly leads to 15 days, 0.1° global, from 2026). Precipitation, 2 m temperature (and dewpoint, WeatherNext 3 only), winds, sea-level pressure, SST, cloud, radiation and pressure-level fields. WeatherNext 2 surface fields and WeatherNext 3 statistics come from dynamical.org with no login; the WeatherNext 3 ensemble and other WeatherNext 2 fields read Google Cloud with a Google login. Use for any WeatherNext forecast."
 license: MIT
-compatibility: "Requires Python 3.12 and uv. WeatherNext 2 surface fields and WeatherNext 3 0.1° statistics (00/06/12/18 UTC) from dynamical.org need no credentials. Everything else reads Google Cloud and needs Google credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a key file path), or `gcloud auth application-default login`. Any authenticated Google account works (free at https://accounts.google.com/signup). WeatherNext 3 ensemble reads are requester pays and need a billing project (--billing-project or GOOGLE_CLOUD_PROJECT)."
+compatibility: "Requires Python 3.12 and uv. WeatherNext 2 surface fields and WeatherNext 3 statistics from dynamical.org need no credentials. The WeatherNext 3 ensemble, WeatherNext 2 pressure levels and dewpoint, and any dynamical.org failure read Google Cloud and need Google credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a key file path), or `gcloud auth application-default login`. Any authenticated Google account works (free at https://accounts.google.com/signup). WeatherNext 3 ensemble reads are requester pays and need a billing project (--billing-project or GOOGLE_CLOUD_PROJECT)."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.11"
@@ -28,7 +28,7 @@ metadata:
   openclaw:
     envVars:
       - name: GCLOUD_SERVICE_CREDENTIALS
-        description: Full contents of a GCP service-account key JSON (any Google account can read WeatherNext). Use this when the runtime can only inject secret values, not files. Needed only for Google Cloud reads (WeatherNext 3, and WeatherNext 2 fields dynamical.org lacks).
+        description: Full contents of a GCP service-account key JSON (any Google account can read WeatherNext). Use this when the runtime can only inject secret values, not files. Needed only for Google Cloud reads (the WeatherNext 3 ensemble, and anything dynamical.org lacks or fails to serve).
       - name: GOOGLE_APPLICATION_CREDENTIALS
         description: Path to a GCP service-account JSON file. Used only if GCLOUD_SERVICE_CREDENTIALS is unset.
       - name: GOOGLE_CLOUD_PROJECT
@@ -43,7 +43,7 @@ Fetches one WeatherNext forecast init, or every init in one or more date windows
 |---|---|---|---|---|---|---|
 | `2` (default) | dynamical.org for its fields (no login), otherwise Google Cloud | from 2022 on dynamical.org, 2025 on Google Cloud | 64 | 60 × 6 h | 0.25° | free |
 | `3` (`--product ensemble`, default) | Google Cloud | from 2026 | 64 | 360 × 1 h | 0.1° surface, 0.05° station-head, 0.25° upper air | requester pays |
-| `3 --product statistics` | dynamical.org for 0.1° fields at 00/06/12/18 UTC (no login), otherwise Google Cloud | from 2026 | mean, p10/p25/p50/p75/p90 | 360 × 1 h | 0.1° / 0.05° surface | free |
+| `3 --product statistics` | dynamical.org (no login), Google Cloud if it fails | from 2026 | mean, p10/p25/p50/p75/p90 | 360 × 1 h | 0.1° / 0.05° surface | free |
 
 ## Usage
 
@@ -56,8 +56,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--version 3 ...] --probe-latest [--
 
 WeatherNext 2 and WeatherNext 3 statistics pick their source per request, and one stderr line (`Source: ...`) names it and, for Google Cloud, why:
 - dynamical.org, at any cycle (00/06/12/18 UTC), when every `-v` is one of `precip`, `t2m`, `sst`, `msl`, `u10`, `v10`, `u100`, `v100`. No credentials needed.
-- dynamical.org for WeatherNext 3 statistics at 00/06/12/18 UTC when every `-v` is a 0.1° field (no `-v` takes them all). No credentials needed.
-- Google Cloud otherwise (WeatherNext 2 pressure levels or no `-v`, WeatherNext 3 station-head fields or interim cycles), or when dynamical.org fails or lacks a complete init for the date (for windows: lacks every init in them). With windows, each init dynamical.org lacks or is still publishing is skipped with a `WARNING` naming it (not filled, not read from Google Cloud).
+- dynamical.org for WeatherNext 3 statistics at every cycle, interim ones included, when the `-v` fields share one grid (no `-v` takes the 0.1° fields). No credentials needed.
+- Google Cloud otherwise (WeatherNext 2 pressure levels or no `-v`, the WeatherNext 3 ensemble), or when dynamical.org fails or lacks a complete init for the date (for windows: lacks every init in them). With windows, each init dynamical.org lacks or is still publishing is skipped with a `WARNING` naming it (not filled, not read from Google Cloud).
 - Inits before 2025 exist only on dynamical.org: a request that does not fit it, or a dynamical.org failure, exits 1.
 
 Google Cloud reads need credentials: `GCLOUD_SERVICE_CREDENTIALS` (key JSON, takes precedence), `GOOGLE_APPLICATION_CREDENTIALS` (key file path), or `gcloud auth application-default login`; anonymous access fails. The WeatherNext 3 ensemble always reads Google Cloud; its reads are billed to a billing project, and without one the skill exits 2 before reading. gcloud's default project is not read: pass `--billing-project` or export `GOOGLE_CLOUD_PROJECT`.
@@ -114,5 +114,6 @@ Writes WeatherNext 3 hourly mean and 90th-percentile precip over Kenya for 3 day
 ### Size and cost
 - The download is about fields × members × 6 h of leads × a per-block size (measured Oct 2026): WeatherNext 2 ~2–3.5 MB, WeatherNext 3 0.1° surface ~19 MB. WeatherNext 2 inits from 2022–2024 download members in fours, so one member costs as much as four.
 - One field, 64 members, 72 h is ~2 GB from WeatherNext 2 and ~15 GB from WeatherNext 3. A whole field for 15 days is ~9–13 GB (WeatherNext 2) or ~290 GB (WeatherNext 3).
+- WeatherNext 3 statistics are about 20–25 MB per field, statistic and hourly lead at 0.1° (~75 MB at 0.05°): `-v precip --statistic mean --max-lead 72h` is ~1.7 GB, a whole 15-day field and statistic ~8 GB.
 - WeatherNext 2 and WeatherNext 3 statistics are free. WeatherNext 3 ensemble reads are billed to `--billing-project` at about $0.12 per GB outside Google Cloud: ~$1.80 for the 15 GB example, ~$35 for a whole 15-day field. Say the estimate before fetching.
 - Windows multiply all of this by the number of inits, and memory grows with inits × members × steps × box cells. With windows always pass `-v`, `--member` (or `--statistic`) and `--max-lead`: WeatherNext 2, one field, 4 members to 10 days is ~0.4 GB per init, so a month of daily inits is ~13 GB. Keep a WeatherNext 2 window to about a month at that size, and say the estimate before fetching.
