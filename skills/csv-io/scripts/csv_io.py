@@ -30,7 +30,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset, units_convertible
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.10"
 
 # CSV header (lowercased) -> canonical coordinate name.
 COLUMN_ROLES = {
@@ -1028,7 +1028,10 @@ def _read(
     "-i", "--input", type=Dataset("any"), help="Zarr to export; -o names the .csv or .xlsx."
 )
 @weather_skill.argument(
-    "--csv", type=Path, help="CSV or Excel (.xlsx) to read; -o names the .zarr to write."
+    "--csv",
+    type=Path,
+    external_input=True,
+    help="CSV or Excel (.xlsx) to read; -o names the .zarr to write.",
 )
 @weather_skill.argument("--variable", "-v", action="append", help="Read: keep only these.")
 @weather_skill.argument(

@@ -20,7 +20,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.7"
+_SKILL_VERSION = "0.0.8"
 
 NETCDF_SUFFIXES = (".nc", ".nc4", ".netcdf")
 
@@ -135,6 +135,7 @@ def _read(paths, units):
 @weather_skill.argument(
     "--netcdf",
     type=Path,
+    external_input=True,
     action="append",
     help="NetCDF file to read (repeatable, joined on coordinates); -o names the .zarr to write.",
 )

@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Requires Python 3.12 and uv. WeatherNext 2 surface fields and WeatherNext 3 statistics from dynamical.org need no credentials. The WeatherNext 3 ensemble, WeatherNext 2 pressure levels and dewpoint, and any dynamical.org failure read Google Cloud and need Google credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a key file path), or `gcloud auth application-default login`. Any authenticated Google account works (free at https://accounts.google.com/signup). WeatherNext 3 ensemble reads are requester pays and need a billing project (--billing-project or GOOGLE_CLOUD_PROJECT)."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.11"
+  version: "0.0.12"
   catalog-group: fetchers
   variables:
     - precip
