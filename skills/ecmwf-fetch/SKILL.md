@@ -1,6 +1,6 @@
 ---
 name: ecmwf-fetch
-description: "Fetch an ECMWF S2S (extended-range, 46-day) ensemble forecast for one init date over a lat/lon box, as a weather-skills Zarr: precipitation, 2 m temperature, SST, winds, pressure-level fields and more. Also serves inits before 2026 and fields such as ocean variables, 6-hour max/min temperature, surface fluxes and potential vorticity through the ECMWF Data Store. Use when dynamical-fetch lacks the init date or field; the Data Store needs a free ECMWF key."
+description: "Fetch an ECMWF S2S (extended-range, 46-day) ensemble forecast for one init date over a lat/lon box, as a weather-skills Zarr: precipitation, 2 m temperature, SST, winds, solar and thermal radiation, pressure-level fields and more. Also serves inits before 2026 and fields such as ocean variables, 6-hour max/min temperature and potential vorticity through the ECMWF Data Store. Use when dynamical-fetch lacks the init date or field; the Data Store needs a free ECMWF key."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Default source is the dynamical.org catalog (no credentials). ECDS fallback requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`) and ECMWF_DATASTORES_KEY (or a `~/.ecmwfdatastoresrc` file). The store URL (`https://ecds.ecmwf.int/api`) is hardcoded in the skill, not read from the environment; the key is the personal token from your ECDS account, free with sign-up — register an ECMWF account at https://www.ecmwf.int/user/register, then copy the token from https://ecds.ecmwf.int/how-to-api.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -19,6 +19,7 @@ metadata:
     - msl
     - cape
     - tcw
+    - ssrd
     - t
     - gh
   openclaw:
@@ -43,19 +44,19 @@ The skill reads the public dynamical.org copy (`ecmwf-ifs-ens-forecast-46-day-da
 ### Arguments
 - `--date` — init date; the 00 UTC run. Inits are daily from 2023-06-27, Mondays and Thursdays before.
 - `--bbox` — required. `N/W/S/E` decimal degrees; W > E crosses the antimeridian.
-- `--variable`, `-v` — short names, several per flag, repeated, or comma-separated (`-v precip t2m`). Default: `precip`. Most used: `precip`, `t2m`, `sst`, `d2m`, `mx2t6`, `mn2t6`, `u10`, `v10`, `msl`, `cape`, `tcw`; pressure levels `gh`, `t`, `u`, `v`, `w`, `q`; `pv` (320 K). ECDS names (`2_m_temperature`) and GRIB names (`2t`, `wtmp`, `tp`) are accepted, as is `precipitation`. An unknown name exits and lists `Available (most used first):`.
+- `--variable`, `-v` — short names, several per flag, repeated, or comma-separated (`-v precip t2m`). Default: `precip`. Most used: `precip`, `t2m`, `sst`, `d2m`, `mx2t6`, `mn2t6`, `u10`, `v10`, `msl`, `cape`, `tcw`; radiation `ssrd` (downward solar), `ssr`, `strd`, `str`, `ttr`; pressure levels `gh`, `t`, `u`, `v`, `w`, `q`; `pv` (320 K). ECDS names (`2_m_temperature`) and GRIB names (`2t`, `wtmp`, `tp`) are accepted, as is `precipitation`. An unknown name exits and lists `Available (most used first):`.
 - `--probe-latest [IDENT]` — print the latest init on dynamical.org and exit; no download, no credentials. `IDENT` is ignored. If the catalog is unreachable, prints today − 2 days.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
 - Dims `(number, step, latitude, longitude)`, plus `vertical` (hPa, or K for `pv`) for level fields. `number=0` is the control, `1..100` the perturbed members. `step` is daily and labels the start of each 24 h window, so `step=0` is `[init, init+1d)`.
-- `precip` (total precipitation) is a rate in `mm day-1`; temperatures are `degree_Celsius`; other units as published. Stamped `weather_skills_source=ecmwf-s2s`.
+- `precip` (total precipitation) is a rate in `mm day-1`; temperatures are `degree_Celsius`; from the catalog, radiation and heat fluxes are daily means in `W m-2`; other units as published. Stamped `weather_skills_source=ecmwf-s2s`.
 
 ### Notes
 - ECDS refuses inits newer than today − 2 days (real-time embargo); the skill exits 1 before contacting it.
 - Set `ECMWF_DATASTORES_KEY` before the first call that needs ECDS; the catalog path does not read it.
 - From ECDS, pressure-level fields and `pv` are control only: they have data at `number=0` and are NaN for members 1..100.
-- From ECDS, accumulated fields other than `precip` (`cp`, `sf`, `ro`, `sro`, `sshf`, `slhf`, `ssr`, `ssrd`, `str`, `strd`, `ttr`, `ewss`, `nsss`) stay cumulative since init in native units. Requesting them with `precip` exits 2.
+- From ECDS (inits before 2026), accumulated fields other than `precip` (`cp`, `sf`, `ro`, `sro`, `sshf`, `slhf`, `ssr`, `ssrd`, `str`, `strd`, `ttr`, `ewss`, `nsss`) stay cumulative since init in native units. Requesting them with `precip` exits 2.
 - Ocean fields (`t20d`, `zos`, `ocu`, …) come only from ECDS on a 1.0° grid; atmosphere fields are 1.5°. Fetch them in a separate call.
 - On the catalog path, lead 0 is dropped only when every requested field is empty there (daily means, `precip`). Fetch daily-mean fields apart from instant ones (`u10`, `msl`, levels) to keep both on interval-start steps.
 
