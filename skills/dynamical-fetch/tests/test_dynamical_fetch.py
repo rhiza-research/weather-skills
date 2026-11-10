@@ -475,6 +475,36 @@ def test_accum_totals_without_lead0_relabelled_to_start_as_rates(tmp_path, mod, 
     assert float(precip.min()) == 0.0
 
 
+def test_avg_rates_without_lead0_relabelled_to_start(tmp_path, mod, fetch):
+    """WeatherNext 3: a statistic dim, no lead 0, 1 h mean precip rates (step_type avg)."""
+    dims = ("init_time", "lead_time", "statistic", "latitude", "longitude")
+    ds = xr.Dataset(
+        {
+            "precipitation_surface": (
+                dims,
+                np.full((1, 3, 2, 2, 2), 1e-4),
+                {"units": "kg m-2 s-1", "step_type": "avg"},
+            )
+        },
+        coords={
+            "init_time": [np.datetime64("2026-01-01")],
+            "lead_time": np.array([1, 2, 3], dtype="timedelta64[h]").astype("timedelta64[ns]"),
+            "statistic": ["mean", "p90"],
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "forecast"}):
+        run_skill(fetch, "--dataset", "t", "--date", "2026-01-01", "-v", "precip", "-o", str(out))
+    written = xr.open_zarr(out, consolidated=True)
+    precip = written["precipitation_surface"]
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0, 1, 2]
+    assert precip.dims == ("step", "statistic", "latitude", "longitude")
+    assert precip.attrs["units"] == "mm day-1"
+    assert float(precip.max()) == pytest.approx(8.64)  # 1e-4 mm s-1 is 8.64 mm day-1
+
+
 def test_accum_totals_in_an_init_window_divide_by_the_lead_spacing(tmp_path, mod, fetch):
     """Daily inits of 6 h totals: rates use the 6 h cell, not the 1-day gap between inits."""
     one = _weathernext2_like_ds().rename({"y": "latitude", "x": "longitude"})

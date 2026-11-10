@@ -566,26 +566,28 @@ def fetch(
                 pairs = np.stack([leads, ends], axis=1)
                 ds = ds.assign_coords(step_bounds=(("step", "nv"), pairs))
                 ds["step"].attrs["bounds"] = "step_bounds"
-    # WeatherNext 2 has no lead 0: its first lead ends the first 6 h total. When
-    # every field is such a total (step_type accum), relabel to interval start.
+    # WeatherNext 2 and 3 have no lead 0: the first lead ends the first period
+    # (a 6 h total, step_type accum, or a 1 h mean rate, step_type avg). When
+    # every field is such a period, relabel to interval start.
     # Small negative totals are model artifacts; the catalog says to zero them.
     accum = [name for name in ds.data_vars if ds[name].attrs.get("step_type") == "accum"]
     for name in accum:
         ds[name] = ds[name].clip(min=0, keep_attrs=True)
+    period = [name for name in ds.data_vars if ds[name].attrs.get("step_type") in ("accum", "avg")]
     leads = ds["step"].values if is_forecast else None
-    # Each total covers the gap since the previous lead (from 0 for the first).
+    # Each period covers the gap since the previous lead (from 0 for the first).
     # Read it from the catalog leads now: --max-lead can leave a single step,
     # and then nothing is left to infer the cell length from.
     accum_interval = None
-    if is_forecast and accum:
+    if is_forecast and period:
         gaps = np.diff(np.concatenate([[np.timedelta64(0, "ns")], leads]))
         gaps = gaps[gaps > np.timedelta64(0, "ns")]
         if len(set(gaps.tolist())) == 1:
             accum_interval = f"{gaps[0] / np.timedelta64(1, 'h'):g} hour"
     if (
         is_forecast
-        and accum
-        and len(accum) == len(ds.data_vars)
+        and period
+        and len(period) == len(ds.data_vars)
         and leads[0] > np.timedelta64(0, "ns")
     ):
         ds = ds.assign_coords(step=np.concatenate([[np.timedelta64(0, "ns")], leads[:-1]]))

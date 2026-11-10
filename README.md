@@ -21,13 +21,13 @@ Built as [Agent Skills](https://agentskills.io) by Rhiza Research.
 ### Fetchers (ingress — source-specific)
 
 Prefer `dynamical-fetch` when the dynamical.org catalog has the dataset
-(GFS, GEFS, ECMWF IFS-ENS, AIFS, Google WeatherNext 2, ICON-EU, analyses,
+(GFS, GEFS, ECMWF IFS-ENS, AIFS, Google WeatherNext 2 and 3, ICON-EU, analyses,
 IMERG, CHIRPS). Use a
 credentialed or source-specific fetcher only when it does not.
 
 | Skill | What it does |
 |---|---|
-| `dynamical-fetch` | **Preferred when the catalog has it.** dynamical.org open catalog (GFS, GEFS, ECMWF IFS-ENS 15-day and 46-day, AIFS, Google WeatherNext 2, ICON-EU, MRMS, analyses, **IMERG**, **CHIRPS**) via `--dataset`, credential-free → Zarr. Forecasts: one init (`--date`) or a range of inits (repeatable `--start-time`/`--end-time`). Default IMERG source: `nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`. CHIRPS products: `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`. |
+| `dynamical-fetch` | **Preferred when the catalog has it.** dynamical.org open catalog (GFS, GEFS, ECMWF IFS-ENS 15-day and 46-day, AIFS, Google WeatherNext 2, WeatherNext 3 mean and percentiles, ICON-EU, MRMS, analyses, **IMERG**, **CHIRPS**) via `--dataset`, credential-free → Zarr. Forecasts: one init (`--date`) or a range of inits (repeatable `--start-time`/`--end-time`). Default IMERG source: `nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`. CHIRPS products: `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`. |
 | `ecmwf-fetch` | ECDS **fallback** for ECMWF S2S / ER (pre-2026, ocean, unmapped fields). Prefer `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` for 2026+ catalog fields. |
 | `chirps-fetch` | Default CHIRPS source: dynamical.org final + prelim fallback → `precip` Zarr |
 | `imerg-fetch` | Earthdata **daily** IMERG Final (`GPM_3IMERGDF`) → Zarr. All IMERG Late/Early comes from `dynamical-fetch`. |
