@@ -116,6 +116,32 @@ _V2_NATIVE_PRECIP = "total_precipitation_6hr"
 _CATALOG_OPERATIONAL = "google-weathernext2-forecast-operational-virtual"
 _CATALOG_HISTORICAL = "google-weathernext2-forecast-historical-virtual"
 _GCS_V2_START = "20250101"
+# dynamical.org copy of the WeatherNext 3 statistics store's 0.1deg fields,
+# 00/06/12/18 UTC inits (catalog name -> GCS native name, before the _<stat> suffix).
+_CATALOG_V3 = "google-weathernext3-forecast-15-day-0-1-degree-virtual"
+_CATALOG_V3_VARS = {
+    "precipitation_surface": "total_precipitation_1hr",
+    "precipitation_imerg_surface": "imerg_tp_1hr",
+    "precipitation_experimental_surface": "experimental_tp_1hr",
+    "temperature_2m": "temperature_2m",
+    "dew_point_temperature_2m": "dewpoint_temperature_2m",
+    "wind_u_10m": "u_component_of_wind_10m",
+    "wind_v_10m": "v_component_of_wind_10m",
+    "wind_u_100m": "u_component_of_wind_100m",
+    "wind_v_100m": "v_component_of_wind_100m",
+    "wind_speed_10m": "wind_speed_10m",
+    "wind_speed_100m": "wind_speed_100m",
+    "pressure_reduced_to_mean_sea_level": "mean_sea_level_pressure",
+    "sea_surface_temperature": "sea_surface_temperature",
+    "total_cloud_cover_atmosphere": "total_cloud_cover",
+    "cloud_cover_low": "low_cloud_cover",
+    "cloud_cover_medium": "medium_cloud_cover",
+    "cloud_cover_high": "high_cloud_cover",
+    "downward_short_wave_radiation_flux_surface": "surface_solar_radiation_downwards_1hr",
+    "downward_direct_short_wave_radiation_flux_surface": (
+        "total_sky_direct_solar_radiation_at_surface_1hr"
+    ),
+}
 _STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
 # Catalog name -> the gs://weathernext WeatherNext 2 native name.
 _CATALOG_VARS = {
@@ -249,6 +275,7 @@ _VAR_ALIASES = {
 
 # Output names the catalog can serve (``precip`` for its 6 h totals).
 _CATALOG_FIELDS = {_VAR_ALIASES.get(n, n) for n in _CATALOG_VARS.values()}
+_CATALOG_V3_FIELDS = {_VAR_ALIASES.get(n, n) for n in _CATALOG_V3_VARS.values()}
 
 _GRID_RE = re.compile(r"^lat_(0p\d+)$")
 # Default WeatherNext 3 field group when no --variable is given: the hourly
@@ -435,12 +462,14 @@ def _open_remote(stamp: str, product: _Product, billing_project: str | None = No
         raise _gcs_error(exc, f"failed to open remote store {url}", product) from None
 
 
-def _catalog_id(day: str) -> str:
+def _catalog_id(day: str, product: _Product) -> str:
+    if product.version == "3":
+        return _CATALOG_V3
     return _CATALOG_HISTORICAL if day < _GCS_V2_START else _CATALOG_OPERATIONAL
 
 
 def _open_catalog(dataset: str):
-    """Open a dynamical.org WeatherNext 2 store lazily, in the gs://weathernext layout."""
+    """Open a dynamical.org WeatherNext store lazily, in its GCS store's layout."""
     import os
 
     import dynamical_catalog
@@ -451,6 +480,21 @@ def _open_catalog(dataset: str):
         if dataset not in dynamical_catalog.list():
             raise DataError(f"{dataset} is not in the dynamical.org catalog.")
     ds = dynamical_catalog.open(dataset, chunks=None)
+    if dataset == _CATALOG_V3:
+        import xarray as xr
+
+        # One variable per field and statistic (temperature_2m_p90), as on GCS.
+        # Lazy selections: nothing is read until the subset is loaded.
+        stats = [str(s) for s in ds["statistic"].values]
+        ds = ds.drop_vars([c for c in ds.coords if c not in ds.dims and c != "init_time"])
+        return xr.Dataset(
+            {
+                f"{_CATALOG_V3_VARS[name]}_{stat}": ds[name].sel(statistic=stat, drop=True)
+                for name in ds.data_vars
+                if name in _CATALOG_V3_VARS
+                for stat in stats
+            }
+        ).rename({"y": "lat_0p1", "x": "lon_0p1"})
     ds = ds.drop_vars(["expected_forecast_length", "spatial_ref"], errors="ignore")
     ds = ds.rename(
         {
@@ -465,7 +509,7 @@ def _open_catalog(dataset: str):
     return ds.assign_coords(sample=ds["sample"].values.astype("int64"))
 
 
-def _catalog_inits(stamps, latest=False):
+def _catalog_inits(stamps, product: _Product, latest=False):
     """dynamical.org inits for these init stamps, as {stamp: lazy cube}.
 
     With ``latest`` (stamps newest first) only the first complete init is kept.
@@ -477,7 +521,7 @@ def _catalog_inits(stamps, latest=False):
     opened, out = {}, {}
     for stamp in stamps:
         day, hour = stamp[:8], stamp[9:11]
-        dataset = _catalog_id(day)
+        dataset = _catalog_id(day, product)
         if dataset not in opened:
             opened[dataset] = _open_catalog(dataset)
         cat = opened[dataset]
@@ -488,7 +532,8 @@ def _catalog_inits(stamps, latest=False):
             continue
         one = cat.sel(init_time=init)
         # One value of the last lead (t2m is defined everywhere) says the init is complete.
-        last = one["2m_temperature"].isel(sample=0, time=-1, lat=0, lon=0).values
+        t2m = one["temperature_2m_mean" if product.version == "3" else "2m_temperature"]
+        last = t2m.isel({d: -1 for d in t2m.dims}).values
         if np.isnan(float(last)):
             print(
                 f"WARNING: dynamical.org init {stamp} is still publishing; skipped.",
@@ -885,9 +930,10 @@ def fetch(
 
     if probe_latest is not None:
         stamp = None
-        if product.version == "2":
+        if product.version == "2" or (not product.ensemble and (cycle or "00") in _SYNOPTIC_CYCLES):
             try:
-                stamp = next(iter(_catalog_inits(_latest_candidates(cycle), latest=True)), None)
+                candidates = _latest_candidates(cycle)
+                stamp = next(iter(_catalog_inits(candidates, product, latest=True)), None)
             except Exception as exc:  # noqa: BLE001 — any catalog failure falls back to GCS
                 print(f"dynamical.org catalog failed ({exc}); probing GCS.", file=sys.stderr)
         if stamp is None:
@@ -917,25 +963,35 @@ def fetch(
     elif date is not None:
         days = [date.strftime("%Y%m%d")]
 
-    # WeatherNext 2 surface fields come from dynamical.org (no credentials)
-    # when it has the inits; anything else from GCS.
+    # WeatherNext 2 surface fields and WeatherNext 3 0.1deg statistics at
+    # 00/06/12/18 UTC come from dynamical.org (no credentials) when it has the
+    # inits; anything else from GCS.
     catalog = None
-    if product.version == "2":
+    v3_catalog = not product.ensemble and (cycle or "00") in _SYNOPTIC_CYCLES
+    if product.version == "2" or v3_catalog:
         historical = bool(days) and days[0] < _GCS_V2_START
-        # No -v means every field, pressure levels included: GCS.
-        fits = bool(variable) and all(_VAR_ALIASES.get(v, v) in _CATALOG_FIELDS for v in variable)
+        if product.version == "2":
+            # No -v means every field, pressure levels included: GCS.
+            fields = _CATALOG_FIELDS
+            fits = bool(variable) and all(_VAR_ALIASES.get(v, v) in fields for v in variable)
+        else:
+            # No -v means the 0.1deg surface fields, which the catalog has.
+            fields = _CATALOG_V3_FIELDS
+            bases = [_split_statistic(v)[0] for v in variable or []]
+            fits = all(_VAR_ALIASES.get(b, b) in fields for b in bases)
         gcs = f"gs://{product.bucket}/{product.prefix}/"
         if not fits:
-            why = "dynamical.org has only " + ", ".join(sorted(_CATALOG_FIELDS))
+            why = "dynamical.org has only " + ", ".join(sorted(fields))
             if historical:
                 raise DataError(f"WeatherNext 2 inits before 2025 are not on {gcs}; {why} (-v).")
         else:
             try:
                 if days is None:
-                    catalog = _catalog_inits(_latest_candidates(cycle), latest=True)
+                    catalog = _catalog_inits(_latest_candidates(cycle), product, latest=True)
                 else:
                     hour = cycle or "00"
-                    catalog = _catalog_inits([f"{day}_{hour}hr_01_preds" for day in days])
+                    stamps = [f"{day}_{hour}hr_01_preds" for day in days]
+                    catalog = _catalog_inits(stamps, product)
                 if not catalog:
                     raise DataError("no complete init for the requested dates")
             except Exception as exc:  # noqa: BLE001 — any catalog failure falls back to GCS
@@ -946,7 +1002,7 @@ def fetch(
                     ) from None
                 catalog = None
         if catalog is not None:
-            ids = sorted({_catalog_id(s[:8]) for s in catalog})
+            ids = sorted({_catalog_id(s[:8], product) for s in catalog})
             print(f"Source: dynamical.org {', '.join(ids)}", file=sys.stderr)
         else:
             print(f"Source: {gcs} ({why})", file=sys.stderr)
@@ -1015,13 +1071,20 @@ def fetch(
             ds = ensure_normalized_longitude(ds)
         ds = ds.load()
         if catalog is not None:
-            # The catalog's degC and kg m-2 back to the GCS stores' K and m, no attrs.
+            # The catalog's units back to the GCS stores' K, m, J m-2 and 0-1, no attrs.
+            # WeatherNext 3 rates and fluxes are 1 h means; GCS holds 1 h totals.
             for name in ds.data_vars:
                 units = ds[name].attrs.get("units")
                 if units == "degree_Celsius":
                     ds[name] = ds[name] + np.float32(273.15)
                 elif units == "kg m-2":
                     ds[name] = ds[name] / np.float32(1000)
+                elif units == "kg m-2 s-1":
+                    ds[name] = ds[name] * np.float32(3.6)
+                elif units == "W m-2":
+                    ds[name] = ds[name] * np.float32(3600)
+                elif units == "percent":
+                    ds[name] = ds[name] / np.float32(100)
             ds = ds.drop_attrs()
         pieces.append(_prepare_dataset(ds, product))
     if not pieces:
@@ -1041,7 +1104,7 @@ def fetch(
         Conventions="CF-1.13",
         title=product.title,
         institution="Google DeepMind / Google Research (WeatherNext)",
-        source=f"dynamical.org:{_catalog_id(stamps[0][:8])}"
+        source=f"dynamical.org:{_catalog_id(stamps[0][:8], product)}"
         if catalog is not None
         else _store_url(stamps[0], product)
         if not windows

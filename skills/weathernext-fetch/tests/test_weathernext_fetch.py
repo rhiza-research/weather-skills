@@ -945,6 +945,7 @@ def _mock_catalog(monkeypatch, ds, opened=None):
             return [
                 "google-weathernext2-forecast-operational-virtual",
                 "google-weathernext2-forecast-historical-virtual",
+                "google-weathernext3-forecast-15-day-0-1-degree-virtual",
             ]
 
         @staticmethod
@@ -1113,3 +1114,77 @@ def test_v2_catalog_window_warns_on_each_missing_init(tmp_path, fetch_mod, monke
     with xr.open_zarr(out, consolidated=True) as ds:
         days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
     assert days == ["2025-01-30", "2025-02-01"]  # the missing init is not filled
+
+
+# --- WeatherNext 3 statistics from the dynamical.org catalog -------------------
+
+
+def _catalog_v3_like(init="2026-10-02T00:00", n_lead=3):
+    """The dynamical.org WeatherNext 3 statistics store: a statistic dim, y/x, 1 h means."""
+    inits = np.array([init], dtype="datetime64[ns]")
+    lead = (np.arange(1, n_lead + 1) * np.timedelta64(1, "h")).astype("timedelta64[ns]")
+    dims = ("init_time", "statistic", "lead_time", "y", "x")
+    shape = (1, 2, n_lead, 2, 2)
+    return xr.Dataset(
+        {
+            "precipitation_surface": (
+                dims,
+                np.full(shape, 1 / 3600, dtype=np.float32),  # 1 mm h-1
+                {"units": "kg m-2 s-1", "step_type": "avg"},
+            ),
+            "temperature_2m": (
+                dims,
+                np.full(shape, 10.0, dtype=np.float32),
+                {"units": "degree_Celsius", "step_type": "instant"},
+            ),
+            "total_cloud_cover_atmosphere": (
+                dims,
+                np.full(shape, 50.0, dtype=np.float32),
+                {"units": "percent", "step_type": "instant"},
+            ),
+        },
+        coords={
+            "init_time": inits,
+            "statistic": ["mean", "p90"],
+            "lead_time": lead,
+            "valid_time": (("init_time", "lead_time"), inits[:, None] + lead[None]),
+            "expected_forecast_length": ("init_time", [np.timedelta64(360, "h")]),
+            "y": [0.0, 0.1],
+            "x": [10.0, 10.1],
+            "spatial_ref": 0,
+        },
+    )
+
+
+def test_v3_statistics_come_from_catalog_without_gcs(tmp_path, fetch_mod, monkeypatch, capsys):
+    opened = _mock_catalog(monkeypatch, _catalog_v3_like())
+    _no_gcs(monkeypatch, fetch_mod)
+    out = tmp_path / "wn3_cat.zarr"
+    run_skill(
+        fetch_mod.fetch,
+        "--version", "3", "--product", "statistics", "--date", "2026-10-02",
+        "-v", "precip", "-v", "t2m_mean", "-v", "tcc", "--statistic", "mean",
+        "-o", str(out),
+    )  # fmt: skip
+    assert opened == [fetch_mod._CATALOG_V3]
+    assert f"Source: dynamical.org {fetch_mod._CATALOG_V3}" in capsys.readouterr().err
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert set(ds.data_vars) == {"precip_mean", "2m_temperature_mean", "total_cloud_cover_mean"}
+        assert set(ds.coords) == {"step", "lat", "lon", "time", "valid_time"}
+        # 1 mm h-1 is 24 mm day-1, relabelled to period start like the GCS path.
+        np.testing.assert_allclose(ds["precip_mean"].values[:-1], 24.0, rtol=1e-5)
+        np.testing.assert_allclose(ds["2m_temperature_mean"].values[1:], 10.0, rtol=1e-5)
+        np.testing.assert_allclose(ds["total_cloud_cover_mean"].values[1:], 0.5, rtol=1e-5)
+        assert ds.attrs["weather_skills_source"] == "weathernext3-statistics:20261002_00hr_01_preds"
+
+
+def test_v3_statistics_interim_cycle_reads_gcs(tmp_path, fetch_mod, monkeypatch):
+    opened = _mock_catalog(monkeypatch, _catalog_v3_like())
+    seen = _mock_v3(monkeypatch, fetch_mod, _native_v3_statistics())
+    run_skill(
+        fetch_mod.fetch,
+        "--version", "3", "--product", "statistics", "--date", "2026-10-02", "--cycle", "01",
+        "-v", "t2m", "-o", str(tmp_path / "x.zarr"),
+    )  # fmt: skip
+    assert opened == []
+    assert seen["open"][1] == "weathernext3_statistics_spatial"

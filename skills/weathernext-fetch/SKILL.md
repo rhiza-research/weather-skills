@@ -1,8 +1,8 @@
 ---
 name: weathernext-fetch
-description: "Fetch a Google WeatherNext AI forecast for one init or a range of inits over an optional lat/lon box, as a weather-skills Zarr: WeatherNext 2 (64-member ensemble, 6-hourly leads to 15 days, 0.25° global, from 2022) or WeatherNext 3 (64-member ensemble or its precomputed mean and percentiles, hourly leads to 15 days, 0.1° global, from 2026). Precipitation, 2 m temperature (and dewpoint, WeatherNext 3 only), winds, sea-level pressure, SST, cloud, radiation and pressure-level fields. WeatherNext 2 surface fields come from dynamical.org with no login; everything else reads Google Cloud with a Google login. Use for any WeatherNext forecast."
+description: "Fetch a Google WeatherNext AI forecast for one init or a range of inits over an optional lat/lon box, as a weather-skills Zarr: WeatherNext 2 (64-member ensemble, 6-hourly leads to 15 days, 0.25° global, from 2022) or WeatherNext 3 (64-member ensemble or its precomputed mean and percentiles, hourly leads to 15 days, 0.1° global, from 2026). Precipitation, 2 m temperature (and dewpoint, WeatherNext 3 only), winds, sea-level pressure, SST, cloud, radiation and pressure-level fields. WeatherNext 2 surface fields and WeatherNext 3 0.1° statistics come from dynamical.org with no login; everything else reads Google Cloud with a Google login. Use for any WeatherNext forecast."
 license: MIT
-compatibility: "Requires Python 3.12 and uv. WeatherNext 2 surface fields from dynamical.org need no credentials. Everything else reads Google Cloud and needs Google credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a key file path), or `gcloud auth application-default login`. Any authenticated Google account works (free at https://accounts.google.com/signup). WeatherNext 3 ensemble reads are requester pays and need a billing project (--billing-project or GOOGLE_CLOUD_PROJECT)."
+compatibility: "Requires Python 3.12 and uv. WeatherNext 2 surface fields and WeatherNext 3 0.1° statistics (00/06/12/18 UTC) from dynamical.org need no credentials. Everything else reads Google Cloud and needs Google credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a key file path), or `gcloud auth application-default login`. Any authenticated Google account works (free at https://accounts.google.com/signup). WeatherNext 3 ensemble reads are requester pays and need a billing project (--billing-project or GOOGLE_CLOUD_PROJECT)."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.11"
@@ -43,7 +43,7 @@ Fetches one WeatherNext forecast init, or every init in one or more date windows
 |---|---|---|---|---|---|---|
 | `2` (default) | dynamical.org for its fields (no login), otherwise Google Cloud | from 2022 on dynamical.org, 2025 on Google Cloud | 64 | 60 × 6 h | 0.25° | free |
 | `3` (`--product ensemble`, default) | Google Cloud | from 2026 | 64 | 360 × 1 h | 0.1° surface, 0.05° station-head, 0.25° upper air | requester pays |
-| `3 --product statistics` | Google Cloud | from 2026 | mean, p10/p25/p50/p75/p90 | 360 × 1 h | 0.1° / 0.05° surface | free |
+| `3 --product statistics` | dynamical.org for 0.1° fields at 00/06/12/18 UTC (no login), otherwise Google Cloud | from 2026 | mean, p10/p25/p50/p75/p90 | 360 × 1 h | 0.1° / 0.05° surface | free |
 
 ## Usage
 
@@ -54,12 +54,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--version 2|3 ...] --start-time YYY
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--version 3 ...] --probe-latest [--cycle HH]
 ```
 
-WeatherNext 2 picks its source per request, and one stderr line (`Source: ...`) names it and, for Google Cloud, why:
+WeatherNext 2 and WeatherNext 3 statistics pick their source per request, and one stderr line (`Source: ...`) names it and, for Google Cloud, why:
 - dynamical.org, at any cycle (00/06/12/18 UTC), when every `-v` is one of `precip`, `t2m`, `sst`, `msl`, `u10`, `v10`, `u100`, `v100`. No credentials needed.
-- Google Cloud otherwise (pressure levels, or no `-v`), or when dynamical.org fails or lacks a complete init for the date (for windows: lacks every init in them). With windows, each init dynamical.org lacks or is still publishing is skipped with a `WARNING` naming it (not filled, not read from Google Cloud).
+- dynamical.org for WeatherNext 3 statistics at 00/06/12/18 UTC when every `-v` is a 0.1° field (no `-v` takes them all). No credentials needed.
+- Google Cloud otherwise (WeatherNext 2 pressure levels or no `-v`, WeatherNext 3 station-head fields or interim cycles), or when dynamical.org fails or lacks a complete init for the date (for windows: lacks every init in them). With windows, each init dynamical.org lacks or is still publishing is skipped with a `WARNING` naming it (not filled, not read from Google Cloud).
 - Inits before 2025 exist only on dynamical.org: a request that does not fit it, or a dynamical.org failure, exits 1.
 
-Google Cloud reads need credentials: `GCLOUD_SERVICE_CREDENTIALS` (key JSON, takes precedence), `GOOGLE_APPLICATION_CREDENTIALS` (key file path), or `gcloud auth application-default login`; anonymous access fails. WeatherNext 3 always reads Google Cloud; its ensemble reads are billed to a billing project, and without one the skill exits 2 before reading. gcloud's default project is not read: pass `--billing-project` or export `GOOGLE_CLOUD_PROJECT`.
+Google Cloud reads need credentials: `GCLOUD_SERVICE_CREDENTIALS` (key JSON, takes precedence), `GOOGLE_APPLICATION_CREDENTIALS` (key file path), or `gcloud auth application-default login`; anonymous access fails. The WeatherNext 3 ensemble always reads Google Cloud; its reads are billed to a billing project, and without one the skill exits 2 before reading. gcloud's default project is not read: pass `--billing-project` or export `GOOGLE_CLOUD_PROJECT`.
 
 ### Arguments
 - `--version` — `2` (default) or `3`.
@@ -77,7 +78,7 @@ Google Cloud reads need credentials: `GCLOUD_SERVICE_CREDENTIALS` (key JSON, tak
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- The same whichever WeatherNext 2 source served it. Dims `(number, step, [level,] lat, lon)`, scalar `time` = init, `valid_time` on `step`. With windows, `(time, step, number, [level,] lat, lon)`, one `time` per init, and `valid_time` on `(time, step)`; an init still publishing keeps its missing leads NaN (not filled), with a `WARNING` naming it. Statistics have no `number` and name variables `<name>_<stat>`.
+- The same whichever source served it. Dims `(number, step, [level,] lat, lon)`, scalar `time` = init, `valid_time` on `step`. With windows, `(time, step, number, [level,] lat, lon)`, one `time` per init, and `valid_time` on `(time, step)`; an init still publishing keeps its missing leads NaN (not filled), with a `WARNING` naming it. Statistics have no `number` and name variables `<name>_<stat>`.
 - `number` is 0..63; `level` is 13 pressure levels, 50–1000 hPa. WeatherNext 3 leads form one hourly `step`.
 - `precip` (and `imerg_precip`, `experimental_precip`) is a rate in `mm day-1`, clipped at zero; `ssrd` and `total_sky_direct_solar_radiation_at_surface_1hr` are 1 h totals in `J m-2` (divide by 3600 s for `W m-2`). These are labelled at period start: `step=0` is `[init, init+6h)` for WeatherNext 2 `precip`, `[init, init+1h)` for WeatherNext 3. Other fields are instants at `init + step`. Fetched together, the period fields are NaN at the last lead and the instants at 0 h. Never `deaccumulate` it.
 - Air temperatures are `degree_Celsius`; SST stays `K`; others keep ERA5-style units (`m s-1`, `Pa`, `Pa s-1`, `kg kg-1`, `m2 s-2`, `J m-2`, cloud fraction `1`).
