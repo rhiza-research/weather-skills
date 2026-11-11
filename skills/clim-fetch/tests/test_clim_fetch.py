@@ -168,3 +168,47 @@ def test_base_period_is_carried_through_or_reported_missing(tmp_path, mod, capsy
     else:
         assert "climatology_start_time" not in out.attrs
         assert "does not record which years" in err
+
+
+def test_rfe_reads_its_mirror_key(tmp_path, mod):
+    import numpy as np
+    import pandas as pd
+    import xarray as xr
+
+    inits = pd.date_range("1904-01-01", "1904-12-31", freq="D")
+    values = np.ones((len(inits), 1, 2, 2), dtype="float32")
+    source = xr.Dataset(
+        {
+            "avg": (("init_time", "prediction_timedelta", "lat", "lon"), values),
+            "std": (("init_time", "prediction_timedelta", "lat", "lon"), values),
+        },
+        coords={
+            "init_time": inits,
+            "prediction_timedelta": np.array([0], dtype="timedelta64[D]").astype("timedelta64[ns]"),
+            "lat": [0.0, 0.1],
+            "lon": [36.0, 36.1],
+        },
+        attrs={"variable": "precip", "units": "mm day-1"},
+    )
+    keys = []
+
+    def _open(key):
+        keys.append(key)
+        return source
+
+    with patch.object(mod, "_open_zarr_or_none", _open):
+        run_skill(
+            mod.fetch,
+            "--dataset",
+            "rfe",
+            "--start-time",
+            "2026-03-01",
+            "--end-time",
+            "2026-03-02",
+            "-o",
+            str(tmp_path / "out.zarr"),
+        )
+    assert keys == ["climatologies/rfe_precip_1d.zarr"]
+    out = xr.open_zarr(tmp_path / "out.zarr")
+    assert out.attrs["climatology_dataset"] == "rfe"
+    assert float(out["precip_avg"].isel(time=0).mean()) == 1.0
