@@ -134,7 +134,8 @@ def concat(ds, dim, coords, **kwargs):
                 f"inputs overlap along {dim!r}: {[str(v) for v in dups[:5]]} appear more than once; "
                 "keep only the new entries of one input with select (repeat --index)"
             )
-        if not (index.is_monotonic_increasing or index.is_monotonic_decreasing):
+        # --coords labels keep the order given; other labels are sorted.
+        if not coords and not (index.is_monotonic_increasing or index.is_monotonic_decreasing):
             out = out.sortby(dim)
         # Boxes stitched along lat/lon with a gap between them leave an
         # irregular axis that clipping, regridding, and plotting assume away.
