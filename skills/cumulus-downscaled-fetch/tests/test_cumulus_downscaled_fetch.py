@@ -214,6 +214,60 @@ def test_source_reads_another_subfolder(tmp_path, fetch_mod, remote, capsys):
     assert "no era5 target" in capsys.readouterr().err
 
 
+def test_target_folder_without_product_suffix(tmp_path, fetch_mod, remote, capsys):
+    # A checkpoint whose only target folder carries no _era5/_imerg suffix.
+    plain = "total_precipitation_24h_acc"
+    ckpt = f"{ROOT}/2026-10-27/{DIFF}/ckpt-a"
+    remote["tree"][ckpt] = [plain, "notes.yml"]
+    remote["tree"][f"{ckpt}/{plain}/precip_24h/data"] = ["2026-10-27-00-0024.nc"]
+    out = tmp_path / "plain.zarr"
+    run_skill(fetch_mod.fetch, "-o", str(out))
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds.attrs["weather_skills_source"].endswith(f"/ckpt-a/{plain}")
+    run_skill(fetch_mod.fetch, "--target", plain, "-o", str(tmp_path / "named.zarr"))
+    run_skill(fetch_mod.fetch, "--list")
+    assert f"checkpoint ckpt-a (targets: {plain})" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--target", "era5", "-o", str(tmp_path / "unused.zarr"))
+    assert exc.value.code == 1
+    assert f"(it has: {plain})" in capsys.readouterr().err
+
+
+def test_substrings_pick_source_model_and_target(tmp_path, fetch_mod, remote, capsys):
+    # Each level takes a substring of its folder name; an exact name wins.
+    base = "data/live_forecasts/downscaled_models"
+    root = ROOT.replace("/aurora/", "/aurora-imerg/")
+    ckpt = f"{root}/2026-10-26/{DIFF}/ckpt-b"
+    remote["tree"].update(
+        {
+            base: ["aurora", "aurora-imerg"],
+            root: ["2026-10-26"],
+            f"{root}/2026-10-26": [DIFF, UNET],
+            f"{root}/2026-10-26/{DIFF}": ["ckpt-b"],
+            ckpt: [ERA5, IMERG],
+            f"{ckpt}/{IMERG}/precip_24h/data": ["2026-10-26-00-0024.nc"],
+        }
+    )
+    out = tmp_path / "sub.zarr"
+    args = ["--source", "imerg", "--model", "input_output", "--target", "imerg"]
+    run_skill(fetch_mod.fetch, *args, "-o", str(out))
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds.attrs["weather_skills_source"] == (
+            f"cumulus-downscaled:aurora-imerg/{DIFF}/ckpt-b/{IMERG}"
+        )
+    # "aurora" is an exact name, so it does not also match aurora-imerg.
+    run_skill(fetch_mod.fetch, "--source", "aurora", "--probe-latest")
+    assert capsys.readouterr().out.strip() == "2026-10-27"
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--source", "a", "-o", str(out))
+    assert exc.value.code == 2
+    assert "matches aurora, aurora-imerg" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--source", "imerg", "--target", "total", "-o", str(out))
+    assert exc.value.code == 1
+    assert "several total target(s)" in capsys.readouterr().err
+
+
 def test_unknown_source_lists_subfolders(tmp_path, fetch_mod, remote, capsys):
     remote["tree"]["data/live_forecasts/downscaled_models"] = ["aurora", "aurora-imerg"]
     with pytest.raises(SystemExit) as exc:
@@ -228,7 +282,7 @@ def test_list_shows_names_without_reading_files(fetch_mod, remote, capsys):
     out = capsys.readouterr().out
     assert "sources: aurora, aurora-imerg" in out
     assert "inits of aurora: 2026-10-20, 2026-10-27" in out
-    assert f"  model {DIFF}\n    checkpoint ckpt-a (targets: era5)" in out
+    assert f"  model {DIFF}\n    checkpoint ckpt-a (targets: {ERA5})" in out
     assert f"  model {UNET}" in out
     assert remote["read"] == []
     run_skill(fetch_mod.fetch, "--list")

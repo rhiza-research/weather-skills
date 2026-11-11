@@ -26,7 +26,7 @@ Fetches one Cumulus downscaled init (all leads, ensemble mean or members) and wr
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--source SUBFOLDER] [--model diffusion|flow-matching|unet] [--target era5|imerg] [--members] [--date YYYY-MM-DD] [--bbox N/W/S/E] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--source SUBFOLDER] [--model diffusion|flow-matching|unet] [--checkpoint SUBSTRING] [--target era5|imerg|SUBSTRING] [--members] [--date YYYY-MM-DD] [--bbox N/W/S/E] -o OUT.zarr
 # Latest init date with output (no download)
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--source SUBFOLDER] --probe-latest [MODEL]
 # Sources, inits, and the models, checkpoints and targets at one init (no download)
@@ -34,8 +34,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--source SUBFOLDER] [--date YYYY-MM
 ```
 
 ### Arguments
-- `--source` — subfolder of `downscaled_models/` to read. Default: `aurora`. Other subfolders, such as `aurora-imerg`, hold other downscaling runs. Each subfolder has its own inits, models and checkpoints, so `--probe-latest` and the defaults are worked out per `--source`. An unknown subfolder exits 1 and lists the ones there.
-- `--model` — downscaling model. Default: `diffusion`. A short name matches the model folder whose name starts with `model_diffusion_`, `model_flow_matching_` or `model_unet_`, so it works across sources whose folder names differ. Any full model folder name under an init also works, e.g. older runs. When a short name matches several folders at one init, the skill exits 1 and lists them.
+- `--source` — subfolder of `downscaled_models/` to read: its full name, or a substring that matches only one (`imerg` picks `aurora-imerg`; an exact name wins, so `aurora` stays `aurora`). Default: `aurora`. Other subfolders, such as `aurora-imerg`, hold other downscaling runs. Each subfolder has its own inits, models and checkpoints, so `--probe-latest` and the defaults are worked out per `--source`. An unknown subfolder exits 1 and lists the ones there.
+- `--model` — downscaling model. Default: `diffusion`. A short name matches the model folder whose name starts with `model_diffusion_`, `model_flow_matching_` or `model_unet_`, so it works across sources whose folder names differ. Any other value is a model folder name or a substring of one, e.g. `input_output` to pick the diffusion model that also takes surface inputs. When the value matches several folders at one init, the skill exits 1 and lists them.
 
   For `--source aurora`:
 
@@ -44,7 +44,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--source SUBFOLDER] [--date YYYY-MM
   | `diffusion` | diffusion UNet | ensemble mean + 10 members | 2026-10-04 |
   | `flow-matching` | flow-matching UNet | ensemble mean + 10 members | 2026-10-27 |
   | `unet` | deterministic UNet | one field | 2026-10-04 |
-- `--target` — precipitation product the model was trained to reproduce: `era5` or `imerg`. Default: the only one the checkpoint has, else `era5`. A target the checkpoint lacks exits 1 and lists what it has.
+- `--target` — precipitation product the model was trained to reproduce: a target folder name as `--list` prints it, or a substring of one such as `era5` or `imerg`. Default: the only target folder the checkpoint has, else `era5`. A value that matches none or several exits 1 and lists what the checkpoint has.
 - `--members` — fetch the individual members instead of the ensemble mean. A model with one field (`unet`) exits 1.
 - `--checkpoint` — substring of the checkpoint folder. When an init has several and this is omitted, the skill keeps the one later inits carry on running and warns; if that does not settle it, it exits 1 and lists them.
 - `--date` — init date. Default: the latest init with output for `--model`. A date with no output exits 1.

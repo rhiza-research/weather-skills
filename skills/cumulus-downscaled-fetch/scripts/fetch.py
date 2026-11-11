@@ -39,18 +39,13 @@ _INIT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _FILE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-(\d{4})\.nc$")
 _MEMBER_RE = re.compile(r"^member_(\d+)$")
 
-# --model name → model folder prefix. Folder names differ between sources and
-# setups, so the name is matched by prefix at each init. A full model folder
-# name is also accepted.
+# --model short name → model folder prefix. Folder names differ between sources and
+# setups, so the name is matched by prefix at each init. Any other --model value
+# matches like --source and --target: the exact folder name, else a substring.
 _MODELS = {
     "diffusion": "model_diffusion_",
     "flow-matching": "model_flow_matching_",
     "unet": "model_unet_",
-}
-# --target name → target folder: the precipitation product the model was trained to.
-_TARGETS = {
-    "era5": "total_precipitation_24h_acc_era5",
-    "imerg": "total_precipitation_24h_acc_imerg",
 }
 _PRECIP_ALIASES = {"tp", "precip", "precipitation", "total_precipitation", "precip_24h"}
 DEFAULT_WORKERS = 16
@@ -98,19 +93,18 @@ def _azure_error(exc: Exception, what: str) -> DataError:
 @weather_skill.argument(
     "--source",
     default="aurora",
-    help="Subfolder of downscaled_models/ to read, e.g. aurora-imerg (default aurora).",
+    help="Subfolder of downscaled_models/ to read, or a substring of its name (default aurora).",
 )
 @weather_skill.argument(
     "--model",
     default="diffusion",
-    help=f"One of {', '.join(_MODELS)} (default diffusion), or a model folder name.",
+    help=f"One of {', '.join(_MODELS)} (default diffusion), or a model folder name or substring.",
 )
 @weather_skill.argument(
     "--target",
-    choices=list(_TARGETS),
     help=(
-        "Precipitation product the model was trained to (default: the only one "
-        "the checkpoint has, else era5)."
+        "Target folder name or substring, e.g. imerg: the precipitation product the model "
+        "was trained to (default: the only one the checkpoint has, else era5)."
     ),
 )
 @weather_skill.argument(
@@ -179,7 +173,6 @@ def fetch(
     import xarray as xr
 
     model = probe_latest or model
-    root = f"{_BASE}/{source.strip('/')}/{_DOMAIN}"
     if workers < 1:
         raise UsageError(f"--workers must be at least 1 (got {workers}).")
     unknown = set(variable or ()) - _PRECIP_ALIASES
@@ -199,10 +192,25 @@ def fetch(
             raise _azure_error(exc, f"Azure listing failed for az://{_ACCOUNT}/{path}/") from None
         return sorted(p.rstrip("/").rsplit("/", 1)[-1] for p in paths)
 
+    def match(names, sub):
+        """The folder named ``sub`` exactly, else every folder whose name contains ``sub``."""
+        return [n for n in names if n == sub] or [n for n in names if sub in n]
+
+    sources = match(ls(_BASE), source.strip("/"))
+    if len(sources) > 1:
+        raise UsageError(
+            f"--source {source!r} matches {', '.join(sources)}: pass more of the name."
+        )
+    # No match keeps the name, so the "no init folders" error below lists the subfolders.
+    source = sources[0] if sources else source.strip("/")
+    root = f"{_BASE}/{source}/{_DOMAIN}"
+
     def model_folders(init):
-        """Model folders at ``init`` that ``--model`` names (exact name or short-name prefix)."""
-        prefix = _MODELS.get(model)
-        return [m for m in ls(f"{root}/{init}") if m == model or (prefix and m.startswith(prefix))]
+        """Model folders at ``init`` that ``--model`` names (short-name prefix, exact name or substring)."""
+        names = ls(f"{root}/{init}")
+        if model in _MODELS:
+            return [m for m in names if m.startswith(_MODELS[model])]
+        return match(names, model)
 
     def checkpoints(init):
         """(model folder, checkpoint folders) for ``--model`` at ``init``; ``(None, [])`` when absent."""
@@ -239,9 +247,8 @@ def fetch(
         for folder in ls(f"{root}/{shown}"):
             print(f"  model {folder}")
             for ckpt in ls(f"{root}/{shown}/{folder}"):
-                found = ls(f"{root}/{shown}/{folder}/{ckpt}")
-                names = [t for t in _TARGETS if _TARGETS[t] in found]
-                print(f"    checkpoint {ckpt} (targets: {', '.join(names) or 'none'})")
+                found = [t for t in ls(f"{root}/{shown}/{folder}/{ckpt}") if "." not in t]
+                print(f"    checkpoint {ckpt} (targets: {', '.join(found) or 'none'})")
         return
     # Walk back from the newest init to the first that has this model.
     inits = all_inits
@@ -322,16 +329,18 @@ def fetch(
         )
     # Target folders: the precipitation products this checkpoint was trained to.
     ckpt_dir = f"{root}/{init}/{model_folder}/{ckpt}"
-    targets = ls(ckpt_dir)
+    # Target folders have no extension; files beside them (notes.yml) do.
+    targets = [t for t in ls(ckpt_dir) if "." not in t]
     if target is None:
-        found = [t for t in _TARGETS if _TARGETS[t] in targets]
-        target = found[0] if len(found) == 1 else "era5"
-    target_folder = _TARGETS[target]
-    if target_folder not in targets:
+        target = targets[0] if len(targets) == 1 else "era5"
+    found = match(targets, target)
+    if len(found) != 1:
         raise DataError(
-            f"no {target} target under az://{_ACCOUNT}/{ckpt_dir}/ (it has: "
-            f"{', '.join(targets) or 'nothing'}). Pass another --target."
+            f"{'no' if not found else 'several'} {target} target(s) under az://{_ACCOUNT}/{ckpt_dir}/ "
+            f"(it has: {', '.join(targets) or 'nothing'}). Pass one of those, or a substring "
+            "that picks one, as --target."
         )
+    (target_folder,) = found
     data_dir = f"{ckpt_dir}/{target_folder}/precip_24h/data"
     print(f"Reading az://{_ACCOUNT}/{data_dir}/", file=sys.stderr)
 
