@@ -37,7 +37,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/csv_io.py --csv IN.csv -o OUT.zarr [--date-fo
 - `--names` — read: comma-separated names replacing the header row; none blank or repeated.
 - `--drop-column` — read: column to leave out, by its header as written or cleaned (`2026-10-16` for an Excel date header); repeatable.
 - `--drop-incomplete` — read: leave out rows with no station, time, level or lat/lon (footer and total rows) instead of exiting 2.
-- `--replace` — read: `TEXT=NUMBER` for a cell code, such as `tr=0` for trace rain; repeatable. A column whose cells are then all numbers is read as numbers.
+- `--replace` — read: `TEXT=NUMBER` replaces every cell that is exactly `TEXT` (case-sensitive) in every column but station ids, times, lat/lon, levels and members, such as `tr=0` for trace rain; repeatable, so `--replace tr=0 --replace TR=0` covers both spellings. A column whose cells are then all numbers is read as numbers.
 - `--unpivot` — read: `NAME=VALUE` for a wide table: coordinate columns, `--index` columns and text columns with no number in them under a header that is no date or number (a station name) stay; the others stack, headers into `NAME`, cells into `VALUE` (non-numeric ones exit 2). Numeric headers (steps, levels) read as numbers, Excel date headers as dates; headers mixing numbers and text (`Total`), or `NAME`/`VALUE` equal to an existing column, exit 2. The kept and stacked columns are listed on stderr.
 
 ### Output
