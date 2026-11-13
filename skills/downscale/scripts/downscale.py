@@ -9,11 +9,20 @@
 
 import math
 import sys
+from pathlib import Path
 
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import detect_spatial_dims
 from weather_skills_core.standard_utils import ensure_normalized_longitude, grid_spacing
 from weather_skills_core.units import units_equal
+
+
+class ZarrPath(str):
+    """A Zarr path the decorator hashes into the history, with the Zarr's own history."""
+
+    def zarr_paths(self):
+        return [Path(self)]
+
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.8"
@@ -69,13 +78,15 @@ def _qmap(values, model, ref):
 )
 @weather_skill.argument("-f", "--factor", type=int)
 @weather_skill.argument("--target-resolution", type=float)
-@weather_skill.argument("--reference-grid")
+@weather_skill.argument("--reference-grid", type=ZarrPath)
 @weather_skill.argument(
     "--qq-reference",
+    type=ZarrPath,
     help="q-q: observed climatology sample on the output grid (the target distribution).",
 )
 @weather_skill.argument(
     "--qq-model",
+    type=ZarrPath,
     help=(
         "q-q: the model's own climatology sample (hindcasts / reforecasts) on the "
         "input grid. Without it the input is its own model sample."
