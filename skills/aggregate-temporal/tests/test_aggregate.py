@@ -926,3 +926,19 @@ def test_window_on_uneven_leads_weights_by_duration(tmp_path, aggregate):
     assert float(rolled["precip"].values[at[18]]) == pytest.approx(2.5)
     assert float(rolled[AGGREGATION_COVERAGE_COORD].values[at[18]]) == pytest.approx(1.0)
     assert float(rolled[AGGREGATION_COVERAGE_COORD].values[at[60]]) == pytest.approx(0.5)
+
+
+def test_month_start_labels_stay_in_their_own_month(tmp_path, aggregate):
+    """Month-start labels are uneven steps; each value is its label's month, not the one before."""
+    times = xr.date_range("2019-11-01", "2020-04-01", freq="MS")
+    ds = xr.Dataset(
+        {"index": (("time",), np.arange(times.size, dtype=float), {"units": "degree_Celsius"})},
+        coords={"time": times},
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--period", "monthly")
+
+    result = xr.open_zarr(out)["index"]
+    assert result["time"].values.tolist() == times.values.tolist()
+    assert result.values.tolist() == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]

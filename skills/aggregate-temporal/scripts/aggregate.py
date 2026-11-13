@@ -27,7 +27,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.11"
 
 # Named --period / --window → (aggregation_period stamped, resample freq, length in days).
 NAMED_PERIODS = {
@@ -155,6 +155,20 @@ def aggregate(
             raise UsageError(f"no time/step dim in {list(ds.dims)}; pass --time-dim")
 
     # Each input sample's cell: CF bounds (uneven spacing) or a scalar data_interval.
+    # Month-start labels are uneven, and inferred bounds would end each cell at its label
+    # (the month before), so give each its own month. shortcut: datetime64 axes only.
+    times = ds.indexes.get(dim)
+    if (
+        isinstance(times, pd.DatetimeIndex)
+        and times.size > 1
+        and times.is_month_start.all()
+        and (times == times.normalize()).all()
+        and data_interval_of(ds) is None
+        and not (isinstance(ds[dim].attrs.get("bounds"), str) or f"{dim}_bounds" in ds)
+    ):
+        ends = times + pd.offsets.MonthBegin(1)
+        ds = ds.assign_coords({f"{dim}_bounds": ((dim, "nv"), np.stack([times, ends], axis=1))})
+        ds[dim].attrs["bounds"] = f"{dim}_bounds"
     try:
         ds = stamp_data_interval(ds, dim=dim)
     except UsageError:
