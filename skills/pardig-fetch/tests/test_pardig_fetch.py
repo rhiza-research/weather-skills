@@ -14,13 +14,12 @@ def mod():
     return load_skill("pardig-fetch", "fetch")
 
 
-def _store():
-    """Two days of 15-minute frames on a 0..360 grid, 0.001 m/h everywhere."""
-    times = np.arange(
-        np.datetime64("2020-04-01T00:00"),
-        np.datetime64("2020-04-03T00:00"),
-        np.timedelta64(15, "m"),
-    ).astype("datetime64[ns]")
+def _store(start="2020-04-01T00:00", days=2):
+    """15-minute frames on a 0..360 grid, 0.001 m/h everywhere."""
+    t0 = np.datetime64(start)
+    times = np.arange(t0, t0 + np.timedelta64(days, "D"), np.timedelta64(15, "m")).astype(
+        "datetime64[ns]"
+    )
     lat = np.array([-1.0, -0.9, -0.8])
     lon = np.array([36.0, 36.1, 359.9])
     data = np.full((times.size, lat.size, lon.size), 0.001, dtype="float32")
@@ -58,7 +57,11 @@ def test_fetch_converts_and_clips(tmp_path, mod, capsys):
 
 
 def test_fetch_window_without_data_exits_1(tmp_path, mod):
-    with patch.object(mod, "_open_store", return_value=_store()), pytest.raises(SystemExit) as exc:
+    with (
+        patch.object(mod, "_open_store", return_value=_store()),
+        patch.object(mod, "_read_live", return_value=None),
+        pytest.raises(SystemExit) as exc,
+    ):
         run_skill(
             mod.fetch,
             "--start-time",
@@ -71,3 +74,27 @@ def test_fetch_window_without_data_exits_1(tmp_path, mod):
             str(tmp_path / "out.zarr"),
         )
     assert exc.value.code == 1
+
+
+def test_fetch_joins_archive_and_live_frames(tmp_path, mod):
+    out = tmp_path / "out.zarr"
+    live = _store("2026-01-01T00:00", 1)
+    with (
+        patch.object(mod, "_open_store", return_value=_store("2025-12-31T00:00", 1)),
+        patch.object(mod, "_read_live", return_value=live.sel(latitude=[-1.0], longitude=[36.0])),
+    ):
+        run_skill(
+            mod.fetch,
+            "--start-time",
+            "2025-12-31",
+            "--end-time",
+            "2026-01-01",
+            "--bbox",
+            "-1/36/-1/36",
+            "-o",
+            str(out),
+        )
+    ds = xr.open_zarr(out)
+    assert ds.sizes["time"] == 192
+    assert ds["time"].values[0] == np.datetime64("2025-12-31T00:00")
+    assert ds["time"].values[-1] == np.datetime64("2026-01-01T23:45")
