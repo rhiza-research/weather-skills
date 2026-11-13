@@ -37,6 +37,12 @@ def _resolve_dim(ds, time_dim):
         if time_dim not in ds.dims:
             raise UsageError(f"--time-dim {time_dim!r} not in dataset (have {list(ds.dims)})")
         return time_dim
+    # aggregate-temporal names the dim it binned along in cell_methods ("step: mean").
+    # Once select has collapsed that dim, other axes (e.g. daily inits) are not intervals.
+    for da in ds.data_vars.values():
+        binned = re.match(r"\s*(\w+):", str(da.attrs.get("cell_methods", "")))
+        if binned and AGGREGATION_PERIOD_ATTR in da.attrs:
+            return binned.group(1) if binned.group(1) in ds.dims else None
     try:
         cf_time = ds.cf["time"].name
     except KeyError:
