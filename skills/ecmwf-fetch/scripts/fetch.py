@@ -46,7 +46,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.10"
 
 # Product -> dynamical.org dataset id (hres is not on dynamical.org).
 PRODUCTS = {
@@ -292,8 +292,8 @@ _DROP_COORDS = (
 # Medium-range stores keep selected levels as separate `temperature_850hpa` fields.
 _HPA_RE = re.compile(r"^(.+)_(\d+)hpa$")
 
-# Short name -> catalog fields it stands for, first match wins. Fluxes (ECDS
-# accumulated J m-2 vs catalog mean W m-2), 6-hour max/min, static masks,
+# Short name -> catalog fields it stands for, first match wins. Catalog fluxes
+# are daily-mean W m-2 (ECDS: J m-2 since init). 6-hour max/min, static masks,
 # ocean, and pv are not mapped, so S2S takes them from ECDS. Unmapped catalog
 # fields keep their catalog name.
 _CATALOG_NAMES = {
@@ -326,6 +326,13 @@ _CATALOG_NAMES = {
     "nsss": ("northward_turbulent_surface_stress",),
     "ro": ("runoff_water_equivalent_surface",),
     "sro": ("runoff_surface",),
+    "ssrd": ("downward_short_wave_radiation_flux_surface",),
+    "ssr": ("net_short_wave_radiation_flux_surface",),
+    "strd": ("downward_long_wave_radiation_flux_surface",),
+    "str": ("net_long_wave_radiation_flux_surface",),
+    "ttr": ("net_long_wave_radiation_flux_top_of_atmosphere",),
+    "sshf": ("downward_sensible_heat_flux_surface",),
+    "slhf": ("downward_latent_heat_flux_surface",),
     "gh": ("geopotential_height",),
     "t": ("temperature",),
     "u": ("wind_u",),

@@ -27,9 +27,9 @@ onto `vertical`. The 6-hourly 46-day store has precip, 10 m wind, and 6 h
 max/min 2 m temperature only.
 
 `-v` takes a short name or any catalog name. Fields with a short name are
-written under it; other catalog fields keep their catalog name and units
-(e.g. `net_long_wave_radiation_flux_top_of_atmosphere`, OLR as a daily
-mean in `W m-2`).
+written under it (`net_long_wave_radiation_flux_top_of_atmosphere` becomes
+`ttr`, a daily mean in `W m-2`); other catalog fields keep their catalog
+name and units.
 
 | `-v` | Catalog field (first one the store has) |
 |---|---|
@@ -50,15 +50,19 @@ mean in `W m-2`).
 | `cp` / `sf` | `precipitation_convective_surface` / `snowfall_water_equivalent_rate_surface` |
 | `ewss` / `nsss` | `eastward_turbulent_surface_stress` / `northward_turbulent_surface_stress` |
 | `ro` / `sro` | `runoff_water_equivalent_surface` / `runoff_surface` |
+| `ssrd` / `ssr` | `downward_short_wave_radiation_flux_surface` / `net_short_wave_radiation_flux_surface` |
+| `strd` / `str` | `downward_long_wave_radiation_flux_surface` / `net_long_wave_radiation_flux_surface` |
+| `ttr` | `net_long_wave_radiation_flux_top_of_atmosphere` |
+| `sshf` / `slhf` | `downward_sensible_heat_flux_surface` / `downward_latent_heat_flux_surface` |
 | `gh` / `t` / `u` / `v` / `w` / `q` | `geopotential_height`, `temperature`, `wind_u`, `wind_v`, `vertical_velocity`, `specific_humidity` (every level) |
 
 Before 2026-01-01, `s2s` reads `precip`, `t2m` and `sst` from the ECMWF
 reforecast (below). It uses the Data Store for a `--date` the reforecast
 lacks and, for one `--date` or an init window, for fields with neither a catalog nor a reforecast equivalent: `mx2t6`, `mn2t6` (the catalog 24 h
-max/min is a different statistic), accumulated fluxes (`sshf`, `slhf`,
-`ssr`, `ssrd`, `str`, `strd`, `ttr`; the catalog means in `W m-2` are
-reachable by their catalog names), static fields (`lsm`, `orog`, `slt`),
-`pv`, and ocean parameters. A call mixing those with catalog fields also
+max/min is a different statistic), static fields (`lsm`, `orog`, `slt`),
+`pv`, and ocean parameters. Before 2026 it also serves the fluxes (`sshf`,
+`slhf`, `ssr`, `ssrd`, `str`, `strd`, `ttr`), accumulated since init in
+J m-2 rather than the catalog's daily means in `W m-2`. A call mixing those with catalog fields also
 uses the Data Store. With a window, the Data Store gets one set of requests
 (control and members, per field group) for every published init day in the
 windows; inits inside the embargo or with no data are skipped with a

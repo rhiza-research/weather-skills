@@ -1,11 +1,11 @@
 ---
 name: ecmwf-fetch
-description: "Fetch an ECMWF forecast over a lat/lon box as a weather-skills Zarr, for one init date or every init in a date window: the S2S extended-range ensemble (46 days, daily or 6-hourly), the IFS-ENS 15-day 0.25° ensemble, the AIFS ensemble or single run, or the deterministic HRES. Precipitation, 2 m temperature, SST, winds, pressure-level fields and more. S2S inits before 2026 come from the ECMWF reforecast (10 members, 1996-2025) for precipitation, 2 m temperature and SST; other pre-2026 inits and extra fields (ocean variables, 6-hour max/min temperature, surface fluxes, potential vorticity) come from the ECMWF Data Store, which needs a free ECMWF key; everything else needs no credentials. Use for any ECMWF forecast."
+description: "Fetch an ECMWF forecast over a lat/lon box as a weather-skills Zarr, for one init date or every init in a date window: the S2S extended-range ensemble (46 days, daily or 6-hourly), the IFS-ENS 15-day 0.25° ensemble, the AIFS ensemble or single run, or the deterministic HRES. Precipitation, 2 m temperature, SST, winds, solar and thermal radiation, pressure-level fields and more. S2S inits before 2026 come from the ECMWF reforecast (10 members, 1996-2025) for precipitation, 2 m temperature and SST; other pre-2026 inits and extra fields (ocean variables, 6-hour max/min temperature, surface fluxes, potential vorticity) come from the ECMWF Data Store, which needs a free ECMWF key; everything else needs no credentials. Use for any ECMWF forecast."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Most requests need no credentials. The ECMWF Data Store (S2S fallback) and `hres` need the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`). The Data Store also needs ECMWF_DATASTORES_KEY (or a `~/.ecmwfdatastoresrc` file), the personal token of a free ECMWF account — register at https://www.ecmwf.int/user/register, then copy the token from https://ecds.ecmwf.int/how-to-api.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.9"
+  version: "0.0.10"
   catalog-group: fetchers
   variables:
     - precip
@@ -30,6 +30,9 @@ metadata:
     - strd
     - str
     - ttr
+    - ssr
+    - sshf
+    - slhf
     - t
     - gh
     - u
@@ -75,7 +78,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --product P --list-variables
 - `--date` — init date; the 00 UTC run (for `hres`, the run set by `--run`). S2S inits are daily from 2023-06-27, Mondays and Thursdays before.
 - `--start-time`, `--end-time` — a window of inits; `--end-time` is inclusive. Repeat the pair for several windows; not with `--date`. Takes every 00 UTC init in them (for `hres`, the `--run` init of every day) with all their leads: the windows select init times, not valid times. An init with no data is skipped with a `WARNING` (never filled); no init in any window exits 1.
 - `--bbox` — `N/W/S/E` decimal degrees; W > E crosses the antimeridian. Required for `s2s` and `hres`; omit it on the other products for the whole globe.
-- `--variable`, `-v` — several per flag, repeated, or comma-separated (`-v precip t2m`). Default `precip`. Short names: `precip`, `t2m`, `d2m`, `sst`, `msl`, `sp`, `u10`, `v10`, `u100`, `v100`, `gust10`, `tcc`, `skt`, `cape`, `tcw`; pressure levels `t`, `gh`, `u`, `v`, `w`, `q` (every level the product has). GRIB and Data Store names (`tp`, `2t`, `2_m_temperature`) and `precipitation` are accepted. The dynamical.org products also take any of their own field names (`net_long_wave_radiation_flux_top_of_atmosphere`, `temperature_850hpa`); see `--list-variables`. `s2s` Data Store-only fields: `mx2t6`, `mn2t6`, accumulated fluxes (`sshf`, `slhf`, `ssr`, `ssrd`, `str`, `strd`, `ttr`), static fields (`lsm`, `orog`, `slt`), `pv` (320 K), and ocean fields (`t20d`, `zos`, `ocu`, …). `hres` fields: `precip`, `t2m`, `d2m`, `msl`, `u10`, `v10`, `gust10`, `sp`, `tcwv`, `mucape`, `skt`, `ssrd`, `strd`, `str`, `ttr`, and `t`, `gh`, `u`, `v`, `q`, `r` on 13 levels (1000–50 hPa). An unknown name exits 2 and lists what is available.
+- `--variable`, `-v` — several per flag, repeated, or comma-separated (`-v precip t2m`). Default `precip`. Short names: `precip`, `t2m`, `d2m`, `sst`, `msl`, `sp`, `u10`, `v10`, `u100`, `v100`, `gust10`, `tcc`, `skt`, `cape`, `tcw`; radiation and heat fluxes `ssrd` (downward solar), `ssr`, `strd`, `str`, `ttr`, `sshf`, `slhf`; pressure levels `t`, `gh`, `u`, `v`, `w`, `q` (every level the product has). GRIB and Data Store names (`tp`, `2t`, `2_m_temperature`) and `precipitation` are accepted. The dynamical.org products also take any of their own field names (`net_long_wave_radiation_flux_top_of_atmosphere`, `temperature_850hpa`); see `--list-variables`. `s2s` fluxes are daily means in `W m-2` from 2026 and cumulative since init in J m-2 before (Data Store). `s2s` Data Store-only fields: `mx2t6`, `mn2t6`, static fields (`lsm`, `orog`, `slt`), `pv` (320 K), and ocean fields (`t20d`, `zos`, `ocu`, …). `hres` fields: `precip`, `t2m`, `d2m`, `msl`, `u10`, `v10`, `gust10`, `sp`, `tcwv`, `mucape`, `skt`, `ssrd`, `strd`, `str`, `ttr`, and `t`, `gh`, `u`, `v`, `q`, `r` on 13 levels (1000–50 hPa). An unknown name exits 2 and lists what is available.
 - `--max-lead` — keep output steps up to this lead: `24`, `24h`, `10D` (bare numbers are hours); `0` is the first step only. Default: every step.
 - `--run` — `hres` only: init hour UTC, `0`, `6`, `12` or `18`. Default `0`.
 - `--probe-latest [IDENT]` — print the product's latest init (`YYYY-MM-DD`, usable as `--date`) and exit. stderr notes an init whose last lead is still publishing; for `hres` it names the latest run hour. `IDENT` is ignored. If the source is unreachable, `s2s` prints today − 2 days.

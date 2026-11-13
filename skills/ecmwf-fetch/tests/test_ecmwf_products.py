@@ -86,11 +86,11 @@ def test_short_names_and_source(tmp_path, mod, fetch):
 
 
 def test_unmapped_catalog_name_is_kept(tmp_path, mod, fetch):
-    root = _end_labelled_ds().rename(temperature_2m="downward_short_wave_radiation_flux_surface")
-    root["downward_short_wave_radiation_flux_surface"].attrs["units"] = "W m-2"
-    written = _fetch(tmp_path, mod, fetch, root, "-v", "downward_short_wave_radiation_flux_surface")
-    assert list(written.data_vars) == ["downward_short_wave_radiation_flux_surface"]
-    assert written["downward_short_wave_radiation_flux_surface"].attrs["units"] == "W m-2"
+    root = _end_labelled_ds().rename(temperature_2m="categorical_precipitation_type_surface")
+    root["categorical_precipitation_type_surface"].attrs["units"] = "W m-2"
+    written = _fetch(tmp_path, mod, fetch, root, "-v", "categorical_precipitation_type_surface")
+    assert list(written.data_vars) == ["categorical_precipitation_type_surface"]
+    assert written["categorical_precipitation_type_surface"].attrs["units"] == "W m-2"
 
 
 def test_end_labelled_lead0_dropped_and_relabelled_to_start(tmp_path, mod, fetch):
@@ -194,7 +194,7 @@ def _s2s_ds(name, units, dims=(), coords=None, n_lead=4, lead0_nan=True):
     )
 
 
-def test_s2s_olr_by_catalog_name_keeps_w_m2_daily_from_step_0(tmp_path, mod, fetch):
+def test_s2s_olr_by_catalog_name_is_ttr_w_m2_daily_from_step_0(tmp_path, mod, fetch):
     olr = "net_long_wave_radiation_flux_top_of_atmosphere"
     root = _s2s_ds(olr, "W m-2")
     written = _run(
@@ -210,15 +210,15 @@ def test_s2s_olr_by_catalog_name_keeps_w_m2_daily_from_step_0(tmp_path, mod, fet
         olr,
         product="s2s",
     )
-    assert list(written.data_vars) == [olr]
-    assert written[olr].attrs["units"] == "W m-2"
+    assert list(written.data_vars) == ["ttr"]
+    assert written["ttr"].attrs["units"] == "W m-2"
     assert written["time"].ndim == 0
     assert np.asarray(written["step"].values).astype("timedelta64[D]").astype(int).tolist() == [
         0,
         1,
         2,
     ]
-    assert written[olr].attrs["data_interval"] == "1 day"
+    assert written["ttr"].attrs["data_interval"] == "1 day"
     assert written.sizes["longitude"] == 4
     assert written.attrs["weather_skills_source"] == "ecmwf-s2s"
 

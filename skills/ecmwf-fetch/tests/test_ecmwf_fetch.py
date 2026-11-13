@@ -378,6 +378,7 @@ def _catalog_pressure_ds(*, n_lead=3):
 
 def test_catalog_covers_mapped_fields_from_2026(mod):
     assert mod._catalog_covers(date(2026, 1, 1), ["precip", "t2m", "t"])
+    assert mod._catalog_covers(date(2026, 1, 1), ["ssrd", "u10", "v10"])
     assert not mod._catalog_covers(date(2025, 12, 31), ["precip"])
     assert not mod._catalog_covers(date(2026, 1, 1), ["pv"])
     assert not mod._catalog_covers(date(2026, 1, 1), ["precip", "mx2t6"])
