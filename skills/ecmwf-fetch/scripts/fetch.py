@@ -4,20 +4,26 @@
 #   "weather-skills-core>=0.3.6",
 #   "dynamical-catalog==1.0.1",
 #   "ecmwf-datastores-client==0.4.2",
+#   # >=0.3.34 for the IFS Cycle 50r1 (2026-05-12) date-aware oper/scda
+#   # stream fix in Client.patch_stream — older pins misroute 06/18Z runs.
+#   "ecmwf-opendata==0.3.34",
 #   "requests",
+#   "pandas",
 #   "cfgrib",
 #   # eccodeslib carries the native libeccodes that cfgrib loads on macOS/Linux;
 #   # eccodes drops this as a transitive dep via PyPI metadata (ecmwf/eccodes-python#150),
 #   # so it is declared directly. Windows bundles the library in eccodes itself.
 #   "eccodeslib",
+#   "gcsfs",
 # ]
 # ///
-"""Fetch an ECMWF S2S (46-day) ensemble forecast for one init date as a weather-skills Zarr."""
+"""Fetch an ECMWF forecast product (S2S, IFS-ENS, AIFS, HRES) as a weather-skills Zarr."""
 
 from __future__ import annotations
 
 import datetime as dt
 import os
+import re
 import sys
 import tempfile
 import time
@@ -42,12 +48,25 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.10"
 
+# Product -> dynamical.org dataset id (hres is not on dynamical.org).
+PRODUCTS = {
+    "s2s": "ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree",
+    "s2s-6h": "ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree",
+    "ifs-ens": "ecmwf-ifs-ens-forecast-15-day-0-25-degree",
+    "aifs-ens": "ecmwf-aifs-ens-forecast",
+    "aifs-single": "ecmwf-aifs-single-forecast",
+    "hres": None,
+}
+
 _PROBE_POLL_SECONDS = 30
 _PROBE_POLL_MAX_SECONDS = 3600
 
 # S2S archives precipitation 6-hourly; request 00Z daily leads through the 46-day S2S range.
 _MAX_LEAD_HOURS = 46 * 24
 LEADTIME_HOURS = [str(h) for h in range(0, _MAX_LEAD_HOURS + 1, 24)]
+
+# S2S inits are daily from this date, Mondays and Thursdays only before it.
+_DAILY_FROM = dt.date(2023, 6, 27)
 
 S2S_LICENCE_URL = "https://ecds.ecmwf.int/datasets/s2s-forecasts?tab=download#manage-licences"
 
@@ -197,11 +216,72 @@ VARIABLES: dict[str, _Var] = {
 }
 DEFAULT_VARIABLES = ["precip"]
 
-# dynamical.org ECMWF ER / S2S 46-day product. Inits start 2026-01-01; still
-# ~2-day embargo. Prefer this over ECDS when every requested field maps.
-_DATASET = "ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree"
-_STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
+# --- HRES (ECMWF Open Data) --------------------------------------------------
+
+_FULL_RUN_STEPS = list(range(0, 144 + 1, 3)) + list(range(150, 360 + 1, 6))
+_SHORT_CUTOFF_STEPS = list(range(0, 144 + 1, 3))
+
+# data.ecmwf.int keeps only the inits of the last 4 days (today included);
+# older inits are only on the AWS mirror (from 2023).
+_ECMWF_DAYS_KEPT = 4
+
+# Every Open Data level from 1000 to 50 hPa. 10 hPa exists only since IFS
+# Cycle 50r1 (2026-05-12), so it is not requested: older inits would fail.
+HRES_PRESSURE_LEVELS = (
+    "1000",
+    "925",
+    "850",
+    "700",
+    "600",
+    "500",
+    "400",
+    "300",
+    "250",
+    "200",
+    "150",
+    "100",
+    "50",
+)
+
+
+class _HresVar(NamedTuple):
+    param: str  # ECMWF Open Data short param name
+    level_type: str = "sfc"  # "sfc" | "pl"
+    levels: tuple[str, ...] = ()
+
+
+# Most-used first, then the rest of the HRES ("oper") single-level and
+# pressure-level fields carried by ECMWF Open Data.
+HRES_VARIABLES: dict[str, _HresVar] = {
+    "precip": _HresVar("tp"),
+    "t2m": _HresVar("2t"),
+    "d2m": _HresVar("2d"),
+    "msl": _HresVar("msl"),
+    "u10": _HresVar("10u"),
+    "v10": _HresVar("10v"),
+    "gust10": _HresVar("10fg"),
+    "sp": _HresVar("sp"),
+    "tcwv": _HresVar("tcwv"),
+    # Open Data publishes most-unstable CAPE only; there is no `cape` field.
+    "mucape": _HresVar("mucape"),
+    "skt": _HresVar("skt"),
+    "ssrd": _HresVar("ssrd"),
+    "strd": _HresVar("strd"),
+    "str": _HresVar("str"),
+    "ttr": _HresVar("ttr"),
+    "t": _HresVar("t", "pl", HRES_PRESSURE_LEVELS),
+    "gh": _HresVar("gh", "pl", HRES_PRESSURE_LEVELS),
+    "u": _HresVar("u", "pl", HRES_PRESSURE_LEVELS),
+    "v": _HresVar("v", "pl", HRES_PRESSURE_LEVELS),
+    "q": _HresVar("q", "pl", HRES_PRESSURE_LEVELS),
+    "r": _HresVar("r", "pl", HRES_PRESSURE_LEVELS),
+}
+
+# --- dynamical.org catalog ---------------------------------------------------
+
+# 46-day inits on dynamical.org start 2026-01-01 (still ~2-day embargo).
 _CATALOG_START = dt.date(2026, 1, 1)
+_STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
 _PRESSURE_GROUP = "pressure_level"
 _DROP_COORDS = (
     "valid_time",
@@ -209,55 +289,60 @@ _DROP_COORDS = (
     "ingested_forecast_length",
     "spatial_ref",
 )
+# Medium-range stores keep selected levels as separate `temperature_850hpa` fields.
+_HPA_RE = re.compile(r"^(.+)_(\d+)hpa$")
 
-# S2S short name → catalog field. Catalog fluxes are daily-mean W m-2 (ECDS: J m-2
-# since init). 6-hour max/min, static masks, ocean, and pv stay on ECDS.
-_CATALOG_SURFACE = {
-    "precip": "precipitation_surface",
-    "t2m": "average_temperature_2m",
-    "sst": "sea_surface_temperature",
-    "d2m": "average_dew_point_temperature_2m",
-    "u10": "wind_u_10m",
-    "v10": "wind_v_10m",
-    "msl": "pressure_reduced_to_mean_sea_level",
-    "cape": "average_convective_available_potential_energy_surface",
-    "tcw": "total_column_water_atmosphere",
-    "skt": "skin_temperature_surface",
-    "tcc": "total_cloud_cover_atmosphere",
-    "sp": "pressure_surface",
-    "sd": "snow_water_equivalent_surface",
-    "rsn": "snow_density_surface",
-    "asn": "snow_albedo_surface",
-    "sm20": "soil_moisture_0_20cm",
-    "sm100": "soil_moisture_0_100cm",
-    "st20": "soil_temperature_0_20cm",
-    "st100": "soil_temperature_0_100cm",
-    "ci": "sea_ice_area_fraction",
-    "cp": "precipitation_convective_surface",
-    "sf": "snowfall_water_equivalent_rate_surface",
-    "ewss": "eastward_turbulent_surface_stress",
-    "nsss": "northward_turbulent_surface_stress",
-    "ro": "runoff_water_equivalent_surface",
-    "sro": "runoff_surface",
-    "ssrd": "downward_short_wave_radiation_flux_surface",
-    "ssr": "net_short_wave_radiation_flux_surface",
-    "strd": "downward_long_wave_radiation_flux_surface",
-    "str": "net_long_wave_radiation_flux_surface",
-    "ttr": "net_long_wave_radiation_flux_top_of_atmosphere",
-    "sshf": "downward_sensible_heat_flux_surface",
-    "slhf": "downward_latent_heat_flux_surface",
+# Short name -> catalog fields it stands for, first match wins. Catalog fluxes
+# are daily-mean W m-2 (ECDS: J m-2 since init). 6-hour max/min, static masks,
+# ocean, and pv are not mapped, so S2S takes them from ECDS. Unmapped catalog
+# fields keep their catalog name.
+_CATALOG_NAMES = {
+    "precip": ("precipitation_surface",),
+    "t2m": ("temperature_2m", "average_temperature_2m"),
+    "d2m": ("dew_point_temperature_2m", "average_dew_point_temperature_2m"),
+    "sst": ("sea_surface_temperature",),
+    "u10": ("wind_u_10m",),
+    "v10": ("wind_v_10m",),
+    "u100": ("wind_u_100m",),
+    "v100": ("wind_v_100m",),
+    "gust10": ("wind_gust_10m",),
+    "msl": ("pressure_reduced_to_mean_sea_level",),
+    "sp": ("pressure_surface",),
+    "cape": ("average_convective_available_potential_energy_surface",),
+    "tcw": ("total_column_water_atmosphere",),
+    "skt": ("skin_temperature_surface",),
+    "tcc": ("total_cloud_cover_atmosphere",),
+    "sd": ("snow_water_equivalent_surface",),
+    "rsn": ("snow_density_surface",),
+    "asn": ("snow_albedo_surface",),
+    "sm20": ("soil_moisture_0_20cm",),
+    "sm100": ("soil_moisture_0_100cm",),
+    "st20": ("soil_temperature_0_20cm",),
+    "st100": ("soil_temperature_0_100cm",),
+    "ci": ("sea_ice_area_fraction",),
+    "cp": ("precipitation_convective_surface",),
+    "sf": ("snowfall_water_equivalent_rate_surface",),
+    "ewss": ("eastward_turbulent_surface_stress",),
+    "nsss": ("northward_turbulent_surface_stress",),
+    "ro": ("runoff_water_equivalent_surface",),
+    "sro": ("runoff_surface",),
+    "ssrd": ("downward_short_wave_radiation_flux_surface",),
+    "ssr": ("net_short_wave_radiation_flux_surface",),
+    "strd": ("downward_long_wave_radiation_flux_surface",),
+    "str": ("net_long_wave_radiation_flux_surface",),
+    "ttr": ("net_long_wave_radiation_flux_top_of_atmosphere",),
+    "sshf": ("downward_sensible_heat_flux_surface",),
+    "slhf": ("downward_latent_heat_flux_surface",),
+    "gh": ("geopotential_height",),
+    "t": ("temperature",),
+    "u": ("wind_u",),
+    "v": ("wind_v",),
+    "w": ("vertical_velocity",),
+    "q": ("specific_humidity",),
 }
-_CATALOG_PRESSURE = {
-    "gh": "geopotential_height",
-    "t": "temperature",
-    "u": "wind_u",
-    "v": "wind_v",
-    "w": "vertical_velocity",
-    "q": "specific_humidity",
-}
-_CATALOG_TO_SHORT = {v: k for k, v in {**_CATALOG_SURFACE, **_CATALOG_PRESSURE}.items()}
+_CATALOG_TO_SHORT = {cat: short for short, cats in _CATALOG_NAMES.items() for cat in cats}
 
-# cfgrib / S2S abbreviations and other names accepted for a canonical `-v` token.
+# cfgrib / S2S / Open Data abbreviations and other names accepted for a canonical `-v` token.
 _GRIB_EXTRAS = {
     "tp": "precip",
     "precipitation": "precip",
@@ -265,10 +350,11 @@ _GRIB_EXTRAS = {
     "2d": "d2m",
     "10u": "u10",
     "10v": "v10",
+    "10fg": "gust10",
     "wtmp": "sst",
     "z": "gh",
 }
-_GRIB_ALIASES = {name: name for name in VARIABLES} | _GRIB_EXTRAS
+_GRIB_ALIASES = {name: name for name in VARIABLES | HRES_VARIABLES} | _GRIB_EXTRAS
 
 # Cumulative-since-init fields besides `precip`, written as-is (not deaccumulated).
 # Mixing them with `precip` would relabel their steps onto precip's shortened axis.
@@ -277,17 +363,19 @@ _ACCUMULATED = frozenset(
 )
 
 # Kelvin fields `to_standard_units` does not treat as air temperature.
-_KELVIN_TEMPS = frozenset({"sst", "skt", "d2m", "mx2t6", "mn2t6", "st20", "st100", "mswpt300", "t"})
+_KELVIN_TEMPS = frozenset(
+    {"t2m", "sst", "skt", "d2m", "mx2t6", "mn2t6", "st20", "st100", "mswpt300", "t"}
+)
 
 
-def _canonical_name(token: str) -> str | None:
-    if token in VARIABLES:
+def _canonical_name(token: str, table: dict = VARIABLES) -> str | None:
+    if token in table:
         return token
     extra = _GRIB_EXTRAS.get(token)
-    if extra is not None:
+    if extra in table:
         return extra
-    for short, spec in VARIABLES.items():
-        if token == spec.ecds:
+    for short, spec in table.items():
+        if token == spec[0]:
             return short
     return None
 
@@ -307,191 +395,461 @@ def _flatten_variable_tokens(raw) -> list[str]:
     return tokens
 
 
-def _resolve_variables(raw: list | None) -> list[str]:
+def _resolve_variables(raw: list | None, table: dict = VARIABLES) -> list[str]:
     tokens = _flatten_variable_tokens(raw) or list(DEFAULT_VARIABLES)
-    unknown = [token for token in tokens if _canonical_name(token) is None]
+    unknown = [token for token in tokens if _canonical_name(token, table) is None]
     if unknown:
         raise UsageError(
             f"unknown variable(s): {', '.join(unknown)}.\n"
-            f"Available (most used first): {', '.join(VARIABLES)}"
+            f"Available (most used first): {', '.join(table)}"
         )
     resolved: list[str] = []
     seen: set[str] = set()
     for token in tokens:
-        name = _canonical_name(token)
+        name = _canonical_name(token, table)
         if name not in seen:
             seen.add(name)
             resolved.append(name)
     return resolved
 
 
-def _catalog_covers(init: dt.date, names: list[str]) -> bool:
+def _catalog_covers(init: dt.date, tokens: list[str]) -> bool:
+    """True when the S2S catalog can serve the init and no token is an ECDS-only field."""
     if init < _CATALOG_START:
         return False
-    return all(name in _CATALOG_SURFACE or name in _CATALOG_PRESSURE for name in names)
+    return all(_canonical_name(t) in (None, *_CATALOG_NAMES) for t in tokens)
 
 
-def _use_staging_catalog() -> None:
+def _open_catalog(dataset: str, group: str | None = None):
+    """Open a dataset (production catalog, else staging until it is promoted)."""
     import dynamical_catalog
 
-    os.environ["DYNAMICAL_STAC_CATALOG_URL"] = _STAGING_CATALOG
-    dynamical_catalog.clear_cache()
-
-
-def _ensure_catalog() -> None:
-    """Prefer production; fall through to staging until the 46-day product is promoted."""
-    import dynamical_catalog
-
-    if _DATASET in dynamical_catalog.list():
-        return
-    _use_staging_catalog()
-    ids = dynamical_catalog.list()
-    if _DATASET not in ids:
-        raise DataError(
-            f"{_DATASET} is not in the dynamical.org catalog "
-            f"(tried production and staging). Available: {', '.join(ids)}"
-        )
-
-
-def _open_catalog(group: str | None = None):
-    import dynamical_catalog
-
-    kwargs: dict = {"chunks": None}
-    if group:
-        kwargs["group"] = group
     try:
-        _ensure_catalog()
-        return dynamical_catalog.open(_DATASET, **kwargs)
+        if dataset not in dynamical_catalog.list():
+            os.environ["DYNAMICAL_STAC_CATALOG_URL"] = _STAGING_CATALOG
+            dynamical_catalog.clear_cache()
+            ids = dynamical_catalog.list()
+            if dataset not in ids:
+                raise DataError(
+                    f"{dataset} is not in the dynamical.org catalog "
+                    f"(tried production and staging). Available: {', '.join(ids)}"
+                )
+        kwargs: dict = {"chunks": None}
+        if group:
+            kwargs["group"] = group
+        return dynamical_catalog.open(dataset, **kwargs)
     except DataError:
         raise
     except Exception as exc:  # noqa: BLE001
         raise DataError(
-            f"could not open {_DATASET} from the dynamical.org catalog ({exc})."
+            f"could not open {dataset} from the dynamical.org catalog ({exc})."
         ) from None
 
 
-def _catalog_latest_init() -> dt.date | None:
-    import numpy as np
+def _resolve_catalog(tokens: list[str], data_vars, dataset: str) -> list[str]:
+    """Map `-v` tokens onto catalog fields: catalog names, short names, or a level prefix.
 
-    try:
-        ds = _open_catalog()
-    except Exception:
-        return None
-    if ds.sizes.get("init_time", 0) == 0:
-        return None
-    return np_to_date(np.max(ds["init_time"].values))
-
-
-def _drop_empty_lead0(ds):
-    """Drop lead 0 when every requested field is all-NaN there, then reindex steps.
-
-    Catalog 24-hour surface statistics are NaN at init (no preceding day). ECDS
-    deaccumulation already writes `step=0` as the first 24 h, so shift remaining
-    leads down to match. Instant fields (winds, pressure, pressure-level) keep
-    lead 0.
+    A pressure-level token (`t`, `temperature`) takes every `*_Nhpa` field of
+    that prefix (never `temperature_2m`), or the single grouped field.
     """
-    import numpy as np
+    hpa: dict[str, list[str]] = {}
+    for name in data_vars:
+        match = _HPA_RE.match(name)
+        if match:
+            hpa.setdefault(match.group(1), []).append(name)
+    resolved: list[str] = []
+    missing: list[str] = []
+    for token in tokens:
+        short = _GRIB_EXTRAS.get(token) or _canonical_name(token) or token
+        found: list[str] = []
+        for cand in (token, *_CATALOG_NAMES.get(short, ())):
+            if cand in data_vars:
+                found = [cand]
+                break
+            if cand in hpa:
+                found = sorted(hpa[cand], key=lambda n: -int(_HPA_RE.match(n).group(2)))
+                break
+        if not found:
+            missing.append(token)
+        resolved += [name for name in found if name not in resolved]
+    if missing:
+        raise UsageError(
+            f"variable(s) not in {dataset}: {', '.join(missing)}.\n"
+            f"Available: {', '.join(sorted(data_vars))}\n"
+            "Run with --list-variables to see them with units and pressure levels."
+        )
+    return resolved
 
-    if "lead_time" not in ds.dims or ds.sizes["lead_time"] < 2:
-        return ds
-    first = ds.isel(lead_time=0)
+
+def _set_vertical_attrs(ds):
+    ds["vertical"].attrs.update(
+        units="hPa", standard_name="air_pressure", long_name="pressure", positive="down", axis="Z"
+    )
+    return ds
+
+
+def _stack_pressure_levels(ds):
+    """Combine `*_Nhpa` variables into one field with a `vertical` (hPa) dim."""
+    import xarray as xr
+
+    groups: dict[str, list[tuple[int, str]]] = {}
     for name in ds.data_vars:
-        if not bool(np.asarray(first[name].isnull().all())):
-            return ds
-    ds = ds.isel(lead_time=slice(1, None))
-    steps = np.arange(ds.sizes["lead_time"]) * np.timedelta64(1, "D")
-    return ds.assign_coords(lead_time=("lead_time", steps))
+        match = _HPA_RE.match(name)
+        if match:
+            groups.setdefault(match.group(1), []).append((int(match.group(2)), name))
+    if not groups:
+        return ds
+    drop = [name for items in groups.values() for _, name in items]
+    pieces = [ds.drop_vars(drop)]
+    for prefix, items in groups.items():
+        items = sorted(items, key=lambda it: -it[0])
+        stacked = xr.concat(
+            [ds[name].expand_dims(vertical=[float(hpa)]) for hpa, name in items], dim="vertical"
+        )
+        stacked.name = prefix
+        pieces.append(_set_vertical_attrs(stacked.to_dataset()))
+    return xr.merge(pieces)
 
 
-def _standardize_catalog(ds):
-    """CF attrs + standard units. Catalog precip is already a rate."""
+def _list_catalog_variables(dataset: str) -> None:
+    ds = _open_catalog(dataset)
+    print(f"{dataset} variables (pass the name or its short name to -v):")
+    for name in sorted(ds.data_vars):
+        attrs = ds[name].attrs
+        print(f"  {name}\t{attrs.get('units', '')}\t{attrs.get('long_name', '')}")
+    try:
+        pds = _open_catalog(dataset, group=_PRESSURE_GROUP)
+    except DataError:  # most stores have no pressure-level group
+        return
+    levels = ", ".join(f"{float(v):g}" for v in pds["pressure_level"].values)
+    print(f"{_PRESSURE_GROUP} group, levels {levels} hPa (-v NAME takes every level):")
+    for name in sorted(pds.data_vars):
+        attrs = pds[name].attrs
+        print(f"  {name}\t{attrs.get('units', '')}\t{attrs.get('long_name', '')}")
+
+
+def _fetch_catalog(dataset, tokens, bbox, date, windows, max_lead_h, source):
+    """Read one product from dynamical.org and write it on the skill's output contract."""
+    import numpy as np
+    import xarray as xr
+
+    ds = _open_catalog(dataset)
+    try:
+        names = _resolve_catalog(tokens, ds.data_vars, dataset)
+    except UsageError as err:
+        # 46-day fields on pressure levels live in a separate group.
+        try:
+            pds = _open_catalog(dataset, group=_PRESSURE_GROUP)
+        except DataError:
+            raise err from None
+        if "pressure_level" in pds.dims:
+            pds = _set_vertical_attrs(pds.rename({"pressure_level": "vertical"}))
+        ds = xr.merge([ds, pds], compat="override")
+        names = _resolve_catalog(tokens, ds.data_vars, dataset)
+    ds = ds[names]
+
+    inits = ds["init_time"].values
+    init_range = f"{np_to_date(inits.min()).isoformat()}..{np_to_date(inits.max()).isoformat()}"
+    when = date.isoformat() if date is not None else "selected"
+    if max_lead_h is not None:
+        limit = np.timedelta64(round(max_lead_h * 3600), "s")
+        # One catalog lead past the limit: end-labelled fields move back one
+        # step below, and the extra lead is trimmed after that.
+        n = int((ds["lead_time"].values <= limit).sum())
+        ds = ds.isel(lead_time=slice(0, n + 1))
+    if date is not None:
+        init_target = np.datetime64(f"{date.isoformat()}T00:00:00").astype(inits.dtype)
+        if init_target not in inits:
+            raise DataError(
+                f"{dataset} has no {date.isoformat()} 00 UTC init; "
+                f"available init range is {init_range}."
+            )
+        ds = ds.sel(init_time=init_target)
+    else:
+        # 00 UTC inits only, as with --date: the windows select init times.
+        midnight = inits == inits.astype("datetime64[D]")
+        keep = np.zeros(inits.size, dtype=bool)
+        for start, end in windows:
+            lo = np.datetime64(start.isoformat())
+            hi = np.datetime64(end.isoformat()) + np.timedelta64(1, "D")
+            keep |= midnight & (inits >= lo) & (inits < hi)
+        if not keep.any():
+            window_text = ", ".join(f"{start}..{end}" for start, end in windows)
+            raise DataError(
+                f"{dataset} has no 00 UTC init in {window_text}; "
+                f"available init range is {init_range}."
+            )
+        ds = ds.isel(init_time=np.nonzero(keep)[0])
+        print(f"Selected {int(keep.sum())} inits.", file=sys.stderr)
+    ds = ds.drop_vars([c for c in _DROP_COORDS if c in ds.coords])
+    rename = {"lead_time": "step", "init_time": "time"}
+    if "ensemble_member" in ds.dims:
+        rename["ensemble_member"] = "number"
+    ds = ds.rename(rename)
+
+    # Spatial subset after the time/variable selection: an antimeridian bbox
+    # concatenates two longitude wings, which reads every selected value.
+    if bbox is not None:
+        ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
+    else:
+        ds = ensure_normalized_longitude(ds, lon_dim="longitude")
+    # Read the subset once: the NaN checks below would otherwise re-read it.
+    ds = ds.load()
+    # Same order as the ECDS path, so a product's output doesn't depend on its source.
+    ds = ds.transpose(*[d for d in ("time", "number", "step") if d in ds.dims], ...)
+
+    empty = np.ones(ds.sizes["step"], dtype=bool)
+    for name in ds.data_vars:
+        other = [d for d in ds[name].dims if d != "step"]
+        empty &= ds[name].isnull().all(other).values
+    if empty.all():
+        raise DataError(
+            f"{dataset} {when} init has no data for the requested variables and "
+            "bbox (still publishing?); try the previous day's init."
+        )
+    # A fresh init is still publishing its long leads (all-NaN). Drop that
+    # tail and say so instead of writing empty leads.
+    last = int(np.nonzero(~empty)[0][-1])
+    if last < ds.sizes["step"] - 1:
+        hours = ds["step"].values / np.timedelta64(1, "h")
+        print(
+            f"WARNING: {dataset} {when} init has no data after catalog lead "
+            f"{hours[last]:g} h (of {hours[-1]:g} h; still publishing?). Dropped the "
+            "empty leads (not padded); use the previous day's init for every lead.",
+            file=sys.stderr,
+        )
+        ds = ds.isel(step=slice(0, last + 1))
+    # A range of inits: the newest may still be publishing its long leads
+    # while older inits fill them. Its empty leads stay NaN (not filled); an
+    # init with no data at all is skipped.
+    if "time" in ds.dims:
+        init_empty = np.ones((ds.sizes["time"], ds.sizes["step"]), dtype=bool)
+        for name in ds.data_vars:
+            other = [d for d in ds[name].dims if d not in ("time", "step")]
+            init_empty &= ds[name].isnull().all(other).transpose("time", "step").values
+        hours = ds["step"].values / np.timedelta64(1, "h")
+        for i, row in enumerate(init_empty):
+            init = str(ds["time"].values[i])[:13]
+            if row.all():
+                print(
+                    f"WARNING: {dataset} {init} UTC init has no data in the bbox "
+                    "(still publishing?); skipped.",
+                    file=sys.stderr,
+                )
+            elif row[-1]:
+                print(
+                    f"WARNING: {dataset} {init} UTC init has no data after catalog lead "
+                    f"{hours[np.nonzero(~row)[0][-1]]:g} h (still publishing?); its later "
+                    "leads are NaN (not filled).",
+                    file=sys.stderr,
+                )
+        ds = ds.isel(time=~init_empty.all(axis=1))
+
+    # Averaged fields (precip, daily means) are labelled at the END of their
+    # interval, so lead 0 is all-NaN. When every field is NaN there, drop lead 0
+    # and relabel each step to the previous lead: step = interval start.
+    # Instant fields (winds, pressure levels, instant t2m) keep lead 0.
+    leads = ds["step"].values
+    first = ds.isel(step=0)
+    if ds.sizes["step"] > 1 and all(bool(first[n].isnull().all()) for n in ds.data_vars):
+        ds = ds.isel(step=slice(1, None)).assign_coords(step=leads[:-1])
+        # IFS ENS goes 3- to 6-hourly. Write each cell's [start, end] here:
+        # stamp_data_interval would infer bounds as if steps were ends.
+        if len(set(np.diff(leads))) > 1:
+            pairs = np.stack([leads[:-1], leads[1:]], axis=1)
+            ds = ds.assign_coords(step_bounds=(("step", "nv"), pairs))
+            ds["step"].attrs["bounds"] = "step_bounds"
+        note = "Steps relabelled to interval start: step s covers [s, next lead)."
+        for name in ds.data_vars:
+            ds[name].attrs["comment"] = f"{ds[name].attrs.get('comment', '')} {note}".strip()
+        print("Dropped all-NaN lead 0 and relabelled steps to interval start.", file=sys.stderr)
+    elif ds.sizes["step"] > 1 and not any(bool(first[n].isnull().all()) for n in ds.data_vars):
+        # Only instant fields: on uneven leads give each sample the cell
+        # [s, next lead), so a day bin holds the samples labelled in that day.
+        if len(set(np.diff(leads))) > 1:
+            ends = np.append(leads[1:], leads[-1] + (leads[-1] - leads[-2]))
+            ds = ds.assign_coords(step_bounds=(("step", "nv"), np.stack([leads, ends], axis=1)))
+            ds["step"].attrs["bounds"] = "step_bounds"
+    if max_lead_h is not None:
+        ds = ds.sel(step=slice(None, limit))
+        # Mixed with instant fields, an end-labelled field has no value at step 0.
+        dropped = [name for name in ds.data_vars if bool(ds[name].isnull().all())]
+        if dropped:
+            print(
+                f"WARNING: dropped {', '.join(dropped)}: no value up to --max-lead "
+                f"{max_lead_h:g} h (averaged fields are labelled at the end of their interval).",
+                file=sys.stderr,
+            )
+            ds = ds.drop_vars(dropped)
+
+    ds = _stack_pressure_levels(ds)
+    ds = ds.rename({n: _CATALOG_TO_SHORT[n] for n in ds.data_vars if n in _CATALOG_TO_SHORT})
+    ds.attrs.update(Conventions="CF-1.13", weather_skills_source=source)
     stamp_cf_attrs(ds)
     if "precip" in ds.data_vars:
         ds["precip"].attrs.setdefault("standard_name", "precipitation_flux")
         ds["precip"].attrs.setdefault("long_name", "Total precipitation")
-    ds = ensure_normalized_longitude(ds)
-    out = ds
+    # Convert each variable alone so one inconvertible field does not abort the fetch.
     for name in list(ds.data_vars):
         try:
-            out = to_standard_units(out, variables=[name])
+            ds = to_standard_units(ds, variables=[name])
         except UsageError:
             continue
     for name in _KELVIN_TEMPS:
-        if name in out.data_vars:
-            out[name] = _to_celsius(out[name])
-    return stamp_data_interval(out)
+        if name in ds.data_vars:
+            ds[name] = _to_celsius(ds[name])
+    # Stamp the lead spacing: with an init window, `time` is the init axis
+    # and its 1-day gaps are not the cell length.
+    return stamp_data_interval(ds, dim="step")
 
 
-def _fetch_catalog(init: dt.date, bbox, names: list[str]):
+# --- Sheerwater reforecast (hindcast) stores ------------------------------------
+
+_HINDCAST_ROOT = "gs://sheerwater-public-datalake/hindcasts"
+# Label -> (store file prefix, short names it has). Planette (IFS CY49R1, one model
+# cycle, every second day 2006-2025) first; WeatherBench2 (mixed cycles, 1996-2021)
+# serves only inits before Planette's first, so one window never mixes the two.
+_HINDCAST_STORES = {
+    "ecmwf_planette": ("ecmwf_planette", ("precip", "t2m", "sst")),
+    "ecmwf_wb2": ("ecmwf_ifs", ("precip", "t2m")),
+}
+# Short name -> (variable in the store, units, standard_name). The stores' own unit
+# strings ("mm" for a daily rate, "C") are not all right, so units are set here.
+_HINDCAST_VARS = {
+    "precip": ("precip", "mm day-1", "precipitation_flux"),
+    "t2m": ("tmp2m", "degree_Celsius", "air_temperature"),
+    "sst": ("sst", "degree_Celsius", "sea_surface_temperature"),
+}
+
+
+def _open_hindcast(path: str):
+    """Open a public reforecast store lazily: (member, prediction_timedelta, lat, lon, init_time)."""
+    import xarray as xr
+
+    try:
+        return xr.open_zarr(
+            path, storage_options={"token": "anon"}, decode_timedelta=True, chunks=None
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise DataError(f"failed to open {path} ({exc}).") from None
+
+
+def _fetch_hindcast(names, bbox, date, windows, max_lead_h):
+    """Read ECMWF reforecast inits from the Sheerwater stores on the live s2s output contract.
+
+    Returns None when --date is not a reforecast init for every requested field.
+    """
     import numpy as np
     import xarray as xr
 
-    date_iso = init.isoformat()
-    surface = [name for name in names if name in _CATALOG_SURFACE]
-    pressure = [name for name in names if name in _CATALOG_PRESSURE]
-
-    pieces = []
-    if surface:
-        ds = _open_catalog()[[_CATALOG_SURFACE[name] for name in surface]]
-        pieces.append(ds)
-    if pressure:
-        pds = _open_catalog(group=_PRESSURE_GROUP)
-        pds = pds[[_CATALOG_PRESSURE[name] for name in pressure]]
-        if "pressure_level" in pds.dims:
-            pds = pds.rename({"pressure_level": "vertical"})
-            pds["vertical"].attrs.update(
-                units="hPa",
-                standard_name="air_pressure",
-                long_name="pressure",
-                positive="down",
-                axis="Z",
+    spans = [(date, date)] if date is not None else windows
+    parts: dict[str, list] = {name: [] for name in names}
+    taken = np.array([], dtype="datetime64[D]")
+    first = np.datetime64("9999-12-31", "D")  # first init of the stores read so far
+    used, ranges = [], {}
+    wb2_days = np.array([], dtype="datetime64[D]")
+    for label, (prefix, served) in _HINDCAST_STORES.items():
+        if all(np.datetime64(start, "D") >= first for start, _ in spans):
+            continue
+        new = []
+        store_first = first
+        for name in [n for n in names if n in served]:
+            var = _HINDCAST_VARS[name][0]
+            path = f"{_HINDCAST_ROOT}/{prefix}_{var}.zarr"
+            ds = _open_hindcast(path)[[var]].drop_vars("time", errors="ignore")
+            day = ds["init_time"].values.astype("datetime64[D]")
+            ranges.setdefault(label, f"{label} {day.min()}..{day.max()}")
+            keep = np.any(
+                [(day >= np.datetime64(s, "D")) & (day <= np.datetime64(e, "D")) for s, e in spans],
+                axis=0,
+            ) & (day < first)
+            store_first = min(store_first, day.min())
+            if not keep.any():
+                continue
+            new.append(day[keep])
+            # Still lazy: only the chunks inside the inits, leads and bbox are read.
+            ds = ds.isel(init_time=keep).rename(
+                {
+                    var: name,
+                    "init_time": "time",
+                    "member": "number",
+                    "prediction_timedelta": "step",
+                    "lat": "latitude",
+                    "lon": "longitude",
+                }
             )
-        pieces.append(pds)
-    ds = pieces[0] if len(pieces) == 1 else xr.merge(pieces, compat="override")
+            if max_lead_h is not None:
+                ds = ds.sel(step=slice(None, np.timedelta64(round(max_lead_h * 3600), "s")))
+            ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
+            try:
+                parts[name].append(ds.load())
+            except Exception as exc:  # noqa: BLE001
+                raise DataError(f"failed to read {path} ({exc}).") from None
+        first = store_first
+        if new:
+            used.append(label)
+            days = np.unique(np.concatenate(new))
+            taken = np.union1d(taken, days)
+            if label == "ecmwf_wb2":
+                wb2_days = days
 
-    ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
-
-    inits = ds["init_time"].values
-    init_target = np.datetime64(f"{date_iso}T00:00:00").astype(inits.dtype)
-
-    def _no_init() -> DataError:
-        return DataError(
-            f"{_DATASET} has no {date_iso} 00 UTC init; available init range is "
-            f"{np_to_date(inits.min()).isoformat()}..{np_to_date(inits.max()).isoformat()}."
+    if date is not None and any(not parts[name] for name in names):
+        return None
+    if not taken.size:
+        window_text = ", ".join(f"{s}..{e}" for s, e in windows)
+        raise DataError(
+            f"no ECMWF reforecast init in {window_text}; the stores run {'; '.join(ranges.values())}."
+        )
+    absent = [name for name in names if not parts[name]]
+    if absent:
+        raise DataError(
+            f"no ECMWF reforecast {', '.join(absent)} for the inits in the window "
+            "(sst is in ecmwf_planette only, inits 2006-01-03..2025-06-01)."
         )
 
-    if init_target not in inits:
-        raise _no_init()
+    source = "+".join(f"sheerwater-hindcast:{label}" for label in used)
+    print(
+        f"Fetching ECMWF s2s reforecast from {source}: {taken.size} init(s), 10 members, "
+        f"variables={','.join(names)}",
+        file=sys.stderr,
+    )
+    if wb2_days.size:
+        print(
+            f"WARNING: {wb2_days.size} init(s) ({wb2_days[0]}..{wb2_days[-1]}) come from the "
+            "WeatherBench2 IFS reforecast, whose model cycle changes from init to init; a trend "
+            "across them can be a model change.",
+            file=sys.stderr,
+        )
+    times = taken.astype("datetime64[ns]")
+    fields = []
+    for name in names:
+        da = xr.concat(parts[name], "time", join="exact")[name]
+        missing = np.setdiff1d(taken, da["time"].values.astype("datetime64[D]"))
+        if missing.size:
+            print(
+                f"WARNING: reforecast {name} has no run for {missing.size} init(s), left NaN: "
+                + ", ".join(str(d) for d in missing),
+                file=sys.stderr,
+            )
+        da = da.reindex(time=times)
+        da.attrs = {"units": _HINDCAST_VARS[name][1], "standard_name": _HINDCAST_VARS[name][2]}
+        fields.append(da)
     try:
-        ds = ds.sel(init_time=init_target)
-    except KeyError:
-        raise _no_init() from None
+        ds = xr.merge(fields, join="exact")
+    except ValueError as exc:
+        raise DataError(f"reforecast stores are on different grids ({exc}).") from None
+    ds = ds.transpose("time", "number", "step", "latitude", "longitude")
+    if date is not None:
+        ds = ds.isel(time=0)
+    ds.attrs = {"Conventions": "CF-1.13", "weather_skills_source": source}
+    stamp_cf_attrs(ds)
+    if "precip" in ds.data_vars:
+        ds["precip"].attrs["long_name"] = "Total precipitation"
+    # Step d is the day [init + d, init + d + 1).
+    return stamp_data_interval(ds, period="1 day", dim="step")
 
-    drop = [c for c in _DROP_COORDS if c in ds.coords or c in ds]
-    if drop:
-        ds = ds.drop_vars(drop)
-    ds = _drop_empty_lead0(ds)
-    rename = {"lead_time": "step"}
-    if "ensemble_member" in ds.dims:
-        rename["ensemble_member"] = "number"
-    ds = ds.rename(rename)
-    if "init_time" in ds.coords or "init_time" in ds:
-        ds = ds.assign_coords(time=ds["init_time"]).drop_vars("init_time")
 
-    rename_vars = {
-        name: _CATALOG_TO_SHORT[name]
-        for name in ds.data_vars
-        if name in _CATALOG_TO_SHORT and _CATALOG_TO_SHORT[name] != name
-    }
-    if rename_vars:
-        ds = ds.rename(rename_vars)
-    missing = [name for name in names if name not in ds.data_vars]
-    if missing:
-        have = ", ".join(ds.data_vars) if list(ds.data_vars) else "none"
-        raise DataError(f"{_DATASET} did not contain {', '.join(missing)} (opened: {have}).")
-    ds = ds[names]
-    ds.attrs.update(Conventions="CF-1.13", weather_skills_source="ecmwf-s2s")
-    return _standardize_catalog(ds)
+# --- ECDS ---------------------------------------------------------------------
 
 
 def _request_group_key(name: str) -> tuple:
@@ -615,6 +973,76 @@ def _concat_lon(datasets: list) -> object:
     return combined.isel({lon_name: np.sort(unique_idx)}).sortby(lon_name)
 
 
+def _is_s2s_embargo_error(exc: BaseException) -> bool:
+    """True if `exc` (or its cause/context chain) matches the S2S real-time embargo."""
+    parts: list[str] = []
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen and len(seen) < _EMBARGO_CHAIN_MAX_DEPTH:
+        seen.add(id(cur))
+        parts.append(str(cur))
+        parts.append(type(cur).__name__)
+        cur = cur.__cause__ if cur.__cause__ is not None else cur.__context__
+    haystack = " ".join(parts).lower()
+    return any(sig in haystack for sig in _S2S_EMBARGO_SIGNATURES)
+
+
+# --- HRES requests -------------------------------------------------------------
+
+
+def _steps_for(run_hour: int, max_lead_h: float | None = None) -> list[int]:
+    steps = _SHORT_CUTOFF_STEPS if run_hour in (6, 18) else _FULL_RUN_STEPS
+    if max_lead_h is None:
+        return steps
+    return [s for s in steps if s <= max_lead_h]
+
+
+def _hres_request(
+    date_iso: str,
+    run_hour: int,
+    group_vars: list[str],
+    level_type: str,
+    levels: tuple[str, ...],
+    steps: list[int],
+) -> dict:
+    req: dict = {
+        "date": dt.date.fromisoformat(date_iso),
+        "time": run_hour,
+        # Deliberately omit `stream`. ecmwf-opendata's Client resolves it
+        # itself (Client.patch_stream), and that resolution is date-aware:
+        # IFS Cycle 50r1 (2026-05-12) moved 06/18Z runs from stream=scda to
+        # stream=oper. Passing an explicit "oper" gets inconsistently
+        # remapped back to "scda" by Client.retrieve()'s index-file path for
+        # some 06/18Z requests — let the client infer it instead.
+        "type": "fc",
+        "step": steps,
+        "levtype": level_type,
+        "param": [HRES_VARIABLES[name].param for name in group_vars],
+    }
+    if levels:
+        req["levelist"] = list(levels)
+    return req
+
+
+# --- shared ---------------------------------------------------------------------
+
+
+def _parse_max_lead(value: str) -> float:
+    """Hours from ``24``, ``24h`` or ``10D`` (bare numbers are hours)."""
+    import pandas as pd
+
+    text = value.strip()
+    try:
+        hours = float(text) if text.replace(".", "", 1).isdigit() else None
+        if hours is None:
+            hours = pd.Timedelta(text) / pd.Timedelta(hours=1)
+    except ValueError:
+        raise UsageError(f"--max-lead {value!r} is not a lead time (24, 24h, 10D)") from None
+    if hours < 0:
+        raise UsageError("--max-lead must not be negative")
+    return hours
+
+
 def _drop_grib_filters(ds):
     drop = [name for name in ds.coords if name not in ds.dims and name not in _KEEP_COORDS]
     return ds.drop_vars(drop) if drop else ds
@@ -627,7 +1055,7 @@ def _open_grib(path: Path):
 
     parts = cfgrib.open_datasets(str(path))
     if not parts:
-        raise DataError(f"ECDS GRIB {path.name} contained no messages.")
+        raise DataError(f"GRIB {path.name} contained no messages.")
     cleaned = [_drop_grib_filters(part) for part in parts]
     if len(cleaned) == 1:
         return cleaned[0]
@@ -674,7 +1102,7 @@ def _rename_to_short(ds, requested: list[str]):
     missing = [name for name in requested if name not in ds.data_vars]
     if missing:
         have = ", ".join(ds.data_vars) if list(ds.data_vars) else "none"
-        raise DataError(f"ECDS GRIB did not contain {', '.join(missing)} (decoded: {have}).")
+        raise DataError(f"GRIB did not contain {', '.join(missing)} (decoded: {have}).")
     return ds[requested]
 
 
@@ -688,11 +1116,9 @@ def _to_celsius(da):
 
 
 def _standardize(ds):
-    """CF attrs + standard units. S2S ``precip`` is cumulative; convert to a rate."""
+    """CF attrs + standard units for GRIB fields. Cumulative ``precip`` becomes a rate."""
     stamp_cf_attrs(ds)
     if "precip" in ds.data_vars:
-        ds["precip"].attrs["standard_name"] = "precipitation_amount"
-        ds["precip"].attrs["units"] = "kg m-2"
         ds["precip"].attrs["long_name"] = "Total precipitation"
     ds = ensure_normalized_longitude(ds)
     ds = to_standard_units(ds)
@@ -700,39 +1126,58 @@ def _standardize(ds):
         if name in ds.data_vars:
             ds[name] = _to_celsius(ds[name])
     ds = precip_amounts_to_rates(ds)
-    return stamp_data_interval(ds)
-
-
-def _is_s2s_embargo_error(exc: BaseException) -> bool:
-    """True if `exc` (or its cause/context chain) matches the S2S real-time embargo."""
-    parts: list[str] = []
-    seen: set[int] = set()
-    cur: BaseException | None = exc
-    while cur is not None and id(cur) not in seen and len(seen) < _EMBARGO_CHAIN_MAX_DEPTH:
-        seen.add(id(cur))
-        parts.append(str(cur))
-        parts.append(type(cur).__name__)
-        cur = cur.__cause__ if cur.__cause__ is not None else cur.__context__
-    haystack = " ".join(parts).lower()
-    return any(sig in haystack for sig in _S2S_EMBARGO_SIGNATURES)
+    # With an init window, `time` is the init axis, not the cell length.
+    return stamp_data_interval(ds, dim="step")
 
 
 @weather_skill(
     name="ecmwf-fetch",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("--bbox", required=True)
-@weather_skill.argument("--date", required=True)
+@weather_skill.argument(
+    "--product",
+    default="s2s",
+    choices=tuple(PRODUCTS),
+    help=(
+        "s2s (46-day daily ensemble, default), s2s-6h (46-day 6-hourly), ifs-ens "
+        "(15-day 0.25° ensemble), aifs-ens, aifs-single, hres (deterministic, Open Data)."
+    ),
+)
+@weather_skill.argument("--bbox", help="N/W/S/E. Required for s2s and hres.")
+@weather_skill.argument("--date", help="Init date (00 UTC; with hres, see --run).")
+@weather_skill.argument(
+    "--start-time",
+    action="append",
+    help="Init window start; repeat with --end-time for several windows.",
+)
+@weather_skill.argument("--end-time", action="append", help="Window end, paired with --start-time.")
+@weather_skill.argument(
+    "--run",
+    type=int,
+    choices=(0, 6, 12, 18),
+    help=(
+        "hres only: init hour (UTC). 00/12 publish the full 15-day range (3-hourly to "
+        "144h, 6-hourly to 360h); 06/18 (short cutoff) only to 144h, "
+        "3-hourly throughout. Default 0."
+    ),
+)
 @weather_skill.argument(
     "--variable",
     "-v",
     action="append",
     nargs="+",
     help=(
-        "S2S fields to retrieve. Pass several names in one flag (`-v precip t2m`), "
-        "repeat `-v`, or comma-separate (`-v precip,t2m`). Most used first: precip "
-        "(also tp), t2m, sst. Pressure-level: gh, t, u, v, w, q. Default precip. "
-        "Other names are cfgrib short names (sst, t, not ARCO 2m_temperature)."
+        "Fields to retrieve. Pass several names in one flag (`-v precip t2m`), "
+        "repeat `-v`, or comma-separate (`-v precip,t2m`). Short names: precip "
+        "(also tp), t2m, sst, d2m, u10, v10, msl; pressure-level gh, t, u, v, w, q. "
+        "Default precip. dynamical.org products also take catalog names."
+    ),
+)
+@weather_skill.argument(
+    "--max-lead",
+    help=(
+        "Keep steps up to this lead (24, 24h, 10D; bare numbers are hours); 0 is the "
+        "initial step only. Default: every step."
     ),
 )
 @weather_skill.argument(
@@ -742,39 +1187,258 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Print the latest init date (YYYY-MM-DD, usable as --date) of --product on "
+        "stdout and exit. Does not download fields. IDENT is ignored."
     ),
 )
-def fetch(bbox, date, variable, probe_latest, **kwargs):
-    """Fetch an ECMWF S2S (46-day) ensemble forecast for one init date as a weather-skills Zarr."""
-    if probe_latest is not None:
-        found = _catalog_latest_init()
-        if found is not None:
-            print(found.isoformat())
-            return
-        # Calendar fallback when the catalog is unreachable. 2-day embargo;
-        # Mon/Thu only before 2023-06-27.
-        day = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=2)
-        if day < dt.date(2023, 6, 27):
-            while day.weekday() not in (0, 3):
-                day -= dt.timedelta(days=1)
-        print(day.isoformat())
+@weather_skill.argument(
+    "--list-variables",
+    action="store_true",
+    probe=True,
+    help=(
+        "dynamical.org products: print the catalog variables (name, units, long name; "
+        "pressure levels for the pressure-level group) and exit."
+    ),
+)
+def fetch(
+    product,
+    bbox,
+    date,
+    start_time,
+    end_time,
+    run,
+    variable,
+    max_lead,
+    probe_latest,
+    list_variables,
+    **kwargs,
+):
+    """Fetch an ECMWF forecast product (S2S, IFS-ENS, AIFS, HRES) as a weather-skills Zarr."""
+    dataset = PRODUCTS[product]
+    if run is not None and product != "hres":
+        raise UsageError("--run is for --product hres only.")
+    if list_variables:
+        if dataset is None:
+            raise UsageError("--list-variables is for the dynamical.org products, not hres.")
+        _list_catalog_variables(dataset)
+        if product == "s2s":
+            fields = ", ".join(n for n in VARIABLES if n not in _CATALOG_NAMES)
+            print(f"ECMWF Data Store fields (any init; needs ECMWF_DATASTORES_KEY): {fields}")
         return
 
-    date_iso = date.isoformat()
-    area = list(bbox)
-    names = _resolve_variables(variable)
+    if probe_latest is not None:
+        if product == "hres":
+            from ecmwf.opendata import Client
 
-    if _catalog_covers(date, names):
+            client = Client(source="ecmwf")
+            try:
+                latest = client.latest(stream="oper", type="fc", step=0, levtype="sfc", param="2t")
+            except Exception as exc:  # noqa: BLE001
+                raise DataError(f"could not determine the latest HRES init ({exc}).") from None
+            # stdout is a bare date so it passes straight to --date (whose 00 UTC
+            # run is published whenever any run that day is); stderr names the run.
+            print(
+                f"Latest run: {latest:%Y-%m-%d} {latest:%H} UTC "
+                f"(--date {latest:%Y-%m-%d} --run {latest.hour})",
+                file=sys.stderr,
+            )
+            print(latest.strftime("%Y-%m-%d"))
+            return
+        import numpy as np
+
+        try:
+            ds = _open_catalog(dataset)
+        except DataError:
+            if product != "s2s":
+                raise
+            # Calendar fallback when the catalog is unreachable. 2-day embargo.
+            print((dt.datetime.now(dt.UTC).date() - dt.timedelta(days=2)).isoformat())
+            return
+        latest = np.max(ds["init_time"].values)
+        # Read one value: the last lead of the newest init at one grid point.
+        # NaN there means the long leads are still publishing.
+        var = ds[next(iter(ds.data_vars))].sel(init_time=latest)
+        point = var.isel({d: -1 if d == "lead_time" else 0 for d in var.dims})
+        if np.isnan(float(point.values)):
+            print(
+                f"Note: the {np_to_date(latest).isoformat()} init is still publishing; "
+                "its long leads are all-NaN for now.",
+                file=sys.stderr,
+            )
+        print(np_to_date(latest).isoformat())
+        return
+
+    if len(start_time or []) != len(end_time or []):
+        raise UsageError("pass --start-time and --end-time in pairs.")
+    windows = list(zip(start_time or [], end_time or [], strict=True))
+    if (date is None) == (not windows):
+        raise UsageError(
+            "pass --date for one init, or --start-time/--end-time for a range of inits (not both)."
+        )
+    if product in ("s2s", "hres") and bbox is None:
+        raise UsageError(f"--bbox is required for --product {product}.")
+    max_lead_h = None if max_lead is None else _parse_max_lead(max_lead)
+    tokens = _flatten_variable_tokens(variable) or list(DEFAULT_VARIABLES)
+
+    window_text = ", ".join(f"{start}..{end}" for start, end in windows)
+    when = date.isoformat() if date is not None else window_text
+
+    if product == "hres":
+        run = run or 0
+        if windows:
+            # The --run init of each day in the windows, as with --date: the windows
+            # select init times, not valid times.
+            inits = sorted(
+                {a + dt.timedelta(days=n) for a, b in windows for n in range((b - a).days + 1)}
+            )
+            print(f"Selected {len(inits)} inits.", file=sys.stderr)
+        else:
+            inits = [date]
+        names = _resolve_variables(tokens, HRES_VARIABLES)
+        steps = _steps_for(run, max_lead_h)
+        if max_lead_h is not None and "precip" in names:
+            # precip becomes rates over [step, next step) and loses its last step, so
+            # one more step is fetched to keep every step up to --max-lead.
+            steps += [s for s in _steps_for(run) if s > max_lead_h][:1]
+        groups: dict[tuple, list[str]] = {}
+        for name in names:
+            spec = HRES_VARIABLES[name]
+            groups.setdefault((spec.level_type, spec.levels), []).append(name)
+
+        import xarray as xr
+        from ecmwf.opendata import Client
+
+        # One init at a time: each is downloaded, cut to the bbox and loaded, and its
+        # GRIB files are deleted before the next init.
+        pieces = []
+        for init in inits:
+            date_iso = init.isoformat()
+            print(
+                f"Fetching ECMWF HRES for bbox={list(bbox)} date={date_iso} run={run:02d}Z "
+                f"variables={','.join(names)} steps={steps[0]}..{steps[-1]}h ({len(steps)})",
+                file=sys.stderr,
+            )
+            try:
+                with tempfile.TemporaryDirectory(prefix="ecmwf-fetch-") as tmpdir:
+                    parts = []
+                    for i, ((level_type, levels), group_vars) in enumerate(groups.items()):
+                        req = _hres_request(date_iso, run, group_vars, level_type, levels, steps)
+                        grib = Path(tmpdir) / f"hres_{i}.grib2"
+                        print(
+                            f"Retrieving {', '.join(group_vars)} ({level_type})...",
+                            file=sys.stderr,
+                        )
+                        # Recent inits try ECMWF first (fastest), then AWS; older inits go
+                        # straight to AWS since ECMWF no longer has them. Each source gets
+                        # one attempt: under load both answer "503 Slow Down", and waiting
+                        # it out leaves the user waiting for nothing.
+                        oldest_on_ecmwf = dt.datetime.now(dt.UTC).date() - dt.timedelta(
+                            days=_ECMWF_DAYS_KEPT - 1
+                        )
+                        sources = ("ecmwf", "aws") if init >= oldest_on_ecmwf else ("aws",)
+                        errors = []
+                        for source in sources:
+                            try:
+                                client = Client(source=source, maximum_retries=1)
+                                client.retrieve(request=req, target=str(grib))
+                                break
+                            except Exception as exc:  # noqa: BLE001
+                                errors.append(f"{source}: {exc}")
+                        else:
+                            if any("503" in e or "SlowDown" in e for e in errors):
+                                hint = (
+                                    "The server is rate-limiting requests (503 Slow Down): "
+                                    "fetch one init at a time and try again in a few minutes."
+                                )
+                            else:
+                                hint = (
+                                    "The init may not be published yet (recent inits lag "
+                                    "~6-9h; try --probe-latest) or this is a transport problem."
+                                )
+                            raise DataError(
+                                f"ECMWF Open Data retrieval failed for init {date_iso} "
+                                f"{run:02d}Z ({'; '.join(errors)}). {hint}"
+                            )
+                        ds = _promote_vertical(_open_grib(grib))
+                        parts.append(_rename_to_short(ds, group_vars))
+
+                    ds = (
+                        parts[0]
+                        if len(parts) == 1
+                        else xr.merge(parts, join="outer", compat="override")
+                    )
+                    ds = ds[names]
+                    ds = bbox_subset(ds, list(bbox), lat_dim="latitude", lon_dim="longitude")
+                    if "step" not in ds.dims:
+                        # cfgrib keeps a lone step (--max-lead 0) as a scalar coordinate.
+                        ds = ds.expand_dims("step")
+                    # Read one step at a time: cfgrib materializes the full global field
+                    # for every step/level it is asked for before slicing to the bbox, so
+                    # one whole-cube read of a pressure-level field needs several GB.
+                    pieces.append(
+                        xr.concat(
+                            [ds.isel(step=[i]).load() for i in range(ds.sizes["step"])],
+                            dim="step",
+                        )
+                    )
+            except DataError as exc:
+                if not windows:
+                    raise
+                print(f"WARNING: HRES init {date_iso} {run:02d}Z skipped ({exc})", file=sys.stderr)
+
+        if not pieces:
+            raise DataError(
+                f"no {run:02d} UTC HRES init in {window_text} could be retrieved. ECMWF Open "
+                "Data holds the last ~4 days and the AWS mirror inits from 2023; recent inits "
+                "lag ~6-9h (try --probe-latest)."
+            )
+        if windows:
+            # A range of inits: a `time` axis (the init).
+            ds = xr.concat(
+                pieces, "time", join="outer", coords="different", compat="equals"
+            ).transpose("time", "step", ...)
+        else:
+            ds = pieces[0]
+        ds.attrs.update(Conventions="CF-1.13", weather_skills_source="ecmwf-hres")
+        return _standardize(ds).load()
+
+    if product == "s2s":
+        starts = [date] if date is not None else [start for start, _ in windows]
+        ends = [date] if date is not None else [end for _, end in windows]
+        if min(starts) < _CATALOG_START <= max(ends):
+            raise UsageError(
+                f"split the request at {_CATALOG_START}: inits before it come from the ECMWF "
+                "reforecast (10 members, 1..10) and inits from it from the live forecast "
+                "(101 members, 0..100), so they do not stack on one number axis. Fetch "
+                f"--end-time {_CATALOG_START - dt.timedelta(days=1)} and "
+                f"--start-time {_CATALOG_START} in two calls."
+            )
+        names = [_canonical_name(token) for token in tokens]
+        in_hindcast = all(name in _HINDCAST_VARS for name in names)
+        if max(ends) < _CATALOG_START and in_hindcast:
+            ds = _fetch_hindcast(list(dict.fromkeys(names)), bbox, date, windows, max_lead_h)
+            if ds is not None:
+                return ds
+            print(
+                f"{date} is not an ECMWF reforecast init for every requested field; using the ECMWF Data Store.",
+                file=sys.stderr,
+            )
+
+    # Windows never cross _CATALOG_START (checked above), so the first init decides.
+    first = date if date is not None else min(start for start, _ in windows)
+    if product != "s2s" or _catalog_covers(first, tokens):
+        source = "ecmwf-s2s" if product == "s2s" else f"dynamical:{dataset}"
         print(
-            f"Fetching ECMWF S2S from dynamical:{_DATASET} "
-            f"for area={area} date={date_iso} variables={','.join(names)}",
+            f"Fetching ECMWF {product} from dynamical:{dataset} "
+            f"for bbox={bbox and list(bbox)} variables={','.join(tokens)}",
             file=sys.stderr,
         )
-        return _fetch_catalog(date, bbox, names)
+        return _fetch_catalog(dataset, tokens, bbox, date, windows, max_lead_h, source)
 
+    # S2S from the ECMWF Data Store: pre-2026 inits the reforecast lacks, or fields
+    # neither the catalog nor the reforecast has.
+    area = list(bbox)
+    names = _resolve_variables(tokens)
     mixed = sorted(_ACCUMULATED.intersection(names))
     if "precip" in names and mixed:
         raise UsageError(
@@ -782,11 +1446,43 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
             "since init and would be misaligned with precip's per-step rate."
         )
     latest = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=2)
-    if date > latest:
-        raise DataError(
-            f"init {date_iso} is inside the 2-day S2S real-time embargo; "
-            f"the latest init you can request is {latest.isoformat()}."
-        )
+    if windows:
+        # Every published init day in the windows: daily from _DAILY_FROM,
+        # Mondays and Thursdays before. The windows select init times.
+        inits = set()
+        for start, end in windows:
+            day = start
+            while day <= end:
+                if day >= _DAILY_FROM or day.weekday() in (0, 3):
+                    inits.add(day)
+                day += dt.timedelta(days=1)
+        inits = sorted(inits)
+        if not inits:
+            raise DataError(
+                f"no S2S init in {window_text}: inits are daily from {_DAILY_FROM}, "
+                "Mondays and Thursdays only before then."
+            )
+        embargoed = [init for init in inits if init > latest]
+        if embargoed:
+            print(
+                f"WARNING: {len(embargoed)} init(s) from {embargoed[0]} are inside the 2-day "
+                f"S2S real-time embargo (latest {latest}); skipped.",
+                file=sys.stderr,
+            )
+            inits = [init for init in inits if init <= latest]
+        if not inits:
+            raise DataError(
+                f"every init in {window_text} is inside the 2-day S2S real-time embargo; "
+                f"the latest init you can request is {latest.isoformat()}."
+            )
+        print(f"Selected {len(inits)} inits.", file=sys.stderr)
+    else:
+        if date > latest:
+            raise DataError(
+                f"init {date.isoformat()} is inside the 2-day S2S real-time embargo; "
+                f"the latest init you can request is {latest.isoformat()}."
+            )
+        inits = [date]
 
     require_env("ECMWF_DATASTORES_KEY")
     _ensure_datastores_url()
@@ -797,7 +1493,7 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
     from ecmwf.datastores.processing import ProcessingFailedError
 
     print(
-        f"Fetching ECMWF S2S from ECDS for area={area} date={date_iso} variables={','.join(names)}",
+        f"Fetching ECMWF S2S from ECDS for area={area} inits={when} variables={','.join(names)}",
         file=sys.stderr,
     )
     with tempfile.TemporaryDirectory(prefix="ecmwf-fetch-") as tmpdir:
@@ -806,75 +1502,103 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
         client = Client()
         groups = _group_for_request(names)
 
+        # One ECDS request per init, variable group, forecast type and sub-area.
         legs = []
-        for key, group_vars in groups:
-            slug = _group_slug(key)
-            control_only = key[3]
-            forecast_types = [("control_forecast", "cf")]
-            if not control_only:
-                forecast_types.append(("perturbed_forecast", "pf"))
-            for forecast_type, short in forecast_types:
-                for i, sub in enumerate(sub_areas):
-                    legs.append(
-                        {
-                            "key": key,
-                            "group_vars": group_vars,
-                            "forecast_type": forecast_type,
-                            "short": short,
-                            "area": sub,
-                            "grib": tmp / f"{short}_{slug}_{i}.grib",
-                            "remote": None,
-                        }
-                    )
+        for init in inits:
+            for key, group_vars in groups:
+                slug = _group_slug(key)
+                control_only = key[3]
+                forecast_types = [("control_forecast", "cf")]
+                if not control_only:
+                    forecast_types.append(("perturbed_forecast", "pf"))
+                for forecast_type, short in forecast_types:
+                    for i, sub in enumerate(sub_areas):
+                        legs.append(
+                            {
+                                "init": init,
+                                "key": key,
+                                "group_vars": group_vars,
+                                "forecast_type": forecast_type,
+                                "short": short,
+                                "area": sub,
+                                "grib": tmp / f"{short}_{slug}_{i}_{init.isoformat()}.grib",
+                                "remote": None,
+                            }
+                        )
 
         print(f"Submitting {len(legs)} retrieval leg(s)...", file=sys.stderr)
-        try:
-            for leg in legs:
-                req = _build_request(date_iso, leg["area"], leg["forecast_type"], leg["group_vars"])
-                leg["remote"] = _submit(client, req)
-        except DataError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            raise DataError(
-                f"ECDS submit failed for init {date_iso} ({exc}); this is a transport/auth problem."
-            ) from None
-
-        remotes = [leg["remote"] for leg in legs]
-        waited = 0
-        while True:
+        for leg in legs:
+            date_iso = leg["init"].isoformat()
+            req = _build_request(date_iso, leg["area"], leg["forecast_type"], leg["group_vars"])
             try:
-                if all(r.results_ready for r in remotes):
-                    break
-            except ProcessingFailedError as exc:
-                if _is_s2s_embargo_error(exc):
-                    raise DataError(
-                        f"init {date_iso} is inside the 2-day S2S real-time embargo "
-                        f"(access-restricted) ({exc}); use an older init date."
-                    ) from None
-                raise DataError(
-                    f"ECDS reported no data for init {date_iso} ({exc}); "
-                    "there may be no published S2S real-time forecast for that date "
-                    "(daily since 2023-06-27; Mondays/Thursdays only before then), "
-                    "or the init is not yet available — try another date."
-                ) from None
+                leg["remote"] = _submit(client, req)
+            except DataError:
+                raise
             except Exception as exc:  # noqa: BLE001
-                if _is_s2s_embargo_error(exc):
-                    raise DataError(
-                        f"init {date_iso} is inside the 2-day S2S real-time embargo "
-                        f"(access-restricted) ({exc}); use an older init date."
-                    ) from None
                 raise DataError(
-                    f"polling ECDS job for init {date_iso} failed ({exc}); "
+                    f"ECDS submit failed for init {date_iso} ({exc}); "
                     "this is a transport/auth problem."
                 ) from None
-            if waited >= _PROBE_POLL_MAX_SECONDS:
+
+        # Poll until every leg is ready. With windows, an init ECDS has no data
+        # for is skipped; with --date it is an error.
+        pending = list(legs)
+        waited = 0
+        max_wait = _PROBE_POLL_MAX_SECONDS * len(inits)
+        while pending:
+            for leg in list(pending):
+                if leg not in pending:  # its init was skipped earlier in this pass
+                    continue
+                date_iso = leg["init"].isoformat()
+                try:
+                    ready = leg["remote"].results_ready
+                except ProcessingFailedError as exc:
+                    embargo = _is_s2s_embargo_error(exc)
+                    if windows:
+                        reason = "inside the 2-day real-time embargo" if embargo else "no data"
+                        print(
+                            f"WARNING: ECDS init {date_iso}: {reason} ({exc}); skipped.",
+                            file=sys.stderr,
+                        )
+                        legs = [other for other in legs if other["init"] != leg["init"]]
+                        pending = [other for other in pending if other["init"] != leg["init"]]
+                        inits = [init for init in inits if init != leg["init"]]
+                        continue
+                    if embargo:
+                        raise DataError(
+                            f"init {date_iso} is inside the 2-day S2S real-time embargo "
+                            f"(access-restricted) ({exc}); use an older init date."
+                        ) from None
+                    raise DataError(
+                        f"ECDS reported no data for init {date_iso} ({exc}); "
+                        "there may be no published S2S real-time forecast for that date "
+                        "(daily since 2023-06-27; Mondays/Thursdays only before then), "
+                        "or the init is not yet available — try another date."
+                    ) from None
+                except Exception as exc:  # noqa: BLE001
+                    if _is_s2s_embargo_error(exc):
+                        raise DataError(
+                            f"init {date_iso} is inside the 2-day S2S real-time embargo "
+                            f"(access-restricted) ({exc}); use an older init date."
+                        ) from None
+                    raise DataError(
+                        f"polling ECDS job for init {date_iso} failed ({exc}); "
+                        "this is a transport/auth problem."
+                    ) from None
+                if ready:
+                    pending.remove(leg)
+            if not pending:
+                break
+            if waited >= max_wait:
                 raise DataError(
-                    f"ECDS job for init {date_iso} was still not ready after "
-                    f"{_PROBE_POLL_MAX_SECONDS}s; the job is stuck. Re-run, or pass a "
+                    f"ECDS jobs for inits {when} were still not ready after "
+                    f"{max_wait}s; the job is stuck. Re-run, or pass a "
                     "different init date."
                 )
             time.sleep(_PROBE_POLL_SECONDS)
             waited += _PROBE_POLL_SECONDS
+        if not inits:
+            raise DataError(f"ECDS had no data for any S2S init in {window_text}.")
 
         for leg in legs:
             print(f"Downloading {leg['grib'].name}...", file=sys.stderr)
@@ -882,45 +1606,62 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
                 leg["remote"].download(str(leg["grib"]))
             except Exception as exc:  # noqa: BLE001
                 raise DataError(
-                    f"ECDS download failed for init {date_iso} ({exc}); "
+                    f"ECDS download failed for init {leg['init'].isoformat()} ({exc}); "
                     "this is a transport/auth problem."
                 ) from None
 
         print("Decoding GRIB and writing Zarr...", file=sys.stderr)
-        family_ensembles = []
-        for key, group_vars in groups:
-            cf_parts = [
-                _open_grib(leg["grib"])
-                for leg in legs
-                if leg["key"] == key and leg["forecast_type"] == "control_forecast"
-            ]
-            pf_parts = [
-                _open_grib(leg["grib"])
-                for leg in legs
-                if leg["key"] == key and leg["forecast_type"] == "perturbed_forecast"
-            ]
-            cf = _promote_vertical(_concat_lon(cf_parts).assign_coords(number=0))
-            if pf_parts:
-                pf = _promote_vertical(_concat_lon(pf_parts))
-                ens = xr.concat([pf, cf], dim="number").sortby("number")
-            else:
-                # Control-only fields keep a length-1 number axis so the merge
-                # below leaves members 1..50 NaN instead of dropping `number`.
-                ens = cf.expand_dims("number")
-            if key[0] == "daily":
-                # cfgrib labels a 24 h mean at its window end; relabel to the
-                # window start so step 0 is the first 24 h, like precip.
-                ens = ens.drop_vars("valid_time", errors="ignore")
-                ens = ens.assign_coords(step=ens["step"] - np.timedelta64(24, "h"))
-            family_ensembles.append(_rename_to_short(ens, group_vars))
-        ds = (
-            family_ensembles[0]
-            if len(family_ensembles) == 1
-            else xr.merge(family_ensembles, join="outer", compat="override")
-        )
-        ds = ds[names]
+        pieces = []
+        for init in inits:
+            family_ensembles = []
+            for key, group_vars in groups:
+                cf_parts = [
+                    _open_grib(leg["grib"])
+                    for leg in legs
+                    if leg["init"] == init
+                    and leg["key"] == key
+                    and leg["forecast_type"] == "control_forecast"
+                ]
+                pf_parts = [
+                    _open_grib(leg["grib"])
+                    for leg in legs
+                    if leg["init"] == init
+                    and leg["key"] == key
+                    and leg["forecast_type"] == "perturbed_forecast"
+                ]
+                cf = _promote_vertical(_concat_lon(cf_parts).assign_coords(number=0))
+                if pf_parts:
+                    pf = _promote_vertical(_concat_lon(pf_parts))
+                    ens = xr.concat([pf, cf], dim="number").sortby("number")
+                else:
+                    # Control-only fields keep a length-1 number axis so the merge
+                    # below leaves members 1..50 NaN instead of dropping `number`.
+                    ens = cf.expand_dims("number")
+                if key[0] == "daily":
+                    # cfgrib labels a 24 h mean at its window end; relabel to the
+                    # window start so step 0 is the first 24 h, like precip.
+                    ens = ens.drop_vars("valid_time", errors="ignore")
+                    ens = ens.assign_coords(step=ens["step"] - np.timedelta64(24, "h"))
+                family_ensembles.append(_rename_to_short(ens, group_vars))
+            ds = (
+                family_ensembles[0]
+                if len(family_ensembles) == 1
+                else xr.merge(family_ensembles, join="outer", compat="override")
+            )
+            pieces.append(ds[names])
+        if windows:
+            # A range of inits: a leading `time` axis (the init); valid_time gains it too.
+            ds = xr.concat(pieces, "time", join="outer", coords="different", compat="equals")
+        else:
+            ds = pieces[0]
         ds.attrs.update(Conventions="CF-1.13", weather_skills_source="ecmwf-s2s")
+        if "precip" in ds.data_vars:
+            # ECDS GRIB precip is an amount since init.
+            ds["precip"].attrs["standard_name"] = "precipitation_amount"
+            ds["precip"].attrs["units"] = "kg m-2"
         ds = _standardize(ds)
+        if max_lead_h is not None:
+            ds = ds.sel(step=slice(None, np.timedelta64(round(max_lead_h * 3600), "s")))
         # Materialize while GRIB files in the temp dir still exist.
         ds = ds.load()
 

@@ -5,7 +5,7 @@
 #   "adlfs",
 # ]
 # ///
-"""Fetch the Cumulus AI ensemble precipitation forecast for one init date or a range of inits as a weather-skills Zarr."""
+"""Fetch a Cumulus AI ensemble forecast variable for one init date or a range of inits as a weather-skills Zarr."""
 
 from __future__ import annotations
 
@@ -36,15 +36,31 @@ _SAS_ENV = "AZURE_STORAGE_SAS_TOKEN"
 # One Zarr store per init: <_ROOT>/<folder>/YYYY-MM-DD-HH.zarr
 _ROOT = f"{_CONTAINER}/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr"
 _STORE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}\.zarr$")
+# Inits before the first live store come from Cumulus's own Aurora hindcast: one Zarr
+# per live folder, <_HINDCAST_ROOT>/<folder>.zarr, holding every init (1996 to 2026-08-31, every
+# second day) with the same variable, grid and layout as that folder's live stores.
+# Chunks are 15° tiles over many inits (100 at 1°, 5 at 0.25°), about 100 MB each, so
+# any read downloads whole tiles.
+_HINDCAST_ROOT = f"{_CONTAINER}/ml_reforecasts/gratis-czajkowski-era5/zarr"
 
-# --dataset name → variable folder. Each folder's stores hold that one variable.
+# --dataset name → (store folder, output variable). Each folder holds one variable; a new
+# Cumulus variable is one more line. A folder with no live stores is read from the hindcast only.
 _DATASETS = {
-    "precip": "total_precipitation_24h_acc_imerg_0p25",  # IMERG-trained, 0.25° (default)
-    "precip_1deg": "total_precipitation_24h_acc_imerg",  # IMERG-trained, native 1°
-    "precip_era5": "total_precipitation_24h_acc_era5",  # ERA5-trained
+    "precip": ("total_precipitation_24h_acc_imerg_0p25", "precip"),  # IMERG-trained, 0.25°
+    "precip_1deg": ("total_precipitation_24h_acc_imerg", "precip"),  # IMERG-trained, 1°
+    "precip_era5": ("total_precipitation_24h_acc_era5", "precip"),  # ERA5-trained, 1°
+    "t2m": ("2m_temperature", "t2m"),  # 1°
 }
-# Accepted -v names; the output variable is always ``precip``.
-_PRECIP_ALIASES = {"tp", "precip", "precipitation", "total_precipitation", *_DATASETS.values()}
+# Other -v names for an output variable (store folder names are accepted too).
+_ALIASES = {
+    "tp": "precip",
+    "precipitation": "precip",
+    "total_precipitation": "precip",
+    "2t": "t2m",
+    "tas": "t2m",
+    "temperature_2m": "t2m",
+    **dict(_DATASETS.values()),
+}
 DEFAULT_WORKERS = 8
 
 
@@ -100,8 +116,8 @@ def _list_stores(folder: str) -> list[str]:
     return sorted(name for name in names if _STORE_RE.fullmatch(name))
 
 
-def _open_store(url: str, bbox, workers: int):
-    """Open one init's store and load it, subset to ``bbox``."""
+def _open_store(url: str, bbox, workers: int, select=None):
+    """Open a store and load it, after ``select`` (lazy dataset -> dataset) and the ``bbox`` cut."""
     import weakref
 
     import xarray as xr
@@ -119,6 +135,7 @@ def _open_store(url: str, bbox, workers: int):
                 read_only=True,
             )
             with xr.open_zarr(store, chunks=None) as ds:
+                ds = select(ds) if select is not None else ds
                 ds = (bbox_subset(ds, bbox) if bbox is not None else ds).load()
     except (DataError, UsageError):
         raise
@@ -135,22 +152,24 @@ def _open_store(url: str, bbox, workers: int):
     return ds
 
 
-def _to_standard(ds):
+def _to_standard(ds, out):
     """Map a store's (init_time, lead_time, ensemble_member, lat, lon) onto the standard layout."""
     import numpy as np
 
     (name,) = ds.data_vars
+    # A field with time cell_methods covers the 24 h ending at init + lead; others are instants.
+    period = ds[name].attrs.get("cell_methods", "").startswith("time:")
     ds = ds.squeeze("init_time").drop_vars("valid_time", errors="ignore")
     ds = ds.rename(
-        {name: "precip", "init_time": "time", "lead_time": "step", "ensemble_member": "number"}
+        {name: out, "init_time": "time", "lead_time": "step", "ensemble_member": "number"}
     )
     ds["time"].attrs.update(standard_name="forecast_reference_time", axis="T")
-    # Each lead is the 24h total ending at init + lead; label it by the period start.
-    ds = ds.assign_coords(step=ds["step"] - np.timedelta64(24, "h"))
-    ds["precip"].attrs["comment"] = (
-        "24 h precipitation from init + step to init + step + 24 h "
-        "(cumulus-fetch relabelled store leads from period end to period start)."
-    )
+    if period:
+        ds = ds.assign_coords(step=ds["step"] - np.timedelta64(24, "h"))
+        ds[out].attrs["comment"] = (
+            "24 h period from init + step to init + step + 24 h "
+            "(cumulus-fetch relabelled store leads from period end to period start)."
+        )
     return ds.transpose("number", "step", "latitude", "longitude")
 
 
@@ -160,8 +179,7 @@ def _to_standard(ds):
 )
 @weather_skill.argument(
     "--dataset",
-    default="precip",
-    help=f"One of {', '.join(_DATASETS)} (default precip), or a variable folder name.",
+    help=f"One of {', '.join(_DATASETS)}. Default: the first holding the -v variable, else precip.",
 )
 @weather_skill.argument("--date")
 @weather_skill.argument(
@@ -192,7 +210,7 @@ def _to_standard(ds):
     ),
 )
 def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, workers, **kwargs):
-    """Fetch the Cumulus AI ensemble precipitation forecast for one init date or a range of inits as a weather-skills Zarr."""
+    """Fetch a Cumulus AI ensemble forecast variable for one init date or a range of inits as a weather-skills Zarr."""
     # Opens the init's Zarr store
     # ``az://italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr/<variable>/YYYY-MM-DD-HH.zarr``
     # with the SAS in ``AZURE_STORAGE_SAS_TOKEN``, optionally subsets by
@@ -200,14 +218,18 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
     import numpy as np
 
     probe = probe_latest
+    wanted = {_ALIASES.get(v, v) for v in variable or ()}
     name = probe or dataset
-    folder = _DATASETS.get(name, name)
-    if folder not in _DATASETS.values():
+    name = {folder: n for n, (folder, _) in _DATASETS.items()}.get(name, name)
+    if name is None:
+        name = next((n for n, (_, v) in _DATASETS.items() if v in wanted), "precip")
+    if name not in _DATASETS:
         raise UsageError(
-            f"unknown Cumulus dataset {name!r}. Available: {', '.join(_DATASETS)} "
-            f"(or a folder name: {', '.join(_DATASETS.values())}). cumulus-fetch reads "
-            "only the live forecast runs; hindcast (reforecast) runs are not served here."
+            f"unknown Cumulus dataset {name!r}. Available: {', '.join(_DATASETS)}. Inits "
+            "before the live record are read from the Cumulus hindcast automatically: "
+            "just pass the date."
         )
+    folder, out = _DATASETS[name]
     if workers < 1:
         raise UsageError(f"--workers must be at least 1 (got {workers}).")
     prefix = f"az://{_ACCOUNT}/{_ROOT}/{folder}/"
@@ -217,10 +239,11 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
         print(stores[-1][:10] if stores else "none")
         return
 
-    unknown = set(variable or ()) - _PRECIP_ALIASES
-    if unknown:
+    if wanted - {out}:
+        variables = sorted({v for _, v in _DATASETS.values()})
         raise UsageError(
-            f"variable(s) not in this Cumulus product: {', '.join(sorted(unknown))}.\nAvailable: precip"
+            f"--dataset {name} holds {out}, not {', '.join(sorted(wanted - {out}))}. Each "
+            f"Cumulus variable is its own store: fetch one per call. Variables: {', '.join(variables)}."
         )
 
     # One (start, end) pair per window; --end-time is an inclusive calendar day.
@@ -232,6 +255,34 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
 
     # Names sort by init date then hour, so the last match is the latest init.
     stores = _list_stores(folder)
+    # Inits before the first live store are read from the hindcast; one call reads one source.
+    first_live = stores[0][:10] if stores else "9999-12-31"
+    hindcast = date is not None and date.isoformat() < first_live
+    if windows:
+        hindcast = any(a.isoformat() < first_live for a, _ in windows)
+    hindcast_url = f"az://{_HINDCAST_ROOT}/{folder}.zarr"
+    if hindcast:
+        # Just the coordinates: list the hindcast inits under the live store names.
+        inits = _open_store(
+            hindcast_url, None, workers, lambda ds: ds.drop_vars(list(ds.data_vars))
+        )["init_time"].values
+        hindcast_stores = [f"{str(t)[:10]}-{str(t)[11:13]}.zarr" for t in inits]
+        if windows and any(b.isoformat() >= first_live for _, b in windows):
+            if any(
+                a.isoformat() <= s[:10] <= b.isoformat()
+                for s in hindcast_stores
+                for a, b in windows
+            ):
+                raise UsageError(
+                    f"the init windows cross {first_live}, where the live Cumulus runs start. "
+                    "Earlier inits come from the Cumulus hindcast (a different store), "
+                    "so one call reads only one side: "
+                    f"split the request at {first_live} into two calls."
+                )
+            hindcast = False  # the windows hold no hindcast init: read the live side only
+    if hindcast:
+        prefix = f"az://{_ACCOUNT}/{_HINDCAST_ROOT}/{folder}.zarr"
+        stores = hindcast_stores
     published = stores
     if windows:
         # 00 UTC inits only: the windows select init times, not valid times.
@@ -256,7 +307,10 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
         stores = [s for s in stores if s.startswith(date.isoformat())]
     if not stores:
         if date is None:
-            raise DataError(f"no Cumulus init stores under {prefix}.")
+            raise DataError(
+                f"Cumulus has no live {name} runs; pass --date or --start-time/--end-time "
+                "for hindcast inits."
+            )
         # List the published inits around the requested date so one call is enough.
         dates = sorted({s[:10] for s in published})
         i = bisect.bisect_left(dates, date.isoformat())
@@ -269,22 +323,29 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
                 if dates
                 else "Nothing is published. "
             )
-            + "Omit --date to take the latest."
+            + ("" if hindcast else "Omit --date to take the latest.")
         )
     if not windows:
         stores = stores[-1:]
     # One store per init: each is opened, cut to the bbox and loaded on its own.
     pieces = []
-    for store in stores:
+    if hindcast:
+        print(f"Reading {len(stores)} init(s) from the Cumulus hindcast {prefix}", file=sys.stderr)
+        times = [np.datetime64(f"{s[:10]}T{s[11:13]}", "ns") for s in stores]
+        ds = _open_store(hindcast_url, bbox, workers, lambda ds: ds.sel(init_time=times))
+        pieces = [_to_standard(ds.isel(init_time=[i]), out) for i in range(len(times))]
+    for store in [] if hindcast else stores:
         print(f"Opening {prefix}{store}", file=sys.stderr)
-        pieces.append(_to_standard(_open_store(f"az://{_ROOT}/{folder}/{store}", bbox, workers)))
+        pieces.append(
+            _to_standard(_open_store(f"az://{_ROOT}/{folder}/{store}", bbox, workers), out)
+        )
     if windows:
         import xarray as xr
 
         # A range of inits: a `time` axis (the init). An init still writing its
         # long leads keeps them NaN (not filled); say which init is short.
         ds = xr.concat(pieces, "time", join="outer").transpose("time", "step", ...)
-        init_empty = ds["precip"].isnull().all(("number", "latitude", "longitude")).values
+        init_empty = ds[out].isnull().all(("number", "latitude", "longitude")).values
         if init_empty.all():
             raise DataError(
                 f"no selected Cumulus init has data in the requested bbox under {prefix}."
@@ -305,17 +366,17 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
         ds = pieces[0]
         # A fresh init may still be writing its long leads (all-NaN). Error when
         # nothing is there; drop an empty tail and say so instead of writing it.
-        empty = ds["precip"].isnull().all(("number", "latitude", "longitude")).values
+        empty = ds[out].isnull().all(("number", "latitude", "longitude")).values
         if empty.all():
             raise DataError(
-                f"Cumulus init {store} has no data in the requested bbox (still publishing?). "
+                f"Cumulus init {stores[-1]} has no data in the requested bbox (still publishing?). "
                 "Pass --date with an earlier init."
             )
         last = int(np.nonzero(~empty)[0][-1])
         if last < ds.sizes["step"] - 1:
             days = ds["step"].values / np.timedelta64(1, "D")
             print(
-                f"WARNING: Cumulus init {store} has no data from step {days[last + 1]:g} d "
+                f"WARNING: Cumulus init {stores[-1]} has no data from step {days[last + 1]:g} d "
                 f"(of {days[-1]:g} d; still publishing?). Dropped the empty leads (not padded); "
                 "pass --date with an earlier init for every lead.",
                 file=sys.stderr,
@@ -324,7 +385,8 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, wor
     if bbox is None:
         ds = ensure_normalized_longitude(ds)
 
-    ds.attrs.update(Conventions="CF-1.13", weather_skills_source=f"cumulus:{folder}")
+    source = f"cumulus-hindcast:{folder}" if hindcast else f"cumulus:{folder}"
+    ds.attrs.update(Conventions="CF-1.13", weather_skills_source=source)
     stamp_cf_attrs(ds)
     stamp_precip_amounts(ds)
     ds = to_standard_units(ds)
