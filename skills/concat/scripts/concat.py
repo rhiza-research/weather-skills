@@ -136,7 +136,15 @@ def concat(ds, dim, coords, **kwargs):
             )
         # Coordinate axes come out in order; other dims keep the input order.
         ordered = ALIASES.get(dim, dim) in {
-            "lat", "lon", "x", "y", "vertical", "time", "init_time", "prediction_timedelta", "day_of_year"
+            "lat",
+            "lon",
+            "x",
+            "y",
+            "vertical",
+            "time",
+            "init_time",
+            "prediction_timedelta",
+            "day_of_year",
         }
         if ordered and not (index.is_monotonic_increasing or index.is_monotonic_decreasing):
             out = out.sortby(dim)
