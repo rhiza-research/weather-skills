@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads the public PARDIG Zarr v3 stores and live frames on Google Cloud Storage (gs://pardig_1) anonymously via gcsfs; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.1"
+  version: "0.0.2"
   catalog-group: fetchers
   variables:
     - precip

@@ -16,7 +16,7 @@ from weather_skills_core.standard_utils import bbox_subset, ensure_normalized_lo
 from weather_skills_core.units import stamp_data_interval, to_standard_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.1"
+_SKILL_VERSION = "0.0.2"
 
 # Time-series layout: each chunk is the full time axis of one 0.5° x 0.5° tile,
 # so a small box over many years reads few chunks.
