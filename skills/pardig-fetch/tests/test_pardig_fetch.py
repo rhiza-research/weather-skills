@@ -98,3 +98,15 @@ def test_fetch_joins_archive_and_live_frames(tmp_path, mod):
     assert ds.sizes["time"] == 192
     assert ds["time"].values[0] == np.datetime64("2025-12-31T00:00")
     assert ds["time"].values[-1] == np.datetime64("2026-01-01T23:45")
+
+
+def test_probe_latest_prints_newest_live_day(mod, capsys):
+    frames = {
+        np.datetime64("2026-11-12T23:45"): "20261112T234500",
+        np.datetime64("2026-11-13T16:30"): "20261113T163000",
+    }
+    with patch.object(mod, "_live_frames", return_value=frames):
+        run_skill(mod.fetch, "--probe-latest")
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "2026-11-13"
+    assert "2026-11-13T16:30" in captured.err

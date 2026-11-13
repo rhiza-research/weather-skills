@@ -29,24 +29,28 @@ _LIVE = "gs://pardig_1/NRT/zarr/2026_to_present"
 _LIVE_START = "2026-01-01"
 
 
-def _read_live(first, last, bbox):
-    """Box of every published live NRT frame in [first, last], or None if there are none."""
-    from concurrent.futures import ThreadPoolExecutor
-
+def _live_frames():
+    """{valid time: frame name} for every published live NRT frame."""
     import fsspec
     import numpy as np
-    import xarray as xr
 
     fs = fsspec.filesystem("gcs", token="anon")
     # fs.ls also lists the prefix itself; keep only <YYYYMMDDTHHMMSS> frame names.
     names = [p.rsplit("/", 1)[-1] for p in fs.ls(_LIVE)]
-    stamps = [
-        s
+    return {
+        np.datetime64(f"{s[:4]}-{s[4:6]}-{s[6:8]}T{s[9:11]}:{s[11:13]}"): s
         for s in names
-        if len(s) == 15
-        and s[8] == "T"
-        and first <= np.datetime64(f"{s[:4]}-{s[4:6]}-{s[6:8]}T{s[9:11]}:{s[11:13]}") <= last
-    ]
+        if len(s) == 15 and s[8] == "T"
+    }
+
+
+def _read_live(first, last, bbox):
+    """Box of every published live NRT frame in [first, last], or None if there are none."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    import xarray as xr
+
+    stamps = [s for t, s in sorted(_live_frames().items()) if first <= t <= last]
     if not stamps:
         return None
     print(f"pardig-fetch: reading {len(stamps)} live NRT frames", file=sys.stderr)
@@ -92,10 +96,31 @@ def _open_store(product):
     default="nrt",
     help="nrt: PARDIG-NRT 2016 to present (default). lr: PARDIG-LR 1999-2023.",
 )
-def fetch(start_time, end_time, bbox, product, **kwargs):
+@weather_skill.argument(
+    "--probe-latest",
+    nargs="?",
+    const="",
+    metavar="IDENT",
+    probe=True,
+    help=(
+        "Print the day of the newest frame of --product (YYYY-MM-DD) on stdout "
+        "and exit; the frame time goes to stderr. Downloads no data. IDENT is ignored."
+    ),
+)
+def fetch(start_time, end_time, bbox, product, probe_latest, **kwargs):
     """Fetch Google PARDIG 15-minute precipitation estimates as a weather-skills Zarr."""
     import numpy as np
     import xarray as xr
+
+    if probe_latest is not None:
+        times = list(_live_frames()) if product == "nrt" else []
+        newest = max(times) if times else _open_store(product)["time"].values[-1]
+        print(
+            f"pardig-fetch: newest PARDIG-{product.upper()} frame {str(newest)[:16]}",
+            file=sys.stderr,
+        )
+        print(str(newest)[:10])
+        return
 
     first = np.datetime64(start_time.isoformat())
     last = np.datetime64(end_time.isoformat()) + np.timedelta64(1, "D") - np.timedelta64(1, "m")

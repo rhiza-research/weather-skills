@@ -24,12 +24,15 @@ Fetches PARDIG (Precipitation AI Reanalysis, Densely Inferred GPM), an experimen
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD --bbox N/W/S/E [--product nrt|lr] -o OUT.zarr
+# Day of the newest frame (no download)
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--product nrt|lr]
 ```
 
 ### Arguments
 - `--start-time`, `--end-time` — inclusive range of whole UTC days.
 - `--bbox` — required `N/W/S/E` decimal degrees; longitudes −180..180 or 0..360, W > E crosses the antimeridian.
 - `--product` — `nrt` (default) or `lr`.
+- `--probe-latest` — print the day of the newest frame (`YYYY-MM-DD`) on stdout, and its 15-minute time on stderr, then exit. Honours `--product`. Takes an optional id that this skill ignores. End a recent window here; that day is usually partial.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
