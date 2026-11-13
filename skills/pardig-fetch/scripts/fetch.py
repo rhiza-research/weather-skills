@@ -31,10 +31,10 @@ _LIVE_START = "2026-01-01"
 
 def _live_frames():
     """{valid time: frame name} for every published live NRT frame."""
-    import fsspec
+    import gcsfs
     import numpy as np
 
-    fs = fsspec.filesystem("gcs", token="anon")
+    fs = gcsfs.GCSFileSystem(token="anon")
     # fs.ls also lists the prefix itself; keep only <YYYYMMDDTHHMMSS> frame names.
     names = [p.rsplit("/", 1)[-1] for p in fs.ls(_LIVE)]
     return {
