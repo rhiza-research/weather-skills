@@ -24,7 +24,7 @@ Fetches every hindcast init in one or more date windows and stacks them on one `
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf|ecmwf_wb2|gefs|cumulus --start-time YYYY-MM-DD --end-time YYYY-MM-DD -o OUT.zarr \
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf|ecmwf_wb2|gefs|cumulus|cumulus_0p25 --start-time YYYY-MM-DD --end-time YYYY-MM-DD -o OUT.zarr \
   [-v precip] [-v tmp2m] [-v sst] [--bbox N/W/S/E] [--members]
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET]   # latest init date, no download
 ```
@@ -34,13 +34,14 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET]   # latest 
 | `ecmwf` (default choice) | every second day, 2006-01-03 to 2025-06-01, one model cycle (IFS CY49R1) | mean of 10, or 10 with `--members` | 0–45 | 1.5° |
 | `ecmwf_wb2` | daily dates 1996-01-04 to 2021-12-29, mixed model cycles | mean of 10, or 10 with `--members` | 0–45 | 1.5° |
 | `gefs` | Wednesdays 1998-12-30 to 2019-08-28 | 11 | 0–34 | 1° |
-| `cumulus` | every second day of each year, 1996-01-01 to 2024-12-31 (`AZURE_STORAGE_SAS_TOKEN`) | 30 | 0–45 | 1° |
+| `cumulus` | every second day of each year, 1996-01-01 to 2026-08-31 (`AZURE_STORAGE_SAS_TOKEN`) | 30 | 0–45 | 1° |
+| `cumulus_0p25` | as `cumulus`; `precip` only | 30 | 0–45 | 0.25° |
 
 ### Arguments
 - `--start-time`, `--end-time` — inclusive window of init dates. Repeat the pair for several disjoint windows (e.g. each March to May); every init in any window is kept once.
 - `--variable`, `-v` — `precip` (default), `tmp2m`, and for `ecmwf` `sst`; repeatable.
 - `--bbox` — `N/W/S/E`. Omit for the whole globe, which is read into memory.
-- `--members` — `ecmwf` and `ecmwf_wb2` only: the 10 perturbed members instead of their mean. `gefs` and `cumulus` always return every member.
+- `--members` — `ecmwf` and `ecmwf_wb2` only: the 10 perturbed members instead of their mean. `gefs`, `cumulus` and `cumulus_0p25` always return every member.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
@@ -50,11 +51,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET]   # latest 
 ### Notes
 - Use `ecmwf` unless you need inits before 2006: `ecmwf_wb2` changes model cycle from date to date, so a trend across its inits can be a model change.
 - `precip` is clipped at 0. `sst` is NaN over land.
-- `cumulus` is read straight from Cumulus's own Azure archive of its ERA5-initialised Aurora hindcast: IMERG-trained `precip` and 2 m temperature. Its 30 members are interchangeable draws; none is a control.
+- `cumulus` is read straight from Cumulus's own Azure archive of its ERA5-initialised Aurora hindcast: IMERG-trained `precip` and 2 m temperature at 1°, and the same `precip` at 0.25° (`cumulus_0p25`). Its 30 members are interchangeable draws; none is a control.
 - If one variable's store lacks an init, that variable is NaN there (stderr lists them); nothing is filled.
 - Inits fall on different days per dataset; line datasets up by valid date (`step-to-time`), not by init.
 - A small `--bbox` is fast for `ecmwf`, `ecmwf_wb2` and `gefs`: a whole record over Kenya takes under a minute.
-- `cumulus` is slow: its store is chunked by 100 inits with all members and 15° tiles, about 110 MB a chunk, so even one week over a small box takes over a minute and the whole 1996–2024 record over Kenya is about 12 GB per variable. Ask for only the init windows you need.
+- `cumulus` is slow: its store is chunked by 100 inits with all members and 15° tiles, about 110 MB a chunk, so even one week over a small box takes over a minute and the whole 1996–2026 record over Kenya is about 13 GB per variable. `cumulus_0p25` chunks hold 5 inits instead of 100 (same tile size and chunk bytes), so a short window reads far less but the whole record over Kenya is about 16 times larger. Ask for only the init windows you need.
 
 ### Example
 ```bash
