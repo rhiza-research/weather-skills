@@ -130,6 +130,13 @@ def test_concat_keeps_input_order_on_member_dim(tmp_path, concat):
     assert list(xr.open_zarr(out)["number"].values) == [2, 3, 0, 1]
 
 
+def test_concat_sorts_out_of_order_levels(tmp_path, concat):
+    d1 = write_zarr(make_gridded().expand_dims(level=[500, 250]), tmp_path / "d1.zarr")
+    d2 = write_zarr(make_gridded().expand_dims(level=[1000, 850]), tmp_path / "d2.zarr")
+    out = _run(concat, tmp_path, d1, d2, extra=("--dim", "level"))
+    assert list(xr.open_zarr(out)["level"].values) == [250, 500, 850, 1000]
+
+
 def test_concat_refuses_different_grid(tmp_path, concat):
     d1 = write_zarr(make_gridded(start="2026-01-01"), tmp_path / "d1.zarr")
     d2 = write_zarr(make_gridded(start="2026-01-03", lats=(1.0, 2.0, 4.0)), tmp_path / "d2.zarr")
