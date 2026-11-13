@@ -84,7 +84,7 @@ def _open_dataset():
 )
 @weather_skill.argument("--end-time", action="append", help="Window end, paired with --start-time.")
 @weather_skill.argument("--bbox")
-@weather_skill.argument("--variable", "-v", action="append")
+@weather_skill.argument("--variable", "-v", action="append", nargs="+")
 @weather_skill.argument(
     "--probe-latest",
     action="store_true",
@@ -107,6 +107,10 @@ def fetch(
     **kwargs,
 ):
     """Fetch NOAA MRMS hourly CONUS precipitation from the dynamical.org catalog."""
+    # -v takes several names per flag, repeated flags, or comma-separated names.
+    variable = [
+        t for item in variable or [] for name in item for t in name.replace(",", " ").split()
+    ]
     if list_variables:
         ds = _open_dataset()
         print(f"{_DATASET} variables (pass the name to -v):")

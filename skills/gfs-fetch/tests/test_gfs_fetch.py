@@ -285,6 +285,14 @@ def test_lead0_kept_when_any_requested_field_is_finite(tmp_path, mod, fetch):
     assert hours == [0, 3, 6, 12]
 
 
+@pytest.mark.parametrize(
+    "flags", [["-v", "precip", "temperature_2m"], ["-v", "precip,temperature_2m"]]
+)
+def test_several_variables_in_one_flag(tmp_path, mod, fetch, flags):
+    written = _fetch_forecast(tmp_path, mod, fetch, _end_labelled_forecast_ds(), *flags)
+    assert sorted(written.data_vars) == ["precip", "temperature_2m"]
+
+
 def test_end_time_includes_whole_sub_daily_day(tmp_path, mod, fetch):
     times = np.arange(
         np.datetime64("2026-01-01T00:00"),

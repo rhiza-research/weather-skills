@@ -314,7 +314,7 @@ def _open_dataset(dataset) -> dict:
 )
 @weather_skill.argument("--end-time", action="append", help="Window end, paired with --start-time.")
 @weather_skill.argument("--bbox")
-@weather_skill.argument("--variable", "-v", action="append")
+@weather_skill.argument("--variable", "-v", action="append", nargs="+")
 @weather_skill.argument(
     "--probe-latest",
     action="store_true",
@@ -350,6 +350,10 @@ def fetch(
     **kwargs,
 ):
     """Fetch a NOAA GFS or GEFS forecast or analysis from the dynamical.org catalog."""
+    # -v takes several names per flag, repeated flags, or comma-separated names.
+    variable = [
+        t for item in variable or [] for name in item for t in name.replace(",", " ").split()
+    ]
     dataset = _PRODUCTS[product]
     if list_variables:
         ds = _open_dataset(dataset)["ds"]

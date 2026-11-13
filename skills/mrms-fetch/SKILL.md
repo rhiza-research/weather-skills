@@ -34,7 +34,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --list-variables
 ### Arguments
 - `--start-time`, `--end-time` — inclusive date range; `--end-time` includes the whole end day (24 hourly steps). Repeat the pair for several windows, one window per pair.
 - `--bbox` — `N/W/S/E`, longitudes −180..180. Omit for the full CONUS grid (about 25 million cells per hour; always pass a bbox for more than a few hours).
-- `--variable`, `-v` — catalog variable name; repeat for several. Aliases: `precip`/`tp`/`pr` → `precipitation_surface`. `NAME` also matches `NAME_surface` (`precipitation_radar_only`, `precipitation_pass_1`). An unknown name exits and lists `Available:`. Omitting `-v` fetches every field.
+- `--variable`, `-v` — catalog variable names, several per flag, repeated, or comma-separated (`-v precip t2m`). Aliases: `precip`/`tp`/`pr` → `precipitation_surface`. `NAME` also matches `NAME_surface` (`precipitation_radar_only`, `precipitation_pass_1`). An unknown name exits and lists `Available:`. Omitting `-v` fetches every field.
 - `--probe-latest` — print the latest day and exit. Takes no value. stderr notes that the latest day is partial.
 - `--list-variables` — print each variable (name, units, long name), then exit. Does not download fields.
 - `--output`, `-o` — output Zarr, overwritten.

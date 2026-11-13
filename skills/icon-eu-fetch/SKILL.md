@@ -39,7 +39,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --list-variables
 - `--start-time`, `--end-time` — a window of init dates, `--end-time` inclusive. Repeat the pair for several windows; not with `--date`. Every 00 UTC init in them is taken with all its leads: the windows select init times, not valid times. A range of inits ending today warns when the newest init is still publishing; its missing leads stay NaN.
 - `--max-lead` — keep output steps up to this one (`48h`, `3D`). Default: every step.
 - `--bbox` — `N/W/S/E`, longitudes −180..180. Omit for the full European grid.
-- `--variable`, `-v` — catalog variable name; repeat for several. Aliases: `precip`/`tp`/`pr` → `precipitation_surface`; `t2m` → `temperature_2m`; `d2m` → `dew_point_temperature_2m`; `msl` → `pressure_reduced_to_mean_sea_level`; `sp` → `pressure_surface`; `u10`/`v10` → `wind_u_10m`/`wind_v_10m`. `NAME` also matches `NAME_surface`. An unknown name exits and lists `Available:`. Omitting `-v` fetches every field.
+- `--variable`, `-v` — catalog variable names, several per flag, repeated, or comma-separated (`-v precip t2m`). Aliases: `precip`/`tp`/`pr` → `precipitation_surface`; `t2m` → `temperature_2m`; `d2m` → `dew_point_temperature_2m`; `msl` → `pressure_reduced_to_mean_sea_level`; `sp` → `pressure_surface`; `u10`/`v10` → `wind_u_10m`/`wind_v_10m`. `NAME` also matches `NAME_surface`. An unknown name exits and lists `Available:`. Omitting `-v` fetches every field.
 - `--probe-latest` — print the latest init date and exit. Takes no value. stderr notes an init whose last lead is not published yet.
 - `--list-variables` — print each variable (name, units, long name), then exit. Does not download fields.
 - `--output`, `-o` — output Zarr, overwritten.
