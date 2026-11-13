@@ -60,3 +60,19 @@ def test_drop_missing_name_is_refused(tmp_path, drop):
 
 def test_drop_last_data_var_is_refused(tmp_path, drop):
     _usage_error(drop, tmp_path, make_gridded(), "precip")
+
+
+def test_drop_removes_dims_no_data_variable_spans(tmp_path, drop, capsys):
+    ds = make_gridded()
+    ds = ds.assign(spread=ds["precip"].expand_dims(lead=[7, 8]), precip=ds["precip"].isel(time=0))
+    out, _ = _run(drop, tmp_path, ds, "spread")
+    assert "lead" not in out.dims and "time" not in out.dims
+    assert out["precip"].dims == ("latitude", "longitude")
+    assert "lead" in capsys.readouterr().err
+
+
+def test_drop_index_of_dim_no_data_variable_spans(tmp_path, drop):
+    ds = make_gridded().isel(time=0, drop=True).expand_dims(lead=[7])
+    ds["precip"] = ds["precip"].isel(lead=0, drop=True)
+    out, _ = _run(drop, tmp_path, ds, "lead")
+    assert "lead" not in out.variables
