@@ -81,6 +81,8 @@ credentialed or source-specific fetcher only when it does not.
 | `wind-speed-direction` | Wind speed (`hypot(u, v)`) and the directions the wind blows from and to (degrees clockwise from north) from a `--u` / `--v` component pair; calm cells (speed ≤ `--calm-speed`) get NaN direction |
 | `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). |
 | `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
+| `mme-fit` | Fit multi-model blend weights from several hindcast `--forecast`s and an `--obs` (grid or stations): `--model weighted|linear|logistic`, one fit overall or `--fit-along` lead / cell / station; scikit-learn semantics (`--alpha` L2) |
+| `mme-blend` | Blend several forecasts with fitted `--weights` or fixed `--coef NAME=W` into one `blend` value or logistic event `probability` |
 
 ### Agent capabilities
 Capabilities the agent uses alongside pipelines; none of them produces a
