@@ -37,7 +37,7 @@ _SAS_ENV = "AZURE_STORAGE_SAS_TOKEN"
 _ROOT = f"{_CONTAINER}/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr"
 _STORE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}\.zarr$")
 # Inits before the first live store come from Cumulus's own Aurora hindcast: one Zarr
-# per live folder, <_HINDCAST_ROOT>/<folder>.zarr, holding every init (1996-2024, every
+# per live folder, <_HINDCAST_ROOT>/<folder>.zarr, holding every init (1996 to 2026-08-31, every
 # second day) with the same variable, grid and layout as that folder's live stores.
 # Chunks are 15° tiles over many inits (100 at 1°, 5 at 0.25°), about 100 MB each, so
 # any read downloads whole tiles.

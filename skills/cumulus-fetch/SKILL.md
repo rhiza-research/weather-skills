@@ -1,6 +1,6 @@
 ---
 name: cumulus-fetch
-description: "Fetch a Cumulus AI ensemble forecast variable (Aurora S2S run, 30 members, 46 daily leads, 0.25° or 1° global grid): precipitation, and 2 m temperature for hindcast inits, for one init date or a range of inits and optional region, as a weather-skills Zarr. Inits from 1996 to 2024 come from Cumulus's own hindcast automatically. Needs an Azure read token (AZURE_STORAGE_SAS_TOKEN). Use when a task needs the Cumulus forecast."
+description: "Fetch a Cumulus AI ensemble forecast variable (Aurora S2S run, 30 members, 46 daily leads, 0.25° or 1° global grid): precipitation, and 2 m temperature for hindcast inits, for one init date or a range of inits and optional region, as a weather-skills Zarr. Inits from 1996 to 2026-08-31 come from Cumulus's own hindcast automatically. Needs an Azure read token (AZURE_STORAGE_SAS_TOKEN). Use when a task needs the Cumulus forecast."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads private Cumulus data on Azure. Requires AZURE_STORAGE_SAS_TOKEN (a read SAS with list and read, sp=rl).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -60,7 +60,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET]
 
 ### Coverage
 - Live runs: from 2026-09-01 to the latest init; `--probe-latest` gives the end.
-- Hindcast: every second day from 1996-01-01 to 2024-12-31, for every dataset, read automatically for earlier dates. A dataset with no live runs (`t2m`) needs a `--date` or windows in that range. A `--date` with no hindcast init exits 1 and lists the nearest ones. There are no inits between the two records.
+- Hindcast: every second day from 1996-01-01 to 2026-08-31, for every dataset, read automatically for dates before the live record. A dataset with no live runs (`t2m`) needs a `--date` or windows in that range. A `--date` with no hindcast init exits 1 and lists the nearest ones. The live record starts the day after the hindcast ends.
 - One call reads one record. Windows holding inits on both sides of the first live init exit 2 and name the date to split at; make one call per side.
 
 ### Notes
