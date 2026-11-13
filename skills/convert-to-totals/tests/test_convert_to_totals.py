@@ -443,3 +443,34 @@ def test_convert_no_complete_interval_error_suggests_fix(tmp_path, convert_to_to
         run_skill(convert_to_totals, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
     err = capsys.readouterr().err
     assert "--probe-latest" in err and "2026-01-01" in err
+
+
+def test_week1_of_daily_inits_converts_after_step_select(
+    tmp_path, aggregate, select, convert_to_totals
+):
+    """Weeks binned along step, then week 1 selected: daily init spacing is not an overlap."""
+    ds = xr.Dataset(
+        {
+            "precip": (
+                ("time", "step", "latitude", "longitude"),
+                np.full((3, 14, 2, 2), 2.0),
+                {"units": "mm day-1", "standard_name": "lwe_precipitation_rate"},
+            )
+        },
+        coords={
+            "time": np.array(["2026-01-01", "2026-01-02", "2026-01-03"], dtype="datetime64[ns]"),
+            "step": np.arange(14) * np.timedelta64(1, "D"),
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    wk, w1, out = tmp_path / "wk.zarr", tmp_path / "w1.zarr", tmp_path / "tot.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(wk), "--period", "weekly", "--time-dim", "step")
+    run_skill(select, "-i", str(wk), "-o", str(w1), "--dim", "step", "--index", "0")
+    run_skill(convert_to_totals, "-i", str(w1), "-o", str(out))
+
+    result = xr.open_zarr(out)["precip"]
+    assert result.sizes["time"] == 3
+    assert result.values == pytest.approx(14.0)
+    assert result.attrs["cell_methods"] == "step: sum"
