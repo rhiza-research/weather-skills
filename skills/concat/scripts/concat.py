@@ -8,7 +8,7 @@
 
 import numpy as np
 from weather_skills_core import Dataset, UsageError, weather_skill
-from weather_skills_core.standard_dataset import names_for
+from weather_skills_core.standard_dataset import ALIASES, names_for
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.9"
@@ -134,8 +134,9 @@ def concat(ds, dim, coords, **kwargs):
                 f"inputs overlap along {dim!r}: {[str(v) for v in dups[:5]]} appear more than once; "
                 "keep only the new entries of one input with select (repeat --index)"
             )
-        # --coords labels keep the order given; other labels are sorted.
-        if not coords and not (index.is_monotonic_increasing or index.is_monotonic_decreasing):
+        # Coordinate axes come out in order; other dims keep the input order.
+        ordered = ALIASES.get(dim) in {"lat", "lon", "time", "init_time", "prediction_timedelta"}
+        if ordered and not (index.is_monotonic_increasing or index.is_monotonic_decreasing):
             out = out.sortby(dim)
         # Boxes stitched along lat/lon with a gap between them leave an
         # irregular axis that clipping, regridding, and plotting assume away.

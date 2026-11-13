@@ -123,6 +123,13 @@ def test_concat_keeps_coords_order_on_new_dim(tmp_path, concat):
     assert list(xr.open_zarr(out)["model"].values) == ["GEFS", "AIFS", "ECMWF ENS"]
 
 
+def test_concat_keeps_input_order_on_member_dim(tmp_path, concat):
+    d1 = write_zarr(make_gridded(fill=1.0).expand_dims(number=[2, 3]), tmp_path / "d1.zarr")
+    d2 = write_zarr(make_gridded(fill=2.0).expand_dims(number=[0, 1]), tmp_path / "d2.zarr")
+    out = _run(concat, tmp_path, d1, d2, extra=("--dim", "number"))
+    assert list(xr.open_zarr(out)["number"].values) == [2, 3, 0, 1]
+
+
 def test_concat_refuses_different_grid(tmp_path, concat):
     d1 = write_zarr(make_gridded(start="2026-01-01"), tmp_path / "d1.zarr")
     d2 = write_zarr(make_gridded(start="2026-01-03", lats=(1.0, 2.0, 4.0)), tmp_path / "d2.zarr")
