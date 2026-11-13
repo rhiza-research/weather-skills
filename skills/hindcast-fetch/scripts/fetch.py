@@ -15,8 +15,9 @@
 #     date 1996-2021 from the newest issue that re-ran that date.
 #   gefs — public Sheerwater store. CHC's GEFSv12 reforecast, Wednesday inits 1998-2019.
 #   cumulus — Cumulus's own Azure Zarr of its gratis-czajkowski-era5 Aurora hindcast,
-#     1° IMERG-trained precip and 2 m temperature, 186 inits a year 1996-2024, 30
+#     1° IMERG-trained precip and 2 m temperature, 186 inits a year 1996 to 2026-08-31, 30
 #     exchangeable members; read with the AZURE_STORAGE_SAS_TOKEN cumulus-fetch uses.
+#   cumulus_0p25 — the same hindcast's IMERG-trained precip on its 0.25° grid.
 
 from __future__ import annotations
 
@@ -66,6 +67,13 @@ _STORES = {
             "mm day-1",
         ),
         "tmp2m": (f"{_AZURE}/2m_temperature.zarr", "2m_temperature", "K"),
+    },
+    "cumulus_0p25": {
+        "precip": (
+            f"{_AZURE}/total_precipitation_24h_acc_imerg_0p25.zarr",
+            "total_precipitation_24h_acc_imerg_0p25",
+            "mm day-1",
+        ),
     },
 }
 _ALIASES = {"tp": "precip", "precipitation": "precip", "t2m": "tmp2m"}

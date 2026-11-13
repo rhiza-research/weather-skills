@@ -78,6 +78,9 @@ def stores(mod, monkeypatch):
         f"{AZ}/2m_temperature.zarr": _store(
             "2m_temperature", CUM_INITS, [0, 1, 2], 300.0, order=STORE_ORDER
         ),
+        f"{AZ}/total_precipitation_24h_acc_imerg_0p25.zarr": _store(
+            "total_precipitation_24h_acc_imerg_0p25", CUM_INITS, [0, 1, 2], 1.0, order=STORE_ORDER
+        ),
     }
     opened = []
 
@@ -215,6 +218,16 @@ def test_cumulus_members_and_kelvin_converted(tmp_path, fetch, stores):
         assert t == pytest.approx(26.85, rel=1e-5)
 
 
+def test_cumulus_0p25_reads_its_own_store(tmp_path, fetch, stores):
+    out = tmp_path / "cum025.zarr"
+    _run(fetch, out, "--dataset", "cumulus_0p25", "--start-time", "2024-12-28", "--end-time", "2024-12-31")
+    assert stores.opened == [f"{AZ}/total_precipitation_24h_acc_imerg_0p25.zarr"]
+    with xr.open_zarr(out) as ds:
+        assert _dates(ds) == ["2024-12-29", "2024-12-31"]
+        assert ds["precip"].attrs["units"] == "mm day-1"
+        assert ds.attrs["hindcast_dataset"] == "cumulus_0p25"
+
+
 def test_longitudes_wrap_to_plus_minus_180(tmp_path, fetch, stores):
     stores.data[f"{PUB}/gefs_precip.zarr"] = _store(
         "precip", ["2017-10-04"], [0], 1.0, order=STORE_ORDER, lons=(0.0, 1.0, 359.0)
@@ -244,6 +257,8 @@ def test_window_without_inits_exits_1(tmp_path, fetch, stores):
         ["--dataset", "ecmwf_wb2", "--start-time", "2018-10-01", "--end-time", "2018-10-31", "-v", "sst"],
         ["--dataset", "gefs", "--start-time", "2017-10-01", "--end-time", "2017-10-31", "-v", "sst"],
         ["--dataset", "cumulus_1deg", "--start-time", "2024-12-01", "--end-time", "2024-12-31"],
+        ["--dataset", "cumulus_0p25", "--start-time", "2024-12-01", "--end-time", "2024-12-31",
+         "-v", "tmp2m"],
         ["--dataset", "ecmwf", "--start-time", "2018-10-01", "--end-time", "2018-10-31",
          "--issue-year", "2022"],
     ],
