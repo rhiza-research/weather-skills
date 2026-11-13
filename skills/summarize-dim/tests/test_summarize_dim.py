@@ -929,3 +929,38 @@ def test_sum_by_season_stamps_the_season_span(tmp_path, summarize_dim):
         "sum",
     )
     assert xr.open_zarr(out)["precip"].attrs["aggregation_period"] == "92 day"
+
+
+def test_month_bounds_as_data_var_are_not_reduced(tmp_path, summarize_dim):
+    """time_bounds saved as a data variable is read for the step, not summarized."""
+    import numpy as np
+
+    times = xr.date_range("2019-11-01", "2021-02-01", freq="MS")
+    ends = xr.date_range("2019-12-01", "2021-03-01", freq="MS")
+    ds = xr.Dataset(
+        {
+            "index": (("time",), np.arange(times.size, dtype=float), {"units": "degree_Celsius"}),
+            "time_bounds": (("time", "nv"), np.stack([times.values, ends.values], axis=1)),
+        },
+        coords={"time": times, "year": ("time", times.year), "month": ("time", times.month)},
+    )
+    ds["time"].attrs["bounds"] = "time_bounds"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    assert "time_bounds" in xr.open_zarr(src).data_vars
+    out = tmp_path / "o.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month",
+        "--method",
+        "mean",
+    )
+    got = xr.open_zarr(out)
+    assert list(got.data_vars) == ["index"]
+    assert float(got["index"].sel(year=2020, month=12)) == 13.0

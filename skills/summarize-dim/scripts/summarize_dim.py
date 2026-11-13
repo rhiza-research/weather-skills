@@ -28,7 +28,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.11"
 
 _TIME_LABELS = ("month", "year", "dayofyear", "month_group")
 _INITIALS = "JFMAMJJASOND"
@@ -162,6 +162,9 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
             on_month_starts = (months.astype(ds[bounds].dtype) == ds[bounds].values).all()
             if on_month_starts and spans.min() == spans.max() > 0:
                 bounds_period = f"{spans[0]} month"
+        # The cells are read; grouped output has new ones, and a bounds data var would be reduced.
+        if bounds in ds.variables:
+            ds = ds.drop_vars(bounds)
     # Other label coords on the grouped dims (admin_1_name, ...) cannot survive the collapse.
     ds = ds.drop_vars(
         [c for c in ds.coords if c not in (*by, *ds.dims) and set(ds[c].dims) & set(group_dims)]
