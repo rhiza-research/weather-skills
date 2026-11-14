@@ -220,7 +220,16 @@ def test_cumulus_members_and_kelvin_converted(tmp_path, fetch, stores):
 
 def test_cumulus_0p25_reads_its_own_store(tmp_path, fetch, stores):
     out = tmp_path / "cum025.zarr"
-    _run(fetch, out, "--dataset", "cumulus_0p25", "--start-time", "2024-12-28", "--end-time", "2024-12-31")
+    _run(
+        fetch,
+        out,
+        "--dataset",
+        "cumulus_0p25",
+        "--start-time",
+        "2024-12-28",
+        "--end-time",
+        "2024-12-31",
+    )
     assert stores.opened == [f"{AZ}/total_precipitation_24h_acc_imerg_0p25.zarr"]
     with xr.open_zarr(out) as ds:
         assert _dates(ds) == ["2024-12-29", "2024-12-31"]
