@@ -24,7 +24,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr [
 - `--obs` — observation Zarr on the forecast's grid spacing (or the same stations).
 - `--metric` — `hits` (event classification), `bias` (forecast − obs), or `mae` (|forecast − obs|). Default: `hits`.
 - `--variable`, `-v` — variable name in both inputs. Default: each input's first usable variable (names may differ).
-- `--threshold` — event cutoff for `hits`: an event is value ≥ threshold. A bare number is in the forecast's units. A quantity such as `"50 mm"` is converted to them; on a rate (`mm day-1`) it is a total over the forecast's `aggregation_period` (or `data_interval`), so `"50 mm"` on 3-day mean rates is 16.67 mm day-1 and no convert-to-totals step is needed. stderr prints the converted cutoff. Default: `1`. Ignored (with a stderr note) for other metrics.
+- `--threshold` — event cutoff for `hits`: a cell counts as an event when its value is at least this. A plain number uses the forecast's units (`10` on `mm day-1` data means 10 mm per day). With units on rate data, it is the total over each window, so no convert-to-totals step is needed: `"50 mm"` on 3-day mean rates means 50 mm in 3 days (16.67 mm day-1). The window length comes from the forecast's `aggregation_period` (or `data_interval`). stderr prints the cutoff in the forecast's units. Default: `1`. Ignored (with a stderr note) for other metrics.
 - `--member-fraction` — `hits` on an ensemble only: the forecast event is at least this share of members ≥ threshold (`0.5` = half the members), instead of the ensemble mean ≥ threshold. The mean smooths heavy-rain peaks away; use this for rare events.
 - `--output`, `-o` — output Zarr.
 

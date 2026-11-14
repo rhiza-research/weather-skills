@@ -48,9 +48,10 @@ _VAR = {"hits": "event_hit", "bias": "bias", "mae": "mae"}
     "--threshold",
     default="1",
     help=(
-        "Event cutoff for --metric hits: a cell is an event when the variable is >= this. "
-        "A bare number is in the forecast's units; '50 mm' on a rate is a total over its "
-        "aggregation_period."
+        "Event cutoff for --metric hits: a cell counts as an event when its value is at "
+        "least this. A plain number uses the forecast's units (10 on mm day-1 data means "
+        "10 mm per day). With units on rate data, it is the total over each window: "
+        "'50 mm' on 3-day mean rates means 50 mm in 3 days (16.67 mm day-1)."
     ),
 )
 @weather_skill.argument(
