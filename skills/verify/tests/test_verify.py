@@ -73,7 +73,7 @@ def _expect_exit(fn, *args, **kwargs):
 # --- statistics ---------------------------------------------------------------------------
 
 
-def test_error_statistics_and_attrs(tmp_path, verify_fn, capsys):
+def test_error_statistics_and_attrs(tmp_path, verify_fn):
     fc = make_gridded(n_time=1, fill=3.0)
     obs = make_gridded(n_time=1, fill=1.0)
     ds = _stats(tmp_path, verify_fn, fc, obs, "fcst", "obs", "bias", "mae", "mse", "covariance")
@@ -87,7 +87,7 @@ def test_error_statistics_and_attrs(tmp_path, verify_fn, capsys):
     assert len(runs) == 1
     assert ds["mse"].attrs["verify_statistic"] == "mse"
     assert json.loads(ds["mse"].attrs["verify_config"])["forecast_variable"] == "precip"
-    assert "12 samples" in capsys.readouterr().out
+    assert float(ds["n_valid"].sum()) == 12
     assert load_history(tmp_path / "out.zarr")[-1]["skill"] == "verify"
 
 

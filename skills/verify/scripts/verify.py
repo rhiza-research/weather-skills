@@ -704,7 +704,6 @@ def verify(
         result[s] = field.pint.quantify("1" if u is None else u)
     result.attrs["Conventions"] = "CF-1.13"
     result.attrs["verify_statistics"] = " ".join(out)
-    print(f"verify  {len(stats)} statistic(s) on {n} samples: {', '.join(stats)}")
     return result
 
 
@@ -760,7 +759,6 @@ def _metric(ds, metric, variable):
     out = xr.Dataset()
     for name, field in results.items():
         field = field.astype("float32")
-        values = np.asarray(field.values)
         if metric in _IDENTITY and units_in:
             field = field.pint.quantify(units_in)
         elif metric == "rmse" and units_in:
@@ -776,13 +774,6 @@ def _metric(ds, metric, variable):
             "verify_config": first.get("verify_config", ""),
         }
         out[name] = field
-        u = f" {field.pint.units:~}" if field.pint.units != ureg.dimensionless else ""
-        if values.size == 1:
-            print(f"verify  {name} {float(values.ravel()[0]):.4g}{u}")
-        else:
-            finite = values[np.isfinite(values)]
-            span = f"{finite.min():.4g} … {finite.max():.4g}{u}" if finite.size else "all NaN"
-            print(f"verify  {name} on {dict(field.sizes)}: {span}")
     out.attrs["Conventions"] = "CF-1.13"
     out.attrs["verify_metric"] = metric
     return out
