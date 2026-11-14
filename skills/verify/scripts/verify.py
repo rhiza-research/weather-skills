@@ -252,7 +252,12 @@ def verify(forecast, obs, variable, metric, threshold, member_fraction, **kwargs
                 ber = f"{(n_miss / n_obs + n_false / n_none) / 2:.2f}"
             else:
                 ber = "n/a"
-            return f"{text}, false alarms {n_false} (FAR {far}), CSI {csi}, BER {ber}"
+            # Frequency bias: forecast events / observed events (1 = forecast as often as seen).
+            fbias = f"{(n_hit + n_false) / n_obs:.2f}" if n_obs else "n/a"
+            return (
+                f"{text}, false alarms {n_false} (FAR {far}), CSI {csi}, BER {ber}, "
+                f"frequency bias {fbias}"
+            )
         lat = next((n for n in ("latitude", "lat") if n in field.dims), None)
         u = f"{ureg.Unit(u_fc or u_obs):~}" if (u_fc or u_obs) else ""
         u_suffix = f" {u}" if u else ""

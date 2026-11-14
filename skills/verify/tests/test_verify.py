@@ -52,7 +52,8 @@ def test_hit_miss_false_alarm_and_correct_negative(tmp_path, verify_fn):
     assert ds["event_hit"].attrs["event_variable"] == "precip"
     assert ds.attrs["verify_metric"] == "hits"
     assert ds.attrs["verify_score_summary"] == (
-        "hit rate 50%  (1/2 obs events), false alarms 1 (FAR 50%), CSI 0.33, BER 0.30"
+        "hit rate 50%  (1/2 obs events), false alarms 1 (FAR 50%), CSI 0.33, BER 0.30, "
+        "frequency bias 1.00"
     )
     assert load_history(out)[-1]["skill"] == "verify"
 

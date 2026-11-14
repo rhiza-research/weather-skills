@@ -80,7 +80,7 @@ credentialed or source-specific fetcher only when it does not.
 | `standardize-anomaly` | Standardized anomaly aka z-score: `(field − clim_avg) / clim_std` against a climatology (e.g. `clim-fetch`) — dimensionless output, errors on units mismatch. For a plain physical-unit anomaly, use `difference` instead. |
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
 | `wind-speed-direction` | Wind speed (`hypot(u, v)`) and the directions the wind blows from and to (degrees clockwise from north) from a `--u` / `--v` component pair; calm cells (speed ≤ `--calm-speed`) get NaN direction |
-| `verify` | Forecast vs obs verification for every lead: `--metric hits|bias|mae` (hits = hit / miss / false alarm, with hit rate, FAR, CSI and balanced error rate). |
+| `verify` | Forecast vs obs verification for every lead: `--metric hits|bias|mae` (hits = hit / miss / false alarm, with hit rate, FAR, CSI, balanced error rate and frequency bias). |
 | `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
 
 ### Agent capabilities
