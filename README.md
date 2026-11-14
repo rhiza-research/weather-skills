@@ -82,6 +82,7 @@ credentialed or source-specific fetcher only when it does not.
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
 | `wind-speed-direction` | Wind speed (`hypot(u, v)`) and the directions the wind blows from and to (degrees clockwise from north) from a `--u` / `--v` component pair; calm cells (speed ≤ `--calm-speed`) get NaN direction |
 | `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). |
+| `correlate` | Pearson or Spearman correlation of two datasets along a dim (default `time`), cell by cell, with p-value and pair count — forecast–obs anomaly correlation, or a climate index against a grid |
 | `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
 
 ### Agent capabilities
