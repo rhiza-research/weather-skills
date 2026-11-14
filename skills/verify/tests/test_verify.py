@@ -274,28 +274,6 @@ def test_leads_with_no_obs_at_any_valid_time_are_refused(tmp_path, verify_fn, ca
     assert "no --obs time matches a forecast valid time" in capsys.readouterr().err
 
 
-def test_total_threshold_on_a_rate_uses_its_aggregation_period(tmp_path, verify_fn, capsys):
-    """50 mm over 3-day mean rates is 16.67 mm day-1: 17 is an event, 16 is not."""
-    fc = make_gridded(n_time=1, fill=17.0)
-    fc["precip"].attrs["aggregation_period"] = "3 day"
-    fc["precip"].values[0, 0, 0] = 16.0
-    obs = make_gridded(n_time=1, fill=17.0)
-    ds = _verify(tmp_path, verify_fn, fc, obs, "--threshold", "50 mm")
-    assert ds["event_hit"].values[0, 0, 0] == 2
-    assert (ds["event_hit"].values.ravel()[1:] == 1).all()
-    assert ds["event_hit"].attrs["event_threshold"] == pytest.approx(50 / 3)
-    assert "50 mm over 3 day" in capsys.readouterr().err
-
-
-def test_total_threshold_without_a_period_is_refused(tmp_path, verify_fn):
-    fc = make_gridded(n_time=1, fill=17.0)
-    for attr in ("aggregation_period", "data_interval"):
-        fc["precip"].attrs.pop(attr, None)
-    with pytest.raises(SystemExit) as exc:
-        _verify(tmp_path, verify_fn, fc, make_gridded(n_time=1), "--threshold", "50 mm")
-    assert exc.value.code == 2
-
-
 def test_member_fraction_counts_members_at_the_threshold(tmp_path, verify_fn):
     """2 of 4 members >= 10: an event at --member-fraction 0.5, not at 0.75."""
     fc = make_forecast(n_step=1, members=4, name="precip")

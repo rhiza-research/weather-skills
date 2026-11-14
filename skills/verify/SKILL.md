@@ -16,7 +16,7 @@ Compares a forecast with observations cell by cell (or station by station) and w
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr [--metric hits|bias|mae] [-v NAME] [--threshold 1|"50 mm"] [--member-fraction 0.5] -o OUT.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr [--metric hits|bias|mae] [-v NAME] [--threshold 1] [--member-fraction 0.5] -o OUT.zarr
 ```
 
 ### Arguments
@@ -24,7 +24,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr [
 - `--obs` — observation Zarr on the forecast's grid spacing (or the same stations).
 - `--metric` — `hits` (event classification), `bias` (forecast − obs), or `mae` (|forecast − obs|). Default: `hits`.
 - `--variable`, `-v` — variable name in both inputs. Default: each input's first usable variable (names may differ).
-- `--threshold` — event cutoff for `hits`: a cell counts as an event when its value is at least this. A plain number uses the forecast's units (`10` on `mm day-1` data means 10 mm per day). With units on rate data, it is the total over each window, so no convert-to-totals step is needed: `"50 mm"` on 3-day mean rates means 50 mm in 3 days (16.67 mm day-1). The window length comes from the forecast's `aggregation_period` (or `data_interval`). stderr prints the cutoff in the forecast's units. Default: `1`. Ignored (with a stderr note) for other metrics.
+- `--threshold` — event cutoff for `hits`, a plain number in the forecast's units: a cell counts as an event when its value is at least this (`10` on `mm day-1` data means 10 mm per day). Convert other cutoffs yourself first: 50 mm in 3 days on 3-day mean rates is `16.67`. Default: `1`. Ignored (with a stderr note) for other metrics.
 - `--member-fraction` — `hits` on an ensemble only: the forecast event is at least this share of members ≥ threshold (`0.5` = half the members), instead of the ensemble mean ≥ threshold. The mean smooths heavy-rain peaks away; use this for rare events.
 - `--output`, `-o` — output Zarr.
 
@@ -39,7 +39,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr [
 - Inputs keep only shared labels (inner join); no overlap on a dim exits 2 and prints both ranges. Single-time inputs must carry the same date.
 - **Leads are scored directly.** A forecast with `time` (init, scalar or a range of inits) and `step` against obs on `time` pairs each init and step with the obs at init + step, so no select or step-to-time is needed. The output keeps `(time, step, …)` with `time` = init. Label both on the same bins: after `aggregate-temporal --period "3 day" --time-dim step`, step `3D` covers days 4–6, so the obs need 3-day windows labelled at their first day (`aggregate-temporal --window "3 day" --align left`). Valid times outside the obs record stay NaN and are not scored; none at all exits 2. Obs that also have `step` join on it instead.
 - Ensemble `number` is averaged first, so every metric scores the ensemble mean, unless `--member-fraction` counts members instead; a NaN member makes that cell NaN.
-- Obs are converted to the forecast's units. Incompatible units (an `mm` total against an `mm day-1` rate), or units on only one input, exit 2. For a precip threshold in mm, pass it as a quantity (`--threshold "50 mm"`) on matching rate windows.
+- Obs are converted to the forecast's units. Incompatible units (an `mm` total against an `mm day-1` rate), or units on only one input, exit 2.
 - Stations: sample the grid at the station points first, then pass the sample and the station Zarr. Pairs join on `station_id` and `time`.
 
 ### Examples
@@ -51,6 +51,6 @@ Writes week-2 hit / miss / false-alarm / correct-negative cells for ≥ 10 mm we
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast gefs_hindcast_3day.zarr \
-  --obs imerg_on_gefs_3day_windows.zarr --metric hits --threshold "50 mm" -o hits_3day.zarr
+  --obs imerg_on_gefs_3day_windows.zarr --metric hits --threshold 16.67 -o hits_3day.zarr
 ```
-Scores every hindcast init and every 3-day lead window for ≥ 50 mm in 3 days, with one score line per lead.
+Scores every hindcast init and every 3-day lead window for ≥ 50 mm in 3 days (16.67 mm day-1 on 3-day mean rates), with one score line per lead.

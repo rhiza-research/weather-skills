@@ -19,7 +19,6 @@ from weather_skills_core.cf import auto_variable
 from weather_skills_core.standard_utils import latitude_weights
 from weather_skills_core.units import (
     dequantify_dataset,
-    parse_aggregation_period,
     ureg,
     variable_units,
 )
@@ -46,12 +45,11 @@ _VAR = {"hits": "event_hit", "bias": "bias", "mae": "mae"}
 )
 @weather_skill.argument(
     "--threshold",
-    default="1",
+    type=float,
+    default=1.0,
     help=(
-        "Event cutoff for --metric hits: a cell counts as an event when its value is at "
-        "least this. A plain number uses the forecast's units (10 on mm day-1 data means "
-        "10 mm per day). With units on rate data, it is the total over each window: "
-        "'50 mm' on 3-day mean rates means 50 mm in 3 days (16.67 mm day-1)."
+        "Event cutoff for --metric hits, in the forecast's units: a cell counts as an event "
+        "when its value is at least this (10 on mm day-1 data means 10 mm per day)."
     ),
 )
 @weather_skill.argument(
@@ -179,49 +177,13 @@ def verify(forecast, obs, variable, metric, threshold, member_fraction, **kwargs
     if u_fc and u_obs:
         error = dequantify_dataset(error.to_dataset(name="error"))["error"]
     fc, truth = (da.pint.dequantify() if da.pint.units is not None else da for da in (fc, truth))
-    if metric != "hits" and threshold != "1":
+    if metric != "hits" and threshold != 1.0:
         print(
             f"Note: --threshold {threshold} is ignored for --metric {metric}.",
             file=sys.stderr,
         )
 
-    cutoff = None
-    if metric == "hits":
-        try:
-            cutoff = float(threshold)
-        except ValueError:
-            try:
-                quantity = ureg.Quantity(threshold)
-            except Exception:  # noqa: BLE001 — any pint parse failure is a usage error
-                raise UsageError(
-                    f"--threshold {threshold!r} is not a number or a quantity"
-                ) from None
-            if not u_fc:
-                raise UsageError(
-                    f"--threshold {threshold!r} has units but the forecast has none."
-                ) from None
-            try:
-                cutoff = quantity.to(ureg.Unit(u_fc)).magnitude
-            except pint.DimensionalityError:
-                # A total ("50 mm") on a rate: spread it over the forecast's window.
-                period = fc.attrs.get("aggregation_period") or fc.attrs.get("data_interval")
-                if not period:
-                    raise UsageError(
-                        f"--threshold {threshold!r} is a total but the forecast ({u_fc}) has no "
-                        "aggregation_period or data_interval to spread it over."
-                    ) from None
-                try:
-                    cutoff = (quantity / parse_aggregation_period(period)).to(ureg.Unit(u_fc))
-                except pint.DimensionalityError:
-                    raise UsageError(
-                        f"--threshold {threshold!r} cannot be compared with {u_fc}."
-                    ) from None
-                cutoff = cutoff.magnitude
-                print(
-                    f"--threshold {threshold} over {period} = {cutoff:.6g} {ureg.Unit(u_fc):~}.",
-                    file=sys.stderr,
-                )
-        cutoff = float(cutoff)
+    cutoff = threshold if metric == "hits" else None
 
     if member_fraction is not None:
         # Share of members at or above the cutoff; a NaN member leaves the cell NaN.
