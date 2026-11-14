@@ -180,10 +180,10 @@ def test_units_converted_and_offset_units_scored_in_kelvin(tmp_path, verify_fn):
 
 
 def test_threshold_applies_in_forecast_units(tmp_path, verify_fn):
-    """36 deg C forecast vs 300 K (26.85 deg C) obs at 35 degC: a false alarm."""
+    """36 deg C forecast vs 300 K (26.85 deg C) obs at 35 (deg C, scored in K): a false alarm."""
     ds = _stats(
         tmp_path, verify_fn, _temp(36.0, "degree_Celsius"), _temp(300.0, "K"),
-        "false_positives", extra=("--threshold", "35 degC"),
+        "false_positives", extra=("--threshold", "35"),
     )  # fmt: skip
     assert (ds["false_positives"].values == 1).all()
 
@@ -200,25 +200,11 @@ def test_unit_mismatches_are_refused(tmp_path, verify_fn):
     _expect_exit(_stats, tmp_path, verify_fn, obs, fc, "bias")
 
 
-def test_total_threshold_on_a_rate_uses_its_aggregation_period(tmp_path, verify_fn, capsys):
-    """50 mm over 3-day mean rates is 16.67 mm day-1: 17 is an event, 16 is not."""
-    fc = make_gridded(n_time=1, fill=17.0)
-    fc["precip"].attrs["aggregation_period"] = "3 day"
-    fc["precip"].values[0, 0, 0] = 16.0
-    obs = make_gridded(n_time=1, fill=17.0)
-    ds = _stats(
-        tmp_path, verify_fn, fc, obs, "true_positives", "false_negatives",
-        extra=("--threshold", "50 mm"),
-    )  # fmt: skip
-    assert ds["false_negatives"].values[0, 0, 0] == 1
-    assert ds["true_positives"].values.sum() == 11
-    assert json.loads(ds["true_positives"].attrs["verify_config"])["threshold"] == pytest.approx(
-        50 / 3
-    )
-    assert "50 mm over 3 day" in capsys.readouterr().err
-
-    fc["precip"].attrs.pop("aggregation_period")
-    fc["precip"].attrs.pop("data_interval", None)
+def test_zero_threshold_is_a_threshold(tmp_path, verify_fn):
+    """--threshold 0 is a real cutoff, not a missing one: every value >= 0 is an event."""
+    fc, obs = make_gridded(n_time=1, fill=0.0), make_gridded(n_time=1, fill=0.0)
+    ds = _stats(tmp_path, verify_fn, fc, obs, "true_positives", extra=("--threshold", "0"))
+    assert (ds["true_positives"].values == 1).all()
     _expect_exit(
         _stats, tmp_path, verify_fn, fc, obs, "true_positives", extra=("--threshold", "50 mm")
     )
@@ -441,6 +427,7 @@ def test_contingency_metrics(tmp_path, verify_fn, summarize_fn):
         "far": b / (a + b),
         "pofd": b / (b + d),
         "csi": a / (a + b + c),
+        "balanced_error_rate": (c / (a + c) + b / (b + d)) / 2,
         "frequency_bias": (a + b) / (a + c),
         "ets": (a - (a + b) * (a + c) / (a + b + c + d))
         / (a + b + c - (a + b) * (a + c) / (a + b + c + d)),

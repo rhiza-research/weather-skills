@@ -1,6 +1,6 @@
 ---
 name: verify
-description: "Verify any dataset against a reference (a forecast against observations, or one product against another) in two steps: per-sample statistics (errors, products, event counts, Brier, CRPS, RPS) for every lead, optionally only on dates or cells a mask selects, then, after grouping with summarize-dim, metrics such as RMSE, correlation, ACC, POD, FAR, ETS, Heidke, BSS, RPSS, spread/skill, reliability and ROC. Use for forecast skill scores, skill maps, per-region or per-season scores, and event verification."
+description: "Verify any dataset against a reference (a forecast against observations, or one product against another) in two steps: per-sample statistics (errors, products, event counts, Brier, CRPS, RPS) for every lead, optionally only on dates or cells a mask selects, then, after grouping with summarize-dim, metrics such as RMSE, correlation, ACC, POD, FAR, CSI, balanced error rate, ETS, Heidke, BSS, RPSS, spread/skill, reliability and ROC. Use for forecast skill scores, skill maps, per-region or per-season scores, and event verification."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py *)
@@ -33,7 +33,7 @@ Write every statistic a metric needs in **one** verify call.
 | `rmse` | `mse` | |
 | `pearson` | `fcst obs squared_fcst squared_obs covariance` | |
 | `acc` | `squared_fcst_anom squared_obs_anom anom_covariance` | `--clim` |
-| `pod`, `far`, `pofd`, `csi`, `frequency_bias`, `ets` | `true_positives false_positives false_negatives true_negatives` | `--threshold` |
+| `pod`, `far`, `pofd`, `csi`, `balanced_error_rate`, `frequency_bias`, `ets` | `true_positives false_positives false_negatives true_negatives` | `--threshold` |
 | `heidke` | `n_correct n_fcst_bin n_obs_bin` | `--bins` |
 | `bss` | `brier obs_event` | `--threshold` |
 | `spread` | `ensemble_variance mse` | ensemble |
@@ -47,7 +47,7 @@ A plain mean (`mae`, `bias`, `fcst`) is already the answer after step 2; step 3 
 - `--forecast`, `--obs` — the dataset to score and its reference: any two datasets (a forecast, a satellite product, stations). Bias is forecast − obs; events are counted on the obs.
 - `--statistic` — repeatable; see the table. `n_valid` (1 on every scored sample) is always added.
 - `--variable`, `-v` — variable name in both inputs. Default: each input's first usable variable.
-- `--threshold` — event cutoff: an event is a value ≥ it. A bare number is in the forecast's units; `"50 mm"` on a rate is a total over its `aggregation_period`. Required by event statistics, refused otherwise.
+- `--threshold` — event cutoff, a plain number in the forecast's units: an event is a value ≥ it (`10` on `mm day-1` data means 10 mm per day). Convert other cutoffs yourself first: 50 mm in 3 days on 3-day mean rates is `16.67`. Required by event statistics, refused otherwise.
 - `--member-fraction F` — contingency on an ensemble: forecast event when ≥ F of the members reach the threshold. Default: the ensemble mean reaches it.
 - `--probability` — the forecast is already the event probability (0–1, no members), e.g. `indicator --probability`. Default: the share of members ≥ threshold (0 or 1 without members).
 - `--clim CLIM.zarr` — climatology on obs dates (`clim-fetch`, `climatology`), for the `*_anom` statistics.
@@ -69,9 +69,10 @@ A plain mean (`mae`, `bias`, `fcst`) is already the answer after step 2; step 3 
 - `--metric` exits 2 when a needed statistic is missing, when they come from different verify calls, when they were never grouped, grouped differently, or reduced by anything but a mean.
 - Leads are scored directly: a forecast with init `time` and `step` pairs with the obs at init + step; output keeps `(time, step, …)`. Label both on the same bins (after `aggregate-temporal --time-dim step`, obs windows labelled at their first day, `--align left`). Valid times outside the obs record stay NaN.
 - Grid spacing must match (exit 2 otherwise): coarsen the obs onto the forecast (`coarsen --reference-grid FC.zarr --method conservative`). Inputs keep only shared labels; no overlap exits 2.
-- Obs are converted to the forecast's units; a total against a rate, or units on one side only, exits 2. Offset units (°C) are scored in kelvin.
+- Obs are converted to the forecast's units; a total against a rate, or units on one side only, exits 2. Offset units (°C) are scored in kelvin; `--threshold` stays in the forecast's °C.
 - Deterministic statistics score the ensemble mean; `brier`, `crps`, `crps_fair`, `ensemble_variance`, `rps` and the reliability/ROC statistics score the members. A NaN member drops the sample.
 - `far` is the false alarm ratio FP / (TP + FP); `pofd` is the false alarm rate FP / (FP + TN).
+- `csi` is TP / (TP + FP + FN). `balanced_error_rate` is the mean of the miss rate FN / (TP + FN) and `pofd`: 0 is perfect, 0.5 is no better than chance, whatever the event's base rate.
 - To compare several models against one reference, stack them first: `concat --new-dim model`, then one verify call.
 - Stations: sample the grid at the station points first, then pass the sample and the station Zarr.
 

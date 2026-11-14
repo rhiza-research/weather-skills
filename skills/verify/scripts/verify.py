@@ -20,7 +20,7 @@ import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable
 from weather_skills_core.errors import DataError
-from weather_skills_core.units import parse_aggregation_period, ureg, variable_units
+from weather_skills_core.units import ureg, variable_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.10"
@@ -138,6 +138,16 @@ _METRICS |= {
             / (g["true_positives"] + g["false_positives"] + g["false_negatives"])
         },
     ),
+    "balanced_error_rate": (
+        _CONTINGENCY,
+        lambda g: {
+            "balanced_error_rate": (
+                g["false_negatives"] / (g["true_positives"] + g["false_negatives"])
+                + g["false_positives"] / (g["false_positives"] + g["true_negatives"])
+            )
+            / 2
+        },
+    ),
     "frequency_bias": (
         ("true_positives", "false_positives", "false_negatives"),
         lambda g: {
@@ -175,6 +185,7 @@ _METRIC_NAMES = {
     "far": "False alarm ratio",
     "pofd": "Probability of false detection (false alarm rate)",
     "csi": "Critical success index",
+    "balanced_error_rate": "Balanced error rate (mean of miss rate and false alarm rate)",
     "frequency_bias": "Frequency bias (forecast events / observed events)",
     "ets": "Equitable threat score",
     "heidke": "Heidke skill score",
@@ -262,36 +273,6 @@ def _to_units(da, units, role):
         ) from None
 
 
-def _cutoff(threshold, units, attrs):
-    """--threshold as a number in the forecast's units; a total spreads over a rate's window."""
-    try:
-        return float(threshold)
-    except ValueError:
-        pass
-    try:
-        quantity = ureg.Quantity(threshold)
-    except Exception:  # noqa: BLE001 — any pint parse failure is a usage error
-        raise UsageError(f"--threshold {threshold!r} is not a number or a quantity") from None
-    if units is None:
-        raise UsageError(f"--threshold {threshold!r} has units but the forecast has none.")
-    try:
-        return float(quantity.to(units).magnitude)
-    except pint.DimensionalityError:
-        pass
-    period = attrs.get("aggregation_period") or attrs.get("data_interval")
-    if not period:
-        raise UsageError(
-            f"--threshold {threshold!r} is a total but the forecast ({units:~}) has no "
-            "aggregation_period or data_interval to spread it over."
-        )
-    try:
-        cutoff = float((quantity / parse_aggregation_period(period)).to(units).magnitude)
-    except pint.DimensionalityError:
-        raise UsageError(f"--threshold {threshold!r} cannot be compared with {units:~}.") from None
-    print(f"--threshold {threshold} over {period} = {cutoff:.6g} {units:~}.", file=sys.stderr)
-    return cutoff
-
-
 @weather_skill(
     name="verify",
     version=_SKILL_VERSION,
@@ -313,9 +294,10 @@ def _cutoff(threshold, units, attrs):
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument(
     "--threshold",
+    type=float,
     help=(
-        "Event cutoff: an event is a value >= this. A bare number is in the forecast's units; "
-        "'50 mm' on a rate is a total over its aggregation_period."
+        "Event cutoff, in the forecast's units: an event is a value >= this "
+        "(10 on mm day-1 data means 10 mm per day)."
     ),
 )
 @weather_skill.argument(
@@ -383,7 +365,7 @@ def verify(
                 ("--obs-edges", obs_edges),
                 ("--filter", filter),
             )
-            if value
+            if value is not None and value is not False
         ]
         if given:
             raise UsageError(
@@ -413,9 +395,9 @@ def verify(
 
     def needs(flag, value, wanted):
         used = [s for s in stats if s in wanted]
-        if value and not used:
+        if value is not None and not used:
             raise UsageError(f"{flag} is not used by any of: {', '.join(stats)}.")
-        if used and not value:
+        if used and value is None:
             raise UsageError(f"{', '.join(used)} need {flag}.")
 
     needs("--threshold", threshold, _THRESHOLD_STATS)
@@ -488,7 +470,7 @@ def verify(
         # A NaN member leaves the mean NaN (no mean over the members left).
         truth = truth.mean("number", skipna=False, keep_attrs=True)
     truth = _at_valid_times(truth, fc, "--obs")
-    units = fc.pint.units
+    units = fc_units = fc.pint.units
     if quintiles:
         # Category probabilities: the units belong to the quintile_threshold edges.
         edge_units = fc["quintile_threshold"].attrs.get("units")
@@ -544,7 +526,10 @@ def verify(
             "<forecast.zarr>; for time, aggregate both with the same bins."
         )
 
-    cutoff = _cutoff(threshold, units, fc.attrs) if threshold else None
+    cutoff = threshold
+    if cutoff is not None and fc_units is not None and units is not None:
+        # The cutoff is in the forecast's own units; scoring may have moved them (°C to K).
+        cutoff = float(ureg.Quantity(cutoff, fc_units).to(units).magnitude)
     if probability:
         lo, hi = float(fc.min(skipna=True)), float(fc.max(skipna=True))
         if lo < 0 or hi > 1:
