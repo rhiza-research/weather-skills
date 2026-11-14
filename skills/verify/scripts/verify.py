@@ -25,7 +25,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.10"
 
 _METRICS = ("hits", "bias", "mae")
 _VAR = {"hits": "event_hit", "bias": "bias", "mae": "mae"}
@@ -276,6 +276,7 @@ def verify(forecast, obs, variable, metric, threshold, member_fraction, **kwargs
             n_hit = int((field == 1).sum())
             n_miss = int((field == 2).sum())
             n_false = int((field == 3).sum())
+            n_none = int((field == 0).sum()) + n_false
             n_obs = n_hit + n_miss
             if n_obs == 0:
                 text = "hit rate n/a  (0 obs events)"
@@ -283,7 +284,12 @@ def verify(forecast, obs, variable, metric, threshold, member_fraction, **kwargs
                 text = f"hit rate {100 * n_hit / n_obs:.0f}%  ({n_hit}/{n_obs} obs events)"
             far = f"{100 * n_false / (n_hit + n_false):.0f}%" if n_hit + n_false else "n/a"
             csi = f"{n_hit / (n_obs + n_false):.2f}" if n_obs + n_false else "n/a"
-            return f"{text}, false alarms {n_false} (FAR {far}), CSI {csi}"
+            # Balanced error rate: mean of miss rate and false alarm rate (POFD).
+            if n_obs and n_none:
+                ber = f"{(n_miss / n_obs + n_false / n_none) / 2:.2f}"
+            else:
+                ber = "n/a"
+            return f"{text}, false alarms {n_false} (FAR {far}), CSI {csi}, BER {ber}"
         lat = next((n for n in ("latitude", "lat") if n in field.dims), None)
         u = f"{ureg.Unit(u_fc or u_obs):~}" if (u_fc or u_obs) else ""
         u_suffix = f" {u}" if u else ""

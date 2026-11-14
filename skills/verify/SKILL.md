@@ -1,11 +1,11 @@
 ---
 name: verify
-description: "Score a forecast against observations on a shared grid or shared stations, cell by cell: event hits, misses and false alarms at a threshold (hit rate, FAR, CSI), bias (forecast − obs), or mean absolute error, for every forecast lead in one call. Writes the metric field as a Zarr and prints a regional score. Use for forecast skill maps and event verification."
+description: "Score a forecast against observations on a shared grid or shared stations, cell by cell: event hits, misses and false alarms at a threshold (hit rate, FAR, CSI, balanced error rate), bias (forecast − obs), or mean absolute error, for every forecast lead in one call. Writes the metric field as a Zarr and prints a regional score. Use for forecast skill maps and event verification."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py *)
 metadata:
-  version: "0.0.9"
+  version: "0.0.10"
   catalog-group: transforms
 ---
 
@@ -32,7 +32,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr [
 - One variable: `event_hit`, `bias`, or `mae`, float32. `event_hit` is `1` hit (both ≥ threshold), `2` miss (obs only), `3` false alarm (forecast only), `0` correct negative (both below), with CF `flag_values` / `flag_meanings`. Attrs `event_threshold` (in forecast units) and, with `--member-fraction`, `event_member_fraction`.
 - `bias` and `mae` are in the forecast's units (a temperature error is `delta_degC`).
 - NaN in either input stays NaN and is left out of the score.
-- Stdout prints the score: for `hits`, hit rate = hits / observed events, false alarms with FAR = false alarms / forecast events, and CSI = hits / (hits + misses + false alarms); for `bias` / `mae`, a cos-latitude-weighted mean (a plain mean on stations). A forecast with several leads also prints one line per `step`. Also stamped as `verify_score_summary`.
+- Stdout prints the score: for `hits`, hit rate = hits / observed events, false alarms with FAR = false alarms / forecast events, CSI = hits / (hits + misses + false alarms), and BER (balanced error rate) = the mean of misses / obs events and false alarms / obs non-events, where 0 is perfect and 0.5 is no better than chance whatever the event's base rate; for `bias` / `mae`, a cos-latitude-weighted mean (a plain mean on stations). A forecast with several leads also prints one line per `step`. Also stamped as `verify_score_summary`.
 
 ### Notes
 - Grid spacing must match: a different lat or lon spacing exits 2. Put the obs on the forecast grid (for fine obs, an area mean such as `coarsen --reference-grid FC.zarr --method conservative`), not the forecast on the obs grid.
