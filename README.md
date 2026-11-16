@@ -49,6 +49,7 @@ credentialed or source-specific fetcher only when it does not.
 | `pardig-fetch` | Google PARDIG AI precip estimate, 15-minute 0.1° (NRT 2016 to a few hours ago, LR 1999–2023) → Zarr. No credentials. |
 | `oisst-fetch` | NOAA OISST v2.1 daily 0.25° sea-surface temperature (1981-09 on) → Zarr. No credentials. |
 | `smap-fetch` | NASA SMAP Enhanced L3 (`SPL3SMP_E`) daily 9 km surface soil moisture → Zarr. Requires credentials. |
+| `ascat-fetch` | C3S ACTIVE (Metop ASCAT) daily 0.25° surface soil moisture, % of saturation, 1991 on → Zarr. Requires credentials. |
 | `ghcn-daily-fetch` | NOAA GHCN-Daily station observations (daily precip and max/min/mean temperature, ~130,000 stations) → station Zarr. No credentials. |
 | `openaq-fetch` | OpenAQ air-quality station observations (daily mean PM2.5, PM10, NO2, O3, SO2, CO) → station Zarr. Requires credentials. |
 | `cams-fetch` | CAMS global air-quality fields (PM2.5, PM10, near-surface NO2/O3/SO2/CO, AOD, total columns) — 5-day forecast at 0.4° (2015 on) or EAC4 reanalysis at 0.75° (2003 on) → Zarr. Requires credentials. |
