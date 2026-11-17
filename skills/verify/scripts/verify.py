@@ -76,6 +76,12 @@ _BIN_COMPONENTS = {"n_correct", "n_fcst_bin", "n_obs_bin"}
 
 # Metric functions: each takes the group means of its components (g) and returns the metric,
 # or a dict of named outputs.
+def _identity(g):
+    """The group mean of the metric's one component is the metric."""
+    (value,) = g.values()
+    return value
+
+
 def _rmse(g):
     return g["mse"] ** 0.5
 
@@ -164,20 +170,20 @@ def _roc(g):
     }
 
 
-# Metrics: the components each needs and its function. A metric with no function is the
-# group mean of its own component, and keeps its name and units.
+# Metrics: the components each needs and its function. An _identity metric is the group mean
+# of its own component, and keeps its name and units.
 _METRICS = {
-    "fcst": (("fcst",), None),
-    "obs": (("obs",), None),
-    "bias": (("bias",), None),
-    "mae": (("mae",), None),
-    "mse": (("mse",), None),
-    "mape": (("mape",), None),
-    "smape": (("smape",), None),
-    "crps": (("crps",), None),
-    "crps_fair": (("crps_fair",), None),
-    "brier": (("brier",), None),
-    "rps": (("rps",), None),
+    "fcst": (("fcst",), _identity),
+    "obs": (("obs",), _identity),
+    "bias": (("bias",), _identity),
+    "mae": (("mae",), _identity),
+    "mse": (("mse",), _identity),
+    "mape": (("mape",), _identity),
+    "smape": (("smape",), _identity),
+    "crps": (("crps",), _identity),
+    "crps_fair": (("crps_fair",), _identity),
+    "brier": (("brier",), _identity),
+    "rps": (("rps",), _identity),
     "rmse": (("mse",), _rmse),
     "pearson": (("fcst", "obs", "squared_fcst", "squared_obs", "covariance"), _pearson),
     "acc": (("squared_fcst_anom", "squared_obs_anom", "anom_covariance"), _acc),
@@ -793,14 +799,14 @@ def _metric(ds, metric):
     plain = {s: ds[s].pint.dequantify() if ds[s].pint.units is not None else ds[s] for s in needed}
     units_in = plain[needed[0]].attrs.get("units")
     with np.errstate(divide="ignore", invalid="ignore"):
-        results = finalize(plain) if finalize else plain[metric]
+        results = finalize(plain)
     if not isinstance(results, dict):
         results = {metric: results}
     out = xr.Dataset()
     for name, field in results.items():
         # A zero denominator (no observed event in a cell) gives NaN, never ±inf.
         field = field.where(np.isfinite(field)).astype("float32")
-        if finalize is None and units_in:
+        if finalize is _identity and units_in:
             field = field.pint.quantify(units_in)
         elif metric == "rmse" and units_in:
             # finalize took the root of the values; take it of the units too.
