@@ -70,25 +70,8 @@ _COMPONENTS = {
     "roc_hits": "Observed event warned at the probability threshold",
     "roc_false_alarms": "Non-event warned at the probability threshold",
 }
-_THRESHOLD_STATS = {
-    "true_positives",
-    "false_positives",
-    "false_negatives",
-    "true_negatives",
-    "obs_event",
-    "brier",
-    "reliability_count",
-    "reliability_fcst",
-    "reliability_obs",
-    "roc_hits",
-    "roc_false_alarms",
-}
-_PROBABILITY_STATS = {"brier", "reliability_count", "reliability_fcst", "reliability_obs"}
-_PROBABILITY_STATS |= {"roc_hits", "roc_false_alarms"}
 _CONTINGENCY = ("true_positives", "false_positives", "false_negatives", "true_negatives")
-_ANOM_STATS = {"squared_fcst_anom", "squared_obs_anom", "anom_covariance"}
-_BIN_STATS = {"n_correct", "n_fcst_bin", "n_obs_bin"}
-_ROC_LEVELS = np.round(np.arange(0.1, 1.01, 0.1), 2)
+_BIN_COMPONENTS = {"n_correct", "n_fcst_bin", "n_obs_bin"}
 
 
 # Metrics: (components, finalize) applied to group means of those components.
@@ -404,7 +387,7 @@ def verify(
     if forecast is None or obs is None or ds is not None:
         raise UsageError("--mode prepare needs --forecast and --obs, and no --input.")
     # Every component the metrics need, each once.
-    stats = list(dict.fromkeys(s for m in metrics for s in _METRICS[m][0]))
+    components = list(dict.fromkeys(s for m in metrics for s in _METRICS[m][0]))
 
     fc_name = variable or auto_variable(forecast)
     obs_name = variable or auto_variable(obs)
@@ -424,15 +407,17 @@ def verify(
         if used and value is None:
             raise UsageError(f"--metric {', '.join(used)} need {flag}.")
 
-    needs("--threshold", threshold, _THRESHOLD_STATS)
-    needs("--clim", clim, _ANOM_STATS)
-    needs("--bins", bins, _BIN_STATS)
+    probability_components = {"brier", "reliability_count", "reliability_fcst", "reliability_obs"}
+    probability_components |= {"roc_hits", "roc_false_alarms"}
+    needs("--threshold", threshold, {*_CONTINGENCY, "obs_event", *probability_components})
+    needs("--clim", clim, {"squared_fcst_anom", "squared_obs_anom", "anom_covariance"})
+    needs("--bins", bins, _BIN_COMPONENTS)
     if (fc_edges is None) != (obs_edges is None):
         raise UsageError("--fc-edges and --obs-edges go together.")
-    if fc_edges is not None and not {"rps", "rps_clim"} & set(stats):
+    if fc_edges is not None and not {"rps", "rps_clim"} & set(components):
         raise UsageError("--fc-edges / --obs-edges are for rps and rpss.")
     if member_fraction is not None:
-        if not set(_CONTINGENCY) & set(stats):
+        if not set(_CONTINGENCY) & set(components):
             raise UsageError(
                 "--member-fraction is for the contingency metrics (pod, far, pofd, csi, "
                 "balanced_error_rate, frequency_bias, ets)."
@@ -442,7 +427,7 @@ def verify(
         if not members:
             raise UsageError("--member-fraction needs an ensemble forecast (a number dim).")
     if probability:
-        if not _PROBABILITY_STATS & set(stats):
+        if not probability_components & set(components):
             raise UsageError("--probability is for brier, bss, reliability and roc.")
         if members:
             raise UsageError(
@@ -459,7 +444,7 @@ def verify(
                 "a forecast of category probabilities (a quintile dim) only gives rps and "
                 f"rpss, without edges; drop {', '.join(other) or '--fc-edges/--obs-edges'}."
             )
-    elif {"rps", "rps_clim"} & set(stats) and (fc_edges is None or not members):
+    elif {"rps", "rps_clim"} & set(components) and (fc_edges is None or not members):
         raise UsageError(
             "rps and rpss need either a forecast of quintile probabilities (pbc-correct) or an "
             "ensemble (number dim) with --fc-edges and --obs-edges from summarize-dim "
@@ -612,7 +597,7 @@ def verify(
             fc_event = mean >= cutoff
 
     out = {}
-    for s in stats:
+    for s in components:
         u = None
         if s == "fcst":
             field, u = mean, units
@@ -689,7 +674,7 @@ def verify(
             else:
                 cdf = xr.DataArray(np.arange(1, n_cat) / n_cat, dims="category_edge")
             field = ((cdf - obs_cdf) ** 2).sum("category_edge")
-        elif s in _BIN_STATS:
+        elif s in _BIN_COMPONENTS:
             edges = np.sort(np.asarray(bins, dtype=float))
             category = xr.DataArray(np.arange(edges.size + 1), dims="category")
             # Category k holds values from edge k-1 (inclusive) up to edge k.
@@ -708,11 +693,10 @@ def verify(
             weight = {"count": 1.0, "fcst": prob, "obs": obs_event}[s.removeprefix("reliability_")]
             field = (in_bin * weight).assign_coords(probability_bin=centre)
         else:  # roc_hits, roc_false_alarms
-            level = xr.DataArray(_ROC_LEVELS, dims="probability_threshold")
+            levels = np.round(np.arange(0.1, 1.01, 0.1), 2)
+            level = xr.DataArray(levels, dims="probability_threshold")
             event = obs_event if s == "roc_hits" else 1 - obs_event
-            field = ((prob >= level - 1e-6) * event).assign_coords(
-                probability_threshold=_ROC_LEVELS
-            )
+            field = ((prob >= level - 1e-6) * event).assign_coords(probability_threshold=levels)
         out[s] = (field, u)
 
     # One sample set for every component: a NaN in any component drops that sample from all,

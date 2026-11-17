@@ -90,6 +90,25 @@ Writes the area-weighted RMSE, correlation and CSI (weeks averaging ≥ 5 mm/day
 
 ## Details
 
+### Components
+Prepare writes the components the named metrics need. Each is one value per sample; its group mean feeds the metrics.
+
+| Group | Components | Written for | Needs |
+|---|---|---|---|
+| Errors | `fcst`, `obs`, `bias`, `mae`, `mse`, `mape`, `smape` | the metric of the same name; `rmse` (`mse`) | |
+| Moments | `fcst`, `obs`, `squared_fcst`, `squared_obs`, `covariance` | `pearson` | |
+| Anomaly moments | `squared_fcst_anom`, `squared_obs_anom`, `anom_covariance` | `acc` | `--clim` |
+| Contingency | `true_positives`, `false_positives`, `false_negatives`, `true_negatives` (1 or 0 per sample) | `pod`, `far`, `pofd`, `csi`, `balanced_error_rate`, `frequency_bias`, `ets` | `--threshold` |
+| Probability | `brier`, `obs_event` (observed event, 1 or 0) | `brier`, `bss` | `--threshold` |
+| Reliability | `reliability_count`, `reliability_fcst`, `reliability_obs` on `probability_bin` (10 bins of 0.1) | `reliability` | `--threshold` |
+| ROC | `roc_hits`, `roc_false_alarms` on `probability_threshold` (0.1 … 1.0), with `obs_event` | `roc` | `--threshold` |
+| Ensemble | `crps`, `crps_fair`, `ensemble_variance` (with `mse` for `spread`) | `crps`, `crps_fair`, `spread` | members |
+| Categories | `n_correct`, `n_fcst_bin`, `n_obs_bin` (the last two on `category`) | `heidke` | `--bins` |
+| Ranked probability | `rps`, `rps_clim` | `rps`, `rpss` | quintile forecast, or members + `--fc-edges` / `--obs-edges` |
+| Count | `n_valid` (1 on every scored sample) | always | |
+
+The probability, reliability and ROC components use the forecast event probability: the share of members ≥ `--threshold`, or the forecast itself with `--probability`.
+
 ### Event filters
 Score only dates an obs condition holds, e.g. 30-day rain totals during droughts: run `indicator` on the obs (`--rule "precip sum 30d < 50"`) for the mask, put both inputs on 30-day sums (`aggregate-temporal`), then `--mode prepare --metric mae --filter drought.zarr`. Several `--filter` masks must all hold. For locally extreme days, take the q90 from `climatology --quantiles 0.9`, `difference` the obs minus it, and mask with `indicator "precip >= 0"`.
 
