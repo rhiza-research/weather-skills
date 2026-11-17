@@ -1,6 +1,6 @@
 ---
 name: verify
-description: "Verify any dataset against a reference (a forecast against observations, or one product against another) in one call: pair every forecast value and lead with its obs, optionally only on dates or cells a mask selects, pool the samples over chosen dims, regions or seasons, and write metrics such as RMSE, correlation, ACC, POD, FAR, CSI, balanced error rate, ETS, Heidke, BSS, RPSS, spread/skill, reliability and ROC. Use for forecast skill scores, skill maps, per-region or per-season scores, and event verification."
+description: "Verify any dataset against a reference (a forecast against observations, or one product against another) for every lead, optionally only on dates or cells a mask selects, pooled over chosen dims, regions or seasons, with metrics such as RMSE, correlation, ACC, POD, FAR, CSI, balanced error rate, ETS, Heidke, BSS, RPSS, spread/skill, reliability and ROC. Use for forecast skill scores, skill maps, per-region or per-season scores, and event verification."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py *)
@@ -11,7 +11,7 @@ metadata:
 
 # verify
 
-One call scores a forecast against obs. You name the **metrics** and the **grouping**; verify pairs every forecast value with its obs, computes the per-sample **statistics** each metric needs (its sufficient statistics: values whose mean over any group feeds the metric, such as the squared error for `rmse`), pools them over each group and turns the pooled means into the metrics (RMSE = √mean(squared error), not a mean of RMSEs).
+Scores a forecast against obs. Name the metrics and the dims or labels to pool samples over; each forecast value is paired with its obs at its valid date, and each metric is computed from all the samples in a group.
 
 ## Usage
 
