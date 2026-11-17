@@ -5,7 +5,13 @@
 #   "pandas",
 # ]
 # ///
-"""Verify in two steps: per-sample statistics from a forecast and obs, then metrics from grouped statistics."""
+"""Verify in two steps: per-sample statistics from a forecast and obs, then metrics from grouped statistics.
+
+--forecast ─┐
+            ├─► verify --statistic ─► summarize-dim --method mean ─► verify --metric
+--obs ──────┘     mse, fcst, obs, …     group means over time, space     rmse = √mean(mse),
+                  one value per sample  or --by labels                   pearson, csi, …
+"""
 
 import json
 import re
@@ -20,7 +26,12 @@ import xarray as xr
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.cf import auto_variable
 from weather_skills_core.errors import DataError
-from weather_skills_core.units import ureg, variable_units
+from weather_skills_core.units import (
+    AGGREGATION_COVERAGE_COORD,
+    AGGREGATION_PERIOD_ATTR,
+    ureg,
+    variable_units,
+)
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.10"
@@ -229,20 +240,24 @@ def _at_valid_times(da, fc, role):
     """Pair a field on ``time`` with the forecast's (init ``time``, ``step``): its value at init + step."""
     if "time" in da.coords and da["time"].ndim == 0:
         da = da.expand_dims("time")
-    if "step" not in fc.dims or "step" in da.dims:
+    if "step" not in fc.dims or "step" in da.dims or "time" not in da.dims:
+        # No time axis: a static field (a land mask, a fixed climatology) holds for every lead.
         return da
-    if "time" not in fc.dims or "time" not in da.dims:
+    if "time" not in fc.dims:
         raise UsageError(
-            f"forecast has a step axis but no init time, or {role} has no time axis; "
-            "cannot match leads to dates."
+            f"forecast has a step axis but no init time; cannot match {role} dates to leads."
         )
-    valid = (fc["time"] + fc["step"]).transpose("time", "step")
-    pos = pd.Index(da["time"].values).get_indexer(valid.values.ravel()).reshape(valid.shape)
+    init, lead = fc["time"].values, fc["step"].values
+    if init.dtype == object:
+        # cftime dates (noleap, 360_day) add Python timedeltas, not timedelta64.
+        lead = np.array(pd.to_timedelta(lead).to_pytimedelta())
+    valid = init[:, None] + lead[None, :]
+    pos = pd.Index(da["time"].values).get_indexer(valid.ravel()).reshape(valid.shape)
     if (pos < 0).all():
         raise UsageError(
             f"no {role} time matches a forecast valid time (init + step): valid "
-            f"{pd.Timestamp(valid.values.min())} … {pd.Timestamp(valid.values.max())} vs {role} "
-            f"{pd.Timestamp(da['time'].values.min())} … {pd.Timestamp(da['time'].values.max())}. "
+            f"{valid.min()} … {valid.max()} vs {role} "
+            f"{da['time'].values.min()} … {da['time'].values.max()}. "
             "Label both with the same bins: obs windows start on the day each forecast step starts."
         )
     attrs = da.attrs
@@ -464,6 +479,29 @@ def verify(
             "downscale the forecast to the obs grid."
         )
 
+    periods = []
+    for p in (fc.attrs.get(AGGREGATION_PERIOD_ATTR), truth.attrs.get(AGGREGATION_PERIOD_ATTR)):
+        try:
+            periods.append(pd.Timedelta(p) if p is not None else None)
+        except ValueError:
+            periods.append(str(p).strip())  # calendar periods ("1 month") compare as text
+    if None not in periods and periods[0] != periods[1]:
+        raise UsageError(
+            f"--forecast covers {fc.attrs[AGGREGATION_PERIOD_ATTR]!r} per value but --obs "
+            f"{truth.attrs[AGGREGATION_PERIOD_ATTR]!r}; aggregate-temporal both onto the same "
+            "windows first."
+        )
+    # Partial windows (aggregation_coverage < 1) are left out, never scored as complete.
+    if AGGREGATION_COVERAGE_COORD in fc.coords:
+        fc = fc.where(fc[AGGREGATION_COVERAGE_COORD] >= 1 - 1e-6)
+    if AGGREGATION_COVERAGE_COORD in truth.coords:
+        truth = truth.where(truth[AGGREGATION_COVERAGE_COORD] >= 1 - 1e-6)
+    if quintiles and "quintile_threshold" not in fc.coords:
+        raise UsageError(
+            f"forecast {fc_name!r} has a quintile dim but no quintile_threshold coordinate "
+            "(the category edges); rps needs them to place the obs in a category."
+        )
+
     if "time" in fc.coords and fc["time"].ndim == 0:
         fc = fc.expand_dims("time")
     if "number" in truth.dims:
@@ -626,15 +664,16 @@ def verify(
             field, u = fc.var("number", ddof=1) * (m + 1) / m, unit_sq
         elif s in ("rps", "rps_clim") and quintiles:
             inner = {"quintile": slice(0, -1)}
-            obs_cdf = (truth <= fc["quintile_threshold"]).astype(float).isel(inner)
+            # A value on an edge is in the upper category, as an event is a value >= threshold.
+            obs_cdf = (truth < fc["quintile_threshold"]).astype(float).isel(inner)
             cdf = fc["quintile"] if s == "rps_clim" else fc.cumsum("quintile")
             field = ((cdf.isel(inner) - obs_cdf) ** 2).sum("quintile")
             field = field.drop_vars("quintile_threshold", errors="ignore")
         elif s in ("rps", "rps_clim"):
             n_cat = extras["--fc-edges"].sizes["category_edge"] + 1
-            obs_cdf = (truth <= extras["--obs-edges"]).astype(float)
+            obs_cdf = (truth < extras["--obs-edges"]).astype(float)
             if s == "rps":
-                cdf = (fc <= extras["--fc-edges"]).mean("number")
+                cdf = (fc < extras["--fc-edges"]).mean("number")
             else:
                 cdf = xr.DataArray(np.arange(1, n_cat) / n_cat, dims="category_edge")
             field = ((cdf - obs_cdf) ** 2).sum("category_edge")
@@ -651,14 +690,17 @@ def verify(
                 field = field.assign_coords(category=category)
         elif s.startswith("reliability_"):
             centre = np.round(np.arange(0.05, 1.0, 0.1), 2)
-            index = np.clip(np.floor(prob * 10 + 1e-9), 0, 9)
+            # float32 probabilities read back a hair low (0.7 as 0.6999999); 1e-6 absorbs it.
+            index = np.clip(np.floor(prob * 10 + 1e-6), 0, 9)
             in_bin = (index == xr.DataArray(np.arange(10), dims="probability_bin")).astype(float)
             weight = {"count": 1.0, "fcst": prob, "obs": obs_event}[s.removeprefix("reliability_")]
             field = (in_bin * weight).assign_coords(probability_bin=centre)
         else:  # roc_hits, roc_false_alarms
             level = xr.DataArray(_ROC_LEVELS, dims="probability_threshold")
             event = obs_event if s == "roc_hits" else 1 - obs_event
-            field = ((prob >= level) * event).assign_coords(probability_threshold=_ROC_LEVELS)
+            field = ((prob >= level - 1e-6) * event).assign_coords(
+                probability_threshold=_ROC_LEVELS
+            )
         out[s] = (field, u)
 
     # One sample set for every statistic: a NaN in any statistic drops that sample from all,
@@ -758,7 +800,8 @@ def _metric(ds, metric, variable):
         results = finalize(plain)
     out = xr.Dataset()
     for name, field in results.items():
-        field = field.astype("float32")
+        # A zero denominator (no observed event in a cell) gives NaN, never ±inf.
+        field = field.where(np.isfinite(field)).astype("float32")
         if metric in _IDENTITY and units_in:
             field = field.pint.quantify(units_in)
         elif metric == "rmse" and units_in:

@@ -480,8 +480,8 @@ def test_rpss_from_edges(tmp_path, verify_fn, summarize_fn):
         extra=("--fc-edges", str(pe), "--obs-edges", str(pe)),
     )  # fmt: skip
     x, y = fc["precip"].values[:, :, 0, 0], obs["precip"].values[:, 0, 0]
-    cdf = np.stack([(x <= e).mean(0) for e in (1.5, 3.5)], -1)
-    ocdf = np.stack([(y <= e) for e in (1.5, 3.5)], -1).astype(float)
+    cdf = np.stack([(x < e).mean(0) for e in (1.5, 3.5)], -1)
+    ocdf = np.stack([(y < e) for e in (1.5, 3.5)], -1).astype(float)
     rps = ((cdf - ocdf) ** 2).sum(-1)
     clim = ((np.array([1 / 3, 2 / 3]) - ocdf) ** 2).sum(-1)
     assert float(ds["rpss"]) == pytest.approx(1 - rps.mean() / clim.mean(), rel=1e-5)
@@ -500,7 +500,7 @@ def test_reliability_and_roc_curves(tmp_path, verify_fn, summarize_fn):
         extra=("--threshold", "1", "--probability"),
     )  # fmt: skip
     p, o = prob["p"].values.ravel(), event["p"].values.ravel()
-    k = np.clip(np.floor(p * 10 + 1e-9), 0, 9)
+    k = np.clip(np.floor(p * 10 + 1e-6), 0, 9)
     assert float(ds["sample_fraction"].sum()) == pytest.approx(1.0, rel=1e-5)
     assert float(ds["observed_frequency"][3]) == pytest.approx(o[k == 3].mean(), rel=1e-5)
     assert float(ds["forecast_probability"][3]) == pytest.approx(p[k == 3].mean(), rel=1e-5)
@@ -600,3 +600,208 @@ def test_metric_takes_no_forecast_flags(tmp_path, verify_fn):
             "--threshold", "1", "-o", str(tmp_path / "m.zarr"),
         )  # fmt: skip
     assert exc.value.code == 2
+
+
+# --- edge cases ---------------------------------------------------------------------------
+
+
+def test_partial_windows_are_not_scored(tmp_path, verify_fn):
+    """A window with aggregation_coverage < 1 is left out, never scored as complete."""
+    fc, obs = make_gridded(n_time=3, fill=3.0), make_gridded(n_time=3, fill=1.0)
+    obs = obs.assign_coords(aggregation_coverage=("time", [1.0, 0.5, 1.0]))
+    mae = _stats(tmp_path, verify_fn, fc, obs, "mae")["mae"]
+    assert mae.isel(time=1).isnull().all()
+    assert mae.isel(time=[0, 2]).notnull().all()
+
+
+def test_mismatched_aggregation_periods_are_refused(tmp_path, verify_fn, capsys):
+    fc, obs = make_gridded(n_time=2, fill=3.0), make_gridded(n_time=2, fill=1.0)
+    fc["precip"].attrs["aggregation_period"] = "3 days"
+    obs["precip"].attrs["aggregation_period"] = "1 day"
+    _expect_exit(_stats, tmp_path, verify_fn, fc, obs, "mae")
+    assert "aggregate-temporal both" in capsys.readouterr().err
+    obs["precip"].attrs["aggregation_period"] = "3D"  # same span, other spelling
+    assert _stats(tmp_path, verify_fn, fc, obs, "mae")["mae"].notnull().all()
+
+
+def test_static_mask_applies_to_every_lead(tmp_path, verify_fn):
+    fc = make_forecast(n_step=2, name="precip", fill=3.0)
+    fc["precip"].attrs["units"] = "mm day-1"
+    obs = make_gridded(n_time=2, fill=1.0)
+    land = make_gridded(n_time=1, fill=1.0, name="land").isel(time=0, drop=True)
+    land["land"].attrs = {"units": "1"}
+    land["land"].values[0, 0] = 0.0
+    pm = write_zarr(land, tmp_path / "land.zarr")
+    mae = _stats(tmp_path, verify_fn, fc, obs, "mae", extra=("--filter", str(pm)))["mae"]
+    assert mae.isel(latitude=0, longitude=0).isnull().all()
+    assert int(mae.notnull().sum()) == 2 * 3
+
+
+def test_noleap_forecast_leads(tmp_path, verify_fn):
+    cftime = pytest.importorskip("cftime")
+    fc = make_forecast(n_step=2, name="precip", fill=3.0)
+    fc["precip"].attrs["units"] = "mm day-1"
+    fc = fc.assign_coords(time=cftime.DatetimeNoLeap(2026, 1, 1))
+    obs = make_gridded(n_time=2, fill=1.0).convert_calendar("noleap")
+    bias = _stats(tmp_path, verify_fn, fc, obs, "bias")["bias"]
+    np.testing.assert_allclose(bias.values, 2.0)
+
+
+def test_quintile_forecast_without_edges_is_refused(tmp_path, verify_fn, capsys):
+    fc = make_gridded(n_time=1, fill=0.2).expand_dims(quintile=5).copy(deep=True)
+    fc["precip"].attrs = {"units": "1"}
+    _expect_exit(_stats, tmp_path, verify_fn, fc, make_gridded(n_time=1), "rps")
+    assert "quintile_threshold" in capsys.readouterr().err
+
+
+def test_rps_puts_a_value_on_an_edge_in_the_upper_category(tmp_path, verify_fn):
+    fc = xr.concat([make_gridded(n_time=1, fill=1.0) for _ in range(3)], dim="number")
+    obs = make_gridded(n_time=1, fill=1.5)
+    edges = make_gridded(n_time=1).isel(time=0, drop=True)
+    edges = edges.expand_dims(quantile=[0.333, 0.667]).copy(deep=True)
+    edges["precip"].values[:] = np.array([1.5, 3.5])[:, None, None]
+    pe = write_zarr(edges, tmp_path / "edges.zarr")
+    ds = _stats(
+        tmp_path, verify_fn, fc, obs, "rps_clim",
+        extra=("--fc-edges", str(pe), "--obs-edges", str(pe)),
+    )  # fmt: skip
+    # obs in the middle category: CDF (0, 1) against climatology (1/3, 2/3).
+    np.testing.assert_allclose(ds["rps_clim"].values, 2 / 9, rtol=1e-5)
+
+
+def test_bss_is_nan_where_no_event_was_observed(tmp_path, verify_fn, summarize_fn):
+    fc, obs = make_gridded(n_time=4, fill=5.0), make_gridded(n_time=4, fill=0.0)
+    obs["precip"].values[:, 0, 0] = 5.0  # only one cell sees events
+    ds = _pipeline(
+        tmp_path, verify_fn, summarize_fn, fc, obs, "bss", "brier", "obs_event",
+        extra=("--threshold", "1"), dims=("time",),
+    )  # fmt: skip
+    assert np.isnan(ds["bss"].values[1:, :]).all() and np.isnan(ds["bss"].values[0, 1:]).all()
+    assert not np.isinf(ds["bss"].values).any()
+
+
+def test_roc_counts_float32_probabilities_on_a_level(tmp_path, verify_fn, summarize_fn):
+    prob = make_gridded(n_time=2, fill=0.7, name="p")
+    prob["p"] = prob["p"].astype("float32")
+    prob["p"].attrs = {"units": "1"}
+    event = make_gridded(n_time=2, fill=1.0, name="p")
+    event["p"].attrs = {"units": "1"}
+    ds = _stats(
+        tmp_path, verify_fn, prob, event, "roc_hits", "reliability_count",
+        extra=("--threshold", "1", "--probability"),
+    )  # fmt: skip
+    assert (ds["roc_hits"].sel(probability_threshold=0.7).values == 1).all()
+    assert (ds["reliability_count"].sel(probability_bin=0.75).values == 1).all()
+
+
+def test_metric_refuses_mixed_lat_weighting(tmp_path, verify_fn, summarize_fn, capsys):
+    fc, obs = _random_pair(16)
+    stats = ("true_positives", "false_negatives")
+    _stats(tmp_path, verify_fn, fc, obs, *stats, extra=("--threshold", "4"))
+    dims = ("--dim", "time", "--dim", "latitude", "--dim", "longitude", "--method", "mean")
+    a = _group(tmp_path, summarize_fn, tmp_path / "out.zarr", *dims, "--lat-weighted",
+               "-v", "true_positives", name="a.zarr")  # fmt: skip
+    b = _group(tmp_path, summarize_fn, tmp_path / "out.zarr", *dims,
+               "-v", "false_negatives", name="b.zarr")  # fmt: skip
+    tp, fn = xr.open_zarr(a)[["true_positives"]], xr.open_zarr(b)[["false_negatives"]]
+    mixed = xr.merge([tp, fn], combine_attrs="override")
+    write_zarr(mixed.compute(), tmp_path / "mixed.zarr")
+    _expect_exit(_metric, tmp_path, verify_fn, tmp_path / "mixed.zarr", "pod")
+    assert "latitude-weighted" in capsys.readouterr().err
+
+
+# --- edge cases ---------------------------------------------------------------------------
+
+
+def test_partial_obs_windows_are_not_scored(tmp_path, verify_fn):
+    fc, obs = make_gridded(n_time=2, fill=3.0), make_gridded(n_time=2, fill=1.0)
+    obs = obs.assign_coords(aggregation_coverage=("time", [1.0, 0.5]))
+    mae = _stats(tmp_path, verify_fn, fc, obs, "mae")["mae"]
+    assert mae.isel(time=0).notnull().all() and mae.isel(time=1).isnull().all()
+
+
+def test_mismatched_aggregation_periods_are_refused(tmp_path, verify_fn, capsys):
+    fc, obs = make_gridded(n_time=2, fill=3.0), make_gridded(n_time=2, fill=1.0)
+    fc["precip"].attrs["aggregation_period"] = "3 day"
+    obs["precip"].attrs["aggregation_period"] = "1 day"
+    _expect_exit(_stats, tmp_path, verify_fn, fc, obs, "mae")
+    assert "aggregate-temporal both" in capsys.readouterr().err
+
+
+def test_static_mask_applies_to_every_lead(tmp_path, verify_fn):
+    fc = make_forecast(n_step=2, name="precip", fill=3.0)
+    fc["precip"].attrs["units"] = "mm day-1"
+    obs = make_gridded(n_time=2, lats=(1.0, 2.0), lons=(10.0, 11.0), fill=1.0)
+    mask = obs.isel(time=0, drop=True).rename(precip="land")
+    mask["land"].attrs = {"units": "1"}
+    mask["land"].values[0, 0] = 0.0
+    pm = write_zarr(mask, tmp_path / "land.zarr")
+    mae = _stats(tmp_path, verify_fn, fc, obs, "mae", extra=("--filter", str(pm)))["mae"]
+    assert mae.isel(latitude=0, longitude=0).isnull().all()
+    assert int(mae.notnull().sum()) == 6  # 2 leads x 3 land cells
+
+
+def test_noleap_forecast_leads(tmp_path, verify_fn):
+    cftime = pytest.importorskip("cftime")
+    fc = make_forecast(n_step=2, name="precip", fill=3.0)
+    fc["precip"].attrs["units"] = "mm day-1"
+    fc = fc.assign_coords(time=cftime.DatetimeNoLeap(2026, 1, 1))
+    obs = make_gridded(n_time=2, lats=(1.0, 2.0), lons=(10.0, 11.0), fill=1.0)
+    obs = obs.convert_calendar("noleap")
+    bias = _stats(tmp_path, verify_fn, fc, obs, "bias")["bias"]
+    np.testing.assert_allclose(bias.values, 2.0)
+
+
+def test_quintile_forecast_without_edges_is_refused(tmp_path, verify_fn, capsys):
+    obs = make_gridded(n_time=1, fill=1.0)
+    fc = obs.expand_dims(quintile=5).copy(deep=True)
+    fc["precip"].values[:] = 0.2
+    fc["precip"].attrs = {"units": "1"}
+    _expect_exit(_stats, tmp_path, verify_fn, fc, obs, "rps")
+    assert "quintile_threshold" in capsys.readouterr().err
+
+
+def test_rps_puts_a_value_on_an_edge_in_the_upper_category(tmp_path, verify_fn):
+    fc = xr.concat([make_gridded(n_time=1, lats=(1.0,), lons=(10.0,), fill=5.0)] * 3, "number")
+    obs = make_gridded(n_time=1, lats=(1.0,), lons=(10.0,), fill=4.0)  # exactly on the top edge
+    edges = obs.isel(time=0, drop=True).expand_dims(quantile=[0.333, 0.667]).copy(deep=True)
+    edges["precip"].values[:] = np.array([2.0, 4.0])[:, None, None]
+    pe = write_zarr(edges, tmp_path / "edges.zarr")
+    ds = _stats(tmp_path, verify_fn, fc, obs, "rps", extra=("--fc-edges", str(pe), "--obs-edges", str(pe)))
+    assert float(ds["rps"].max()) == 0.0  # forecast and obs both in the top category
+
+
+def test_float32_probabilities_keep_their_roc_level(tmp_path, verify_fn):
+    prob = make_gridded(n_time=1, fill=0.7, name="p")
+    prob["p"] = prob["p"].astype("float32")
+    prob["p"].attrs = {"units": "1"}
+    event = make_gridded(n_time=1, fill=1.0, name="p")
+    event["p"].attrs = {"units": "1"}
+    ds = _stats(
+        tmp_path, verify_fn, prob, event, "roc_hits", "reliability_count",
+        extra=("--threshold", "1", "--probability"),
+    )  # fmt: skip
+    assert (ds["roc_hits"].sel(probability_threshold=0.7).values == 1).all()
+    assert (ds["reliability_count"].sel(probability_bin=0.75).values == 1).all()
+
+
+def test_skill_score_with_no_observed_event_is_nan(tmp_path, verify_fn, summarize_fn):
+    fc, obs = _random_pair(16)
+    obs["precip"].values[:, 0, 0] = 0.0  # no event ever in one cell
+    ds = _pipeline(
+        tmp_path, verify_fn, summarize_fn, fc, obs, "bss", "brier", "obs_event",
+        extra=("--threshold", "4"), dims=("time",),
+    )  # fmt: skip
+    assert np.isnan(ds["bss"].values[0, 0])
+    assert np.isfinite(ds["bss"].values).sum() > 0 and not np.isinf(ds["bss"].values).any()
+
+
+def test_metric_refuses_mixed_latitude_weighting(tmp_path, verify_fn, summarize_fn, capsys):
+    fc, obs = _random_pair(17)
+    _stats(tmp_path, verify_fn, fc, obs, "true_positives", "false_negatives", extra=("--threshold", "4"))
+    dims = ("--dim", "time", "--dim", "latitude", "--dim", "longitude", "--method", "mean")
+    a = _group(tmp_path, summarize_fn, tmp_path / "out.zarr", *dims, "--lat-weighted",
+               "-v", "true_positives", name="a.zarr")  # fmt: skip
+    b = _group(tmp_path, summarize_fn, a, *dims, "-v", "false_negatives", name="b.zarr")
+    _expect_exit(_metric, tmp_path, verify_fn, b, "pod")
+    assert "reduced differently" in capsys.readouterr().err
