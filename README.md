@@ -51,6 +51,7 @@ credentialed or source-specific fetcher only when it does not.
 | `smap-fetch` | NASA SMAP Enhanced L3 (`SPL3SMP_E`) daily 9 km surface soil moisture → Zarr. Requires credentials. |
 | `ascat-fetch` | C3S ACTIVE (Metop ASCAT) daily 0.25° surface soil moisture, % of saturation, 1991 on → Zarr. Requires credentials. |
 | `smos-fetch` | ESA SMOS L3 daily surface soil moisture (m³/m³, ~25 km EASE-2, 6am or 6pm overpass, 2010 on) from CATDS → Zarr. No credentials. |
+| `smap-smos-fetch` | NASA intercalibrated SMAP/SMOS (NSIDC-0800 v2) daily 9 km surface soil moisture, SMAP gaps filled from SMOS, 2015 on (~5 weeks behind) → Zarr. Requires credentials. |
 | `ghcn-daily-fetch` | NOAA GHCN-Daily station observations (daily precip and max/min/mean temperature, ~130,000 stations) → station Zarr. No credentials. |
 | `openaq-fetch` | OpenAQ air-quality station observations (daily mean PM2.5, PM10, NO2, O3, SO2, CO) → station Zarr. Requires credentials. |
 | `cams-fetch` | CAMS global air-quality fields (PM2.5, PM10, near-surface NO2/O3/SO2/CO, AOD, total columns) — 5-day forecast at 0.4° (2015 on) or EAC4 reanalysis at 0.75° (2003 on) → Zarr. Requires credentials. |
