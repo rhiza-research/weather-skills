@@ -13,9 +13,9 @@
 """
 
 import json
-import re
 import sys
 import uuid
+from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -35,43 +35,235 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.10"
 
+
+# Component functions: each takes the paired data (p) and returns one value per sample.
+# p holds fc (members kept), mean (ensemble mean), truth, error (mean - truth), clim, the
+# rps edges, bins, prob (forecast event probability), obs_event and fc_event.
+def _fcst(p):
+    return p["mean"]
+
+
+def _obs(p):
+    return p["truth"]
+
+
+def _bias(p):
+    return p["error"]
+
+
+def _mae(p):
+    return np.abs(p["error"])
+
+
+def _mse(p):
+    return p["error"] ** 2
+
+
+def _mape(p):
+    return np.abs(p["error"]) / np.maximum(np.abs(p["truth"]), 1e-10)
+
+
+def _smape(p):
+    total = np.abs(p["mean"]) + np.abs(p["truth"])
+    # Both zero is a perfect forecast, not 0/0.
+    return xr.where(total > 0, np.abs(p["error"]) / total.where(total > 0), 0.0)
+
+
+def _squared_fcst(p):
+    return p["mean"] ** 2
+
+
+def _squared_obs(p):
+    return p["truth"] ** 2
+
+
+def _covariance(p):
+    return p["mean"] * p["truth"]
+
+
+def _squared_fcst_anom(p):
+    return (p["mean"] - p["clim"]) ** 2
+
+
+def _squared_obs_anom(p):
+    return (p["truth"] - p["clim"]) ** 2
+
+
+def _anom_covariance(p):
+    return (p["mean"] - p["clim"]) * (p["truth"] - p["clim"])
+
+
+def _contingency(p, fc_event, obs_event):
+    return ((p["fc_event"] == fc_event) & (p["obs_event"] == obs_event)).astype(float)
+
+
+def _obs_event(p):
+    return p["obs_event"]
+
+
+def _brier(p):
+    return (p["prob"] - p["obs_event"]) ** 2
+
+
+def _crps(p, fair):
+    fc = p["fc"]
+    if "number" not in fc.dims:
+        return np.abs(p["error"])
+    # CRPS = E|X - y| - E|X - X'| / 2, with E|X - X'| from the sorted members.
+    # The fair score averages over the m(m-1) distinct member pairs, not all m^2.
+    m = fc.sizes["number"]
+    ranked = xr.apply_ufunc(
+        np.sort, fc, input_core_dims=[["number"]], output_core_dims=[["number"]],
+        kwargs={"axis": -1},
+    )  # fmt: skip
+    rank_weight = xr.DataArray(2.0 * np.arange(1, m + 1) - m - 1, dims="number")
+    spread = 2.0 * (ranked * rank_weight).sum("number") / (m * (m - 1) if fair else m**2)
+    return np.abs(fc - p["truth"]).mean("number") - 0.5 * spread
+
+
+def _ensemble_variance(p):
+    m = p["fc"].sizes["number"]
+    # Finite-ensemble correction (m + 1) / m (Fortin et al. 2014).
+    return p["fc"].var("number", ddof=1) * (m + 1) / m
+
+
+def _rps(p, clim):
+    # A value on an edge is in the upper category, as an event is a value >= threshold.
+    fc = p["fc"]
+    if "quintile" in fc.dims:
+        inner = {"quintile": slice(0, -1)}
+        obs_cdf = (p["truth"] < fc["quintile_threshold"]).astype(float).isel(inner)
+        cdf = fc["quintile"] if clim else fc.cumsum("quintile")
+        field = ((cdf.isel(inner) - obs_cdf) ** 2).sum("quintile")
+        return field.drop_vars("quintile_threshold", errors="ignore")
+    obs_cdf = (p["truth"] < p["obs_edges"]).astype(float)
+    if clim:
+        n_cat = p["fc_edges"].sizes["category_edge"] + 1
+        cdf = xr.DataArray(np.arange(1, n_cat) / n_cat, dims="category_edge")
+    else:
+        cdf = (fc < p["fc_edges"]).mean("number")
+    return ((cdf - obs_cdf) ** 2).sum("category_edge")
+
+
+def _categories(p, which):
+    """1 where the forecast and obs fall in the same category (which="both"), or a 0/1
+    indicator of the forecast's or obs's category on a category dim."""
+    edges = np.sort(np.asarray(p["bins"], dtype=float))
+    # Category k holds values from edge k-1 (inclusive) up to edge k.
+    f_cat = xr.apply_ufunc(np.digitize, p["mean"], kwargs={"bins": edges})
+    o_cat = xr.apply_ufunc(np.digitize, p["truth"], kwargs={"bins": edges})
+    if which == "both":
+        return (f_cat == o_cat).astype(float)
+    category = xr.DataArray(np.arange(edges.size + 1), dims="category")
+    field = ((f_cat if which == "fcst" else o_cat) == category).astype(float)
+    return field.assign_coords(category=category)
+
+
+def _reliability_bin(p, weight):
+    """The weight (1, the forecast probability, or the observed event) in the forecast
+    probability's bin of 0.1."""
+    centre = np.round(np.arange(0.05, 1.0, 0.1), 2)
+    # float32 probabilities read back a hair low (0.7 as 0.6999999); 1e-6 absorbs it.
+    index = np.clip(np.floor(p["prob"] * 10 + 1e-6), 0, 9)
+    in_bin = (index == xr.DataArray(np.arange(10), dims="probability_bin")).astype(float)
+    value = {"count": 1.0, "fcst": p["prob"], "obs": p["obs_event"]}[weight]
+    return (in_bin * value).assign_coords(probability_bin=centre)
+
+
+def _roc_warned(p, event):
+    """Samples with the observed event (event=1) or without it (0), warned at each level."""
+    levels = np.round(np.arange(0.1, 1.01, 0.1), 2)
+    level = xr.DataArray(levels, dims="probability_threshold")
+    observed = p["obs_event"] if event else 1 - p["obs_event"]
+    return ((p["prob"] >= level - 1e-6) * observed).assign_coords(probability_threshold=levels)
+
+
 # Components: per-sample values whose mean over any group feeds a metric.
+# Each has a long name, its units ("units" of the forecast, "units^2", or None for unitless)
+# and its function.
 _COMPONENTS = {
-    "fcst": "Forecast",
-    "obs": "Observation",
-    "bias": "Forecast minus observation",
-    "mae": "Absolute error",
-    "mse": "Squared error",
-    "mape": "Absolute error relative to the observation",
-    "smape": "Symmetric absolute percentage error",
-    "squared_fcst": "Squared forecast",
-    "squared_obs": "Squared observation",
-    "covariance": "Forecast times observation",
-    "squared_fcst_anom": "Squared forecast anomaly",
-    "squared_obs_anom": "Squared observation anomaly",
-    "anom_covariance": "Forecast anomaly times observation anomaly",
-    "true_positives": "Hit (forecast and observed event)",
-    "false_positives": "False alarm (forecast event, none observed)",
-    "false_negatives": "Miss (observed event, none forecast)",
-    "true_negatives": "Correct negative (no event forecast or observed)",
-    "obs_event": "Observed event",
-    "brier": "Brier score",
-    "crps": "Continuous ranked probability score",
-    "crps_fair": "Fair continuous ranked probability score",
-    "ensemble_variance": "Ensemble variance (finite-ensemble corrected)",
-    "rps": "Ranked probability score",
-    "rps_clim": "Ranked probability score of climatology",
-    "n_correct": "Forecast and observation in the same category",
-    "n_fcst_bin": "Forecast in the category",
-    "n_obs_bin": "Observation in the category",
-    "reliability_count": "Forecast probability in the bin",
-    "reliability_fcst": "Forecast probability, counted in its bin",
-    "reliability_obs": "Observed event, counted in the forecast probability's bin",
-    "roc_hits": "Observed event warned at the probability threshold",
-    "roc_false_alarms": "Non-event warned at the probability threshold",
+    "fcst": ("Forecast", "units", _fcst),
+    "obs": ("Observation", "units", _obs),
+    "bias": ("Forecast minus observation", "units", _bias),
+    "mae": ("Absolute error", "units", _mae),
+    "mse": ("Squared error", "units^2", _mse),
+    "mape": ("Absolute error relative to the observation", None, _mape),
+    "smape": ("Symmetric absolute percentage error", None, _smape),
+    "squared_fcst": ("Squared forecast", "units^2", _squared_fcst),
+    "squared_obs": ("Squared observation", "units^2", _squared_obs),
+    "covariance": ("Forecast times observation", "units^2", _covariance),
+    "squared_fcst_anom": ("Squared forecast anomaly", "units^2", _squared_fcst_anom),
+    "squared_obs_anom": ("Squared observation anomaly", "units^2", _squared_obs_anom),
+    "anom_covariance": (
+        "Forecast anomaly times observation anomaly",
+        "units^2",
+        _anom_covariance,
+    ),  # fmt: skip
+    "true_positives": (
+        "Hit (forecast and observed event)",
+        None,
+        partial(_contingency, fc_event=True, obs_event=1),
+    ),  # fmt: skip
+    "false_positives": (
+        "False alarm (forecast event, none observed)",
+        None,
+        partial(_contingency, fc_event=True, obs_event=0),
+    ),  # fmt: skip
+    "false_negatives": (
+        "Miss (observed event, none forecast)",
+        None,
+        partial(_contingency, fc_event=False, obs_event=1),
+    ),  # fmt: skip
+    "true_negatives": (
+        "Correct negative (no event forecast or observed)",
+        None,
+        partial(_contingency, fc_event=False, obs_event=0),
+    ),  # fmt: skip
+    "obs_event": ("Observed event", None, _obs_event),
+    "brier": ("Brier score", None, _brier),
+    "crps": ("Continuous ranked probability score", "units", partial(_crps, fair=False)),
+    "crps_fair": ("Fair continuous ranked probability score", "units", partial(_crps, fair=True)),
+    "ensemble_variance": (
+        "Ensemble variance (finite-ensemble corrected)",
+        "units^2",
+        _ensemble_variance,
+    ),  # fmt: skip
+    "rps": ("Ranked probability score", None, partial(_rps, clim=False)),
+    "rps_clim": ("Ranked probability score of climatology", None, partial(_rps, clim=True)),
+    "n_correct": (
+        "Forecast and observation in the same category",
+        None,
+        partial(_categories, which="both"),
+    ),  # fmt: skip
+    "n_fcst_bin": ("Forecast in the category", None, partial(_categories, which="fcst")),
+    "n_obs_bin": ("Observation in the category", None, partial(_categories, which="obs")),
+    "reliability_count": (
+        "Forecast probability in the bin",
+        None,
+        partial(_reliability_bin, weight="count"),
+    ),  # fmt: skip
+    "reliability_fcst": (
+        "Forecast probability, counted in its bin",
+        None,
+        partial(_reliability_bin, weight="fcst"),
+    ),  # fmt: skip
+    "reliability_obs": (
+        "Observed event, counted in the forecast probability's bin",
+        None,
+        partial(_reliability_bin, weight="obs"),
+    ),  # fmt: skip
+    "roc_hits": (
+        "Observed event warned at the probability threshold",
+        None,
+        partial(_roc_warned, event=1),
+    ),  # fmt: skip
+    "roc_false_alarms": (
+        "Non-event warned at the probability threshold",
+        None,
+        partial(_roc_warned, event=0),
+    ),  # fmt: skip
 }
 _CONTINGENCY = ("true_positives", "false_positives", "false_negatives", "true_negatives")
-_BIN_COMPONENTS = {"n_correct", "n_fcst_bin", "n_obs_bin"}
 
 
 # Metric functions: each takes the group means of its components (g) and returns the metric,
@@ -170,58 +362,132 @@ def _roc(g):
     }
 
 
-# Metrics: the components each needs and its function. An _identity metric is the group mean
-# of its own component, and keeps its name and units.
+def _metric_entry(components, function, names, needs=(), allows=()):
+    """A metric: its components, its function, the long name of each output, the inputs it
+    needs and the optional inputs it takes ("ensemble" = a forecast with >= 2 members)."""
+    return {
+        "components": components,
+        "function": function,
+        "names": names,
+        "needs": set(needs),
+        "allows": set(allows),
+    }
+
+
+_EVENT = {"needs": ("--threshold",), "allows": ("--member-fraction",)}
+_PROBABILITY = {"needs": ("--threshold",), "allows": ("--probability",)}
+_EDGES = {"allows": ("--fc-edges", "--obs-edges")}
+
+# Metrics. An _identity metric is the group mean of its own component and keeps its units.
 _METRICS = {
-    "fcst": (("fcst",), _identity),
-    "obs": (("obs",), _identity),
-    "bias": (("bias",), _identity),
-    "mae": (("mae",), _identity),
-    "mse": (("mse",), _identity),
-    "mape": (("mape",), _identity),
-    "smape": (("smape",), _identity),
-    "crps": (("crps",), _identity),
-    "crps_fair": (("crps_fair",), _identity),
-    "brier": (("brier",), _identity),
-    "rps": (("rps",), _identity),
-    "rmse": (("mse",), _rmse),
-    "pearson": (("fcst", "obs", "squared_fcst", "squared_obs", "covariance"), _pearson),
-    "acc": (("squared_fcst_anom", "squared_obs_anom", "anom_covariance"), _acc),
-    "bss": (("brier", "obs_event"), _bss),
-    "pod": (("true_positives", "false_negatives"), _pod),
-    "far": (("true_positives", "false_positives"), _far),
-    "pofd": (("false_positives", "true_negatives"), _pofd),
-    "csi": (("true_positives", "false_positives", "false_negatives"), _csi),
-    "balanced_error_rate": (_CONTINGENCY, _balanced_error_rate),
-    "frequency_bias": (("true_positives", "false_positives", "false_negatives"), _frequency_bias),
-    "ets": (_CONTINGENCY, _ets),
-    "heidke": (("n_correct", "n_fcst_bin", "n_obs_bin"), _heidke),
-    "spread": (("ensemble_variance", "mse"), _spread),
-    "rpss": (("rps", "rps_clim"), _rpss),
-    "reliability": (("reliability_count", "reliability_fcst", "reliability_obs"), _reliability),
-    "roc": (("roc_hits", "roc_false_alarms", "obs_event"), _roc),
-}
-_METRIC_NAMES = {
-    "rmse": "Root mean square error",
-    "pearson": "Pearson correlation",
-    "acc": "Anomaly correlation coefficient",
-    "bss": "Brier skill score (reference: observed base rate)",
-    "pod": "Probability of detection",
-    "far": "False alarm ratio",
-    "pofd": "Probability of false detection (false alarm rate)",
-    "csi": "Critical success index",
-    "balanced_error_rate": "Balanced error rate (mean of miss rate and false alarm rate)",
-    "frequency_bias": "Frequency bias (forecast events / observed events)",
-    "ets": "Equitable threat score",
-    "heidke": "Heidke skill score",
-    "spread": "Ensemble spread / RMSE of the ensemble mean",
-    "rpss": "Ranked probability skill score (reference: equal category odds)",
-    "forecast_probability": "Mean forecast probability in the bin",
-    "observed_frequency": "Observed event frequency in the bin",
-    "sample_fraction": "Share of forecasts in the bin",
-    "hit_rate": "Hit rate (probability of detection)",
-    "false_alarm_rate": "False alarm rate (probability of false detection)",
-    "roc_area": "Area under the ROC curve",
+    "fcst": _metric_entry(("fcst",), _identity, {"fcst": "Mean forecast"}),
+    "obs": _metric_entry(("obs",), _identity, {"obs": "Mean observation"}),
+    "bias": _metric_entry(("bias",), _identity, {"bias": "Mean bias (forecast - observation)"}),
+    "mae": _metric_entry(("mae",), _identity, {"mae": "Mean absolute error"}),
+    "mse": _metric_entry(("mse",), _identity, {"mse": "Mean square error"}),
+    "mape": _metric_entry(("mape",), _identity, {"mape": "Mean absolute percentage error"}),
+    "smape": _metric_entry(
+        ("smape",), _identity, {"smape": "Symmetric mean absolute percentage error"}
+    ),
+    "crps": _metric_entry(("crps",), _identity, {"crps": "Continuous ranked probability score"}),
+    "crps_fair": _metric_entry(
+        ("crps_fair",),
+        _identity,
+        {"crps_fair": "Fair continuous ranked probability score"},
+        needs=("ensemble",),
+    ),  # fmt: skip
+    "brier": _metric_entry(("brier",), _identity, {"brier": "Brier score"}, **_PROBABILITY),
+    "rps": _metric_entry(("rps",), _identity, {"rps": "Ranked probability score"}, **_EDGES),
+    "rmse": _metric_entry(("mse",), _rmse, {"rmse": "Root mean square error"}),
+    "pearson": _metric_entry(
+        ("fcst", "obs", "squared_fcst", "squared_obs", "covariance"),
+        _pearson,
+        {"pearson": "Pearson correlation"},
+    ),  # fmt: skip
+    "acc": _metric_entry(
+        ("squared_fcst_anom", "squared_obs_anom", "anom_covariance"),
+        _acc,
+        {"acc": "Anomaly correlation coefficient"},
+        needs=("--clim",),
+    ),  # fmt: skip
+    "bss": _metric_entry(
+        ("brier", "obs_event"),
+        _bss,
+        {"bss": "Brier skill score (reference: observed base rate)"},
+        **_PROBABILITY,
+    ),  # fmt: skip
+    "pod": _metric_entry(
+        ("true_positives", "false_negatives"),
+        _pod,
+        {"pod": "Probability of detection"},
+        **_EVENT,
+    ),  # fmt: skip
+    "far": _metric_entry(
+        ("true_positives", "false_positives"), _far, {"far": "False alarm ratio"}, **_EVENT
+    ),
+    "pofd": _metric_entry(
+        ("false_positives", "true_negatives"),
+        _pofd,
+        {"pofd": "Probability of false detection (false alarm rate)"},
+        **_EVENT,
+    ),  # fmt: skip
+    "csi": _metric_entry(
+        ("true_positives", "false_positives", "false_negatives"),
+        _csi,
+        {"csi": "Critical success index"},
+        **_EVENT,
+    ),  # fmt: skip
+    "balanced_error_rate": _metric_entry(
+        _CONTINGENCY,
+        _balanced_error_rate,
+        {"balanced_error_rate": "Balanced error rate (mean of miss rate and false alarm rate)"},
+        **_EVENT,
+    ),  # fmt: skip
+    "frequency_bias": _metric_entry(
+        ("true_positives", "false_positives", "false_negatives"),
+        _frequency_bias,
+        {"frequency_bias": "Frequency bias (forecast events / observed events)"},
+        **_EVENT,
+    ),  # fmt: skip
+    "ets": _metric_entry(_CONTINGENCY, _ets, {"ets": "Equitable threat score"}, **_EVENT),
+    "heidke": _metric_entry(
+        ("n_correct", "n_fcst_bin", "n_obs_bin"),
+        _heidke,
+        {"heidke": "Heidke skill score"},
+        needs=("--bins",),
+    ),  # fmt: skip
+    "spread": _metric_entry(
+        ("ensemble_variance", "mse"),
+        _spread,
+        {"spread": "Ensemble spread / RMSE of the ensemble mean"},
+        needs=("ensemble",),
+    ),  # fmt: skip
+    "rpss": _metric_entry(
+        ("rps", "rps_clim"),
+        _rpss,
+        {"rpss": "Ranked probability skill score (reference: equal category odds)"},
+        **_EDGES,
+    ),  # fmt: skip
+    "reliability": _metric_entry(
+        ("reliability_count", "reliability_fcst", "reliability_obs"),
+        _reliability,
+        {
+            "forecast_probability": "Mean forecast probability in the bin",
+            "observed_frequency": "Observed event frequency in the bin",
+            "sample_fraction": "Share of forecasts in the bin",
+        },
+        **_PROBABILITY,
+    ),  # fmt: skip
+    "roc": _metric_entry(
+        ("roc_hits", "roc_false_alarms", "obs_event"),
+        _roc,
+        {
+            "hit_rate": "Hit rate (probability of detection)",
+            "false_alarm_rate": "False alarm rate (probability of false detection)",
+            "roc_area": "Area under the ROC curve",
+        },
+        **_PROBABILITY,
+    ),  # fmt: skip
 }
 
 
@@ -321,20 +587,18 @@ def _to_units(da, units, role):
     action="store_true",
     help="The forecast is already the event probability (0-1, no members).",
 )
-@weather_skill.argument(
-    "--clim", type=Dataset("any"), help="Climatology on obs dates, for the anomaly components."
-)
+@weather_skill.argument("--clim", type=Dataset("any"), help="Climatology on obs dates, for acc.")
 @weather_skill.argument(
     "--bins",
     type=float,
     nargs="+",
-    help="Category edges for n_correct / n_fcst_bin / n_obs_bin, in the forecast's units.",
+    help="Category edges for heidke, in the forecast's units.",
 )
 @weather_skill.argument(
-    "--fc-edges", type=Dataset("any"), help="rps: forecast category edges (a quantile dim)."
+    "--fc-edges", type=Dataset("any"), help="rps/rpss: forecast category edges (a quantile dim)."
 )
 @weather_skill.argument(
-    "--obs-edges", type=Dataset("any"), help="rps: observed category edges (a quantile dim)."
+    "--obs-edges", type=Dataset("any"), help="rps/rpss: observed category edges (a quantile dim)."
 )
 @weather_skill.argument(
     "--filter",
@@ -361,26 +625,24 @@ def verify(
 ):
     """Verify by metric name: prepare the per-sample components the metrics need, then compute them from grouped components."""
     metrics = list(dict.fromkeys(metric))
+    flags = {
+        "--forecast": forecast,
+        "--obs": obs,
+        "--threshold": threshold,
+        "--member-fraction": member_fraction,
+        "--probability": probability or None,
+        "--clim": clim,
+        "--bins": bins,
+        "--fc-edges": fc_edges,
+        "--obs-edges": obs_edges,
+        "--filter": filter,
+    }
+    given = {flag for flag, value in flags.items() if value is not None}
     if mode == "compute":
-        given = [
-            flag
-            for flag, value in (
-                ("--forecast", forecast),
-                ("--obs", obs),
-                ("--threshold", threshold),
-                ("--member-fraction", member_fraction),
-                ("--probability", probability),
-                ("--clim", clim),
-                ("--bins", bins),
-                ("--fc-edges", fc_edges),
-                ("--obs-edges", obs_edges),
-                ("--filter", filter),
-            )
-            if value is not None and value is not False
-        ]
         if given:
             raise UsageError(
-                f"--mode compute reads grouped components from --input only; drop {', '.join(given)}."
+                f"--mode compute reads grouped components from --input only; drop "
+                f"{', '.join(sorted(given))}."
             )
         if ds is None:
             raise UsageError(
@@ -394,7 +656,7 @@ def verify(
     if forecast is None or obs is None or ds is not None:
         raise UsageError("--mode prepare needs --forecast and --obs, and no --input.")
     # Every component the metrics need, each once.
-    components = list(dict.fromkeys(s for m in metrics for s in _METRICS[m][0]))
+    components = list(dict.fromkeys(c for m in metrics for c in _METRICS[m]["components"]))
 
     fc_name = variable or auto_variable(forecast)
     obs_name = variable or auto_variable(obs)
@@ -407,49 +669,39 @@ def verify(
     members = "number" in fc.dims
     quintiles = "quintile" in fc.dims
 
-    def needs(flag, value, wanted):
-        used = [m for m in metrics if wanted & set(_METRICS[m][0])]
-        if value is not None and not used:
+    # Each metric's inputs: every one it needs is given, and every input given is used.
+    have = given | ({"ensemble"} if fc.sizes.get("number", 0) >= 2 else set())
+    for m in metrics:
+        for need in sorted(_METRICS[m]["needs"] - have):
+            what = "an ensemble forecast with at least 2 members" if need == "ensemble" else need
+            raise UsageError(f"--metric {m} needs {what}.")
+    for flag in sorted(given - {"--forecast", "--obs", "--filter"}):
+        if not any(flag in _METRICS[m]["needs"] | _METRICS[m]["allows"] for m in metrics):
             raise UsageError(f"{flag} is not used by any of: {', '.join(metrics)}.")
-        if used and value is None:
-            raise UsageError(f"--metric {', '.join(used)} need {flag}.")
-
-    probability_components = {"brier", "reliability_count", "reliability_fcst", "reliability_obs"}
-    probability_components |= {"roc_hits", "roc_false_alarms"}
-    needs("--threshold", threshold, {*_CONTINGENCY, "obs_event", *probability_components})
-    needs("--clim", clim, {"squared_fcst_anom", "squared_obs_anom", "anom_covariance"})
-    needs("--bins", bins, _BIN_COMPONENTS)
+    # Checks that depend on the data, not only on which flags are given.
     if (fc_edges is None) != (obs_edges is None):
         raise UsageError("--fc-edges and --obs-edges go together.")
-    if fc_edges is not None and not {"rps", "rps_clim"} & set(components):
-        raise UsageError("--fc-edges / --obs-edges are for rps and rpss.")
     if member_fraction is not None:
-        if not set(_CONTINGENCY) & set(components):
-            raise UsageError(
-                "--member-fraction is for the contingency metrics (pod, far, pofd, csi, "
-                "balanced_error_rate, frequency_bias, ets)."
-            )
         if not 0 < member_fraction <= 1:
             raise UsageError(f"--member-fraction must be in (0, 1]; got {member_fraction}")
         if not members:
             raise UsageError("--member-fraction needs an ensemble forecast (a number dim).")
-    if probability:
-        if not probability_components & set(components):
-            raise UsageError("--probability is for brier, bss, reliability and roc.")
-        if members:
-            raise UsageError(
-                "--probability takes one probability per cell, but the forecast has members "
-                "(a number dim); drop --probability to score the member fraction."
-            )
-    for m in ("crps_fair", "spread"):
-        if m in metrics and fc.sizes.get("number", 0) < 2:
-            raise UsageError(f"{m} needs an ensemble forecast with at least 2 members.")
+    if probability and members:
+        raise UsageError(
+            "--probability takes one probability per cell, but the forecast has members "
+            "(a number dim); drop --probability to score the member fraction."
+        )
     if quintiles:
         other = [m for m in metrics if m not in ("rps", "rpss")]
         if other or fc_edges is not None:
             raise UsageError(
                 "a forecast of category probabilities (a quintile dim) only gives rps and "
                 f"rpss, without edges; drop {', '.join(other) or '--fc-edges/--obs-edges'}."
+            )
+        if "quintile_threshold" not in fc.coords:
+            raise UsageError(
+                f"forecast {fc_name!r} has a quintile dim but no quintile_threshold coordinate "
+                "(the category edges); rps needs them to place the obs in a category."
             )
     elif {"rps", "rps_clim"} & set(components) and (fc_edges is None or not members):
         raise UsageError(
@@ -500,11 +752,6 @@ def verify(
         fc = fc.where(fc[AGGREGATION_COVERAGE_COORD] >= 1 - 1e-6)
     if AGGREGATION_COVERAGE_COORD in truth.coords:
         truth = truth.where(truth[AGGREGATION_COVERAGE_COORD] >= 1 - 1e-6)
-    if quintiles and "quintile_threshold" not in fc.coords:
-        raise UsageError(
-            f"forecast {fc_name!r} has a quintile dim but no quintile_threshold coordinate "
-            "(the category edges); rps needs them to place the obs in a category."
-        )
 
     if "time" in fc.coords and fc["time"].ndim == 0:
         fc = fc.expand_dims("time")
@@ -526,36 +773,47 @@ def verify(
         fc = fc.pint.to(units).pint.dequantify()
     truth = _to_units(truth, units, f"--obs {obs_name!r}")
 
-    extras = {}
+    # Side inputs: the climatology, rps edges and filter masks, each paired with the
+    # forecast leads like the obs.
+    side = []
     if clim is not None:
         name = next(
             (n for n in (variable, f"{fc_name}_avg", fc_name, f"{obs_name}_avg") if n in clim),
             auto_variable(clim),
         )
-        extras["clim"] = _to_units(_at_valid_times(clim[name], fc, "--clim"), units, "--clim")
-    for i, eds in enumerate((fc_edges, obs_edges) if fc_edges is not None else ()):
-        role = ("--fc-edges", "--obs-edges")[i]
+        side.append(("clim", clim[name], "--clim"))
+    for key, eds, role in (
+        ("fc_edges", fc_edges, "--fc-edges"),
+        ("obs_edges", obs_edges, "--obs-edges"),
+    ):
+        if eds is None:
+            continue
         name = next((n for n in (variable, fc_name, obs_name) if n in eds), auto_variable(eds))
-        e = eds[name]
-        if "quantile" not in e.dims or "number" in e.dims:
+        if "quantile" not in eds[name].dims or "number" in eds[name].dims:
             raise UsageError(
-                f"{role} {name!r} has dims {list(e.dims)}; it needs a quantile dim and no "
+                f"{role} {name!r} has dims {list(eds[name].dims)}; it needs a quantile dim and no "
                 "number dim (summarize-dim --dim time --dim number --method quantile --q 0.333 0.667)."
             )
-        e = _to_units(e.sortby("quantile"), units, role)
-        extras[role] = e.drop_vars("quantile").rename(quantile="category_edge")
-    if fc_edges is not None and (
-        extras["--fc-edges"].sizes["category_edge"] != extras["--obs-edges"].sizes["category_edge"]
-    ):
-        raise UsageError("--fc-edges and --obs-edges must hold the same number of quantiles.")
+        e = eds[name].sortby("quantile")
+        side.append((key, e.drop_vars("quantile").rename(quantile="category_edge"), role))
     for i, mds in enumerate(filter or ()):
         m = mds[auto_variable(mds) or next(iter(mds.data_vars))]
         if "number" in m.dims:
             raise UsageError(f"--filter #{i + 1} has a number dim; a mask applies to every member.")
-        m = _at_valid_times(m, fc, f"--filter #{i + 1}")
-        m = m.pint.dequantify() if m.pint.units is not None else m
-        # Missing mask values leave the sample out, as 0 does.
-        extras[f"filter{i}"] = m.fillna(0) != 0
+        side.append((f"filter{i}", m, f"--filter #{i + 1}"))
+    extras = {}
+    for key, da, role in side:
+        da = _at_valid_times(da, fc, role)
+        if key.startswith("filter"):
+            da = da.pint.dequantify() if da.pint.units is not None else da
+            # Missing mask values leave the sample out, as 0 does.
+            extras[key] = da.fillna(0) != 0
+        else:
+            extras[key] = _to_units(da, units, role)
+    if fc_edges is not None and (
+        extras["fc_edges"].sizes["category_edge"] != extras["obs_edges"].sizes["category_edge"]
+    ):
+        raise UsageError("--fc-edges and --obs-edges must hold the same number of quantiles.")
 
     names = list(extras)
     fc, truth, *rest = xr.align(fc, truth, *extras.values(), join="inner")
@@ -584,136 +842,32 @@ def verify(
     for key, e in extras.items():
         if key.startswith("filter"):
             valid = valid & e
-        elif key == "clim":
-            valid = valid & e.notnull()
         else:
-            valid = valid & e.notnull().all("category_edge")
+            valid = valid & (e.notnull().all("category_edge") if "edges" in key else e.notnull())
+
     mean = fc.mean("number") if members else fc
-    error = mean - truth
-    unit_sq = units**2 if units is not None else None
+    paired = {"fc": fc, "mean": mean, "truth": truth, "error": mean - truth, "bins": bins}
+    paired |= {k: v for k, v in extras.items() if not k.startswith("filter")}
     if cutoff is not None:
-        obs_event = (truth >= cutoff).astype(float)
+        paired["obs_event"] = (truth >= cutoff).astype(float)
         if probability:
-            prob = fc
+            paired["prob"] = fc
         else:
             prob = (fc >= cutoff).astype(float)
-            prob = prob.mean("number") if members else prob
+            paired["prob"] = prob.mean("number") if members else prob
         if member_fraction is not None:
-            fc_event = prob >= member_fraction
+            paired["fc_event"] = paired["prob"] >= member_fraction
         else:
-            fc_event = mean >= cutoff
-
-    out = {}
-    for s in components:
-        u = None
-        if s == "fcst":
-            field, u = mean, units
-        elif s == "obs":
-            field, u = truth, units
-        elif s == "bias":
-            field, u = error, units
-        elif s == "mae":
-            field, u = np.abs(error), units
-        elif s == "mse":
-            field, u = error**2, unit_sq
-        elif s == "mape":
-            field = np.abs(error) / np.maximum(np.abs(truth), 1e-10)
-        elif s == "smape":
-            total = np.abs(mean) + np.abs(truth)
-            # Both zero is a perfect forecast, not 0/0.
-            field = xr.where(total > 0, np.abs(error) / total.where(total > 0), 0.0)
-        elif s == "squared_fcst":
-            field, u = mean**2, unit_sq
-        elif s == "squared_obs":
-            field, u = truth**2, unit_sq
-        elif s == "covariance":
-            field, u = mean * truth, unit_sq
-        elif s == "squared_fcst_anom":
-            field, u = (mean - extras["clim"]) ** 2, unit_sq
-        elif s == "squared_obs_anom":
-            field, u = (truth - extras["clim"]) ** 2, unit_sq
-        elif s == "anom_covariance":
-            field, u = (mean - extras["clim"]) * (truth - extras["clim"]), unit_sq
-        elif s == "true_positives":
-            field = (fc_event & (obs_event == 1)).astype(float)
-        elif s == "false_positives":
-            field = (fc_event & (obs_event == 0)).astype(float)
-        elif s == "false_negatives":
-            field = (~fc_event & (obs_event == 1)).astype(float)
-        elif s == "true_negatives":
-            field = (~fc_event & (obs_event == 0)).astype(float)
-        elif s == "obs_event":
-            field = obs_event
-        elif s == "brier":
-            field = (prob - obs_event) ** 2
-        elif s in ("crps", "crps_fair"):
-            u = units
-            if members:
-                # CRPS = E|X - y| - E|X - X'| / 2, with E|X - X'| from the sorted members.
-                # The fair score averages over the m(m-1) distinct member pairs, not all m^2.
-                m = fc.sizes["number"]
-                ranked = xr.apply_ufunc(
-                    np.sort, fc, input_core_dims=[["number"]], output_core_dims=[["number"]],
-                    kwargs={"axis": -1},
-                )  # fmt: skip
-                rank_weight = xr.DataArray(2.0 * np.arange(1, m + 1) - m - 1, dims="number")
-                pairs = m * (m - 1) if s == "crps_fair" else m**2
-                spread = 2.0 * (ranked * rank_weight).sum("number") / pairs
-                field = np.abs(fc - truth).mean("number") - 0.5 * spread
-            else:
-                field = np.abs(error)
-        elif s == "ensemble_variance":
-            m = fc.sizes["number"]
-            # Finite-ensemble correction (m + 1) / m (Fortin et al. 2014).
-            field, u = fc.var("number", ddof=1) * (m + 1) / m, unit_sq
-        elif s in ("rps", "rps_clim") and quintiles:
-            inner = {"quintile": slice(0, -1)}
-            # A value on an edge is in the upper category, as an event is a value >= threshold.
-            obs_cdf = (truth < fc["quintile_threshold"]).astype(float).isel(inner)
-            cdf = fc["quintile"] if s == "rps_clim" else fc.cumsum("quintile")
-            field = ((cdf.isel(inner) - obs_cdf) ** 2).sum("quintile")
-            field = field.drop_vars("quintile_threshold", errors="ignore")
-        elif s in ("rps", "rps_clim"):
-            n_cat = extras["--fc-edges"].sizes["category_edge"] + 1
-            obs_cdf = (truth < extras["--obs-edges"]).astype(float)
-            if s == "rps":
-                cdf = (fc < extras["--fc-edges"]).mean("number")
-            else:
-                cdf = xr.DataArray(np.arange(1, n_cat) / n_cat, dims="category_edge")
-            field = ((cdf - obs_cdf) ** 2).sum("category_edge")
-        elif s in _BIN_COMPONENTS:
-            edges = np.sort(np.asarray(bins, dtype=float))
-            category = xr.DataArray(np.arange(edges.size + 1), dims="category")
-            # Category k holds values from edge k-1 (inclusive) up to edge k.
-            f_cat = xr.apply_ufunc(np.digitize, mean, kwargs={"bins": edges})
-            o_cat = xr.apply_ufunc(np.digitize, truth, kwargs={"bins": edges})
-            if s == "n_correct":
-                field = (f_cat == o_cat).astype(float)
-            else:
-                field = ((f_cat if s == "n_fcst_bin" else o_cat) == category).astype(float)
-                field = field.assign_coords(category=category)
-        elif s.startswith("reliability_"):
-            centre = np.round(np.arange(0.05, 1.0, 0.1), 2)
-            # float32 probabilities read back a hair low (0.7 as 0.6999999); 1e-6 absorbs it.
-            index = np.clip(np.floor(prob * 10 + 1e-6), 0, 9)
-            in_bin = (index == xr.DataArray(np.arange(10), dims="probability_bin")).astype(float)
-            weight = {"count": 1.0, "fcst": prob, "obs": obs_event}[s.removeprefix("reliability_")]
-            field = (in_bin * weight).assign_coords(probability_bin=centre)
-        else:  # roc_hits, roc_false_alarms
-            levels = np.round(np.arange(0.1, 1.01, 0.1), 2)
-            level = xr.DataArray(levels, dims="probability_threshold")
-            event = obs_event if s == "roc_hits" else 1 - obs_event
-            field = ((prob >= level - 1e-6) * event).assign_coords(probability_threshold=levels)
-        out[s] = (field, u)
+            paired["fc_event"] = mean >= cutoff
+    fields = {c: _COMPONENTS[c][2](paired) for c in components}
 
     # One sample set for every component: a NaN in any component drops that sample from all,
     # so their group means pool the same samples.
-    for field, _ in out.values():
+    for field in fields.values():
         extra = [d for d in field.dims if d not in valid.dims]
         valid = valid & (field.notnull().all(extra) if extra else field.notnull())
-    out["n_valid"] = (xr.ones_like(valid, dtype=float), None)
-    n = int(valid.sum())
-    if n == 0:
+    fields["n_valid"] = xr.ones_like(valid, dtype=float)
+    if int(valid.sum()) == 0:
         raise DataError("no sample has both a forecast and an observation (after any --filter).")
 
     config = {
@@ -734,29 +888,34 @@ def verify(
         if k
         not in ("standard_name", "GRIB_name", "GRIB_paramId", "short_name", "comment", "long_name")
     }
+    unit_of = {"units": units, "units^2": units**2 if units is not None else None, None: None}
     result = xr.Dataset()
-    for s, (field, u) in out.items():
+    for c, field in fields.items():
+        long_name, kind, _ = _COMPONENTS.get(
+            c, ("Sample counted (1) in the components", None, None)
+        )
         field = field.where(valid).astype("float32")
         field.attrs = {
             **base,
-            "long_name": _COMPONENTS.get(s, "Sample counted (1) in the components"),
-            "verify_component": s,
+            "long_name": long_name,
+            "verify_component": c,
             "verify_run": run,
             "verify_config": json.dumps(config),
-            "verify_cell_methods": base.get("cell_methods", ""),
         }
         field.attrs.pop("units", None)
-        result[s] = field.pint.quantify("1" if u is None else u)
+        u = unit_of[kind]
+        result[c] = field.pint.quantify("1" if u is None else u)
     result.attrs["Conventions"] = "CF-1.13"
-    result.attrs["verify_components"] = " ".join(out)
+    result.attrs["verify_components"] = " ".join(fields)
     result.attrs["verify_metrics"] = " ".join(metrics)
     return result
 
 
 def _metric(ds, metric):
-    """Finalize a metric from group means of its components, refusing components it cannot use."""
-    needed, finalize = _METRICS[metric]
-    missing = [s for s in needed if s not in ds or ds[s].attrs.get("verify_component") != s]
+    """A metric from the group means of its components, refusing components it cannot use."""
+    entry = _METRICS[metric]
+    needed = entry["components"]
+    missing = [c for c in needed if c not in ds or ds[c].attrs.get("verify_component") != c]
     if missing:
         prepared = ds.attrs.get("verify_metrics") or "unknown metrics"
         raise UsageError(
@@ -765,64 +924,57 @@ def _metric(ds, metric):
             f"--mode prepare with --metric {metric} among the metrics, group with "
             "summarize-dim --method mean, then rerun."
         )
-    if len({ds[s].attrs.get("verify_run") for s in needed}) > 1:
+    if len({ds[c].attrs.get("verify_run") for c in needed}) > 1:
         raise UsageError(
             f"--metric {metric}: {', '.join(needed)} come from different verify calls, so they "
             "may pool different samples; write them in one verify call."
         )
-    added = {}
-    for s in needed:
-        cm, start = ds[s].attrs.get("cell_methods", ""), ds[s].attrs.get("verify_cell_methods", "")
-        if not cm.startswith(start):
-            raise UsageError(f"--metric {metric}: {s!r} cell_methods changed after verify: {cm!r}")
-        added[s] = cm[len(start) :].strip()
-    if len(set(added.values())) > 1:
-        detail = "; ".join(f"{s}: {v or 'not reduced'}" for s, v in added.items())
+    # summarize-dim records each grouping step in summarize_steps.
+    steps = {c: ds[c].attrs.get("summarize_steps", "[]") for c in needed}
+    if len(set(steps.values())) > 1:
+        detail = "; ".join(f"{c}: {v}" for c, v in steps.items())
         raise UsageError(
-            f"--metric {metric}: its components were reduced differently ({detail}); "
+            f"--metric {metric}: its components were grouped differently ({detail}); "
             "group them together in one summarize-dim call."
         )
-    steps = next(iter(added.values()))
-    if not steps:
+    grouping = json.loads(next(iter(steps.values())))
+    if not grouping:
         raise UsageError(
             f"--metric {metric}: {', '.join(needed)} were never grouped. Average them first "
             "(summarize-dim --dim time or --by LABEL --method mean), then rerun."
         )
-    tokens = re.sub(r"\([^)]*\)", " ", steps).split()
-    bad = sorted({t for t in tokens if not t.endswith(":") and t != "mean"})
-    if bad:
+    methods = sorted({step["method"] for step in grouping} - {"mean"})
+    if methods:
         raise UsageError(
             f"--metric {metric} needs group means; the components were reduced with "
-            f"{', '.join(bad)} ({steps!r}). Regroup with summarize-dim --method mean."
+            f"{', '.join(methods)}. Regroup with summarize-dim --method mean."
         )
     first = ds[needed[0]].attrs
-    plain = {s: ds[s].pint.dequantify() if ds[s].pint.units is not None else ds[s] for s in needed}
+    plain = {c: ds[c].pint.dequantify() if ds[c].pint.units is not None else ds[c] for c in needed}
     units_in = plain[needed[0]].attrs.get("units")
     with np.errstate(divide="ignore", invalid="ignore"):
-        results = finalize(plain)
+        results = entry["function"](plain)
     if not isinstance(results, dict):
         results = {metric: results}
     out = xr.Dataset()
     for name, field in results.items():
         # A zero denominator (no observed event in a cell) gives NaN, never ±inf.
         field = field.where(np.isfinite(field)).astype("float32")
-        if finalize is _identity and units_in:
+        if entry["function"] is _identity and units_in:
             field = field.pint.quantify(units_in)
         elif metric == "rmse" and units_in:
-            # finalize took the root of the values; take it of the units too.
+            # The root of the values; take it of the units too.
             root = (xr.DataArray(1.0).pint.quantify(units_in) ** 0.5).pint.units
             field = field.pint.quantify(root)
         else:
             field = field.pint.quantify("1")
         field.attrs = {
-            "long_name": _METRIC_NAMES.get(name, first.get("long_name", name)),
+            "long_name": entry["names"][name],
             "cell_methods": first.get("cell_methods", ""),
             "verify_metric": metric,
             "verify_config": first.get("verify_config", ""),
         }
         out[name] = field
-    out.attrs["Conventions"] = "CF-1.13"
-    out.attrs["verify_metric"] = metric
     return out
 
 

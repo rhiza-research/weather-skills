@@ -9,6 +9,7 @@
 
 import datetime
 import itertools
+import json
 import re
 import sys
 
@@ -476,6 +477,17 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
         attrs["cell_methods"] = (
             f"{attrs['cell_methods']} {step}" if attrs.get("cell_methods") else step
         )
+        # The same step, machine-readable, for skills that check how data was grouped.
+        summarized = json.loads(attrs.get("summarize_steps", "[]"))
+        summarized.append(
+            {
+                "dims": [str(d) for d in rdims],
+                "by": [str(b) for b in by or ()],
+                "method": method,
+                "lat_weighted": bool(method == "mean" and lat_weighted and lat_dim in rdims),
+            }
+        )
+        attrs["summarize_steps"] = json.dumps(summarized)
         period = attrs.get(AGGREGATION_PERIOD_ATTR)
         if method == "sum" and over_time and isinstance(period, str):
             # A sum spans all the steps it adds: the input period times the step count

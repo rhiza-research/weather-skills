@@ -1,5 +1,6 @@
 """Correctness tests for summarize-dim."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -126,6 +127,15 @@ def test_lat_weighted_mean_celsius_over_lat_and_lon(tmp_path, summarize_dim):
     ds = xr.open_zarr(out, consolidated=True)
     assert ds["t2m"].dims == ("time",)
     assert ds["t2m"].values == pytest.approx(50.0 / 3.0)
+    assert json.loads(ds["t2m"].attrs["summarize_steps"]) == [
+        {"dims": ["latitude", "longitude"], "by": [], "method": "mean", "lat_weighted": True}
+    ]
+
+    # A second call appends its step.
+    out2 = tmp_path / "out2.zarr"
+    run_skill(summarize_dim, "-i", str(out), "-o", str(out2), "--dim", "time", "--method", "max")
+    steps = json.loads(xr.open_zarr(out2)["t2m"].attrs["summarize_steps"])
+    assert [s["method"] for s in steps] == ["mean", "max"]
 
 
 def test_lat_weighted_mean_precip_unchanged(tmp_path, summarize_dim):

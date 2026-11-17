@@ -620,10 +620,12 @@ def test_metric_refuses_components_reduced_differently(tmp_path, verify_fn, summ
                "mean", "-v", "true_positives", name="a.zarr")  # fmt: skip
     ds = xr.open_zarr(a)
     ds["false_negatives"] = ds["false_negatives"].mean("latitude", keep_attrs=True)
-    ds["false_negatives"].attrs["cell_methods"] = "latitude: mean"
+    ds["false_negatives"].attrs["summarize_steps"] = json.dumps(
+        [{"dims": ["latitude"], "by": [], "method": "mean", "lat_weighted": False}]
+    )
     write_zarr(ds.compute(), tmp_path / "b.zarr")
     _expect_exit(_metric, tmp_path, verify_fn, tmp_path / "b.zarr", "pod")
-    assert "reduced differently" in capsys.readouterr().err
+    assert "grouped differently" in capsys.readouterr().err
 
 
 def test_metric_takes_no_forecast_flags(tmp_path, verify_fn):
@@ -742,7 +744,7 @@ def test_metric_refuses_mixed_lat_weighting(tmp_path, verify_fn, summarize_fn, c
     mixed = xr.merge([tp, fn], combine_attrs="override")
     write_zarr(mixed.compute(), tmp_path / "mixed.zarr")
     _expect_exit(_metric, tmp_path, verify_fn, tmp_path / "mixed.zarr", "pod")
-    assert "latitude-weighted" in capsys.readouterr().err
+    assert '"lat_weighted": true' in capsys.readouterr().err
 
 
 def test_several_metrics_from_one_components_file(tmp_path, verify_fn, summarize_fn):
