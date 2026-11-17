@@ -1,4 +1,4 @@
-"""Correctness tests for verify: per-sample components, pooled over groups, into metrics."""
+"""Correctness tests for verify: per-sample statistics, pooled over groups, into metrics."""
 
 import json
 

@@ -11,7 +11,7 @@ metadata:
 
 # verify
 
-One call scores a forecast against obs. You name the **metrics** and the **grouping**; verify pairs every forecast value with its obs, computes the per-sample **components** each metric needs (its sufficient statistics, such as the squared error for `rmse`), pools them over each group and turns the pooled means into the metrics (RMSE = √mean(squared error), not a mean of RMSEs).
+One call scores a forecast against obs. You name the **metrics** and the **grouping**; verify pairs every forecast value with its obs, computes the per-sample **statistics** each metric needs (its sufficient statistics: values whose mean over any group feeds the metric, such as the squared error for `rmse`), pools them over each group and turns the pooled means into the metrics (RMSE = √mean(squared error), not a mean of RMSEs).
 
 ## Usage
 
@@ -95,10 +95,10 @@ Writes the area-weighted RMSE, correlation and CSI (weeks averaging ≥ 5 mm/day
 
 ## Details
 
-### Components
-The metrics are computed from per-sample components, pooled by their mean over each group:
+### Statistics
+The metrics are computed from per-sample statistics, pooled by their mean over each group:
 
-| Group | Components | For | Needs |
+| Group | Statistics | For | Needs |
 |---|---|---|---|
 | Errors | `fcst`, `obs`, `bias`, `mae`, `mse`, `mape`, `smape` | the metric of the same name; `rmse` (`mse`) | |
 | Moments | `fcst`, `obs`, `squared_fcst`, `squared_obs`, `covariance` | `pearson` | |
@@ -111,7 +111,7 @@ The metrics are computed from per-sample components, pooled by their mean over e
 | Categories | `n_correct`, `n_fcst_bin`, `n_obs_bin` (the last two on `category`) | `heidke` | `--bins` |
 | Ranked probability | `rps`, `rps_clim` | `rps`, `rpss` | quintile forecast, or members + `--fc-edges` / `--obs-edges` |
 
-The probability, reliability and ROC components use the forecast event probability: the share of members ≥ `--threshold`, or the forecast itself with `--probability`.
+The probability, reliability and ROC statistics use the forecast event probability: the share of members ≥ `--threshold`, or the forecast itself with `--probability`.
 
 ### Event filters
 Score only dates an obs condition holds, e.g. 30-day rain totals during droughts: run `indicator` on the obs (`--rule "precip sum 30d < 50"`) for the mask, put both inputs on 30-day sums (`aggregate-temporal`), then `--metric mae --filter drought.zarr`. Several `--filter` masks must all hold. For locally extreme days, take the q90 from `climatology --quantiles 0.9`, `difference` the obs minus it, and mask with `indicator "precip >= 0"`.

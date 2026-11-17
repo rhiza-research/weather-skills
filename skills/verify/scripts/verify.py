@@ -5,9 +5,9 @@
 #   "pandas",
 # ]
 # ///
-"""Verify a forecast against obs: per-sample components, pooled over groups, into metrics.
+"""Verify a forecast against obs: per-sample statistics, pooled over groups, into metrics.
 
---forecast ─┐   components per sample      group means over --dim,     metrics
+--forecast ─┐   statistics per sample      group means over --dim,     metrics
             ├─► (mse, fcst, obs, …)    ─►  per --by label          ─►  rmse = √mean(mse), csi, …
 --obs ──────┘
 """
@@ -35,7 +35,7 @@ from weather_skills_core.units import (
 _SKILL_VERSION = "0.0.10"
 
 
-# Component functions: each takes the paired data (p) and returns one value per sample.
+# Statistic functions: each takes the paired data (p) and returns one value per sample.
 # p holds fc (members kept), mean (ensemble mean), truth, error (mean - truth), clim, the
 # rps edges, bins, prob (forecast event probability), obs_event and fc_event.
 def _fcst(p):
@@ -177,10 +177,10 @@ def _roc_warned(p, event):
     return ((p["prob"] >= level - 1e-6) * observed).assign_coords(probability_threshold=levels)
 
 
-# Components: per-sample values whose mean over any group feeds a metric.
+# Statistics: per-sample values whose mean over any group feeds a metric.
 # Each has a long name, its units ("units" of the forecast, "units^2", or None for unitless)
 # and its function.
-_COMPONENTS = {
+_STATISTICS = {
     "fcst": ("Forecast", "units", _fcst),
     "obs": ("Observation", "units", _obs),
     "bias": ("Forecast minus observation", "units", _bias),
@@ -265,10 +265,10 @@ _COMPONENTS = {
 _CONTINGENCY = ("true_positives", "false_positives", "false_negatives", "true_negatives")
 
 
-# Metric functions: each takes the group means of its components (g) and returns the metric,
+# Metric functions: each takes the group means of its statistics (g) and returns the metric,
 # or a dict of named outputs.
 def _identity(g):
-    """The group mean of the metric's one component is the metric."""
+    """The group mean of the metric's one statistic is the metric."""
     (value,) = g.values()
     return value
 
@@ -361,11 +361,11 @@ def _roc(g):
     }
 
 
-def _metric_entry(components, function, names, needs=(), allows=()):
-    """A metric: its components, its function, the long name of each output, the inputs it
+def _metric_entry(statistics, function, names, needs=(), allows=()):
+    """A metric: its statistics, its function, the long name of each output, the inputs it
     needs and the optional inputs it takes ("ensemble" = a forecast with >= 2 members)."""
     return {
-        "components": components,
+        "statistics": statistics,
         "function": function,
         "names": names,
         "needs": set(needs),
@@ -377,7 +377,7 @@ _EVENT = {"needs": ("--threshold",), "allows": ("--member-fraction",)}
 _PROBABILITY = {"needs": ("--threshold",), "allows": ("--probability",)}
 _EDGES = {"allows": ("--fc-edges", "--obs-edges")}
 
-# Metrics. An _identity metric is the group mean of its own component and keeps its units.
+# Metrics. An _identity metric is the group mean of its own statistic and keeps its units.
 _METRICS = {
     "fcst": _metric_entry(("fcst",), _identity, {"fcst": "Mean forecast"}),
     "obs": _metric_entry(("obs",), _identity, {"obs": "Mean observation"}),
@@ -626,7 +626,7 @@ def verify(
     lat_weighted,
     **kwargs,
 ):
-    """Verify a forecast against obs: per-sample components, pooled over groups, into metrics."""
+    """Verify a forecast against obs: per-sample statistics, pooled over groups, into metrics."""
     metrics = list(dict.fromkeys(metric))
     flags = {
         "--forecast": forecast,
@@ -643,8 +643,8 @@ def verify(
     given = {flag for flag, value in flags.items() if value is not None}
     if forecast is None or obs is None:
         raise UsageError("verify needs --forecast and --obs.")
-    # Every component the metrics need, each once.
-    components = list(dict.fromkeys(c for m in metrics for c in _METRICS[m]["components"]))
+    # Every statistic the metrics need, each once.
+    statistics = list(dict.fromkeys(c for m in metrics for c in _METRICS[m]["statistics"]))
 
     fc_name = variable or auto_variable(forecast)
     obs_name = variable or auto_variable(obs)
@@ -691,7 +691,7 @@ def verify(
                 f"forecast {fc_name!r} has a quintile dim but no quintile_threshold coordinate "
                 "(the category edges); rps needs them to place the obs in a category."
             )
-    elif {"rps", "rps_clim"} & set(components) and (fc_edges is None or not members):
+    elif {"rps", "rps_clim"} & set(statistics) and (fc_edges is None or not members):
         raise UsageError(
             "rps and rpss need either a forecast of quintile probabilities (pbc-correct) or an "
             "ensemble (number dim) with --fc-edges and --obs-edges from summarize-dim "
@@ -847,9 +847,9 @@ def verify(
             paired["fc_event"] = paired["prob"] >= member_fraction
         else:
             paired["fc_event"] = mean >= cutoff
-    fields = {c: _COMPONENTS[c][2](paired) for c in components}
+    fields = {c: _STATISTICS[c][2](paired) for c in statistics}
 
-    # One sample set for every component: a NaN in any component drops that sample from all,
+    # One sample set for every statistic: a NaN in any statistic drops that sample from all,
     # so their group means pool the same samples.
     for field in fields.values():
         extra = [d for d in field.dims if d not in valid.dims]
@@ -913,11 +913,11 @@ def verify(
     for m in metrics:
         entry = _METRICS[m]
         with np.errstate(divide="ignore", invalid="ignore"):
-            results = entry["function"]({c: grouped[c] for c in entry["components"]})
+            results = entry["function"]({c: grouped[c] for c in entry["statistics"]})
         if not isinstance(results, dict):
             results = {m: results}
         if entry["function"] is _identity:
-            u = unit_of[_COMPONENTS[entry["components"][0]][1]]
+            u = unit_of[_STATISTICS[entry["statistics"][0]][1]]
         else:
             u = units if m == "rmse" else None
         for name, field in results.items():
