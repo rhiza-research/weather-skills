@@ -35,7 +35,8 @@ _FILL = -9999.0
 _VALID = (0.02, 0.5)  # m3 m-3, the product's valid_min / valid_max
 _GRANULE_DATE_RE = re.compile(r"_(\d{8})_")
 _GROUPS = {"smap": "SMAP_Based", "smos": "SMOS_Based"}
-_SOURCE_FLAG = {"smap": 1, "smos": 2}
+# Fill order; a value's soil_moisture_source is its 1-based place here.
+_LAYERS = (("smap", "AM"), ("smos", "AM"), ("smap", "PM"), ("smos", "PM"))
 _WORKERS = 4
 
 # EASE-Grid 2.0 global 9 km (EPSG:6933): cell size and outer corner, in metres.
@@ -108,9 +109,9 @@ def _read(handle, source, overpass, rows, cols, recommended_only):
 @weather_skill.argument("--bbox")
 @weather_skill.argument(
     "--overpass",
-    choices=("AM", "PM"),
+    choices=("AM", "PM", "both"),
     default="AM",
-    help="AM = 6am, PM = 6pm local overpass. Default AM.",
+    help="AM = 6am, PM = 6pm local overpass; both = AM, gaps filled from PM. Default AM.",
 )
 @weather_skill.argument(
     "--source",
@@ -208,14 +209,18 @@ def fetch(start_time, end_time, bbox, overpass, source, quality, **kwargs):
         file=sys.stderr,
     )
 
-    sources = ["smap", "smos"] if source == "merged" else [source]
+    layers = [
+        (s, p)
+        for s, p in _LAYERS
+        if (source == "merged" or s == source) and (overpass == "both" or p == overpass)
+    ]
     recommended_only = quality == "recommended"
 
     def one(day):
         try:
             (handle,) = earthaccess.open([granules[day]])
             with h5py.File(handle, "r") as h:
-                fields = [_read(h, s, overpass, rows, cols, recommended_only) for s in sources]
+                fields = [_read(h, s, p, rows, cols, recommended_only) for s, p in layers]
             return day, fields
         except SkillError:
             raise
@@ -236,13 +241,14 @@ def fetch(start_time, end_time, bbox, overpass, source, quality, **kwargs):
     sm = np.full(shape, np.nan, dtype="float32")
     flag = np.zeros(shape, dtype="int8")
     for i, day in enumerate(days):
-        for s, field in zip(sources, read.get(day, [None] * len(sources)), strict=True):
+        for layer, field in zip(layers, read.get(day, [None] * len(layers)), strict=True):
             if field is None:
                 continue
             fill = np.isnan(sm[i]) & ~np.isnan(field)
             sm[i][fill] = field[fill]
-            flag[i][fill] = _SOURCE_FLAG[s]
+            flag[i][fill] = _LAYERS.index(layer) + 1
 
+    passes = "AM and PM overpasses" if overpass == "both" else f"{overpass} overpass"
     coords = {
         "time": np.array([np.datetime64(d.isoformat(), "ns") for d in days]),
         "latitude": lat,
@@ -257,7 +263,7 @@ def fetch(start_time, end_time, bbox, overpass, source, quality, **kwargs):
                 {
                     "units": "m3 m-3",
                     "standard_name": "volume_fraction_of_condensed_water_in_soil",
-                    "long_name": f"Surface soil moisture ({source}, {overpass} overpass)",
+                    "long_name": f"Surface soil moisture ({source}, {passes})",
                     "comment": "Top ~5 cm. SMOS values are retrieved with SMAP's algorithm from "
                     "SMOS brightness temperatures calibrated to SMAP. Native 9 km EASE-Grid 2.0: "
                     "latitude spacing varies.",
@@ -266,21 +272,21 @@ def fetch(start_time, end_time, bbox, overpass, source, quality, **kwargs):
         },
         coords=coords,
     )
-    if source == "merged":
+    if len(layers) > 1:
         ds["soil_moisture_source"] = xr.DataArray(
             flag,
             dims=dims,
             attrs={
-                "long_name": "Retrieval each soil_moisture value came from",
-                "flag_values": np.array([0, 1, 2], dtype="int8"),
-                "flag_meanings": "none smap smos",
+                "long_name": "Retrieval and overpass each soil_moisture value came from",
+                "flag_values": np.arange(len(_LAYERS) + 1, dtype="int8"),
+                "flag_meanings": " ".join(["none"] + [f"{s}_{p.lower()}" for s, p in _LAYERS]),
             },
         )
     ds = ensure_normalized_longitude(ds.sortby("latitude"))
     ds.attrs = {
         "Conventions": "CF-1.13",
         "title": f"SMAP/SMOS L3 radiometer 9 km soil moisture ({_SHORT_NAME} v{_VERSION}), "
-        f"{overpass} overpass, {source}",
+        f"{passes}, {source}",
         "weather_skills_source": f"nsidc:{_SHORT_NAME}:{source}",
         "institution": "NASA National Snow and Ice Data Center DAAC",
         "source": f"{_SHORT_NAME} v{_VERSION} via NASA Earthdata",
