@@ -74,102 +74,126 @@ _CONTINGENCY = ("true_positives", "false_positives", "false_negatives", "true_ne
 _BIN_COMPONENTS = {"n_correct", "n_fcst_bin", "n_obs_bin"}
 
 
-# Metrics: (components, finalize) applied to group means of those components.
-# A component whose group mean is already the metric keeps its name and units.
-_METRICS = {
-    name: ((name,), lambda g, name=name: {name: g[name]})
-    for name in (
-        "fcst",
-        "obs",
-        "bias",
-        "mae",
-        "mse",
-        "mape",
-        "smape",
-        "crps",
-        "crps_fair",
-        "brier",
-        "rps",
+# Metric functions: each takes the group means of its components (g) and returns the metric,
+# or a dict of named outputs.
+def _rmse(g):
+    return g["mse"] ** 0.5
+
+
+def _pearson(g):
+    fcst_sd = (g["squared_fcst"] - g["fcst"] ** 2) ** 0.5
+    obs_sd = (g["squared_obs"] - g["obs"] ** 2) ** 0.5
+    return (g["covariance"] - g["fcst"] * g["obs"]) / (fcst_sd * obs_sd)
+
+
+def _acc(g):
+    return g["anom_covariance"] / (g["squared_fcst_anom"] * g["squared_obs_anom"]) ** 0.5
+
+
+def _bss(g):
+    return 1 - g["brier"] / (g["obs_event"] * (1 - g["obs_event"]))
+
+
+def _pod(g):
+    return g["true_positives"] / (g["true_positives"] + g["false_negatives"])
+
+
+def _far(g):
+    return g["false_positives"] / (g["true_positives"] + g["false_positives"])
+
+
+def _pofd(g):
+    return g["false_positives"] / (g["false_positives"] + g["true_negatives"])
+
+
+def _csi(g):
+    return g["true_positives"] / (g["true_positives"] + g["false_positives"] + g["false_negatives"])
+
+
+def _balanced_error_rate(g):
+    miss_rate = g["false_negatives"] / (g["true_positives"] + g["false_negatives"])
+    return (miss_rate + _pofd(g)) / 2
+
+
+def _frequency_bias(g):
+    return (g["true_positives"] + g["false_positives"]) / (
+        g["true_positives"] + g["false_negatives"]
     )
-}
-_METRICS |= {
-    "rmse": (("mse",), lambda g: {"rmse": g["mse"] ** 0.5}),
-    "pearson": (
-        ("fcst", "obs", "squared_fcst", "squared_obs", "covariance"),
-        lambda g: {
-            "pearson": (g["covariance"] - g["fcst"] * g["obs"])
-            / (
-                (g["squared_fcst"] - g["fcst"] ** 2) ** 0.5
-                * (g["squared_obs"] - g["obs"] ** 2) ** 0.5
-            )
-        },
-    ),
-    "acc": (
-        ("squared_fcst_anom", "squared_obs_anom", "anom_covariance"),
-        lambda g: {
-            "acc": g["anom_covariance"] / (g["squared_fcst_anom"] * g["squared_obs_anom"]) ** 0.5
-        },
-    ),
-    "bss": (
-        ("brier", "obs_event"),
-        lambda g: {"bss": 1 - g["brier"] / (g["obs_event"] * (1 - g["obs_event"]))},
-    ),
-    "pod": (
-        ("true_positives", "false_negatives"),
-        lambda g: {"pod": g["true_positives"] / (g["true_positives"] + g["false_negatives"])},
-    ),
-    "far": (
-        ("true_positives", "false_positives"),
-        lambda g: {"far": g["false_positives"] / (g["true_positives"] + g["false_positives"])},
-    ),
-    "pofd": (
-        ("false_positives", "true_negatives"),
-        lambda g: {"pofd": g["false_positives"] / (g["false_positives"] + g["true_negatives"])},
-    ),
-    "csi": (
-        ("true_positives", "false_positives", "false_negatives"),
-        lambda g: {
-            "csi": g["true_positives"]
-            / (g["true_positives"] + g["false_positives"] + g["false_negatives"])
-        },
-    ),
-    "balanced_error_rate": (
-        _CONTINGENCY,
-        lambda g: {
-            "balanced_error_rate": (
-                g["false_negatives"] / (g["true_positives"] + g["false_negatives"])
-                + g["false_positives"] / (g["false_positives"] + g["true_negatives"])
-            )
-            / 2
-        },
-    ),
-    "frequency_bias": (
-        ("true_positives", "false_positives", "false_negatives"),
-        lambda g: {
-            "frequency_bias": (g["true_positives"] + g["false_positives"])
-            / (g["true_positives"] + g["false_negatives"])
-        },
-    ),
-    "ets": (_CONTINGENCY, lambda g: {"ets": _ets(*(g[s] for s in _CONTINGENCY))}),
-    "heidke": (
-        ("n_correct", "n_fcst_bin", "n_obs_bin"),
-        lambda g: {"heidke": _heidke(g["n_correct"], g["n_fcst_bin"], g["n_obs_bin"])},
-    ),
-    "spread": (
-        ("ensemble_variance", "mse"),
-        lambda g: {"spread": (g["ensemble_variance"] / g["mse"]) ** 0.5},
-    ),
-    "rpss": (("rps", "rps_clim"), lambda g: {"rpss": 1 - g["rps"] / g["rps_clim"]}),
-    "reliability": (
-        ("reliability_count", "reliability_fcst", "reliability_obs"),
-        lambda g: {
-            "forecast_probability": g["reliability_fcst"] / g["reliability_count"],
-            "observed_frequency": g["reliability_obs"] / g["reliability_count"],
-            "sample_fraction": g["reliability_count"]
-            / g["reliability_count"].sum("probability_bin"),
-        },
-    ),
-    "roc": (("roc_hits", "roc_false_alarms", "obs_event"), lambda g: _roc(g)),
+
+
+def _ets(g):
+    a, b, c, d = (g[s] for s in _CONTINGENCY)
+    random_hits = (a + b) * (a + c) / (a + b + c + d)
+    return (a - random_hits) / (a + b + c - random_hits)
+
+
+def _heidke(g):
+    chance = (g["n_fcst_bin"] * g["n_obs_bin"]).sum("category")
+    return (g["n_correct"] - chance) / (1 - chance)
+
+
+def _spread(g):
+    return (g["ensemble_variance"] / g["mse"]) ** 0.5
+
+
+def _rpss(g):
+    return 1 - g["rps"] / g["rps_clim"]
+
+
+def _reliability(g):
+    count = g["reliability_count"]
+    return {
+        "forecast_probability": g["reliability_fcst"] / count,
+        "observed_frequency": g["reliability_obs"] / count,
+        "sample_fraction": count / count.sum("probability_bin"),
+    }
+
+
+def _roc(g):
+    hit = (g["roc_hits"] / g["obs_event"]).transpose(..., "probability_threshold")
+    false = (g["roc_false_alarms"] / (1 - g["obs_event"])).transpose(..., "probability_threshold")
+    # Area under the curve from (1, 1) through each threshold to (0, 0), by trapezoids.
+    one = np.ones((*hit.shape[:-1], 1))
+    x = np.concatenate([one, false.values, 0 * one], -1)
+    y = np.concatenate([one, hit.values, 0 * one], -1)
+    area = ((x[..., :-1] - x[..., 1:]) * (y[..., :-1] + y[..., 1:]) / 2).sum(-1)
+    return {
+        "hit_rate": hit,
+        "false_alarm_rate": false,
+        "roc_area": hit.isel(probability_threshold=0, drop=True).copy(data=area),
+    }
+
+
+# Metrics: the components each needs and its function. A metric with no function is the
+# group mean of its own component, and keeps its name and units.
+_METRICS = {
+    "fcst": (("fcst",), None),
+    "obs": (("obs",), None),
+    "bias": (("bias",), None),
+    "mae": (("mae",), None),
+    "mse": (("mse",), None),
+    "mape": (("mape",), None),
+    "smape": (("smape",), None),
+    "crps": (("crps",), None),
+    "crps_fair": (("crps_fair",), None),
+    "brier": (("brier",), None),
+    "rps": (("rps",), None),
+    "rmse": (("mse",), _rmse),
+    "pearson": (("fcst", "obs", "squared_fcst", "squared_obs", "covariance"), _pearson),
+    "acc": (("squared_fcst_anom", "squared_obs_anom", "anom_covariance"), _acc),
+    "bss": (("brier", "obs_event"), _bss),
+    "pod": (("true_positives", "false_negatives"), _pod),
+    "far": (("true_positives", "false_positives"), _far),
+    "pofd": (("false_positives", "true_negatives"), _pofd),
+    "csi": (("true_positives", "false_positives", "false_negatives"), _csi),
+    "balanced_error_rate": (_CONTINGENCY, _balanced_error_rate),
+    "frequency_bias": (("true_positives", "false_positives", "false_negatives"), _frequency_bias),
+    "ets": (_CONTINGENCY, _ets),
+    "heidke": (("n_correct", "n_fcst_bin", "n_obs_bin"), _heidke),
+    "spread": (("ensemble_variance", "mse"), _spread),
+    "rpss": (("rps", "rps_clim"), _rpss),
+    "reliability": (("reliability_count", "reliability_fcst", "reliability_obs"), _reliability),
+    "roc": (("roc_hits", "roc_false_alarms", "obs_event"), _roc),
 }
 _METRIC_NAMES = {
     "rmse": "Root mean square error",
@@ -193,31 +217,6 @@ _METRIC_NAMES = {
     "false_alarm_rate": "False alarm rate (probability of false detection)",
     "roc_area": "Area under the ROC curve",
 }
-
-
-def _ets(a, b, c, d):
-    random_hits = (a + b) * (a + c) / (a + b + c + d)
-    return (a - random_hits) / (a + b + c - random_hits)
-
-
-def _heidke(correct, fcst_bin, obs_bin):
-    chance = (fcst_bin * obs_bin).sum("category")
-    return (correct - chance) / (1 - chance)
-
-
-def _roc(g):
-    hit = (g["roc_hits"] / g["obs_event"]).transpose(..., "probability_threshold")
-    false = (g["roc_false_alarms"] / (1 - g["obs_event"])).transpose(..., "probability_threshold")
-    # Area under the curve from (1, 1) through each threshold to (0, 0), by trapezoids.
-    one = np.ones((*hit.shape[:-1], 1))
-    x = np.concatenate([one, false.values, 0 * one], -1)
-    y = np.concatenate([one, hit.values, 0 * one], -1)
-    area = ((x[..., :-1] - x[..., 1:]) * (y[..., :-1] + y[..., 1:]) / 2).sum(-1)
-    return {
-        "hit_rate": hit,
-        "false_alarm_rate": false,
-        "roc_area": hit.isel(probability_threshold=0, drop=True).copy(data=area),
-    }
 
 
 def _at_valid_times(da, fc, role):
@@ -794,12 +793,14 @@ def _metric(ds, metric):
     plain = {s: ds[s].pint.dequantify() if ds[s].pint.units is not None else ds[s] for s in needed}
     units_in = plain[needed[0]].attrs.get("units")
     with np.errstate(divide="ignore", invalid="ignore"):
-        results = finalize(plain)
+        results = finalize(plain) if finalize else plain[metric]
+    if not isinstance(results, dict):
+        results = {metric: results}
     out = xr.Dataset()
     for name, field in results.items():
         # A zero denominator (no observed event in a cell) gives NaN, never ±inf.
         field = field.where(np.isfinite(field)).astype("float32")
-        if needed == (metric,) and units_in:
+        if finalize is None and units_in:
             field = field.pint.quantify(units_in)
         elif metric == "rmse" and units_in:
             # finalize took the root of the values; take it of the units too.
