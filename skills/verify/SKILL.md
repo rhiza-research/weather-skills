@@ -40,6 +40,8 @@ Name the same metrics in prepare and compute. Each metric needs these inputs whe
 
 A plain mean (`mae`, `bias`, `fcst`) is already the answer after step 2; compute only checks it.
 
+For one number per metric over everything, group over every dim the components have, e.g. `--dim time --dim step --dim latitude --dim longitude` (stations: `--dim time --dim station_id`). Leave out `step` to keep one value per lead.
+
 ### Arguments (prepare)
 - `--mode prepare`, `--metric` — repeatable; the file holds every component these metrics need, each once, plus `n_valid` (1 on every scored sample).
 - `--forecast`, `--obs` — the dataset to score and its reference: any two datasets (a forecast, a satellite product, stations). Bias is forecast − obs; events are counted on the obs.

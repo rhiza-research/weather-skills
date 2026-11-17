@@ -76,20 +76,22 @@ _BIN_COMPONENTS = {"n_correct", "n_fcst_bin", "n_obs_bin"}
 
 # Metrics: (components, finalize) applied to group means of those components.
 # A component whose group mean is already the metric keeps its name and units.
-_IDENTITY = (
-    "fcst",
-    "obs",
-    "bias",
-    "mae",
-    "mse",
-    "mape",
-    "smape",
-    "crps",
-    "crps_fair",
-    "brier",
-    "rps",
-)
-_METRICS = {name: ((name,), lambda g, name=name: {name: g[name]}) for name in _IDENTITY}
+_METRICS = {
+    name: ((name,), lambda g, name=name: {name: g[name]})
+    for name in (
+        "fcst",
+        "obs",
+        "bias",
+        "mae",
+        "mse",
+        "mape",
+        "smape",
+        "crps",
+        "crps_fair",
+        "brier",
+        "rps",
+    )
+}
 _METRICS |= {
     "rmse": (("mse",), lambda g: {"rmse": g["mse"] ** 0.5}),
     "pearson": (
@@ -797,7 +799,7 @@ def _metric(ds, metric):
     for name, field in results.items():
         # A zero denominator (no observed event in a cell) gives NaN, never ±inf.
         field = field.where(np.isfinite(field)).astype("float32")
-        if metric in _IDENTITY and units_in:
+        if needed == (metric,) and units_in:
             field = field.pint.quantify(units_in)
         elif metric == "rmse" and units_in:
             # finalize took the root of the values; take it of the units too.
