@@ -1,4 +1,4 @@
-"""Correctness tests for verify: components, then metrics from grouped components."""
+"""Correctness tests for verify: per-sample components, pooled over groups, into metrics."""
 
 import json
 
@@ -8,67 +8,26 @@ import xarray as xr
 from conftest import load_skill, make_forecast, make_gridded, make_point_obs, run_skill, write_zarr
 from weather_skills_core.provenance import load_history
 
+_ALL = ("time", "latitude", "longitude")
+
 
 @pytest.fixture(scope="module")
 def verify_fn():
     return load_skill("verify", "verify").verify
 
 
-@pytest.fixture(scope="module")
-def summarize_fn():
-    return load_skill("summarize-dim", "summarize_dim").summarize_dim
-
-
-# The metric whose components include each component, so tests can ask for the components they check.
-_METRIC_FOR = {
-    **{s: s for s in ("fcst", "obs", "bias", "mae", "mse", "mape", "smape", "crps", "crps_fair")},
-    **{s: s for s in ("brier", "rps")},
-    **dict.fromkeys(("squared_fcst", "squared_obs", "covariance"), "pearson"),
-    **dict.fromkeys(("squared_fcst_anom", "squared_obs_anom", "anom_covariance"), "acc"),
-    **dict.fromkeys(("true_positives", "false_positives", "false_negatives"), "ets"),
-    "true_negatives": "ets",
-    "obs_event": "bss",
-    "ensemble_variance": "spread",
-    "rps_clim": "rpss",
-    **dict.fromkeys(("n_correct", "n_fcst_bin", "n_obs_bin"), "heidke"),
-    **dict.fromkeys(("reliability_count", "reliability_fcst", "reliability_obs"), "reliability"),
-    **dict.fromkeys(("roc_hits", "roc_false_alarms"), "roc"),
-}
-
-
 def _verify(tmp_path, verify_fn, fc, obs, *args, name="out.zarr"):
     pf = write_zarr(fc, tmp_path / f"fc_{name}")
     po = write_zarr(obs, tmp_path / f"obs_{name}")
     out = tmp_path / name
-    run_skill(verify_fn, "--mode", "prepare", "--forecast", str(pf), "--obs", str(po),
-              "-o", str(out), *args)  # fmt: skip
+    run_skill(verify_fn, "--forecast", str(pf), "--obs", str(po), "-o", str(out), *args)
     return xr.open_zarr(out, consolidated=True)
 
 
-def _components(tmp_path, verify_fn, fc, obs, *components, extra=()):
-    """Prepare mode for the metrics that write ``components``."""
-    metrics = dict.fromkeys(_METRIC_FOR[s] for s in components)
-    args = [a for m in metrics for a in ("--metric", m)]
+def _score(tmp_path, verify_fn, fc, obs, *metrics, extra=(), dims=()):
+    """The metrics, pooled over ``dims`` (none: one value per sample)."""
+    args = [a for m in metrics for a in ("--metric", m)] + [a for d in dims for a in ("--dim", d)]
     return _verify(tmp_path, verify_fn, fc, obs, *args, *extra)
-
-
-def _group(tmp_path, summarize_fn, path, *args, name="grouped.zarr"):
-    out = tmp_path / name
-    run_skill(summarize_fn, "-i", str(path), "-o", str(out), *args)
-    return out
-
-
-def _all_mean(tmp_path, summarize_fn, path, *dims, name="grouped.zarr"):
-    flags = [a for d in dims for a in ("--dim", d)]
-    return _group(tmp_path, summarize_fn, path, *flags, "--method", "mean", name=name)
-
-
-def _metric(tmp_path, verify_fn, path, metric, name="metric.zarr"):
-    out = tmp_path / name
-    metrics = [metric] if isinstance(metric, str) else metric
-    args = [a for m in metrics for a in ("--metric", m)]
-    run_skill(verify_fn, "--mode", "compute", *args, "-i", str(path), "-o", str(out))
-    return xr.open_zarr(out, consolidated=True)
 
 
 def _random_pair(seed, n_time=30, lats=(1.0, 2.0, 3.0), lons=(10.0, 11.0)):
@@ -92,56 +51,34 @@ def _expect_exit(fn, *args, **kwargs):
     assert exc.value.code == 2
 
 
-# --- components ---------------------------------------------------------------------------
+# --- per-sample values (no grouping) ------------------------------------------------------
 
 
-def test_error_components_and_attrs(tmp_path, verify_fn):
+def test_error_metrics_per_sample_and_attrs(tmp_path, verify_fn):
     fc = make_gridded(n_time=1, fill=3.0)
     obs = make_gridded(n_time=1, fill=1.0)
-    ds = _components(
-        tmp_path, verify_fn, fc, obs, "fcst", "obs", "bias", "mae", "mse", "covariance"
-    )
+    ds = _score(tmp_path, verify_fn, fc, obs, "fcst", "obs", "bias", "mae", "mse")
     assert float(ds["fcst"].max()) == 3.0 and float(ds["obs"].max()) == 1.0
     assert float(ds["bias"].max()) == 2.0 and float(ds["mae"].max()) == 2.0
-    assert float(ds["mse"].max()) == 4.0 and float(ds["covariance"].max()) == 3.0
+    assert float(ds["mse"].max()) == 4.0
     assert ds["bias"].attrs["units"] == "mm day-1"
     assert ds["mse"].attrs["units"] != "mm day-1"
     assert set(ds["n_valid"].values.ravel()) == {1.0}
-    runs = {ds[v].attrs["verify_run"] for v in ds.data_vars}
-    assert len(runs) == 1
-    assert ds["mse"].attrs["verify_component"] == "mse"
+    assert ds["mse"].attrs["verify_metric"] == "mse"
     assert json.loads(ds["mse"].attrs["verify_config"])["forecast_variable"] == "precip"
-    assert float(ds["n_valid"].sum()) == 12
+    assert ds.attrs["verify_metrics"] == "fcst obs bias mae mse"
     assert load_history(tmp_path / "out.zarr")[-1]["skill"] == "verify"
 
 
-def test_contingency_components(tmp_path, verify_fn):
-    fc = make_gridded(n_time=1, fill=0.0)
-    obs = make_gridded(n_time=1, fill=0.0)
-    fc["precip"].values[0, 0, :2] = 5.0  # forecast events at (0,0), (0,1)
-    obs["precip"].values[0, 0, 0] = 5.0  # observed events at (0,0), (1,0)
-    obs["precip"].values[0, 1, 0] = 5.0
-    ds = _components(
-        tmp_path, verify_fn, fc, obs,
-        "true_positives", "false_positives", "false_negatives", "true_negatives",
-        extra=("--threshold", "1"),
-    )  # fmt: skip
-    one = {s: ds[s].isel(time=0).values for s in ds.data_vars}
-    assert one["true_positives"][0, 0] == 1 and one["true_positives"].sum() == 1
-    assert one["false_positives"][0, 1] == 1 and one["false_positives"].sum() == 1
-    assert one["false_negatives"][1, 0] == 1 and one["false_negatives"].sum() == 1
-    assert one["true_negatives"].sum() == 12 - 3
-
-
-def test_flags_must_match_components(tmp_path, verify_fn):
+def test_flags_must_match_metrics(tmp_path, verify_fn):
     fc, obs = make_gridded(n_time=1), make_gridded(n_time=1)
     run = (tmp_path, verify_fn, fc, obs)
-    _expect_exit(_components, *run, "true_positives")  # no --threshold
-    _expect_exit(_components, *run, "mae", extra=("--threshold", "1"))  # threshold unused
-    _expect_exit(_components, *run, "squared_fcst_anom")  # no --clim
-    _expect_exit(_components, *run, "n_correct")  # no --bins
-    _expect_exit(_components, *run, "crps_fair")  # no members
-    _expect_exit(_components, *run, "mae", extra=("--member-fraction", "0.5"))
+    _expect_exit(_score, *run, "pod")  # no --threshold
+    _expect_exit(_score, *run, "mae", extra=("--threshold", "1"))  # threshold unused
+    _expect_exit(_score, *run, "acc")  # no --clim
+    _expect_exit(_score, *run, "heidke")  # no --bins
+    _expect_exit(_score, *run, "crps_fair")  # no members
+    _expect_exit(_score, *run, "mae", extra=("--member-fraction", "0.5"))
     _expect_exit(_verify, *run)  # no --metric
 
 
@@ -152,13 +89,9 @@ def test_single_init_scores_each_lead_against_its_valid_date(tmp_path, verify_fn
     fc["precip"].values[1] = 0.0  # lead 1 day forecasts no event
     obs = make_gridded(n_time=3, fill=5.0)
     obs["precip"].values[2] = 0.0  # 2026-01-03 has none; no lead lands there
-    ds = _components(
-        tmp_path, verify_fn, fc, obs, "true_positives", "false_negatives",
-        extra=("--threshold", "1"),
-    )  # fmt: skip
-    assert ds["true_positives"].dims[:2] == ("time", "step")
-    assert (ds["true_positives"].isel(step=0).values == 1).all()
-    assert (ds["false_negatives"].isel(step=1).values == 1).all()
+    ds = _score(tmp_path, verify_fn, fc, obs, "pod", extra=("--threshold", "1"), dims=_ALL)
+    assert ds["pod"].dims == ("step",)
+    np.testing.assert_allclose(ds["pod"].values, [1.0, 0.0])
 
 
 def test_init_window_leads_past_obs_record_stay_nan(tmp_path, verify_fn):
@@ -167,7 +100,7 @@ def test_init_window_leads_past_obs_record_stay_nan(tmp_path, verify_fn):
     fc["precip"].attrs["units"] = "mm day-1"
     fc = xr.concat([fc, fc.assign_coords(time=np.datetime64("2026-01-02", "ns"))], dim="time")
     obs = make_gridded(n_time=2, fill=1.0)  # 2026-01-01 and 2026-01-02 only
-    bias = _components(tmp_path, verify_fn, fc, obs, "bias")["bias"]
+    bias = _score(tmp_path, verify_fn, fc, obs, "bias")["bias"]
     np.testing.assert_allclose(bias.isel(time=0).values, 2.0)
     np.testing.assert_allclose(bias.isel(time=1, step=0).values, 2.0)
     assert np.isnan(bias.isel(time=1, step=1).values).all()  # 2026-01-03: no obs
@@ -177,19 +110,19 @@ def test_leads_with_no_obs_at_any_valid_time_are_refused(tmp_path, verify_fn, ca
     fc = make_forecast(n_step=2, name="precip")
     fc["precip"].attrs["units"] = "mm day-1"
     obs = make_gridded(n_time=2, start="2027-01-01")
-    _expect_exit(_components, tmp_path, verify_fn, fc, obs, "bias")
+    _expect_exit(_score, tmp_path, verify_fn, fc, obs, "bias")
     assert "no --obs time matches a forecast valid time" in capsys.readouterr().err
 
 
 def test_obs_finer_grid_is_refused(tmp_path, verify_fn):
     fc = make_gridded(n_time=1, lats=(1.0, 2.0), lons=(10.0, 11.0))
     obs = make_gridded(n_time=1, lats=(1.0, 1.5, 2.0), lons=(10.0, 10.5, 11.0))
-    _expect_exit(_components, tmp_path, verify_fn, fc, obs, "bias")
+    _expect_exit(_score, tmp_path, verify_fn, fc, obs, "bias")
 
 
 def test_units_converted_and_offset_units_scored_in_kelvin(tmp_path, verify_fn):
     """deg C forecast vs K obs: bias +2 K, not -271."""
-    ds = _components(
+    ds = _score(
         tmp_path, verify_fn, _temp(27.0, "degree_Celsius"), _temp(298.15, "K"), "bias", "mse"
     )
     assert float(ds["bias"].max()) == pytest.approx(2.0)
@@ -198,40 +131,38 @@ def test_units_converted_and_offset_units_scored_in_kelvin(tmp_path, verify_fn):
 
     hourly = make_gridded(n_time=1, fill=0.5)
     hourly["precip"].attrs["units"] = "mm hr-1"
-    ds = _components(tmp_path, verify_fn, make_gridded(n_time=1, fill=24.0), hourly, "mae")
+    ds = _score(tmp_path, verify_fn, make_gridded(n_time=1, fill=24.0), hourly, "mae")
     assert float(ds["mae"].max()) == pytest.approx(12.0)
     assert ds["mae"].attrs["units"] == "mm day-1"
 
 
 def test_threshold_applies_in_forecast_units(tmp_path, verify_fn):
     """36 deg C forecast vs 300 K (26.85 deg C) obs at 35 (deg C, scored in K): a false alarm."""
-    ds = _components(
-        tmp_path, verify_fn, _temp(36.0, "degree_Celsius"), _temp(300.0, "K"),
-        "false_positives", extra=("--threshold", "35"),
+    ds = _score(
+        tmp_path, verify_fn, _temp(36.0, "degree_Celsius"), _temp(300.0, "K"), "far",
+        extra=("--threshold", "35"),
     )  # fmt: skip
-    assert (ds["false_positives"].values == 1).all()
+    assert (ds["far"].values == 1).all()
 
 
 def test_unit_mismatches_are_refused(tmp_path, verify_fn):
     total = make_gridded(n_time=1, fill=14.0)
     total["precip"].attrs = {"units": "mm"}
-    _expect_exit(_components, tmp_path, verify_fn, total, make_gridded(n_time=1), "mae")
+    _expect_exit(_score, tmp_path, verify_fn, total, make_gridded(n_time=1), "mae")
     fc = make_gridded(n_time=1, fill=3.0, name="x")
     fc["x"].attrs = {"units": "K"}
     obs = make_gridded(n_time=1, fill=1.0, name="x")
     obs["x"].attrs = {}
-    _expect_exit(_components, tmp_path, verify_fn, fc, obs, "bias")
-    _expect_exit(_components, tmp_path, verify_fn, obs, fc, "bias")
+    _expect_exit(_score, tmp_path, verify_fn, fc, obs, "bias")
+    _expect_exit(_score, tmp_path, verify_fn, obs, fc, "bias")
 
 
 def test_zero_threshold_is_a_threshold(tmp_path, verify_fn):
     """--threshold 0 is a real cutoff, not a missing one: every value >= 0 is an event."""
     fc, obs = make_gridded(n_time=1, fill=0.0), make_gridded(n_time=1, fill=0.0)
-    ds = _components(tmp_path, verify_fn, fc, obs, "true_positives", extra=("--threshold", "0"))
-    assert (ds["true_positives"].values == 1).all()
-    _expect_exit(
-        _components, tmp_path, verify_fn, fc, obs, "true_positives", extra=("--threshold", "50 mm")
-    )
+    ds = _score(tmp_path, verify_fn, fc, obs, "pod", extra=("--threshold", "0"))
+    assert (ds["pod"].values == 1).all()
+    _expect_exit(_score, tmp_path, verify_fn, fc, obs, "pod", extra=("--threshold", "50 mm"))
 
 
 def test_member_fraction_counts_members_at_the_threshold(tmp_path, verify_fn):
@@ -242,24 +173,24 @@ def test_member_fraction_counts_members_at_the_threshold(tmp_path, verify_fn):
     fc = fc.isel(step=0, drop=True).expand_dims(time=[np.datetime64("2026-01-01", "ns")])
     obs = make_gridded(n_time=1, lats=(1.0, 2.0), lons=(10.0, 11.0), fill=12.0)
     for fraction, hit in (("0.5", 1), ("0.75", 0)):
-        ds = _components(
-            tmp_path, verify_fn, fc, obs, "true_positives",
+        ds = _score(
+            tmp_path, verify_fn, fc, obs, "pod",
             extra=("--threshold", "10", "--member-fraction", fraction),
         )  # fmt: skip
-        assert (ds["true_positives"].values == hit).all()
-    ds = _components(tmp_path, verify_fn, fc, obs, "true_positives", extra=("--threshold", "10"))
-    assert (ds["true_positives"].values == 0).all()
+        assert (ds["pod"].values == hit).all()
+    ds = _score(tmp_path, verify_fn, fc, obs, "pod", extra=("--threshold", "10"))
+    assert (ds["pod"].values == 0).all()
 
 
 def test_ensemble_mean_and_nan_member(tmp_path, verify_fn):
-    """Deterministic components score the ensemble mean; a NaN member drops the sample."""
+    """Deterministic metrics score the ensemble mean; a NaN member drops the sample."""
     fc = make_forecast(n_step=1, members=3, name="precip")
     fc["precip"].attrs["units"] = "mm day-1"
     fc["precip"].values[:] = np.array([0.0, 0.0, 3.0])[:, None, None, None]
     fc["precip"].values[2, 0, 0, 0] = np.nan
     fc = fc.isel(step=0, drop=True).expand_dims(time=[np.datetime64("2026-01-01", "ns")])
     obs = make_gridded(n_time=1, lats=(1.0, 2.0), lons=(10.0, 11.0), fill=0.0)
-    ds = _components(tmp_path, verify_fn, fc, obs, "mae")
+    ds = _score(tmp_path, verify_fn, fc, obs, "mae")
     mae = ds["mae"].isel(time=0).values
     assert np.isnan(mae[0, 0])
     np.testing.assert_allclose(mae.ravel()[1:], 1.0)
@@ -267,9 +198,7 @@ def test_ensemble_mean_and_nan_member(tmp_path, verify_fn):
 
 
 def test_station_pairs(tmp_path, verify_fn):
-    ds = _components(
-        tmp_path, verify_fn, make_point_obs(fill=3.0), make_point_obs(fill=1.0), "bias"
-    )
+    ds = _score(tmp_path, verify_fn, make_point_obs(fill=3.0), make_point_obs(fill=1.0), "bias")
     assert ds["bias"].attrs["units"] == "mm day-1"
     assert float(ds["bias"].mean()) == pytest.approx(2.0)
 
@@ -277,25 +206,25 @@ def test_station_pairs(tmp_path, verify_fn):
 def test_scalar_times_must_match(tmp_path, verify_fn, capsys):
     fc = make_gridded(n_time=1, fill=3.0).isel(time=0)
     obs = make_gridded(n_time=1, fill=1.0, start="2026-02-01").isel(time=0)
-    _expect_exit(_components, tmp_path, verify_fn, fc, obs, "bias")
+    _expect_exit(_score, tmp_path, verify_fn, fc, obs, "bias")
     assert "no overlapping time labels" in capsys.readouterr().err
-    ds = _components(tmp_path, verify_fn, fc, obs.assign_coords(time=fc.time), "bias")
+    ds = _score(tmp_path, verify_fn, fc, obs.assign_coords(time=fc.time), "bias")
     assert float(ds["bias"].max()) == pytest.approx(2.0)
 
 
-def test_one_sample_set_for_every_component(tmp_path, verify_fn):
-    """A sample missing from one component is missing from all, so their means pool alike."""
+def test_one_sample_set_for_every_metric(tmp_path, verify_fn):
+    """A sample missing from one input is missing from every metric, so they pool alike."""
     fc = make_gridded(n_time=1, fill=2.0)
     obs = make_gridded(n_time=1, fill=1.0)
     obs["precip"].values[0, 0, 0] = np.nan
-    ds = _components(tmp_path, verify_fn, fc, obs, "fcst", "obs", "covariance")
-    for v in ds.data_vars:
+    ds = _score(tmp_path, verify_fn, fc, obs, "fcst", "obs", "mse")
+    for v in ("fcst", "obs", "mse"):
         assert np.isnan(ds[v].values[0, 0, 0])
         assert int(ds[v].notnull().sum()) == 11
 
 
 def test_smape_of_two_zeros_is_zero(tmp_path, verify_fn):
-    ds = _components(
+    ds = _score(
         tmp_path, verify_fn, make_gridded(n_time=1, fill=0.0), make_gridded(n_time=1, fill=0.0),
         "smape", "mape",
     )  # fmt: skip
@@ -312,7 +241,7 @@ def test_filter_keeps_only_masked_samples(tmp_path, verify_fn):
     b["indicator"].values[:] = 1.0
     b["indicator"].values[1, 0, 0] = np.nan  # one cell on day two out
     pa, pb = write_zarr(a, tmp_path / "a.zarr"), write_zarr(b, tmp_path / "b.zarr")
-    ds = _components(
+    ds = _score(
         tmp_path, verify_fn, fc, obs, "mae", extra=("--filter", str(pa), "--filter", str(pb))
     )
     assert int(ds["mae"].notnull().sum()) == 11
@@ -329,20 +258,17 @@ def test_obs_filter_follows_forecast_leads(tmp_path, verify_fn):
     mask["indicator"].attrs = {"units": "1"}
     mask["indicator"].values[1] = 0.0  # 2026-01-02 is not an event day
     pm = write_zarr(mask, tmp_path / "m.zarr")
-    mae = _components(tmp_path, verify_fn, fc, obs, "mae", extra=("--filter", str(pm)))["mae"]
+    mae = _score(tmp_path, verify_fn, fc, obs, "mae", extra=("--filter", str(pm)))["mae"]
     assert mae.isel(step=0).notnull().all() and mae.isel(step=1).isnull().all()
 
 
-def test_anomaly_components_use_clim(tmp_path, verify_fn):
+def test_acc_uses_clim(tmp_path, verify_fn):
+    """Forecast anomaly +1, obs anomaly -1 from a climatology of 4: ACC -1."""
     fc, obs = make_gridded(n_time=1, fill=5.0), make_gridded(n_time=1, fill=3.0)
     clim = make_gridded(n_time=1, fill=4.0, name="precip_avg")
     pc = write_zarr(clim, tmp_path / "clim.zarr")
-    ds = _components(
-        tmp_path, verify_fn, fc, obs, "squared_fcst_anom", "squared_obs_anom", "anom_covariance",
-        extra=("--clim", str(pc)),
-    )  # fmt: skip
-    assert float(ds["squared_fcst_anom"].max()) == 1.0
-    assert float(ds["anom_covariance"].max()) == -1.0
+    ds = _score(tmp_path, verify_fn, fc, obs, "acc", extra=("--clim", str(pc)))
+    np.testing.assert_allclose(ds["acc"].values, -1.0)
 
 
 def test_brier_from_members_and_from_a_probability(tmp_path, verify_fn):
@@ -351,43 +277,39 @@ def test_brier_from_members_and_from_a_probability(tmp_path, verify_fn):
     fc["precip"].values[:] = np.array([0.0, 4.0, 10.0, 12.0])[:, None, None, None]
     fc = fc.isel(step=0, drop=True).expand_dims(time=[np.datetime64("2026-01-01", "ns")])
     obs = make_gridded(n_time=1, lats=(1.0, 2.0), lons=(10.0, 11.0), fill=12.0)
-    ds = _components(
-        tmp_path, verify_fn, fc, obs, "brier", "obs_event", extra=("--threshold", "10")
-    )
+    ds = _score(tmp_path, verify_fn, fc, obs, "brier", extra=("--threshold", "10"))
     np.testing.assert_allclose(ds["brier"].values, 0.25)  # p = 0.5, o = 1
-    assert (ds["obs_event"].values == 1).all()
 
     prob = make_gridded(n_time=1, lats=(1.0, 2.0), lons=(10.0, 11.0), fill=0.8, name="p")
     prob["p"].attrs = {"units": "1"}
     mask = make_gridded(n_time=1, lats=(1.0, 2.0), lons=(10.0, 11.0), fill=1.0, name="p")
     mask["p"].attrs = {"units": "1"}
     mask["p"].values[0, 0, 0] = 0.0
-    ds = _components(
+    ds = _score(
         tmp_path, verify_fn, prob, mask, "brier", extra=("--threshold", "1", "--probability")
     )
     assert ds["brier"].values[0, 0, 0] == pytest.approx(0.64)
     assert ds["brier"].values[0, 1, 1] == pytest.approx(0.04)
 
-    prob["p"].values[0, 0, 0] = 1.5
-    _expect_exit(
-        _components,
-        tmp_path,
-        verify_fn,
-        fc,
-        obs,
-        "brier",
-        extra=("--threshold", "1", "--probability"),
+    _expect_exit(  # members and --probability
+        _score, tmp_path, verify_fn, fc, obs, "brier", extra=("--threshold", "1", "--probability")
     )
+    prob["p"].values[0, 0, 0] = 1.5
+    pf, pm = write_zarr(prob, tmp_path / "p.zarr"), write_zarr(mask, tmp_path / "m.zarr")
+    with pytest.raises(SystemExit) as exc:  # not a probability
+        run_skill(verify_fn, "--forecast", str(pf), "--obs", str(pm), "--metric", "brier",
+                  "--threshold", "1", "--probability", "-o", str(tmp_path / "x.zarr"))  # fmt: skip
+    assert exc.value.code != 0
 
 
-def test_crps_matches_the_pairwise_definition(tmp_path, verify_fn):
+def test_crps_and_spread_match_their_definitions(tmp_path, verify_fn):
     rng = np.random.default_rng(0)
     fc = make_forecast(n_step=1, members=5, name="precip")
     fc["precip"].attrs["units"] = "mm day-1"
     fc["precip"].values = rng.gamma(1.0, 3.0, fc["precip"].shape)
     fc = fc.isel(step=0, drop=True).expand_dims(time=[np.datetime64("2026-01-01", "ns")])
     obs = make_gridded(n_time=1, lats=(1.0, 2.0), lons=(10.0, 11.0), fill=2.0)
-    ds = _components(tmp_path, verify_fn, fc, obs, "crps", "crps_fair", "ensemble_variance")
+    ds = _score(tmp_path, verify_fn, fc, obs, "crps", "crps_fair", "spread")
     x = fc["precip"].isel(time=0, latitude=0, longitude=0).values
     m = x.size
     pair = np.abs(x[:, None] - x[None, :]).sum()
@@ -397,8 +319,8 @@ def test_crps_matches_the_pairwise_definition(tmp_path, verify_fn):
     assert float(ds["crps_fair"].values[0, 0, 0]) == pytest.approx(
         np.abs(x - 2).mean() - pair / (2 * m * (m - 1)), rel=1e-5
     )
-    assert float(ds["ensemble_variance"].values[0, 0, 0]) == pytest.approx(
-        x.var(ddof=1) * (m + 1) / m, rel=1e-5
+    assert float(ds["spread"].values[0, 0, 0]) == pytest.approx(
+        np.sqrt(x.var(ddof=1) * (m + 1) / m / (x.mean() - 2) ** 2), rel=1e-5
     )
 
 
@@ -408,51 +330,43 @@ def test_extra_dims_pass_through(tmp_path, verify_fn):
         [make_gridded(n_time=1, fill=v) for v in (2.0, 4.0)],
         dim=xr.DataArray(["a", "b"], dims="model"),
     )
-    ds = _components(tmp_path, verify_fn, fc, make_gridded(n_time=1, fill=1.0), "bias")
+    ds = _score(tmp_path, verify_fn, fc, make_gridded(n_time=1, fill=1.0), "bias")
     assert float(ds["bias"].sel(model="a").max()) == 1.0
     assert float(ds["bias"].sel(model="b").max()) == 3.0
 
 
-# --- metrics from grouped components ------------------------------------------------------
+# --- pooled metrics -----------------------------------------------------------------------
 
 
-def _pipeline(tmp_path, verify_fn, summarize_fn, fc, obs, metric, *components, extra=(), dims=None):
-    _components(tmp_path, verify_fn, fc, obs, *components, extra=extra)
-    dims = dims or ("time", "latitude", "longitude")
-    grouped = _all_mean(tmp_path, summarize_fn, tmp_path / "out.zarr", *dims)
-    return _metric(tmp_path, verify_fn, grouped, metric)
-
-
-def test_rmse_is_the_root_of_the_pooled_mean(tmp_path, verify_fn, summarize_fn):
+def test_rmse_is_the_root_of_the_pooled_mean(tmp_path, verify_fn):
     fc, obs = _random_pair(1)
-    ds = _pipeline(tmp_path, verify_fn, summarize_fn, fc, obs, "rmse", "mse")
+    ds = _score(tmp_path, verify_fn, fc, obs, "rmse", dims=_ALL)
     err = fc["precip"].values - obs["precip"].values
     assert float(ds["rmse"]) == pytest.approx(np.sqrt((err**2).mean()), rel=1e-5)
     assert ds["rmse"].attrs["units"] == "mm day-1"
-    assert ds.attrs["verify_metrics"] == "rmse"
+    assert ds["rmse"].attrs["cell_methods"] == "time: latitude: longitude: mean"
+    assert int(ds["n_valid"]) == err.size
 
 
-def test_rmse_per_cell_over_time(tmp_path, verify_fn, summarize_fn):
+def test_rmse_per_cell_over_time(tmp_path, verify_fn):
     fc, obs = _random_pair(2)
-    ds = _pipeline(tmp_path, verify_fn, summarize_fn, fc, obs, "rmse", "mse", dims=("time",))
+    ds = _score(tmp_path, verify_fn, fc, obs, "rmse", dims=("time",))
     err = fc["precip"].values - obs["precip"].values
     np.testing.assert_allclose(ds["rmse"].values, np.sqrt((err**2).mean(0)), rtol=1e-5)
 
 
-def test_pearson_matches_numpy(tmp_path, verify_fn, summarize_fn):
+def test_pearson_matches_numpy(tmp_path, verify_fn):
     fc, obs = _random_pair(3)
-    components = ("fcst", "obs", "squared_fcst", "squared_obs", "covariance")
-    ds = _pipeline(tmp_path, verify_fn, summarize_fn, fc, obs, "pearson", *components)
+    ds = _score(tmp_path, verify_fn, fc, obs, "pearson", dims=_ALL)
     r = np.corrcoef(fc["precip"].values.ravel(), obs["precip"].values.ravel())[0, 1]
     assert float(ds["pearson"]) == pytest.approx(r, rel=1e-4)
 
 
-def test_contingency_metrics(tmp_path, verify_fn, summarize_fn):
+def test_contingency_metrics(tmp_path, verify_fn):
     fc, obs = _random_pair(4)
-    components = ("true_positives", "false_positives", "false_negatives", "true_negatives")
-    _components(tmp_path, verify_fn, fc, obs, *components, extra=("--threshold", "4"))
-    grouped = _all_mean(
-        tmp_path, summarize_fn, tmp_path / "out.zarr", "time", "latitude", "longitude"
+    expected_metrics = ("pod", "far", "pofd", "csi", "balanced_error_rate", "frequency_bias", "ets")
+    ds = _score(
+        tmp_path, verify_fn, fc, obs, *expected_metrics, extra=("--threshold", "4"), dims=_ALL
     )
     f, o = fc["precip"].values >= 4, obs["precip"].values >= 4
     a, b, c, d = ((x & y).sum() for x, y in ((f, o), (f, ~o), (~f, o), (~f, ~o)))
@@ -467,29 +381,22 @@ def test_contingency_metrics(tmp_path, verify_fn, summarize_fn):
         / (a + b + c - (a + b) * (a + c) / (a + b + c + d)),
     }
     for metric, value in expected.items():
-        ds = _metric(tmp_path, verify_fn, grouped, metric, name=f"{metric}.zarr")
         assert float(ds[metric]) == pytest.approx(value, rel=1e-5), metric
         assert ds[metric].attrs["units"] == "1"
 
 
-def test_brier_skill_score_vs_base_rate(tmp_path, verify_fn, summarize_fn):
+def test_brier_skill_score_vs_base_rate(tmp_path, verify_fn):
     fc, obs = _random_pair(5)
-    ds = _pipeline(
-        tmp_path, verify_fn, summarize_fn, fc, obs, "bss", "brier", "obs_event",
-        extra=("--threshold", "4"),
-    )  # fmt: skip
+    ds = _score(tmp_path, verify_fn, fc, obs, "bss", extra=("--threshold", "4"), dims=_ALL)
     p = (fc["precip"].values >= 4).astype(float)
     o = (obs["precip"].values >= 4).astype(float)
     expected = 1 - ((p - o) ** 2).mean() / (o.mean() * (1 - o.mean()))
     assert float(ds["bss"]) == pytest.approx(expected, rel=1e-5)
 
 
-def test_heidke_with_bins(tmp_path, verify_fn, summarize_fn):
+def test_heidke_with_bins(tmp_path, verify_fn):
     fc, obs = _random_pair(6)
-    ds = _pipeline(
-        tmp_path, verify_fn, summarize_fn, fc, obs, "heidke", "n_correct", "n_fcst_bin",
-        "n_obs_bin", extra=("--bins", "2", "6"),
-    )  # fmt: skip
+    ds = _score(tmp_path, verify_fn, fc, obs, "heidke", extra=("--bins", "2", "6"), dims=_ALL)
     f = np.digitize(fc["precip"].values.ravel(), [2, 6])
     o = np.digitize(obs["precip"].values.ravel(), [2, 6])
     chance = sum((f == k).mean() * (o == k).mean() for k in range(3))
@@ -497,7 +404,14 @@ def test_heidke_with_bins(tmp_path, verify_fn, summarize_fn):
     assert float(ds["heidke"]) == pytest.approx(expected, rel=1e-5)
 
 
-def test_rpss_from_edges(tmp_path, verify_fn, summarize_fn):
+def _edges(tmp_path, values, lats=(1.0,), lons=(10.0,)):
+    edges = make_gridded(n_time=1, lats=lats, lons=lons).isel(time=0, drop=True)
+    edges = edges.expand_dims(quantile=[0.333, 0.667]).copy(deep=True)
+    edges["precip"].values[:] = np.array(values)[:, None, None]
+    return write_zarr(edges, tmp_path / "edges.zarr")
+
+
+def test_rpss_from_edges(tmp_path, verify_fn):
     rng = np.random.default_rng(7)
     fc = xr.concat(
         [make_gridded(n_time=20, lats=(1.0,), lons=(10.0,)) for _ in range(6)], dim="number"
@@ -505,13 +419,10 @@ def test_rpss_from_edges(tmp_path, verify_fn, summarize_fn):
     fc["precip"].values = rng.gamma(1.0, 3.0, fc["precip"].shape)
     obs = make_gridded(n_time=20, lats=(1.0,), lons=(10.0,))
     obs["precip"].values = rng.gamma(1.0, 3.0, obs["precip"].shape)
-    edges = make_gridded(n_time=2, lats=(1.0,), lons=(10.0,)).isel(time=0, drop=True)
-    edges = edges.expand_dims(quantile=[0.333, 0.667]).copy(deep=True)
-    edges["precip"].values[:] = np.array([1.5, 3.5])[:, None, None]
-    pe = write_zarr(edges, tmp_path / "edges.zarr")
-    ds = _pipeline(
-        tmp_path, verify_fn, summarize_fn, fc, obs, "rpss", "rps", "rps_clim",
-        extra=("--fc-edges", str(pe), "--obs-edges", str(pe)),
+    pe = _edges(tmp_path, [1.5, 3.5])
+    ds = _score(
+        tmp_path, verify_fn, fc, obs, "rpss", extra=("--fc-edges", str(pe), "--obs-edges", str(pe)),
+        dims=_ALL,
     )  # fmt: skip
     x, y = fc["precip"].values[:, :, 0, 0], obs["precip"].values[:, 0, 0]
     cdf = np.stack([(x < e).mean(0) for e in (1.5, 3.5)], -1)
@@ -521,40 +432,34 @@ def test_rpss_from_edges(tmp_path, verify_fn, summarize_fn):
     assert float(ds["rpss"]) == pytest.approx(1 - rps.mean() / clim.mean(), rel=1e-5)
 
 
-def test_reliability_and_roc_curves(tmp_path, verify_fn, summarize_fn):
+def test_reliability_and_roc_curves(tmp_path, verify_fn):
     rng = np.random.default_rng(8)
     prob = make_gridded(n_time=40, name="p")
     prob["p"].values = rng.uniform(0, 1, prob["p"].shape)
     prob["p"].attrs = {"units": "1"}
     event = prob.copy(deep=True)
     event["p"].values = (rng.uniform(0, 1, prob["p"].shape) < prob["p"].values).astype(float)
-    components = ("reliability_count", "reliability_fcst", "reliability_obs")
-    ds = _pipeline(
-        tmp_path, verify_fn, summarize_fn, prob, event, "reliability", *components,
-        extra=("--threshold", "1", "--probability"),
+    ds = _score(
+        tmp_path, verify_fn, prob, event, "reliability", "roc",
+        extra=("--threshold", "1", "--probability"), dims=_ALL,
     )  # fmt: skip
     p, o = prob["p"].values.ravel(), event["p"].values.ravel()
     k = np.clip(np.floor(p * 10 + 1e-6), 0, 9)
     assert float(ds["sample_fraction"].sum()) == pytest.approx(1.0, rel=1e-5)
     assert float(ds["observed_frequency"][3]) == pytest.approx(o[k == 3].mean(), rel=1e-5)
     assert float(ds["forecast_probability"][3]) == pytest.approx(p[k == 3].mean(), rel=1e-5)
-
-    ds = _pipeline(
-        tmp_path, verify_fn, summarize_fn, prob, event, "roc", "roc_hits", "roc_false_alarms",
-        "obs_event", extra=("--threshold", "1", "--probability"),
-    )  # fmt: skip
     hit = [((p >= t) & (o == 1)).sum() / (o == 1).sum() for t in np.arange(0.1, 1.01, 0.1)]
     np.testing.assert_allclose(ds["hit_rate"].values, hit, rtol=1e-5)
     assert 0.6 < float(ds["roc_area"]) <= 1.0
 
 
-def test_spread_skill(tmp_path, verify_fn, summarize_fn):
+def test_spread_skill(tmp_path, verify_fn):
     rng = np.random.default_rng(9)
     fc = xr.concat([make_gridded(n_time=30) for _ in range(5)], dim="number")
     fc["precip"].values = rng.normal(5, 1, fc["precip"].shape)
     obs = make_gridded(n_time=30)
     obs["precip"].values = rng.normal(5, 1, obs["precip"].shape)
-    ds = _pipeline(tmp_path, verify_fn, summarize_fn, fc, obs, "spread", "ensemble_variance", "mse")
+    ds = _score(tmp_path, verify_fn, fc, obs, "spread", dims=_ALL)
     x, y = fc["precip"].values, obs["precip"].values
     var = (x.var(0, ddof=1) * 6 / 5).mean()
     assert float(ds["spread"]) == pytest.approx(
@@ -562,81 +467,48 @@ def test_spread_skill(tmp_path, verify_fn, summarize_fn):
     )
 
 
-def test_metric_per_group_keeps_the_group_dim(tmp_path, verify_fn, summarize_fn):
+def test_by_label_pools_each_group(tmp_path, verify_fn):
     fc, obs = _random_pair(10)
-    obs = obs.assign_coords(zone=("latitude", ["n", "n", "s"]))
     fc = fc.assign_coords(zone=("latitude", ["n", "n", "s"]))
-    _components(tmp_path, verify_fn, fc, obs, "mse")
-    grouped = _group(
-        tmp_path, summarize_fn, tmp_path / "out.zarr", "--dim", "time", "--dim", "longitude", "--by", "zone",
-        "--method", "mean",
+    ds = _score(
+        tmp_path, verify_fn, fc, obs, "rmse",
+        extra=("--by", "zone"), dims=("time", "longitude"),
     )  # fmt: skip
-    ds = _metric(tmp_path, verify_fn, grouped, "rmse")
     err = fc["precip"].values - obs["precip"].values
-    assert float(ds["rmse"].sel(zone="s")) == pytest.approx(
-        np.sqrt((err[:, 2] ** 2).mean()), rel=1e-5
+    assert ds["rmse"].dims == ("zone",)
+    assert float(ds["rmse"].sel(zone="n")) == pytest.approx(
+        np.sqrt((err[:, :2] ** 2).mean()), rel=1e-5
     )
+    assert int(ds["n_valid"].sel(zone="s")) == err[:, 2].size
+    assert "(grouped by zone)" in ds["rmse"].attrs["cell_methods"]
 
 
-# --- metric refusals ----------------------------------------------------------------------
+def test_lat_weighted_pooling(tmp_path, verify_fn):
+    fc, obs = _random_pair(11, lats=(0.0, 60.0))
+    ds = _score(tmp_path, verify_fn, fc, obs, "mae", extra=("--lat-weighted",), dims=_ALL)
+    err = np.abs(fc["precip"].values - obs["precip"].values)
+    w = np.cos(np.deg2rad([0.0, 60.0]))[None, :, None] * np.ones(err.shape)
+    assert float(ds["mae"]) == pytest.approx((w * err).sum() / w.sum(), rel=1e-5)
+    assert "(latitude-weighted)" in ds["mae"].attrs["cell_methods"]
 
 
-def test_metric_missing_component(tmp_path, verify_fn, summarize_fn, capsys):
-    fc, obs = _random_pair(11)
-    _components(tmp_path, verify_fn, fc, obs, "fcst", "obs")
-    grouped = _all_mean(tmp_path, summarize_fn, tmp_path / "out.zarr", "time")
-    _expect_exit(_metric, tmp_path, verify_fn, grouped, "pearson")
-    assert "squared_fcst" in capsys.readouterr().err
-
-
-def test_metric_refuses_components_from_different_calls(tmp_path, verify_fn, summarize_fn, capsys):
+def test_grouping_flags_are_checked(tmp_path, verify_fn, capsys):
     fc, obs = _random_pair(12)
-    a = _components(tmp_path, verify_fn, fc, obs, "fcst", "obs", "squared_fcst", "squared_obs")
-    b = _components(tmp_path, verify_fn, fc, obs, "covariance")
-    a = a.drop_vars("covariance")
-    write_zarr(xr.merge([a, b[["covariance"]]], combine_attrs="override"), tmp_path / "mix.zarr")
-    grouped = _all_mean(tmp_path, summarize_fn, tmp_path / "mix.zarr", "time")
-    _expect_exit(_metric, tmp_path, verify_fn, grouped, "pearson")
-    assert "different verify calls" in capsys.readouterr().err
+    _expect_exit(_score, tmp_path, verify_fn, fc, obs, "mae", dims=("step",))
+    assert "--dim 'step'" in capsys.readouterr().err
+    _expect_exit(_score, tmp_path, verify_fn, fc, obs, "mae", extra=("--by", "admin_1"))
+    assert "label-group" in capsys.readouterr().err
 
 
-def test_metric_refuses_ungrouped_and_non_mean(tmp_path, verify_fn, summarize_fn, capsys):
+def test_several_metrics_in_one_call(tmp_path, verify_fn):
     fc, obs = _random_pair(13)
-    _components(tmp_path, verify_fn, fc, obs, "mse")
-    _expect_exit(_metric, tmp_path, verify_fn, tmp_path / "out.zarr", "rmse")
-    assert "never grouped" in capsys.readouterr().err
-    summed = _group(
-        tmp_path, summarize_fn, tmp_path / "out.zarr", "--dim", "time", "--method", "median"
-    )
-    _expect_exit(_metric, tmp_path, verify_fn, summed, "rmse")
-    assert "median" in capsys.readouterr().err
-
-
-def test_metric_refuses_components_reduced_differently(tmp_path, verify_fn, summarize_fn, capsys):
-    fc, obs = _random_pair(14)
-    components = ("true_positives", "false_negatives")
-    _components(tmp_path, verify_fn, fc, obs, *components, extra=("--threshold", "4"))
-    a = _group(tmp_path, summarize_fn, tmp_path / "out.zarr", "--dim", "time", "--method",
-               "mean", "-v", "true_positives", name="a.zarr")  # fmt: skip
-    ds = xr.open_zarr(a)
-    ds["false_negatives"] = ds["false_negatives"].mean("latitude", keep_attrs=True)
-    ds["false_negatives"].attrs["summarize_steps"] = json.dumps(
-        [{"dims": ["latitude"], "by": [], "method": "mean", "lat_weighted": False}]
-    )
-    write_zarr(ds.compute(), tmp_path / "b.zarr")
-    _expect_exit(_metric, tmp_path, verify_fn, tmp_path / "b.zarr", "pod")
-    assert "grouped differently" in capsys.readouterr().err
-
-
-def test_metric_takes_no_forecast_flags(tmp_path, verify_fn):
-    fc, obs = _random_pair(15)
-    _components(tmp_path, verify_fn, fc, obs, "mse")
-    with pytest.raises(SystemExit) as exc:
-        run_skill(
-            verify_fn, "--mode", "compute", "--metric", "rmse", "-i", str(tmp_path / "out.zarr"),
-            "--threshold", "1", "-o", str(tmp_path / "m.zarr"),
-        )  # fmt: skip
-    assert exc.value.code == 2
+    metrics = ("rmse", "pearson", "pod", "csi")
+    ds = _score(tmp_path, verify_fn, fc, obs, *metrics, extra=("--threshold", "4"), dims=_ALL)
+    assert set(ds.data_vars) == {*metrics, "n_valid"}
+    err = fc["precip"].values - obs["precip"].values
+    assert float(ds["rmse"]) == pytest.approx(np.sqrt((err**2).mean()), rel=1e-5)
+    f, o = fc["precip"].values >= 4, obs["precip"].values >= 4
+    assert float(ds["pod"]) == pytest.approx((f & o).sum() / o.sum(), rel=1e-5)
 
 
 # --- edge cases ---------------------------------------------------------------------------
@@ -646,7 +518,7 @@ def test_partial_windows_are_not_scored(tmp_path, verify_fn):
     """A window with aggregation_coverage < 1 is left out, never scored as complete."""
     fc, obs = make_gridded(n_time=3, fill=3.0), make_gridded(n_time=3, fill=1.0)
     obs = obs.assign_coords(aggregation_coverage=("time", [1.0, 0.5, 1.0]))
-    mae = _components(tmp_path, verify_fn, fc, obs, "mae")["mae"]
+    mae = _score(tmp_path, verify_fn, fc, obs, "mae")["mae"]
     assert mae.isel(time=1).isnull().all()
     assert mae.isel(time=[0, 2]).notnull().all()
 
@@ -655,10 +527,10 @@ def test_mismatched_aggregation_periods_are_refused(tmp_path, verify_fn, capsys)
     fc, obs = make_gridded(n_time=2, fill=3.0), make_gridded(n_time=2, fill=1.0)
     fc["precip"].attrs["aggregation_period"] = "3 days"
     obs["precip"].attrs["aggregation_period"] = "1 day"
-    _expect_exit(_components, tmp_path, verify_fn, fc, obs, "mae")
+    _expect_exit(_score, tmp_path, verify_fn, fc, obs, "mae")
     assert "aggregate-temporal both" in capsys.readouterr().err
     obs["precip"].attrs["aggregation_period"] = "3D"  # same span, other spelling
-    assert _components(tmp_path, verify_fn, fc, obs, "mae")["mae"].notnull().all()
+    assert _score(tmp_path, verify_fn, fc, obs, "mae")["mae"].notnull().all()
 
 
 def test_static_mask_applies_to_every_lead(tmp_path, verify_fn):
@@ -669,7 +541,7 @@ def test_static_mask_applies_to_every_lead(tmp_path, verify_fn):
     land["land"].attrs = {"units": "1"}
     land["land"].values[0, 0] = 0.0
     pm = write_zarr(land, tmp_path / "land.zarr")
-    mae = _components(tmp_path, verify_fn, fc, obs, "mae", extra=("--filter", str(pm)))["mae"]
+    mae = _score(tmp_path, verify_fn, fc, obs, "mae", extra=("--filter", str(pm)))["mae"]
     assert mae.isel(latitude=0, longitude=0).isnull().all()
     assert int(mae.notnull().sum()) == 2 * 3
 
@@ -680,109 +552,46 @@ def test_noleap_forecast_leads(tmp_path, verify_fn):
     fc["precip"].attrs["units"] = "mm day-1"
     fc = fc.assign_coords(time=cftime.DatetimeNoLeap(2026, 1, 1))
     obs = make_gridded(n_time=2, fill=1.0).convert_calendar("noleap")
-    bias = _components(tmp_path, verify_fn, fc, obs, "bias")["bias"]
+    bias = _score(tmp_path, verify_fn, fc, obs, "bias")["bias"]
     np.testing.assert_allclose(bias.values, 2.0)
 
 
 def test_quintile_forecast_without_edges_is_refused(tmp_path, verify_fn, capsys):
     fc = make_gridded(n_time=1, fill=0.2).expand_dims(quintile=5).copy(deep=True)
     fc["precip"].attrs = {"units": "1"}
-    _expect_exit(_components, tmp_path, verify_fn, fc, make_gridded(n_time=1), "rps")
+    _expect_exit(_score, tmp_path, verify_fn, fc, make_gridded(n_time=1), "rps")
     assert "quintile_threshold" in capsys.readouterr().err
 
 
 def test_rps_puts_a_value_on_an_edge_in_the_upper_category(tmp_path, verify_fn):
+    """Members below the lower edge, obs on it: the obs is in the middle category, so
+    rps = 1 and rps_clim = 2/9, and rpss = 1 - 9/2."""
     fc = xr.concat([make_gridded(n_time=1, fill=1.0) for _ in range(3)], dim="number")
     obs = make_gridded(n_time=1, fill=1.5)
-    edges = make_gridded(n_time=1).isel(time=0, drop=True)
-    edges = edges.expand_dims(quantile=[0.333, 0.667]).copy(deep=True)
-    edges["precip"].values[:] = np.array([1.5, 3.5])[:, None, None]
-    pe = write_zarr(edges, tmp_path / "edges.zarr")
-    ds = _components(
-        tmp_path, verify_fn, fc, obs, "rps_clim",
-        extra=("--fc-edges", str(pe), "--obs-edges", str(pe)),
-    )  # fmt: skip
-    # obs in the middle category: CDF (0, 1) against climatology (1/3, 2/3).
-    np.testing.assert_allclose(ds["rps_clim"].values, 2 / 9, rtol=1e-5)
+    pe = _edges(tmp_path, [1.5, 3.5], lats=(1.0, 2.0), lons=(10.0, 11.0))
+    ds = _score(
+        tmp_path, verify_fn, fc, obs, "rpss", extra=("--fc-edges", str(pe), "--obs-edges", str(pe))
+    )
+    np.testing.assert_allclose(ds["rpss"].values, 1 - 9 / 2, rtol=1e-5)
 
 
-def test_bss_is_nan_where_no_event_was_observed(tmp_path, verify_fn, summarize_fn):
+def test_bss_is_nan_where_no_event_was_observed(tmp_path, verify_fn):
     fc, obs = make_gridded(n_time=4, fill=5.0), make_gridded(n_time=4, fill=0.0)
     obs["precip"].values[:, 0, 0] = 5.0  # only one cell sees events
-    ds = _pipeline(
-        tmp_path, verify_fn, summarize_fn, fc, obs, "bss", "brier", "obs_event",
-        extra=("--threshold", "1"), dims=("time",),
-    )  # fmt: skip
+    ds = _score(tmp_path, verify_fn, fc, obs, "bss", extra=("--threshold", "1"), dims=("time",))
     assert np.isnan(ds["bss"].values[1:, :]).all() and np.isnan(ds["bss"].values[0, 1:]).all()
     assert not np.isinf(ds["bss"].values).any()
 
 
-def test_roc_counts_float32_probabilities_on_a_level(tmp_path, verify_fn, summarize_fn):
+def test_roc_counts_float32_probabilities_on_a_level(tmp_path, verify_fn):
     prob = make_gridded(n_time=2, fill=0.7, name="p")
     prob["p"] = prob["p"].astype("float32")
     prob["p"].attrs = {"units": "1"}
     event = make_gridded(n_time=2, fill=1.0, name="p")
     event["p"].attrs = {"units": "1"}
-    ds = _components(
-        tmp_path, verify_fn, prob, event, "roc_hits", "reliability_count",
-        extra=("--threshold", "1", "--probability"),
+    ds = _score(
+        tmp_path, verify_fn, prob, event, "roc", "reliability",
+        extra=("--threshold", "1", "--probability"), dims=_ALL,
     )  # fmt: skip
-    assert (ds["roc_hits"].sel(probability_threshold=0.7).values == 1).all()
-    assert (ds["reliability_count"].sel(probability_bin=0.75).values == 1).all()
-
-
-def test_metric_refuses_mixed_lat_weighting(tmp_path, verify_fn, summarize_fn, capsys):
-    fc, obs = _random_pair(16)
-    components = ("true_positives", "false_negatives")
-    _components(tmp_path, verify_fn, fc, obs, *components, extra=("--threshold", "4"))
-    dims = ("--dim", "time", "--dim", "latitude", "--dim", "longitude", "--method", "mean")
-    a = _group(tmp_path, summarize_fn, tmp_path / "out.zarr", *dims, "--lat-weighted",
-               "-v", "true_positives", name="a.zarr")  # fmt: skip
-    b = _group(tmp_path, summarize_fn, tmp_path / "out.zarr", *dims,
-               "-v", "false_negatives", name="b.zarr")  # fmt: skip
-    tp, fn = xr.open_zarr(a)[["true_positives"]], xr.open_zarr(b)[["false_negatives"]]
-    mixed = xr.merge([tp, fn], combine_attrs="override")
-    write_zarr(mixed.compute(), tmp_path / "mixed.zarr")
-    _expect_exit(_metric, tmp_path, verify_fn, tmp_path / "mixed.zarr", "pod")
-    assert '"lat_weighted": true' in capsys.readouterr().err
-
-
-def test_several_metrics_from_one_components_file(tmp_path, verify_fn, summarize_fn):
-    """Components for every named metric in one file; one metrics call writes them all."""
-    fc, obs = _random_pair(18)
-    metrics = ("rmse", "pearson", "pod", "csi")
-    ds = _verify(
-        tmp_path, verify_fn, fc, obs, *(a for m in metrics for a in ("--metric", m)),
-        "--threshold", "4",
-    )  # fmt: skip
-    assert ds.attrs["verify_metrics"] == "rmse pearson pod csi"
-    assert set(ds.data_vars) == {
-        "mse", "fcst", "obs", "squared_fcst", "squared_obs", "covariance",
-        "true_positives", "false_negatives", "false_positives", "n_valid",
-    }  # fmt: skip
-    grouped = _all_mean(
-        tmp_path, summarize_fn, tmp_path / "out.zarr", "time", "latitude", "longitude"
-    )
-    out = _metric(tmp_path, verify_fn, grouped, list(metrics))
-    assert set(out.data_vars) == set(metrics)
-    err = fc["precip"].values - obs["precip"].values
-    assert float(out["rmse"]) == pytest.approx(np.sqrt((err**2).mean()), rel=1e-5)
-    f, o = fc["precip"].values >= 4, obs["precip"].values >= 4
-    assert float(out["pod"]) == pytest.approx((f & o).sum() / o.sum(), rel=1e-5)
-
-
-def test_metric_not_prepared_names_the_fix(tmp_path, verify_fn, summarize_fn, capsys):
-    fc, obs = _random_pair(19)
-    _components(tmp_path, verify_fn, fc, obs, "mse")
-    grouped = _all_mean(tmp_path, summarize_fn, tmp_path / "out.zarr", "time")
-    _expect_exit(_metric, tmp_path, verify_fn, grouped, ["rmse", "pearson"])
-    assert "--mode prepare with --metric pearson" in capsys.readouterr().err
-
-
-def test_mode_is_required(tmp_path, verify_fn):
-    fc, obs = _random_pair(20)
-    pf, po = write_zarr(fc, tmp_path / "f.zarr"), write_zarr(obs, tmp_path / "o.zarr")
-    with pytest.raises(SystemExit) as exc:
-        run_skill(verify_fn, "--metric", "rmse", "--forecast", str(pf), "--obs", str(po),
-                  "-o", str(tmp_path / "x.zarr"))  # fmt: skip
-    assert exc.value.code == 2
+    assert float(ds["hit_rate"].sel(probability_threshold=0.7)) == 1
+    assert float(ds["sample_fraction"].sel(probability_bin=0.75)) == 1

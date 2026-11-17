@@ -5,16 +5,15 @@
 #   "pandas",
 # ]
 # ///
-"""Verify by metric name: prepare the per-sample components the metrics need, then compute them from grouped components.
+"""Verify a forecast against obs: per-sample components, pooled over groups, into metrics.
 
---forecast ─┐  verify --mode prepare        summarize-dim --method mean       verify --mode compute
-            ├─► --metric rmse ...       ─► group means over time, space  ─► --metric rmse ...
---obs ──────┘   the components they need    or --by labels                    rmse = √mean(mse), …
+--forecast ─┐   components per sample      group means over --dim,     metrics
+            ├─► (mse, fcst, obs, …)    ─►  per --by label          ─►  rmse = √mean(mse), csi, …
+--obs ──────┘
 """
 
 import json
 import sys
-import uuid
 from functools import partial
 
 import numpy as np
@@ -550,23 +549,11 @@ def _to_units(da, units, role):
 @weather_skill.argument("--forecast", type=Dataset("any"))
 @weather_skill.argument("--obs", type=Dataset("any"))
 @weather_skill.argument(
-    "--mode",
-    choices=["prepare", "compute"],
-    required=True,
-    help=(
-        "prepare: write the per-sample components the metrics need (--forecast, --obs). "
-        "compute: the metrics from those components after summarize-dim (--input)."
-    ),
-)
-@weather_skill.argument(
     "--metric",
     action="append",
     choices=list(_METRICS),
     required=True,
-    help="Metric (repeatable). Name the same metrics in both modes.",
-)
-@weather_skill.argument(
-    "--input", "-i", type=Dataset("any"), help="Grouped components Zarr, for --mode compute."
+    help="Metric (repeatable); all go into one output Zarr.",
 )
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument(
@@ -606,12 +593,25 @@ def _to_units(da, units, role):
     action="append",
     help="0/1 mask (repeatable): only samples where every mask is 1 are kept.",
 )
+@weather_skill.argument(
+    "--dim",
+    action="append",
+    help="Dim to pool samples over (repeatable); the metrics keep the other dims.",
+)
+@weather_skill.argument(
+    "--by",
+    action="append",
+    help="Label coord (label-group) to pool samples by (repeatable): one value per group.",
+)
+@weather_skill.argument(
+    "--lat-weighted",
+    action="store_true",
+    help="Weigh each grid cell by cos(latitude) when pooling.",
+)
 def verify(
     forecast,
     obs,
-    mode,
     metric,
-    ds,
     variable,
     threshold,
     member_fraction,
@@ -621,9 +621,12 @@ def verify(
     fc_edges,
     obs_edges,
     filter,
+    dim,
+    by,
+    lat_weighted,
     **kwargs,
 ):
-    """Verify by metric name: prepare the per-sample components the metrics need, then compute them from grouped components."""
+    """Verify a forecast against obs: per-sample components, pooled over groups, into metrics."""
     metrics = list(dict.fromkeys(metric))
     flags = {
         "--forecast": forecast,
@@ -638,32 +641,17 @@ def verify(
         "--filter": filter,
     }
     given = {flag for flag, value in flags.items() if value is not None}
-    if mode == "compute":
-        if given:
-            raise UsageError(
-                f"--mode compute reads grouped components from --input only; drop "
-                f"{', '.join(sorted(given))}."
-            )
-        if ds is None:
-            raise UsageError(
-                "--mode compute needs --input, the components Zarr grouped by summarize-dim."
-            )
-        if variable:
-            print("Note: --variable is ignored with --mode compute.", file=sys.stderr)
-        out = xr.merge([_metric(ds, m) for m in metrics], combine_attrs="drop")
-        out.attrs = {"Conventions": "CF-1.13", "verify_metrics": " ".join(metrics)}
-        return out
-    if forecast is None or obs is None or ds is not None:
-        raise UsageError("--mode prepare needs --forecast and --obs, and no --input.")
+    if forecast is None or obs is None:
+        raise UsageError("verify needs --forecast and --obs.")
     # Every component the metrics need, each once.
     components = list(dict.fromkeys(c for m in metrics for c in _METRICS[m]["components"]))
 
     fc_name = variable or auto_variable(forecast)
     obs_name = variable or auto_variable(obs)
-    for name, ds, role in ((fc_name, forecast, "forecast"), (obs_name, obs, "obs")):
-        if not name or name not in ds:
+    for name, data, role in ((fc_name, forecast, "forecast"), (obs_name, obs, "obs")):
+        if not name or name not in data:
             raise UsageError(
-                f"variable {name!r} missing from --{role}. Available: {list(ds.data_vars)}"
+                f"variable {name!r} missing from --{role}. Available: {list(data.data_vars)}"
             )
     fc, truth = forecast[fc_name], obs[obs_name]
     members = "number" in fc.dims
@@ -870,6 +858,42 @@ def verify(
     if int(valid.sum()) == 0:
         raise DataError("no sample has both a forecast and an observation (after any --filter).")
 
+    # Group: pool every sample in each group, skipping filtered or missing ones. Sums are
+    # taken over --dim first, then per --by label, and divided once, so a group's mean is
+    # over its samples, not a mean of means. With --lat-weighted, each cell weighs cos(lat).
+    for d in dim or ():
+        if d not in valid.dims:
+            raise UsageError(f"--dim {d!r} is not a dim of the paired data: {list(valid.dims)}.")
+    labels = {}
+    for b in by or ():
+        coord = next((f.coords[b] for f in fields.values() if b in f.coords), None)
+        if coord is None:
+            raise UsageError(
+                f"--by {b!r} is not a label on the forecast; add it with label-group "
+                "(--level admin_1, --time MAM,OND) first."
+            )
+        labels[b] = coord
+    label_dims = {d for coord in labels.values() for d in coord.dims}
+    first = [d for d in dim or () if d not in label_dims]
+    weight = xr.DataArray(1.0)
+    if lat_weighted:
+        lat = next((d for d in ("latitude", "lat") if d in valid.dims), None)
+        if lat is None:
+            raise UsageError("--lat-weighted needs a latitude dim.")
+        weight = np.cos(np.deg2rad(valid[lat]))
+    grouped = {}
+    for c, x in fields.items():
+        x = x.where(valid)
+        w = 1.0 if c == "n_valid" else weight
+        total, count = (x * w).sum(first), (x.notnull() * w).sum(first)
+        if labels:
+            total, count = total.groupby(list(labels)).sum(), count.groupby(list(labels)).sum()
+        # n_valid stays a count of the samples pooled.
+        grouped[c] = total if c == "n_valid" else total / count
+    step = f"{': '.join([*first, *label_dims])}: mean" if first or labels else ""
+    step += " (latitude-weighted)" if lat_weighted and step else ""
+    step += f" (grouped by {', '.join(labels)})" if labels else ""
+
     config = {
         "forecast_variable": fc_name,
         "obs_variable": obs_name,
@@ -880,101 +904,35 @@ def verify(
         "bins": list(bins) if bins else None,
         "edges": fc_edges is not None,
         "filters": len(filter or ()),
-    }
-    run = uuid.uuid4().hex
-    base = {
-        k: v
-        for k, v in forecast[fc_name].attrs.items()
-        if k
-        not in ("standard_name", "GRIB_name", "GRIB_paramId", "short_name", "comment", "long_name")
+        "dims": list(dim or ()),
+        "by": list(by or ()),
+        "lat_weighted": bool(lat_weighted),
     }
     unit_of = {"units": units, "units^2": units**2 if units is not None else None, None: None}
-    result = xr.Dataset()
-    for c, field in fields.items():
-        long_name, kind, _ = _COMPONENTS.get(
-            c, ("Sample counted (1) in the components", None, None)
-        )
-        field = field.where(valid).astype("float32")
-        field.attrs = {
-            **base,
-            "long_name": long_name,
-            "verify_component": c,
-            "verify_run": run,
-            "verify_config": json.dumps(config),
-        }
-        field.attrs.pop("units", None)
-        u = unit_of[kind]
-        result[c] = field.pint.quantify("1" if u is None else u)
-    result.attrs["Conventions"] = "CF-1.13"
-    result.attrs["verify_components"] = " ".join(fields)
-    result.attrs["verify_metrics"] = " ".join(metrics)
-    return result
-
-
-def _metric(ds, metric):
-    """A metric from the group means of its components, refusing components it cannot use."""
-    entry = _METRICS[metric]
-    needed = entry["components"]
-    missing = [c for c in needed if c not in ds or ds[c].attrs.get("verify_component") != c]
-    if missing:
-        prepared = ds.attrs.get("verify_metrics") or "unknown metrics"
-        raise UsageError(
-            f"--metric {metric} needs the components {', '.join(needed)}; missing "
-            f"{', '.join(missing)} (the input was prepared for: {prepared}). Rerun verify "
-            f"--mode prepare with --metric {metric} among the metrics, group with "
-            "summarize-dim --method mean, then rerun."
-        )
-    if len({ds[c].attrs.get("verify_run") for c in needed}) > 1:
-        raise UsageError(
-            f"--metric {metric}: {', '.join(needed)} come from different verify calls, so they "
-            "may pool different samples; write them in one verify call."
-        )
-    # summarize-dim records each grouping step in summarize_steps.
-    steps = {c: ds[c].attrs.get("summarize_steps", "[]") for c in needed}
-    if len(set(steps.values())) > 1:
-        detail = "; ".join(f"{c}: {v}" for c, v in steps.items())
-        raise UsageError(
-            f"--metric {metric}: its components were grouped differently ({detail}); "
-            "group them together in one summarize-dim call."
-        )
-    grouping = json.loads(next(iter(steps.values())))
-    if not grouping:
-        raise UsageError(
-            f"--metric {metric}: {', '.join(needed)} were never grouped. Average them first "
-            "(summarize-dim --dim time or --by LABEL --method mean), then rerun."
-        )
-    methods = sorted({step["method"] for step in grouping} - {"mean"})
-    if methods:
-        raise UsageError(
-            f"--metric {metric} needs group means; the components were reduced with "
-            f"{', '.join(methods)}. Regroup with summarize-dim --method mean."
-        )
-    first = ds[needed[0]].attrs
-    plain = {c: ds[c].pint.dequantify() if ds[c].pint.units is not None else ds[c] for c in needed}
-    units_in = plain[needed[0]].attrs.get("units")
-    with np.errstate(divide="ignore", invalid="ignore"):
-        results = entry["function"](plain)
-    if not isinstance(results, dict):
-        results = {metric: results}
     out = xr.Dataset()
-    for name, field in results.items():
-        # A zero denominator (no observed event in a cell) gives NaN, never ±inf.
-        field = field.where(np.isfinite(field)).astype("float32")
-        if entry["function"] is _identity and units_in:
-            field = field.pint.quantify(units_in)
-        elif metric == "rmse" and units_in:
-            # The root of the values; take it of the units too.
-            root = (xr.DataArray(1.0).pint.quantify(units_in) ** 0.5).pint.units
-            field = field.pint.quantify(root)
+    for m in metrics:
+        entry = _METRICS[m]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            results = entry["function"]({c: grouped[c] for c in entry["components"]})
+        if not isinstance(results, dict):
+            results = {m: results}
+        if entry["function"] is _identity:
+            u = unit_of[_COMPONENTS[entry["components"][0]][1]]
         else:
-            field = field.pint.quantify("1")
-        field.attrs = {
-            "long_name": entry["names"][name],
-            "cell_methods": first.get("cell_methods", ""),
-            "verify_metric": metric,
-            "verify_config": first.get("verify_config", ""),
-        }
-        out[name] = field
+            u = units if m == "rmse" else None
+        for name, field in results.items():
+            # A zero denominator (no observed event in a group) gives NaN, never ±inf.
+            field = field.where(np.isfinite(field)).astype("float32")
+            field.attrs = {
+                "long_name": entry["names"][name],
+                "cell_methods": step,
+                "verify_metric": m,
+                "verify_config": json.dumps(config),
+            }
+            out[name] = field.pint.quantify("1" if u is None else u)
+    out["n_valid"] = grouped["n_valid"].astype("float32")
+    out["n_valid"].attrs = {"long_name": "Samples pooled", "units": "1"}
+    out.attrs = {"Conventions": "CF-1.13", "verify_metrics": " ".join(metrics)}
     return out
 
 
