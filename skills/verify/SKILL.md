@@ -11,18 +11,35 @@ metadata:
 
 # verify
 
-Verification in three calls, all named by metric: `--mode prepare` writes the per-sample **components** the metrics need (their sufficient statistics), `summarize-dim --method mean` averages them over any time and space groups, and `--mode compute` turns the group means into the **metrics** (RMSE = √mean(mse), not a mean of RMSEs).
+Verification always takes three calls. You only ever name **metrics**; verify works out the per-sample **components** (the metrics' sufficient statistics, such as `mse` for `rmse`) itself.
+
+1. **Prepare** — `verify --mode prepare --metric … --forecast … --obs …` pairs every forecast value with its obs and writes, for each sample, every component the named metrics need. One file, one value per sample.
+2. **Group** — `summarize-dim --method mean` averages the whole file over the samples each score should pool: `--dim` for dims to collapse, `--by` for labelled groups (regions, seasons). Whatever dims are left are the dims of the scores.
+3. **Compute** — `verify --mode compute --metric … -i GROUPED.zarr` turns the group means into the metrics, e.g. RMSE = √mean(mse), not a mean of RMSEs. Name the same metrics as in step 1 (or a subset); all of them go into one file.
 
 ## Usage
 
 ```bash
-# 1. prepare: the components for every --metric, in one file
-uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --mode prepare --metric NAME [--metric NAME ...] --forecast FC.zarr --obs OBS.zarr [-v NAME] [--threshold T] [--filter MASK.zarr ...] [other inputs below] -o STATS.zarr
-# 2. group (summarize-dim skill): the whole file in one call, method mean
-summarize_dim.py -i STATS.zarr -o GROUPED.zarr --dim time [--by admin_1] [--lat-weighted] --method mean [--min-coverage 0]
-# 3. compute: the same metrics, into one file
+# 1. prepare: components for every --metric, one file
+uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --mode prepare --metric NAME [--metric NAME ...] \
+  --forecast FC.zarr --obs OBS.zarr [-v NAME] [--threshold T] [--filter MASK.zarr ...] [inputs below] -o COMPONENTS.zarr
+# 2. group: the whole file in one summarize-dim call, method mean
+summarize_dim.py -i COMPONENTS.zarr -o GROUPED.zarr --dim DIM [--dim DIM ...] [--by LABEL] [--lat-weighted] --method mean [--min-coverage 0]
+# 3. compute: the same metrics, one file
 uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --mode compute --metric NAME [--metric NAME ...] -i GROUPED.zarr -o METRICS.zarr
 ```
+
+What to pass to step 2:
+
+| You want | summarize-dim |
+|---|---|
+| one number per metric | `--dim` every dim: `--dim time --dim step --dim latitude --dim longitude` (stations: `--dim time --dim station_id`) |
+| one value per lead | the same without `--dim step` |
+| a skill map (one value per cell) | `--dim time` (and `--dim step` to pool leads) |
+| one value per region or season | label the file with `label-group` first (`--level admin_1`, `--time MAM,OND`), then `--by` that label; with a time label add `--min-coverage 0` |
+| area-weighted pooling over a grid | add `--lat-weighted` |
+
+Plain means (`mae`, `bias`, `fcst`) are already the answer after step 2; step 3 checks the grouping and copies them.
 
 ### Metrics
 Name the same metrics in prepare and compute. Each metric needs these inputs when preparing:
@@ -37,10 +54,6 @@ Name the same metrics in prepare and compute. Each metric needs these inputs whe
 | `heidke` | `--bins` |
 | `spread` | ensemble, ≥ 2 members |
 | `rps`, `rpss` | quintile forecast (pbc-correct), or ensemble + `--fc-edges` / `--obs-edges` |
-
-A plain mean (`mae`, `bias`, `fcst`) is already the answer after step 2; compute only checks it.
-
-For one number per metric over everything, group over every dim the components have, e.g. `--dim time --dim step --dim latitude --dim longitude` (stations: `--dim time --dim station_id`). Leave out `step` to keep one value per lead.
 
 ### Arguments (prepare)
 - `--mode prepare`, `--metric` — repeatable; the file holds every component these metrics need, each once, plus `n_valid` (1 on every scored sample).
