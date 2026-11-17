@@ -58,7 +58,7 @@ A plain mean (`mae`, `bias`, `fcst`) is already the answer after step 2; compute
 - `--output`, `-o` — output Zarr (both modes).
 
 ### Output
-- Prepare: one variable per component on the paired dims (`time`, `step`, grid or stations, plus any other dim such as a `model` dim from `concat`), float32. Errors in the forecast's units (`mse` squared). Attrs `verify_component`, `verify_run`, `verify_config`; the file's `verify_metrics` lists the metrics it was prepared for.
+- Prepare: one variable per component. A component is a per-sample sufficient statistic: a value that can be grouped (averaged over any samples) and feed a metric, e.g. `mse` for `rmse`. Components sit on the paired dims (`time`, `step`, grid or stations, plus any other dim such as a `model` dim from `concat`), float32. Errors in the forecast's units (`mse` squared). Attrs `verify_component`, `verify_run`, `verify_config`; the file's `verify_metrics` lists the metrics it was prepared for.
 - Every component is NaN on the same samples (missing forecast, member or obs, or filtered out), so group means pool the same samples.
 - Compute: every metric's variable(s) in one Zarr, on whatever dims grouping left. `rmse` in the forecast's units, scores unitless. `reliability` gives `forecast_probability`, `observed_frequency`, `sample_fraction` on `probability_bin`; `roc` gives `hit_rate`, `false_alarm_rate` on `probability_threshold` and `roc_area`.
 
