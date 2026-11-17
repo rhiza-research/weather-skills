@@ -1,6 +1,6 @@
 ---
 name: verify
-description: "Verify any dataset against a reference (a forecast against observations, or one product against another) in two steps: per-sample statistics (errors, products, event counts, Brier, CRPS, RPS) for every lead, optionally only on dates or cells a mask selects, then, after grouping with summarize-dim, metrics such as RMSE, correlation, ACC, POD, FAR, CSI, balanced error rate, ETS, Heidke, BSS, RPSS, spread/skill, reliability and ROC. Use for forecast skill scores, skill maps, per-region or per-season scores, and event verification."
+description: "Verify any dataset against a reference (a forecast against observations, or one product against another) in three calls named by metric: per-sample statistics (errors, products, event counts, Brier, CRPS, RPS) for every lead, optionally only on dates or cells a mask selects, then, after grouping with summarize-dim, metrics such as RMSE, correlation, ACC, POD, FAR, CSI, balanced error rate, ETS, Heidke, BSS, RPSS, spread/skill, reliability and ROC. Use for forecast skill scores, skill maps, per-region or per-season scores, and event verification."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py *)
@@ -11,62 +11,59 @@ metadata:
 
 # verify
 
-Verification in three calls: verify writes per-sample **statistics**, `summarize-dim --method mean` averages them over any time and space groups, and verify turns the group means into a **metric** (RMSE = √mean(mse), not a mean of RMSEs).
+Verification in three calls, all named by metric: `--mode prepare` writes the per-sample **statistics** the metrics need, `summarize-dim --method mean` averages them over any time and space groups, and `--mode compute` turns the group means into the **metrics** (RMSE = √mean(mse), not a mean of RMSEs).
 
 ## Usage
 
 ```bash
-# 1. statistics
-uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr --statistic NAME [--statistic NAME ...] [-v NAME] [--threshold T] [--filter MASK.zarr ...] [other inputs below] -o STATS.zarr
-# 2. group (summarize-dim skill): every statistic in one call, method mean
+# 1. prepare: the statistics for every --metric, in one file
+uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --mode prepare --metric NAME [--metric NAME ...] --forecast FC.zarr --obs OBS.zarr [-v NAME] [--threshold T] [--filter MASK.zarr ...] [other inputs below] -o STATS.zarr
+# 2. group (summarize-dim skill): the whole file in one call, method mean
 summarize_dim.py -i STATS.zarr -o GROUPED.zarr --dim time [--by admin_1] [--lat-weighted] --method mean [--min-coverage 0]
-# 3. metric
-uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --metric NAME -i GROUPED.zarr -o METRIC.zarr
+# 3. compute: the same metrics, into one file
+uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --mode compute --metric NAME [--metric NAME ...] -i GROUPED.zarr -o METRICS.zarr
 ```
 
-### Metrics and the statistics they need
-Write every statistic a metric needs in **one** verify call.
+### Metrics
+Name the same metrics in prepare and compute. Each metric needs these inputs when preparing:
 
-| `--metric` | `--statistic` | Extra input |
-|---|---|---|
-| `mae`, `bias`, `mse`, `mape`, `smape`, `crps`, `crps_fair`, `brier`, `rps`, `fcst`, `obs` | the same name | `--threshold` for brier |
-| `rmse` | `mse` | |
-| `pearson` | `fcst obs squared_fcst squared_obs covariance` | |
-| `acc` | `squared_fcst_anom squared_obs_anom anom_covariance` | `--clim` |
-| `pod`, `far`, `pofd`, `csi`, `balanced_error_rate`, `frequency_bias`, `ets` | `true_positives false_positives false_negatives true_negatives` | `--threshold` |
-| `heidke` | `n_correct n_fcst_bin n_obs_bin` | `--bins` |
-| `bss` | `brier obs_event` | `--threshold` |
-| `spread` | `ensemble_variance mse` | ensemble |
-| `rpss` | `rps rps_clim` | quintile forecast, or ensemble + edges |
-| `reliability` | `reliability_count reliability_fcst reliability_obs` | `--threshold` |
-| `roc` | `roc_hits roc_false_alarms obs_event` | `--threshold` |
+| `--metric` | Extra input |
+|---|---|
+| `mae`, `bias`, `mse`, `rmse`, `mape`, `smape`, `pearson`, `fcst`, `obs` | |
+| `crps`, `crps_fair` | ensemble (≥ 2 members for `crps_fair`); without members `crps` is `mae` |
+| `acc` | `--clim` |
+| `pod`, `far`, `pofd`, `csi`, `balanced_error_rate`, `frequency_bias`, `ets` | `--threshold` (optional `--member-fraction`) |
+| `brier`, `bss`, `reliability`, `roc` | `--threshold` (optional `--probability`) |
+| `heidke` | `--bins` |
+| `spread` | ensemble, ≥ 2 members |
+| `rps`, `rpss` | quintile forecast (pbc-correct), or ensemble + `--fc-edges` / `--obs-edges` |
 
-A plain mean (`mae`, `bias`, `fcst`) is already the answer after step 2; step 3 only checks it.
+A plain mean (`mae`, `bias`, `fcst`) is already the answer after step 2; compute only checks it.
 
-### Arguments (statistics)
+### Arguments (prepare)
+- `--mode prepare`, `--metric` — repeatable; the file holds every statistic these metrics need, each once, plus `n_valid` (1 on every scored sample).
 - `--forecast`, `--obs` — the dataset to score and its reference: any two datasets (a forecast, a satellite product, stations). Bias is forecast − obs; events are counted on the obs.
-- `--statistic` — repeatable; see the table. `n_valid` (1 on every scored sample) is always added.
 - `--variable`, `-v` — variable name in both inputs. Default: each input's first usable variable.
-- `--threshold` — event cutoff, a plain number in the forecast's units: an event is a value ≥ it (`10` on `mm day-1` data means 10 mm per day). Convert other cutoffs yourself first: 50 mm in 3 days on 3-day mean rates is `16.67`. Required by event statistics, refused otherwise.
+- `--threshold` — event cutoff, a plain number in the forecast's units: an event is a value ≥ it (`10` on `mm day-1` data means 10 mm per day). Convert other cutoffs yourself first: 50 mm in 3 days on 3-day mean rates is `16.67`. Required by event metrics, refused otherwise.
 - `--member-fraction F` — contingency on an ensemble: forecast event when ≥ F of the members reach the threshold. Default: the ensemble mean reaches it.
 - `--probability` — the forecast is already the event probability (0–1, no members), e.g. `indicator --probability`. The obs must then be a 0/1 event indicator (`indicator` on the obs) with `--threshold 1`; obs in mm are refused. Default: the share of members ≥ threshold (0 or 1 without members).
-- `--clim CLIM.zarr` — climatology on obs dates (`clim-fetch`, `climatology`), for the `*_anom` statistics.
-- `--bins E1 E2 ...` — category edges for `n_correct`, `n_fcst_bin`, `n_obs_bin`; category k holds values from edge k−1 up to edge k. A value on an edge is in the upper category, here, in `rps` and for `--threshold`.
-- `--fc-edges`, `--obs-edges` — for `rps`/`rps_clim` on an ensemble: category edges with a `quantile` dim (`summarize-dim --method quantile --q 0.333 0.667`, or `climatology --quantiles`), one from the forecast's own climate, one from the obs.
+- `--clim CLIM.zarr` — climatology on obs dates (`clim-fetch`, `climatology`), for `acc`.
+- `--bins E1 E2 ...` — category edges for `heidke`; category k holds values from edge k−1 up to edge k. A value on an edge is in the upper category, here, in `rps` and for `--threshold`.
+- `--fc-edges`, `--obs-edges` — for `rps`/`rpss` on an ensemble: category edges with a `quantile` dim (`summarize-dim --method quantile --q 0.333 0.667`, or `climatology --quantiles`), one from the forecast's own climate, one from the obs.
 - `--filter MASK.zarr` — repeatable 0/1 mask (an `indicator` output): only samples where every mask is 1 are scored. A mask on `time` follows the forecast leads like the obs; a mask with no time axis (land, a region) holds for every date and lead. Missing mask values leave the sample out.
 
-### Arguments (metric)
-- `--metric` — see the table.
+### Arguments (compute)
+- `--mode compute`, `--metric` — repeatable; any metrics the input was prepared for.
 - `--input`, `-i` — the grouped statistics Zarr from summarize-dim.
-- `--output`, `-o` — output Zarr (both steps).
+- `--output`, `-o` — output Zarr (both modes).
 
 ### Output
-- Statistics: one variable per statistic on the paired dims (`time`, `step`, grid or stations, plus any other dim such as a `model` dim from `concat`), float32. Errors in the forecast's units (`mse` squared). Attrs `verify_statistic`, `verify_run`, `verify_config`.
+- Prepare: one variable per statistic on the paired dims (`time`, `step`, grid or stations, plus any other dim such as a `model` dim from `concat`), float32. Errors in the forecast's units (`mse` squared). Attrs `verify_statistic`, `verify_run`, `verify_config`; the file's `verify_metrics` lists the metrics it was prepared for.
 - Every statistic is NaN on the same samples (missing forecast, member or obs, or filtered out), so group means pool the same samples.
-- Metrics: the metric variable(s), on whatever dims grouping left. `rmse` in the forecast's units, scores unitless. `reliability` gives `forecast_probability`, `observed_frequency`, `sample_fraction` on `probability_bin`; `roc` gives `hit_rate`, `false_alarm_rate` on `probability_threshold` and `roc_area`.
+- Compute: every metric's variable(s) in one Zarr, on whatever dims grouping left. `rmse` in the forecast's units, scores unitless. `reliability` gives `forecast_probability`, `observed_frequency`, `sample_fraction` on `probability_bin`; `roc` gives `hit_rate`, `false_alarm_rate` on `probability_threshold` and `roc_area`.
 
 ### Notes
-- `--metric` exits 2 when a needed statistic is missing, when they come from different verify calls, when they were never grouped, grouped differently (including with and without `--lat-weighted`), or reduced by anything but a mean. A zero denominator (no observed event in a cell for `bss`, `pod`) gives NaN.
+- Compute exits 2 when a metric's statistics are missing (prepare with that `--metric`), when they come from different prepare calls, when they were never grouped, grouped differently (including with and without `--lat-weighted`), or reduced by anything but a mean. A zero denominator (no observed event in a cell for `bss`, `pod`) gives NaN.
 - Partial windows (`aggregation_coverage` < 1 on either input) are not scored. Inputs whose `aggregation_period` differs (daily obs against 3-day forecast means) exit 2: aggregate both onto the same windows first.
 - Leads are scored directly: a forecast with init `time` and `step` pairs with the obs at init + step; output keeps `(time, step, …)`. Label both on the same bins (after `aggregate-temporal --time-dim step`, obs windows labelled at their first day, `--align left`). Valid times outside the obs record stay NaN.
 - Grid spacing must match (exit 2 otherwise): coarsen the obs onto the forecast (`coarsen --reference-grid FC.zarr --method conservative`). Inputs keep only shared labels; no overlap exits 2.
@@ -78,22 +75,23 @@ A plain mean (`mae`, `bias`, `fcst`) is already the answer after step 2; step 3 
 - `spread` is √(mean ensemble variance / mean mse of the ensemble mean): 1 is ideal, below 1 under-dispersive, above 1 over-dispersive.
 - `pearson` pooled over space and season includes spatial and seasonal variance, so it is not an anomaly correlation; use `acc` with `--clim` for that, or group per cell (`--dim time`). `acc` is uncentred: anomalies from `--clim` are not re-centred on their group mean.
 - `smape` is |f − o| / (|f| + |o|), 0–1, without the factor 2. `mape` divides by the obs, so it explodes on dry days; prefer `mae` or `smape` for rainfall.
-- To compare models with the same member count, `concat --new-dim model` the forecasts and verify once. With different member counts (ECMWF 51, GEFS 31) verify each model separately, then `concat --new-dim model` the statistics: concatenating the forecasts pads the smaller ensemble with NaN members, which drops all its samples.
+- To compare models with the same member count, `concat --new-dim model` the forecasts and prepare once. With different member counts (ECMWF 51, GEFS 31) prepare each model separately, then `concat --new-dim model` the statistics: concatenating the forecasts pads the smaller ensemble with NaN members, which drops all its samples.
 - Stations: sample the grid at the station points first, then pass the sample and the station Zarr.
 
 ### Example
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast gefs_weekly.zarr --obs chirps_weekly.zarr \
-  --statistic mse -o mse.zarr
-summarize_dim.py -i mse.zarr -o mse_by_lead.zarr --dim time --dim latitude --dim longitude --lat-weighted --method mean
-uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --metric rmse -i mse_by_lead.zarr -o rmse_by_lead.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --mode prepare --metric rmse --metric pearson --metric csi \
+  --forecast gefs_weekly.zarr --obs chirps_weekly.zarr --threshold 5 -o stats.zarr
+summarize_dim.py -i stats.zarr -o by_lead.zarr --dim time --dim latitude --dim longitude --lat-weighted --method mean
+uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --mode compute --metric rmse --metric pearson --metric csi \
+  -i by_lead.zarr -o skill_by_lead.zarr
 ```
-Writes the area-weighted RMSE of past GEFS forecasts (several inits, weekly leads) for each lead.
+Writes the area-weighted RMSE, correlation and CSI (weeks averaging ≥ 5 mm/day) of past GEFS forecasts (several inits, weekly leads) for each lead.
 
 ## Details
 
 ### Event filters
-Score only dates an obs condition holds, e.g. 30-day rain totals during droughts: run `indicator` on the obs (`--rule "precip sum 30d < 50"`) for the mask, put both inputs on 30-day sums (`aggregate-temporal`), then `--statistic mae --filter drought.zarr`. Several `--filter` masks must all hold. For locally extreme days, take the q90 from `climatology --quantiles 0.9`, `difference` the obs minus it, and mask with `indicator "precip >= 0"`.
+Score only dates an obs condition holds, e.g. 30-day rain totals during droughts: run `indicator` on the obs (`--rule "precip sum 30d < 50"`) for the mask, put both inputs on 30-day sums (`aggregate-temporal`), then `--mode prepare --metric mae --filter drought.zarr`. Several `--filter` masks must all hold. For locally extreme days, take the q90 from `climatology --quantiles 0.9`, `difference` the obs minus it, and mask with `indicator "precip >= 0"`.
 
 ### Grouping
 - With a `--by` time label (`month`, a season) or `--method sum`, pass summarize-dim `--min-coverage 0`: statistics are NaN on purpose wherever a sample was filtered or missing, and the default 1.0 would drop every such cell. `n_valid` still says how many samples each group pooled.

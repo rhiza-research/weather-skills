@@ -5,12 +5,11 @@
 #   "pandas",
 # ]
 # ///
-"""Verify in two steps: per-sample statistics from a forecast and obs, then metrics from grouped statistics.
+"""Verify by metric name: prepare the per-sample statistics the metrics need, then compute them from grouped statistics.
 
---forecast ─┐
-            ├─► verify --statistic ─► summarize-dim --method mean ─► verify --metric
---obs ──────┘     mse, fcst, obs, …     group means over time, space     rmse = √mean(mse),
-                  one value per sample  or --by labels                   pearson, csi, …
+--forecast ─┐  verify --mode prepare        summarize-dim --method mean       verify --mode compute
+            ├─► --metric rmse ...       ─► group means over time, space  ─► --metric rmse ...
+--obs ──────┘   the statistics they need    or --by labels                    rmse = √mean(mse), …
 """
 
 import json
@@ -295,17 +294,24 @@ def _to_units(da, units, role):
 @weather_skill.argument("--forecast", type=Dataset("any"))
 @weather_skill.argument("--obs", type=Dataset("any"))
 @weather_skill.argument(
-    "--statistic",
-    action="append",
-    choices=list(_STATISTICS),
-    help="Per-sample statistic to write (repeatable); needs --forecast and --obs.",
+    "--mode",
+    choices=["prepare", "compute"],
+    required=True,
+    help=(
+        "prepare: write the per-sample statistics the metrics need (--forecast, --obs). "
+        "compute: the metrics from those statistics after summarize-dim (--input)."
+    ),
 )
 @weather_skill.argument(
     "--metric",
+    action="append",
     choices=list(_METRICS),
-    help="Metric from grouped statistics in --input (summarize-dim output).",
+    required=True,
+    help="Metric (repeatable). Name the same metrics in both modes.",
 )
-@weather_skill.argument("--input", "-i", type=Dataset("any"), help="Statistics Zarr, for --metric.")
+@weather_skill.argument(
+    "--input", "-i", type=Dataset("any"), help="Grouped statistics Zarr, for --mode compute."
+)
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument(
     "--threshold",
@@ -349,7 +355,7 @@ def _to_units(da, units, role):
 def verify(
     forecast,
     obs,
-    statistic,
+    mode,
     metric,
     ds,
     variable,
@@ -363,14 +369,14 @@ def verify(
     filter,
     **kwargs,
 ):
-    """Verify in two steps: per-sample statistics from a forecast and obs, then metrics from grouped statistics."""
-    if metric:
+    """Verify by metric name: prepare the per-sample statistics the metrics need, then compute them from grouped statistics."""
+    metrics = list(dict.fromkeys(metric))
+    if mode == "compute":
         given = [
             flag
             for flag, value in (
                 ("--forecast", forecast),
                 ("--obs", obs),
-                ("--statistic", statistic),
                 ("--threshold", threshold),
                 ("--member-fraction", member_fraction),
                 ("--probability", probability),
@@ -384,18 +390,21 @@ def verify(
         ]
         if given:
             raise UsageError(
-                f"--metric reads grouped statistics from --input only; drop {', '.join(given)}."
+                f"--mode compute reads grouped statistics from --input only; drop {', '.join(given)}."
             )
         if ds is None:
             raise UsageError(
-                "--metric needs --input, the statistics Zarr grouped by summarize-dim."
+                "--mode compute needs --input, the statistics Zarr grouped by summarize-dim."
             )
-        return _metric(ds, metric, variable)
-    if not statistic:
-        raise UsageError("pass --statistic (with --forecast and --obs) or --metric (with --input).")
+        if variable:
+            print("Note: --variable is ignored with --mode compute.", file=sys.stderr)
+        out = xr.merge([_metric(ds, m) for m in metrics], combine_attrs="drop")
+        out.attrs = {"Conventions": "CF-1.13", "verify_metrics": " ".join(metrics)}
+        return out
     if forecast is None or obs is None or ds is not None:
-        raise UsageError("--statistic needs --forecast and --obs, and no --input.")
-    stats = list(dict.fromkeys(statistic))
+        raise UsageError("--mode prepare needs --forecast and --obs, and no --input.")
+    # Every statistic the metrics need, each once.
+    stats = list(dict.fromkeys(s for m in metrics for s in _METRICS[m][0]))
 
     fc_name = variable or auto_variable(forecast)
     obs_name = variable or auto_variable(obs)
@@ -409,11 +418,11 @@ def verify(
     quintiles = "quintile" in fc.dims
 
     def needs(flag, value, wanted):
-        used = [s for s in stats if s in wanted]
+        used = [m for m in metrics if wanted & set(_METRICS[m][0])]
         if value is not None and not used:
-            raise UsageError(f"{flag} is not used by any of: {', '.join(stats)}.")
+            raise UsageError(f"{flag} is not used by any of: {', '.join(metrics)}.")
         if used and value is None:
-            raise UsageError(f"{', '.join(used)} need {flag}.")
+            raise UsageError(f"--metric {', '.join(used)} need {flag}.")
 
     needs("--threshold", threshold, _THRESHOLD_STATS)
     needs("--clim", clim, _ANOM_STATS)
@@ -421,35 +430,38 @@ def verify(
     if (fc_edges is None) != (obs_edges is None):
         raise UsageError("--fc-edges and --obs-edges go together.")
     if fc_edges is not None and not {"rps", "rps_clim"} & set(stats):
-        raise UsageError("--fc-edges / --obs-edges are for rps and rps_clim.")
+        raise UsageError("--fc-edges / --obs-edges are for rps and rpss.")
     if member_fraction is not None:
         if not set(_CONTINGENCY) & set(stats):
-            raise UsageError("--member-fraction is for the contingency statistics.")
+            raise UsageError(
+                "--member-fraction is for the contingency metrics (pod, far, pofd, csi, "
+                "balanced_error_rate, frequency_bias, ets)."
+            )
         if not 0 < member_fraction <= 1:
             raise UsageError(f"--member-fraction must be in (0, 1]; got {member_fraction}")
         if not members:
             raise UsageError("--member-fraction needs an ensemble forecast (a number dim).")
     if probability:
         if not _PROBABILITY_STATS & set(stats):
-            raise UsageError("--probability is for brier, reliability_* and roc_* statistics.")
+            raise UsageError("--probability is for brier, bss, reliability and roc.")
         if members:
             raise UsageError(
                 "--probability takes one probability per cell, but the forecast has members "
                 "(a number dim); drop --probability to score the member fraction."
             )
-    for s in ("crps_fair", "ensemble_variance"):
-        if s in stats and fc.sizes.get("number", 0) < 2:
-            raise UsageError(f"{s} needs an ensemble forecast with at least 2 members.")
+    for m in ("crps_fair", "spread"):
+        if m in metrics and fc.sizes.get("number", 0) < 2:
+            raise UsageError(f"{m} needs an ensemble forecast with at least 2 members.")
     if quintiles:
-        other = [s for s in stats if s not in ("rps", "rps_clim")]
+        other = [m for m in metrics if m not in ("rps", "rpss")]
         if other or fc_edges is not None:
             raise UsageError(
                 "a forecast of category probabilities (a quintile dim) only gives rps and "
-                f"rps_clim, without edges; drop {', '.join(other) or '--fc-edges/--obs-edges'}."
+                f"rpss, without edges; drop {', '.join(other) or '--fc-edges/--obs-edges'}."
             )
     elif {"rps", "rps_clim"} & set(stats) and (fc_edges is None or not members):
         raise UsageError(
-            "rps needs either a forecast of quintile probabilities (pbc-correct) or an "
+            "rps and rpss need either a forecast of quintile probabilities (pbc-correct) or an "
             "ensemble (number dim) with --fc-edges and --obs-edges from summarize-dim "
             "--method quantile."
         )
@@ -746,19 +758,21 @@ def verify(
         result[s] = field.pint.quantify("1" if u is None else u)
     result.attrs["Conventions"] = "CF-1.13"
     result.attrs["verify_statistics"] = " ".join(out)
+    result.attrs["verify_metrics"] = " ".join(metrics)
     return result
 
 
-def _metric(ds, metric, variable):
+def _metric(ds, metric):
     """Finalize a metric from group means of its statistics, refusing statistics it cannot use."""
     needed, finalize = _METRICS[metric]
     missing = [s for s in needed if s not in ds or ds[s].attrs.get("verify_statistic") != s]
     if missing:
-        flags = " ".join(f"--statistic {s}" for s in needed)
+        prepared = ds.attrs.get("verify_metrics") or "unknown metrics"
         raise UsageError(
             f"--metric {metric} needs the statistics {', '.join(needed)}; missing "
-            f"{', '.join(missing)}. Write them in one call (verify {flags} --forecast … --obs …), "
-            "group with summarize-dim --method mean, then rerun."
+            f"{', '.join(missing)} (the input was prepared for: {prepared}). Rerun verify "
+            f"--mode prepare with --metric {metric} among the metrics, group with "
+            "summarize-dim --method mean, then rerun."
         )
     if len({ds[s].attrs.get("verify_run") for s in needed}) > 1:
         raise UsageError(
@@ -790,9 +804,6 @@ def _metric(ds, metric, variable):
             f"--metric {metric} needs group means; the statistics were reduced with "
             f"{', '.join(bad)} ({steps!r}). Regroup with summarize-dim --method mean."
         )
-    if variable:
-        print("Note: --variable is ignored with --metric.", file=sys.stderr)
-
     first = ds[needed[0]].attrs
     plain = {s: ds[s].pint.dequantify() if ds[s].pint.units is not None else ds[s] for s in needed}
     units_in = plain[needed[0]].attrs.get("units")
