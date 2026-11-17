@@ -11,7 +11,7 @@ metadata:
 
 # verify
 
-Verification in three calls, all named by metric: `--mode prepare` writes the per-sample **components** the metrics need, `summarize-dim --method mean` averages them over any time and space groups, and `--mode compute` turns the group means into the **metrics** (RMSE = √mean(mse), not a mean of RMSEs).
+Verification in three calls, all named by metric: `--mode prepare` writes the per-sample **components** the metrics need (their sufficient statistics), `summarize-dim --method mean` averages them over any time and space groups, and `--mode compute` turns the group means into the **metrics** (RMSE = √mean(mse), not a mean of RMSEs).
 
 ## Usage
 
