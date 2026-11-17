@@ -1,4 +1,4 @@
-"""Correctness tests for verify: statistics, then metrics from grouped statistics."""
+"""Correctness tests for verify: components, then metrics from grouped components."""
 
 import json
 
@@ -19,7 +19,7 @@ def summarize_fn():
     return load_skill("summarize-dim", "summarize_dim").summarize_dim
 
 
-# The metric whose statistics include each statistic, so tests can ask for the statistics they check.
+# The metric whose components include each component, so tests can ask for the components they check.
 _METRIC_FOR = {
     **{s: s for s in ("fcst", "obs", "bias", "mae", "mse", "mape", "smape", "crps", "crps_fair")},
     **{s: s for s in ("brier", "rps")},
@@ -92,10 +92,10 @@ def _expect_exit(fn, *args, **kwargs):
     assert exc.value.code == 2
 
 
-# --- statistics ---------------------------------------------------------------------------
+# --- components ---------------------------------------------------------------------------
 
 
-def test_error_statistics_and_attrs(tmp_path, verify_fn):
+def test_error_components_and_attrs(tmp_path, verify_fn):
     fc = make_gridded(n_time=1, fill=3.0)
     obs = make_gridded(n_time=1, fill=1.0)
     ds = _stats(tmp_path, verify_fn, fc, obs, "fcst", "obs", "bias", "mae", "mse", "covariance")
@@ -107,13 +107,13 @@ def test_error_statistics_and_attrs(tmp_path, verify_fn):
     assert set(ds["n_valid"].values.ravel()) == {1.0}
     runs = {ds[v].attrs["verify_run"] for v in ds.data_vars}
     assert len(runs) == 1
-    assert ds["mse"].attrs["verify_statistic"] == "mse"
+    assert ds["mse"].attrs["verify_component"] == "mse"
     assert json.loads(ds["mse"].attrs["verify_config"])["forecast_variable"] == "precip"
     assert float(ds["n_valid"].sum()) == 12
     assert load_history(tmp_path / "out.zarr")[-1]["skill"] == "verify"
 
 
-def test_contingency_statistics(tmp_path, verify_fn):
+def test_contingency_components(tmp_path, verify_fn):
     fc = make_gridded(n_time=1, fill=0.0)
     obs = make_gridded(n_time=1, fill=0.0)
     fc["precip"].values[0, 0, :2] = 5.0  # forecast events at (0,0), (0,1)
@@ -131,7 +131,7 @@ def test_contingency_statistics(tmp_path, verify_fn):
     assert one["true_negatives"].sum() == 12 - 3
 
 
-def test_flags_must_match_statistics(tmp_path, verify_fn):
+def test_flags_must_match_components(tmp_path, verify_fn):
     fc, obs = make_gridded(n_time=1), make_gridded(n_time=1)
     run = (tmp_path, verify_fn, fc, obs)
     _expect_exit(_stats, *run, "true_positives")  # no --threshold
@@ -250,7 +250,7 @@ def test_member_fraction_counts_members_at_the_threshold(tmp_path, verify_fn):
 
 
 def test_ensemble_mean_and_nan_member(tmp_path, verify_fn):
-    """Deterministic statistics score the ensemble mean; a NaN member drops the sample."""
+    """Deterministic components score the ensemble mean; a NaN member drops the sample."""
     fc = make_forecast(n_step=1, members=3, name="precip")
     fc["precip"].attrs["units"] = "mm day-1"
     fc["precip"].values[:] = np.array([0.0, 0.0, 3.0])[:, None, None, None]
@@ -279,8 +279,8 @@ def test_scalar_times_must_match(tmp_path, verify_fn, capsys):
     assert float(ds["bias"].max()) == pytest.approx(2.0)
 
 
-def test_one_sample_set_for_every_statistic(tmp_path, verify_fn):
-    """A sample missing from one statistic is missing from all, so their means pool alike."""
+def test_one_sample_set_for_every_component(tmp_path, verify_fn):
+    """A sample missing from one component is missing from all, so their means pool alike."""
     fc = make_gridded(n_time=1, fill=2.0)
     obs = make_gridded(n_time=1, fill=1.0)
     obs["precip"].values[0, 0, 0] = np.nan
@@ -329,7 +329,7 @@ def test_obs_filter_follows_forecast_leads(tmp_path, verify_fn):
     assert mae.isel(step=0).notnull().all() and mae.isel(step=1).isnull().all()
 
 
-def test_anomaly_statistics_use_clim(tmp_path, verify_fn):
+def test_anomaly_components_use_clim(tmp_path, verify_fn):
     fc, obs = make_gridded(n_time=1, fill=5.0), make_gridded(n_time=1, fill=3.0)
     clim = make_gridded(n_time=1, fill=4.0, name="precip_avg")
     pc = write_zarr(clim, tmp_path / "clim.zarr")
@@ -401,7 +401,7 @@ def test_extra_dims_pass_through(tmp_path, verify_fn):
     assert float(ds["bias"].sel(model="b").max()) == 3.0
 
 
-# --- metrics from grouped statistics ------------------------------------------------------
+# --- metrics from grouped components ------------------------------------------------------
 
 
 def _pipeline(tmp_path, verify_fn, summarize_fn, fc, obs, metric, *stats, extra=(), dims=None):
@@ -569,7 +569,7 @@ def test_metric_per_group_keeps_the_group_dim(tmp_path, verify_fn, summarize_fn)
 # --- metric refusals ----------------------------------------------------------------------
 
 
-def test_metric_missing_statistic(tmp_path, verify_fn, summarize_fn, capsys):
+def test_metric_missing_component(tmp_path, verify_fn, summarize_fn, capsys):
     fc, obs = _random_pair(11)
     _stats(tmp_path, verify_fn, fc, obs, "fcst", "obs")
     grouped = _all_mean(tmp_path, summarize_fn, tmp_path / "out.zarr", "time")
@@ -577,7 +577,7 @@ def test_metric_missing_statistic(tmp_path, verify_fn, summarize_fn, capsys):
     assert "squared_fcst" in capsys.readouterr().err
 
 
-def test_metric_refuses_statistics_from_different_calls(tmp_path, verify_fn, summarize_fn, capsys):
+def test_metric_refuses_components_from_different_calls(tmp_path, verify_fn, summarize_fn, capsys):
     fc, obs = _random_pair(12)
     a = _stats(tmp_path, verify_fn, fc, obs, "fcst", "obs", "squared_fcst", "squared_obs")
     b = _stats(tmp_path, verify_fn, fc, obs, "covariance")
@@ -600,7 +600,7 @@ def test_metric_refuses_ungrouped_and_non_mean(tmp_path, verify_fn, summarize_fn
     assert "median" in capsys.readouterr().err
 
 
-def test_metric_refuses_statistics_reduced_differently(tmp_path, verify_fn, summarize_fn, capsys):
+def test_metric_refuses_components_reduced_differently(tmp_path, verify_fn, summarize_fn, capsys):
     fc, obs = _random_pair(14)
     stats = ("true_positives", "false_negatives")
     _stats(tmp_path, verify_fn, fc, obs, *stats, extra=("--threshold", "4"))
@@ -733,8 +733,8 @@ def test_metric_refuses_mixed_lat_weighting(tmp_path, verify_fn, summarize_fn, c
     assert "latitude-weighted" in capsys.readouterr().err
 
 
-def test_several_metrics_from_one_statistics_file(tmp_path, verify_fn, summarize_fn):
-    """Statistics for every named metric in one file; one metrics call writes them all."""
+def test_several_metrics_from_one_components_file(tmp_path, verify_fn, summarize_fn):
+    """Components for every named metric in one file; one metrics call writes them all."""
     fc, obs = _random_pair(18)
     metrics = ("rmse", "pearson", "pod", "csi")
     ds = _verify(

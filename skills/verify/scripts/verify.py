@@ -5,11 +5,11 @@
 #   "pandas",
 # ]
 # ///
-"""Verify by metric name: prepare the per-sample statistics the metrics need, then compute them from grouped statistics.
+"""Verify by metric name: prepare the per-sample components the metrics need, then compute them from grouped components.
 
 --forecast ─┐  verify --mode prepare        summarize-dim --method mean       verify --mode compute
             ├─► --metric rmse ...       ─► group means over time, space  ─► --metric rmse ...
---obs ──────┘   the statistics they need    or --by labels                    rmse = √mean(mse), …
+--obs ──────┘   the components they need    or --by labels                    rmse = √mean(mse), …
 """
 
 import json
@@ -35,8 +35,8 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.10"
 
-# Statistics: per-sample values whose mean over any group feeds a metric.
-_STATISTICS = {
+# Components: per-sample values whose mean over any group feeds a metric.
+_COMPONENTS = {
     "fcst": "Forecast",
     "obs": "Observation",
     "bias": "Forecast minus observation",
@@ -91,8 +91,8 @@ _BIN_STATS = {"n_correct", "n_fcst_bin", "n_obs_bin"}
 _ROC_LEVELS = np.round(np.arange(0.1, 1.01, 0.1), 2)
 
 
-# Metrics: (statistics, finalize) applied to group means of those statistics.
-# A statistic whose group mean is already the metric keeps its name and units.
+# Metrics: (components, finalize) applied to group means of those components.
+# A component whose group mean is already the metric keeps its name and units.
 _IDENTITY = (
     "fcst",
     "obs",
@@ -298,8 +298,8 @@ def _to_units(da, units, role):
     choices=["prepare", "compute"],
     required=True,
     help=(
-        "prepare: write the per-sample statistics the metrics need (--forecast, --obs). "
-        "compute: the metrics from those statistics after summarize-dim (--input)."
+        "prepare: write the per-sample components the metrics need (--forecast, --obs). "
+        "compute: the metrics from those components after summarize-dim (--input)."
     ),
 )
 @weather_skill.argument(
@@ -310,7 +310,7 @@ def _to_units(da, units, role):
     help="Metric (repeatable). Name the same metrics in both modes.",
 )
 @weather_skill.argument(
-    "--input", "-i", type=Dataset("any"), help="Grouped statistics Zarr, for --mode compute."
+    "--input", "-i", type=Dataset("any"), help="Grouped components Zarr, for --mode compute."
 )
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument(
@@ -332,7 +332,7 @@ def _to_units(da, units, role):
     help="The forecast is already the event probability (0-1, no members).",
 )
 @weather_skill.argument(
-    "--clim", type=Dataset("any"), help="Climatology on obs dates, for the anomaly statistics."
+    "--clim", type=Dataset("any"), help="Climatology on obs dates, for the anomaly components."
 )
 @weather_skill.argument(
     "--bins",
@@ -369,7 +369,7 @@ def verify(
     filter,
     **kwargs,
 ):
-    """Verify by metric name: prepare the per-sample statistics the metrics need, then compute them from grouped statistics."""
+    """Verify by metric name: prepare the per-sample components the metrics need, then compute them from grouped components."""
     metrics = list(dict.fromkeys(metric))
     if mode == "compute":
         given = [
@@ -390,11 +390,11 @@ def verify(
         ]
         if given:
             raise UsageError(
-                f"--mode compute reads grouped statistics from --input only; drop {', '.join(given)}."
+                f"--mode compute reads grouped components from --input only; drop {', '.join(given)}."
             )
         if ds is None:
             raise UsageError(
-                "--mode compute needs --input, the statistics Zarr grouped by summarize-dim."
+                "--mode compute needs --input, the components Zarr grouped by summarize-dim."
             )
         if variable:
             print("Note: --variable is ignored with --mode compute.", file=sys.stderr)
@@ -403,7 +403,7 @@ def verify(
         return out
     if forecast is None or obs is None or ds is not None:
         raise UsageError("--mode prepare needs --forecast and --obs, and no --input.")
-    # Every statistic the metrics need, each once.
+    # Every component the metrics need, each once.
     stats = list(dict.fromkeys(s for m in metrics for s in _METRICS[m][0]))
 
     fc_name = variable or auto_variable(forecast)
@@ -715,7 +715,7 @@ def verify(
             )
         out[s] = (field, u)
 
-    # One sample set for every statistic: a NaN in any statistic drops that sample from all,
+    # One sample set for every component: a NaN in any component drops that sample from all,
     # so their group means pool the same samples.
     for field, _ in out.values():
         extra = [d for d in field.dims if d not in valid.dims]
@@ -748,8 +748,8 @@ def verify(
         field = field.where(valid).astype("float32")
         field.attrs = {
             **base,
-            "long_name": _STATISTICS.get(s, "Sample counted (1) in the statistics"),
-            "verify_statistic": s,
+            "long_name": _COMPONENTS.get(s, "Sample counted (1) in the components"),
+            "verify_component": s,
             "verify_run": run,
             "verify_config": json.dumps(config),
             "verify_cell_methods": base.get("cell_methods", ""),
@@ -757,19 +757,19 @@ def verify(
         field.attrs.pop("units", None)
         result[s] = field.pint.quantify("1" if u is None else u)
     result.attrs["Conventions"] = "CF-1.13"
-    result.attrs["verify_statistics"] = " ".join(out)
+    result.attrs["verify_components"] = " ".join(out)
     result.attrs["verify_metrics"] = " ".join(metrics)
     return result
 
 
 def _metric(ds, metric):
-    """Finalize a metric from group means of its statistics, refusing statistics it cannot use."""
+    """Finalize a metric from group means of its components, refusing components it cannot use."""
     needed, finalize = _METRICS[metric]
-    missing = [s for s in needed if s not in ds or ds[s].attrs.get("verify_statistic") != s]
+    missing = [s for s in needed if s not in ds or ds[s].attrs.get("verify_component") != s]
     if missing:
         prepared = ds.attrs.get("verify_metrics") or "unknown metrics"
         raise UsageError(
-            f"--metric {metric} needs the statistics {', '.join(needed)}; missing "
+            f"--metric {metric} needs the components {', '.join(needed)}; missing "
             f"{', '.join(missing)} (the input was prepared for: {prepared}). Rerun verify "
             f"--mode prepare with --metric {metric} among the metrics, group with "
             "summarize-dim --method mean, then rerun."
@@ -788,7 +788,7 @@ def _metric(ds, metric):
     if len(set(added.values())) > 1:
         detail = "; ".join(f"{s}: {v or 'not reduced'}" for s, v in added.items())
         raise UsageError(
-            f"--metric {metric}: its statistics were reduced differently ({detail}); "
+            f"--metric {metric}: its components were reduced differently ({detail}); "
             "group them together in one summarize-dim call."
         )
     steps = next(iter(added.values()))
@@ -801,7 +801,7 @@ def _metric(ds, metric):
     bad = sorted({t for t in tokens if not t.endswith(":") and t != "mean"})
     if bad:
         raise UsageError(
-            f"--metric {metric} needs group means; the statistics were reduced with "
+            f"--metric {metric} needs group means; the components were reduced with "
             f"{', '.join(bad)} ({steps!r}). Regroup with summarize-dim --method mean."
         )
     first = ds[needed[0]].attrs
