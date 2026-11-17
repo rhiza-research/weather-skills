@@ -352,8 +352,7 @@ def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs)
             )
         print(
             f"WARNING: {len(missing_days)} requested day(s) have no SMAP granule "
-            f"within {start_iso}..{end_iso}; writing the {len(present_days)} "
-            f"available day(s) only. {'; '.join(parts)}.",
+            f"within {start_iso}..{end_iso}; they are left empty (NaN). {'; '.join(parts)}.",
             file=sys.stderr,
         )
 
@@ -400,7 +399,7 @@ def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs)
             f"WARNING: {len(empty_days)} day(s) have a granule but no usable "
             f"{overpass} retrievals in the requested area (the overpass missed it, "
             f"or every retrieval there was masked): "
-            f"{', '.join(empty_days)}; writing the other day(s) only.",
+            f"{', '.join(empty_days)}; they are left empty (NaN).",
             file=sys.stderr,
         )
     if not day_datasets:
@@ -409,7 +408,11 @@ def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs)
             f"within {start_iso}..{end_iso}; try the other --overpass or a wider window."
         )
 
-    ds = xr.concat(day_datasets, dim="time")
+    # Every requested day, empty where there was nothing, so the time axis lines
+    # up with other daily products (e.g. smos-fetch) for concat.
+    ds = xr.concat(day_datasets, dim="time").reindex(
+        time=np.array([np.datetime64(d.isoformat(), "ns") for d in requested_days])
+    )
     _stamp_cf(ds)
     ds = ensure_normalized_longitude(ds, lon_dim="longitude")
     ds.attrs["weather_skills_source"] = "smap"

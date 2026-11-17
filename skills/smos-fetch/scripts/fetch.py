@@ -152,7 +152,7 @@ def fetch(start_time, end_time, bbox, overpass, **kwargs):
                 pieces.append(da.expand_dims(time=[np.datetime64(day.isoformat(), "ns")]).load())
     if missing:
         print(
-            f"smos-fetch: no CATDS file for {len(missing)} day(s), skipped: "
+            f"smos-fetch: no CATDS file for {len(missing)} day(s), left empty: "
             + ", ".join(d.isoformat() for d in missing[:10])
             + (" ..." if len(missing) > 10 else ""),
             file=sys.stderr,
@@ -160,7 +160,11 @@ def fetch(start_time, end_time, bbox, overpass, **kwargs):
     if not pieces:
         raise DataError(f"CATDS has no {overpass} SMOS files for {start_time}..{end_time}.")
 
-    ds = xr.concat(pieces, dim="time")
+    # Every requested day, empty where CATDS had no file, so the time axis lines
+    # up with other daily products (e.g. smap-fetch) for concat.
+    ds = xr.concat(pieces, dim="time").reindex(
+        time=np.array([np.datetime64(d.isoformat(), "ns") for d in days])
+    )
     ds["soil_moisture"] = ds["soil_moisture"].astype("float32")
     ds["soil_moisture"].attrs = {
         "units": "m3 m-3",

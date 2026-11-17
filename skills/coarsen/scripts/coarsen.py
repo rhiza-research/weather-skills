@@ -154,7 +154,8 @@ def coarsen(
         ref_lat_sp = grid_spacing(ref[ref_lat_dim].values)
         ref_lon_sp = grid_spacing(ref[ref_lon_dim].values)
         # 1% rel_tol: float noise / half-cell shift is not a resolution change.
-        if (ref_lat_sp < in_lat and not math.isclose(ref_lat_sp, in_lat, rel_tol=1e-2)) or (
+        # Finer on one axis only (an EASE grid onto a regular one) is still a coarsen.
+        if (ref_lat_sp < in_lat and not math.isclose(ref_lat_sp, in_lat, rel_tol=1e-2)) and (
             ref_lon_sp < in_lon and not math.isclose(ref_lon_sp, in_lon, rel_tol=1e-2)
         ):
             raise UsageError("--reference-grid is finer than input; use downscale --reference-grid")
@@ -163,14 +164,15 @@ def coarsen(
         lat_attrs = dict(ref[ref_lat_dim].attrs) or dict(ds[lat_dim].attrs)
         lon_attrs = dict(ref[ref_lon_dim].attrs) or dict(ds[lon_dim].attrs)
     else:
-        # Reject finer targets (that's downscale)
-        for spacing in (in_lat, in_lon):
-            if target_resolution < spacing and not math.isclose(
-                target_resolution, spacing, rel_tol=1e-2
-            ):
-                raise UsageError(
-                    f"--target-resolution {target_resolution}° finer than input; use downscale"
-                )
+        # Reject targets finer on both axes (that's downscale); finer on one only is still a coarsen.
+        if all(
+            target_resolution < spacing
+            and not math.isclose(target_resolution, spacing, rel_tol=1e-2)
+            for spacing in (in_lat, in_lon)
+        ):
+            raise UsageError(
+                f"--target-resolution {target_resolution}° finer than input; use downscale"
+            )
         new_lat = _target_axis(ds[lat_dim].values, target_resolution, offset)
         new_lon = _target_axis(ds[lon_dim].values, target_resolution, offset)
         lat_attrs = dict(ds[lat_dim].attrs)

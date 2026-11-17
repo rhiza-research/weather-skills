@@ -42,8 +42,8 @@ Credentials come from `EARTHDATA_USERNAME` / `EARTHDATA_PASSWORD`, then a `urs.e
 
 ### Notes
 - Each day is a separate download of about 690 MB, read one at a time, so keep windows to days or a few weeks.
-- Days with no published granule are left out, not filled; stderr lists them as trailing (likely not yet published) or interior gaps. A window with no granule exits 1.
-- A day whose granule has no usable retrievals for the chosen overpass inside the requested area (an instrument outage, a partial swath that missed the area, or every retrieval masked) is also left out, with a stderr warning; if no day has any, it exits 1 and suggests the other `--overpass` or a wider window.
+- Every requested day is in the output, so the time axis lines up with other daily products (smos-fetch) for concat. Days with no published granule are empty (NaN); stderr lists them as trailing (likely not yet published) or interior gaps. A window with no granule exits 1.
+- A day whose granule has no usable retrievals for the chosen overpass inside the requested area (an instrument outage, a partial swath that missed the area, or every retrieval masked) is also empty, with a stderr warning; if no day has any, it exits 1 and suggests the other `--overpass` or a wider window.
 
 ### Example
 ```bash

@@ -23,7 +23,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--overpass AM|PM]
 ```
 
 ### Arguments
-- `--start-time`, `--end-time` — inclusive range of days, from 2010-01-17. Days CATDS has no file for are skipped, with a note on stderr.
+- `--start-time`, `--end-time` — inclusive range of days, from 2010-01-17. Every day is in the output; days CATDS has no file for are empty, with a note on stderr.
 - `--bbox` — `N/W/S/E` decimal degrees. Default: the globe.
 - `--overpass` — `AM` (6am local, ascending) or `PM` (6pm local, descending). Default: `AM`, the one less disturbed by daytime heating.
 - `--probe-latest` — print the last day CATDS has for `--overpass` (`YYYY-MM-DD`) and exit.

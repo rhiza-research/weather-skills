@@ -168,7 +168,7 @@ def test_fetch_writes_zarr_with_mocked_earthaccess(tmp_path, mod, fetch):
     assert ds["latitude_longitude"].dims == ()
 
 
-def test_fetch_skips_days_with_no_retrievals(tmp_path, mod, fetch, capsys):
+def test_fetch_leaves_days_with_no_retrievals_empty(tmp_path, mod, fetch, capsys):
     out = tmp_path / "out.zarr"
 
     granules = []
@@ -214,9 +214,12 @@ def test_fetch_skips_days_with_no_retrievals(tmp_path, mod, fetch, capsys):
         )
 
     # 01-02 has no retrievals anywhere, 01-03 none inside the box, and 01-04's
-    # swath missed the box entirely.
+    # swath missed the box entirely: all three stay in, empty.
     ds = xr.open_zarr(out, consolidated=True)
     np.testing.assert_array_equal(
-        ds["time"].values, np.array(["2026-01-01", "2026-01-05"], dtype="datetime64[ns]")
+        ds["time"].values,
+        np.arange("2026-01-01", "2026-01-06", dtype="datetime64[D]").astype("datetime64[ns]"),
     )
+    has_data = ds["soil_moisture"].notnull().any(("latitude", "longitude")).values
+    np.testing.assert_array_equal(has_data, [True, False, False, False, True])
     assert "3 day(s) have a granule but no usable AM retrievals" in capsys.readouterr().err
