@@ -35,6 +35,7 @@ credentialed or source-specific fetcher only when it does not.
 | `tahmo-fetch` | TAHMO station observations (daily-aggregated) → Zarr |
 | `3dpaws-fetch` | 3D-PAWS station observations from a CHORDS portal (default: FEWS NET Kenya; daily precip, temperature, humidity, pressure, wind) → station Zarr. Requires credentials. |
 | `cumulus-fetch` | Cumulus AI operational ensemble precip (Aurora S2S run) — 30 members, 46 daily leads, 0.25° or 1° global (`--dataset precip`, `precip_1deg`, `precip_era5`), one init or a range of inits → Zarr. Requires credentials. |
+| `cumulus-downscaled-fetch` | Cumulus AI downscaled Aurora precip — 0.1° over East and West Africa, 46 daily leads, diffusion / flow-matching / UNet, ensemble mean or 10 members → Zarr. Requires credentials. |
 | `neuralgcm-fetch` | NeuralGCM S2S ensemble (IMERG precip `precip`, ERA5 surface `t2m`/`d2m`) — up to 50 members, 6-hour leads to 60 days, ~2.8°, one init or a range of inits → Zarr. Requires credentials. |
 | `weathernext-fetch` | Google WeatherNext 2 ensemble (2025 on; 64 members, 6-hour leads to 15 days, 0.25°, 13 pressure levels) or WeatherNext 3 (2026 on; 64-member ensemble, requester pays, or free ensemble mean/percentiles; hourly leads to 15 days, 0.1°) → Zarr. One init or a range of inits. Pass `-v` and `--member` or `--statistic` (full cubes are ~1 TB). Requires credentials. |
 | `windborne-fetch` | WindBorne data, one `--product` per call: WeatherMesh-6 ensemble grids (live or archived runs from mid-2026; 128 members as mean, std or all; 3-hour leads to 15 days, 0.25°), point forecasts with spread, percentiles and rain-exceedance probabilities, vertical soundings, plain-language site summaries, ERA5 1991–2020 hourly normals at points, the recent ECMWF IFS analysis, or US state heating/cooling degree days → Zarr. Requires credentials. |
@@ -82,6 +83,7 @@ credentialed or source-specific fetcher only when it does not.
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
 | `wind-speed-direction` | Wind speed (`hypot(u, v)`) and the directions the wind blows from and to (degrees clockwise from north) from a `--u` / `--v` component pair; calm cells (speed ≤ `--calm-speed`) get NaN direction |
 | `verify` | Forecast verification for every lead: pairs forecast and obs (optional `--filter` masks), pools the samples into one score or keeps dims (`--keep`) or `--by` labels, optionally `--lat-weighted`, and writes RMSE, correlation, ACC, POD/FAR/ETS, Heidke, BSS, RPSS, spread, reliability and ROC, with the sample count behind each value. |
+| `correlate` | Pearson or Spearman correlation of two datasets along a dim (default `time`), cell by cell, with p-value and pair count — forecast–obs anomaly correlation, or a climate index against a grid |
 | `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
 
 ### Agent capabilities
