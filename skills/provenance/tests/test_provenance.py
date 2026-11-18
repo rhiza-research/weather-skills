@@ -1,6 +1,7 @@
 """Correctness tests for provenance."""
 
 import json
+import re
 
 import pytest
 from conftest import load_skill, make_gridded, run_skill, write_zarr
@@ -272,8 +273,12 @@ def test_script_reproduces_join_before_later_step(tmp_path, clip_region, provena
 
     captured = _script(provenance, final, capsys)
 
-    assert "clip-region --bbox -1/10/-3/13 --input '<UPSTREAM>' --output a.zarr" in captured
-    assert "clip-region --bbox -1/10/-3/13 --input '<UPSTREAM>' --output b.zarr" in captured
+    # a.zarr / b.zarr have no history: read from the path core recorded, or
+    # <UPSTREAM> for a core that leaves inputs out of args.
+    for out in ("a", "b"):
+        assert re.search(
+            rf"clip-region --bbox -1/10/-3/13 --input \S+ --output {out}\.zarr", captured
+        )
     assert "difference --input a.zarr --input b.zarr --output step1.zarr" in captured
     assert "clip-region --bbox -1/10/-2/12 --input step1.zarr --output final.zarr" in captured
 
@@ -363,3 +368,112 @@ def test_script_reruns_resolve_region_geojson(tmp_path, provenance, capsys):
 
     assert "resolve-region 'Indian Ocean' --pad 0.25 --geojson io.geojson" in captured
     assert "--code" not in captured
+
+
+def _plot_step(input_field):
+    # A skill with its own repeatable -i/--input PATH=NAME: core keeps it in args.
+    args = {
+        "input": ["/x/grid.zarr=G", "/x/coast.geojson=C"],
+        "const": ["top=5"],
+        "spec": {"data": [{"type": "heatmap", "z": "@G.precip"}]},
+    }
+    return {"skill": "plot", "version": "0.0.2", "args": args, "input": input_field}
+
+
+def test_script_keeps_recorded_input_flags(tmp_path, provenance, capsys):
+    step = _plot_step({"basename": "grid.zarr", "hash": "h"})
+    out = _stamp_history(tmp_path / "rep.zarr", [step])
+
+    captured = _script(provenance, out, capsys)
+
+    spec = """'{"data": [{"type": "heatmap", "z": "@G.precip"}]}'"""
+    assert (
+        "plot --const top=5 --input /x/grid.zarr=G --input /x/coast.geojson=C "
+        f"--spec {spec} --output rep.zarr"
+    ) in captured
+    assert "<UPSTREAM>" not in captured
+    assert captured.count("--input") == 2
+
+
+def test_script_links_recorded_input_to_upstream(tmp_path, provenance, capsys):
+    history = [_fetch("chirps-fetch"), _plot_step({"basename": "grid.zarr", "hash": "h"})]
+    out = _stamp_history(tmp_path / "rep.zarr", history)
+
+    captured = _script(provenance, out, capsys)
+
+    spec = """'{"data": [{"type": "heatmap", "z": "@G.precip"}]}'"""
+    assert "chirps-fetch --output step1.zarr" in captured
+    assert (
+        "plot --const top=5 --input step1.zarr=G --input /x/coast.geojson=C "
+        f"--spec {spec} --output rep.zarr"
+    ) in captured
+    assert captured.count("--input") == 2
+
+
+def test_script_reads_imported_file_from_its_recorded_flag(tmp_path, provenance, capsys):
+    # An imported CSV is recorded as the input and as --csv; it is read in place.
+    step = {
+        "skill": "csv-io",
+        "version": "0.0.1",
+        "args": {"csv": "/x/rain.csv"},
+        "input": {"basename": "rain.csv", "hash": "h"},
+    }
+    history = [step, {**_fetch("drop"), "input": {"basename": "step1.zarr", "hash": "h"}}]
+    out = _stamp_history(tmp_path / "rep.zarr", history)
+
+    captured = _script(provenance, out, capsys)
+
+    assert "csv-io --csv /x/rain.csv --output step1.zarr" in captured
+    assert "drop --input step1.zarr --output rep.zarr" in captured
+    assert "<UPSTREAM>" not in captured
+
+
+def test_script_keeps_imported_join_files_at_recorded_paths(tmp_path, provenance, capsys):
+    # Several imported NetCDF files record a join whose parents have no history.
+    step = {
+        "skill": "netcdf-io",
+        "version": "0.0.1",
+        "args": {"netcdf": ["/x/a.nc", "/x/b.nc"]},
+        "input": [
+            {"basename": "a.nc", "hash": "h", "history": []},
+            {"basename": "b.nc", "hash": "h", "history": []},
+        ],
+    }
+    out = _stamp_history(tmp_path / "rep.zarr", [step])
+
+    captured = _script(provenance, out, capsys)
+
+    assert "netcdf-io --netcdf /x/a.nc --netcdf /x/b.nc --output rep.zarr" in captured
+    assert "--input" not in captured
+    assert "yourself" not in captured
+
+
+def test_script_relinks_every_input_named_in_args(tmp_path, provenance, capsys):
+    # Core records each input's path in args (here --input and --reference-grid);
+    # the replay swaps each for the file it makes and appends nothing.
+    step = {
+        "skill": "coarsen",
+        "version": "0.0.1",
+        "args": {
+            "input": "work/chirps_dek.zarr",
+            "method": "conservative",
+            "reference_grid": "work/imerg_dek.zarr",
+        },
+        "input": [
+            {"basename": "chirps_dek.zarr", "hash": "h", "history": [_fetch("chirps-fetch")]},
+            {"basename": "imerg_dek.zarr", "hash": "h", "history": [_fetch("imerg-fetch")]},
+        ],
+    }
+    later = {**_fetch("drop"), "args": {"input": "work/c.zarr"}}
+    later["input"] = {"basename": "c.zarr", "hash": "h"}
+    out = _stamp_history(tmp_path / "rep.zarr", [step, later])
+
+    captured = _script(provenance, out, capsys)
+
+    assert "chirps-fetch --output a.zarr" in captured
+    assert "imerg-fetch --output b.zarr" in captured
+    assert (
+        "coarsen --input a.zarr --method conservative --reference-grid b.zarr --output step1.zarr"
+    ) in captured
+    assert "drop --input step1.zarr --output rep.zarr" in captured
+    assert captured.count("--input") == 2
