@@ -8,8 +8,6 @@ import xarray as xr
 from conftest import load_skill, make_forecast, make_gridded, make_point_obs, run_skill, write_zarr
 from weather_skills_core.provenance import load_history
 
-_ALL = ("time", "latitude", "longitude")
-
 
 @pytest.fixture(scope="module")
 def verify_fn():
@@ -24,9 +22,12 @@ def _verify(tmp_path, verify_fn, fc, obs, *args, name="out.zarr"):
     return xr.open_zarr(out, consolidated=True)
 
 
-def _score(tmp_path, verify_fn, fc, obs, *metrics, extra=(), dims=()):
-    """The metrics, pooled over ``dims`` (none: one value per sample)."""
-    args = [a for m in metrics for a in ("--metric", m)] + [a for d in dims for a in ("--dim", d)]
+def _score(tmp_path, verify_fn, fc, obs, *metrics, extra=(), keep=None):
+    """The metrics, keeping the dims in ``keep`` (None: every forecast dim, one value per
+    sample; () pools everything)."""
+    if keep is None:
+        keep = [d for d in fc.dims if d not in ("number", "quintile")]
+    args = [a for m in metrics for a in ("--metric", m)] + [a for d in keep for a in ("--keep", d)]
     return _verify(tmp_path, verify_fn, fc, obs, *args, *extra)
 
 
@@ -89,7 +90,7 @@ def test_single_init_scores_each_lead_against_its_valid_date(tmp_path, verify_fn
     fc["precip"].values[1] = 0.0  # lead 1 day forecasts no event
     obs = make_gridded(n_time=3, fill=5.0)
     obs["precip"].values[2] = 0.0  # 2026-01-03 has none; no lead lands there
-    ds = _score(tmp_path, verify_fn, fc, obs, "pod", extra=("--threshold", "1"), dims=_ALL)
+    ds = _score(tmp_path, verify_fn, fc, obs, "pod", extra=("--threshold", "1"), keep=("step",))
     assert ds["pod"].dims == ("step",)
     np.testing.assert_allclose(ds["pod"].values, [1.0, 0.0])
 
@@ -340,7 +341,7 @@ def test_extra_dims_pass_through(tmp_path, verify_fn):
 
 def test_rmse_is_the_root_of_the_pooled_mean(tmp_path, verify_fn):
     fc, obs = _random_pair(1)
-    ds = _score(tmp_path, verify_fn, fc, obs, "rmse", dims=_ALL)
+    ds = _score(tmp_path, verify_fn, fc, obs, "rmse", keep=())
     err = fc["precip"].values - obs["precip"].values
     assert float(ds["rmse"]) == pytest.approx(np.sqrt((err**2).mean()), rel=1e-5)
     assert ds["rmse"].attrs["units"] == "mm day-1"
@@ -350,14 +351,14 @@ def test_rmse_is_the_root_of_the_pooled_mean(tmp_path, verify_fn):
 
 def test_rmse_per_cell_over_time(tmp_path, verify_fn):
     fc, obs = _random_pair(2)
-    ds = _score(tmp_path, verify_fn, fc, obs, "rmse", dims=("time",))
+    ds = _score(tmp_path, verify_fn, fc, obs, "rmse", keep=("latitude", "longitude"))
     err = fc["precip"].values - obs["precip"].values
     np.testing.assert_allclose(ds["rmse"].values, np.sqrt((err**2).mean(0)), rtol=1e-5)
 
 
 def test_pearson_matches_numpy(tmp_path, verify_fn):
     fc, obs = _random_pair(3)
-    ds = _score(tmp_path, verify_fn, fc, obs, "pearson", dims=_ALL)
+    ds = _score(tmp_path, verify_fn, fc, obs, "pearson", keep=())
     r = np.corrcoef(fc["precip"].values.ravel(), obs["precip"].values.ravel())[0, 1]
     assert float(ds["pearson"]) == pytest.approx(r, rel=1e-4)
 
@@ -366,7 +367,7 @@ def test_contingency_metrics(tmp_path, verify_fn):
     fc, obs = _random_pair(4)
     expected_metrics = ("pod", "far", "pofd", "csi", "balanced_error_rate", "frequency_bias", "ets")
     ds = _score(
-        tmp_path, verify_fn, fc, obs, *expected_metrics, extra=("--threshold", "4"), dims=_ALL
+        tmp_path, verify_fn, fc, obs, *expected_metrics, extra=("--threshold", "4"), keep=()
     )
     f, o = fc["precip"].values >= 4, obs["precip"].values >= 4
     a, b, c, d = ((x & y).sum() for x, y in ((f, o), (f, ~o), (~f, o), (~f, ~o)))
@@ -387,7 +388,7 @@ def test_contingency_metrics(tmp_path, verify_fn):
 
 def test_brier_skill_score_vs_base_rate(tmp_path, verify_fn):
     fc, obs = _random_pair(5)
-    ds = _score(tmp_path, verify_fn, fc, obs, "bss", extra=("--threshold", "4"), dims=_ALL)
+    ds = _score(tmp_path, verify_fn, fc, obs, "bss", extra=("--threshold", "4"), keep=())
     p = (fc["precip"].values >= 4).astype(float)
     o = (obs["precip"].values >= 4).astype(float)
     expected = 1 - ((p - o) ** 2).mean() / (o.mean() * (1 - o.mean()))
@@ -396,7 +397,7 @@ def test_brier_skill_score_vs_base_rate(tmp_path, verify_fn):
 
 def test_heidke_with_bins(tmp_path, verify_fn):
     fc, obs = _random_pair(6)
-    ds = _score(tmp_path, verify_fn, fc, obs, "heidke", extra=("--bins", "2", "6"), dims=_ALL)
+    ds = _score(tmp_path, verify_fn, fc, obs, "heidke", extra=("--bins", "2", "6"), keep=())
     f = np.digitize(fc["precip"].values.ravel(), [2, 6])
     o = np.digitize(obs["precip"].values.ravel(), [2, 6])
     chance = sum((f == k).mean() * (o == k).mean() for k in range(3))
@@ -422,7 +423,7 @@ def test_rpss_from_edges(tmp_path, verify_fn):
     pe = _edges(tmp_path, [1.5, 3.5])
     ds = _score(
         tmp_path, verify_fn, fc, obs, "rpss", extra=("--fc-edges", str(pe), "--obs-edges", str(pe)),
-        dims=_ALL,
+        keep=(),
     )  # fmt: skip
     x, y = fc["precip"].values[:, :, 0, 0], obs["precip"].values[:, 0, 0]
     cdf = np.stack([(x < e).mean(0) for e in (1.5, 3.5)], -1)
@@ -441,7 +442,7 @@ def test_reliability_and_roc_curves(tmp_path, verify_fn):
     event["p"].values = (rng.uniform(0, 1, prob["p"].shape) < prob["p"].values).astype(float)
     ds = _score(
         tmp_path, verify_fn, prob, event, "reliability", "roc",
-        extra=("--threshold", "1", "--probability"), dims=_ALL,
+        extra=("--threshold", "1", "--probability"), keep=(),
     )  # fmt: skip
     p, o = prob["p"].values.ravel(), event["p"].values.ravel()
     k = np.clip(np.floor(p * 10 + 1e-6), 0, 9)
@@ -459,7 +460,7 @@ def test_spread_skill(tmp_path, verify_fn):
     fc["precip"].values = rng.normal(5, 1, fc["precip"].shape)
     obs = make_gridded(n_time=30)
     obs["precip"].values = rng.normal(5, 1, obs["precip"].shape)
-    ds = _score(tmp_path, verify_fn, fc, obs, "spread", dims=_ALL)
+    ds = _score(tmp_path, verify_fn, fc, obs, "spread", keep=())
     x, y = fc["precip"].values, obs["precip"].values
     var = (x.var(0, ddof=1) * 6 / 5).mean()
     assert float(ds["spread"]) == pytest.approx(
@@ -472,7 +473,7 @@ def test_by_label_pools_each_group(tmp_path, verify_fn):
     fc = fc.assign_coords(zone=("latitude", ["n", "n", "s"]))
     ds = _score(
         tmp_path, verify_fn, fc, obs, "rmse",
-        extra=("--by", "zone"), dims=("time", "longitude"),
+        extra=("--by", "zone"), keep=(),
     )  # fmt: skip
     err = fc["precip"].values - obs["precip"].values
     assert ds["rmse"].dims == ("zone",)
@@ -485,7 +486,7 @@ def test_by_label_pools_each_group(tmp_path, verify_fn):
 
 def test_lat_weighted_pooling(tmp_path, verify_fn):
     fc, obs = _random_pair(11, lats=(0.0, 60.0))
-    ds = _score(tmp_path, verify_fn, fc, obs, "mae", extra=("--lat-weighted",), dims=_ALL)
+    ds = _score(tmp_path, verify_fn, fc, obs, "mae", extra=("--lat-weighted",), keep=())
     err = np.abs(fc["precip"].values - obs["precip"].values)
     w = np.cos(np.deg2rad([0.0, 60.0]))[None, :, None] * np.ones(err.shape)
     assert float(ds["mae"]) == pytest.approx((w * err).sum() / w.sum(), rel=1e-5)
@@ -494,16 +495,16 @@ def test_lat_weighted_pooling(tmp_path, verify_fn):
 
 def test_grouping_flags_are_checked(tmp_path, verify_fn, capsys):
     fc, obs = _random_pair(12)
-    _expect_exit(_score, tmp_path, verify_fn, fc, obs, "mae", dims=("step",))
-    assert "--dim 'step'" in capsys.readouterr().err
-    _expect_exit(_score, tmp_path, verify_fn, fc, obs, "mae", extra=("--by", "admin_1"))
+    _expect_exit(_score, tmp_path, verify_fn, fc, obs, "mae", keep=("step",))
+    assert "--keep 'step'" in capsys.readouterr().err
+    _expect_exit(_score, tmp_path, verify_fn, fc, obs, "mae", extra=("--by", "admin_1"), keep=())
     assert "label-group" in capsys.readouterr().err
 
 
 def test_several_metrics_in_one_call(tmp_path, verify_fn):
     fc, obs = _random_pair(13)
     metrics = ("rmse", "pearson", "pod", "csi")
-    ds = _score(tmp_path, verify_fn, fc, obs, *metrics, extra=("--threshold", "4"), dims=_ALL)
+    ds = _score(tmp_path, verify_fn, fc, obs, *metrics, extra=("--threshold", "4"), keep=())
     assert set(ds.data_vars) == {*metrics, "n_valid"}
     err = fc["precip"].values - obs["precip"].values
     assert float(ds["rmse"]) == pytest.approx(np.sqrt((err**2).mean()), rel=1e-5)
@@ -578,7 +579,15 @@ def test_rps_puts_a_value_on_an_edge_in_the_upper_category(tmp_path, verify_fn):
 def test_bss_is_nan_where_no_event_was_observed(tmp_path, verify_fn):
     fc, obs = make_gridded(n_time=4, fill=5.0), make_gridded(n_time=4, fill=0.0)
     obs["precip"].values[:, 0, 0] = 5.0  # only one cell sees events
-    ds = _score(tmp_path, verify_fn, fc, obs, "bss", extra=("--threshold", "1"), dims=("time",))
+    ds = _score(
+        tmp_path,
+        verify_fn,
+        fc,
+        obs,
+        "bss",
+        extra=("--threshold", "1"),
+        keep=("latitude", "longitude"),
+    )
     assert np.isnan(ds["bss"].values[1:, :]).all() and np.isnan(ds["bss"].values[0, 1:]).all()
     assert not np.isinf(ds["bss"].values).any()
 
@@ -591,7 +600,7 @@ def test_roc_counts_float32_probabilities_on_a_level(tmp_path, verify_fn):
     event["p"].attrs = {"units": "1"}
     ds = _score(
         tmp_path, verify_fn, prob, event, "roc", "reliability",
-        extra=("--threshold", "1", "--probability"), dims=_ALL,
+        extra=("--threshold", "1", "--probability"), keep=(),
     )  # fmt: skip
     assert float(ds["hit_rate"].sel(probability_threshold=0.7)) == 1
     assert float(ds["sample_fraction"].sel(probability_bin=0.75)) == 1

@@ -7,8 +7,8 @@
 # ///
 """Verify a forecast against obs: per-sample statistics, pooled over groups, into metrics.
 
---forecast ─┐   statistics per sample      group means over --dim,     metrics
-            ├─► (mse, fcst, obs, …)    ─►  per --by label          ─►  rmse = √mean(mse), csi, …
+--forecast ─┐   statistics per sample      group means over the dims   metrics
+            ├─► (mse, fcst, obs, …)    ─►  not kept, per --by label ─► rmse = √mean(mse), csi, …
 --obs ──────┘
 """
 
@@ -594,9 +594,9 @@ def _to_units(da, units, role):
     help="0/1 mask (repeatable): only samples where every mask is 1 are kept.",
 )
 @weather_skill.argument(
-    "--dim",
+    "--keep",
     action="append",
-    help="Dim to pool samples over (repeatable); the metrics keep the other dims.",
+    help="Dim to keep (repeatable), e.g. step for one value per lead; every other dim is pooled.",
 )
 @weather_skill.argument(
     "--by",
@@ -621,7 +621,7 @@ def verify(
     fc_edges,
     obs_edges,
     filter,
-    dim,
+    keep,
     by,
     lat_weighted,
     **kwargs,
@@ -859,11 +859,11 @@ def verify(
         raise DataError("no sample has both a forecast and an observation (after any --filter).")
 
     # Group: pool every sample in each group, skipping filtered or missing ones. Sums are
-    # taken over --dim first, then per --by label, and divided once, so a group's mean is
-    # over its samples, not a mean of means. With --lat-weighted, each cell weighs cos(lat).
-    for d in dim or ():
+    # taken over every dim not kept, then per --by label, and divided once, so a group's mean
+    # is over its samples, not a mean of means. With --lat-weighted, each cell weighs cos(lat).
+    for d in keep or ():
         if d not in valid.dims:
-            raise UsageError(f"--dim {d!r} is not a dim of the paired data: {list(valid.dims)}.")
+            raise UsageError(f"--keep {d!r} is not a dim of the paired data: {list(valid.dims)}.")
     labels = {}
     for b in by or ():
         coord = next((f.coords[b] for f in fields.values() if b in f.coords), None)
@@ -874,7 +874,12 @@ def verify(
             )
         labels[b] = coord
     label_dims = {d for coord in labels.values() for d in coord.dims}
-    first = [d for d in dim or () if d not in label_dims]
+    if label_dims & set(keep or ()):
+        raise UsageError(
+            f"--keep {', '.join(sorted(label_dims & set(keep)))} is grouped by --by "
+            f"{', '.join(labels)}; keep it or group by it, not both."
+        )
+    first = [d for d in valid.dims if d not in (keep or ()) and d not in label_dims]
     weight = xr.DataArray(1.0)
     if lat_weighted:
         lat = next((d for d in ("latitude", "lat") if d in valid.dims), None)
@@ -904,7 +909,7 @@ def verify(
         "bins": list(bins) if bins else None,
         "edges": fc_edges is not None,
         "filters": len(filter or ()),
-        "dims": list(dim or ()),
+        "keep": list(keep or ()),
         "by": list(by or ()),
         "lat_weighted": bool(lat_weighted),
     }

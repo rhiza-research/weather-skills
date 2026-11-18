@@ -1,6 +1,6 @@
 ---
 name: verify
-description: "Verify any dataset against a reference (a forecast against observations, or one product against another) for every lead, optionally only on dates or cells a mask selects, pooled over chosen dims, regions or seasons, with metrics such as RMSE, correlation, ACC, POD, FAR, CSI, balanced error rate, ETS, Heidke, BSS, RPSS, spread/skill, reliability and ROC. Use for forecast skill scores, skill maps, per-region or per-season scores, and event verification."
+description: "Verify any dataset against a reference (a forecast against observations, or one product against another) for every lead, optionally only on dates or cells a mask selects, pooled into one score, or kept per lead, cell, region or season, with metrics such as RMSE, correlation, ACC, POD, FAR, CSI, balanced error rate, ETS, Heidke, BSS, RPSS, spread/skill, reliability and ROC. Use for forecast skill scores, skill maps, per-region or per-season scores, and event verification."
 license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py *)
@@ -11,26 +11,26 @@ metadata:
 
 # verify
 
-Scores a forecast against obs. Name the metrics and the dims or labels to pool samples over; each forecast value is paired with its obs at its valid date, and each metric is computed from all the samples in a group.
+Scores a forecast against obs. Name the metrics; every sample is pooled into one value per metric unless you keep dims (`--keep step`) or group by a label (`--by admin_1`); each forecast value is paired with its obs at its valid date, and each metric is computed from all the samples in a group.
 
 ## Usage
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast FC.zarr --obs OBS.zarr --metric NAME [--metric NAME ...] \
-  [--dim DIM ...] [--by LABEL ...] [--lat-weighted] [--threshold T] [--filter MASK.zarr ...] [inputs below] -o METRICS.zarr
+  [--keep DIM ...] [--by LABEL ...] [--lat-weighted] [--threshold T] [--filter MASK.zarr ...] [inputs below] -o METRICS.zarr
 ```
 
 ### Grouping
-The metrics keep every dim not pooled. What to pass:
+Every dim is pooled unless you keep it. What to pass:
 
 | You want | Grouping flags |
 |---|---|
-| one number per metric | `--dim` every dim: `--dim time --dim step --dim latitude --dim longitude` (stations: `--dim time --dim station_id`) |
-| one value per lead | the same without `--dim step` |
-| a skill map (one value per cell) | `--dim time` (and `--dim step` to pool leads) |
-| one value per region or season | label `--forecast` with `label-group` first (`--level admin_1`, `--time MAM,OND`), then `--by` that label, with `--dim` for the dims to pool inside each group |
+| one number per metric | nothing |
+| one value per lead | `--keep step` |
+| a skill map (one value per cell) | `--keep latitude --keep longitude` (stations: `--keep station_id`) |
+| one value per model (a `model` dim from `concat`) | `--keep model`; any extra dim is pooled unless kept |
+| one value per region or season | label `--forecast` with `label-group` first (`--level admin_1`, `--time MAM,OND`), then `--by` that label |
 | area-weighted pooling over a grid | add `--lat-weighted` |
-| one value per sample | no `--dim` or `--by` |
 
 Every sample in a group counts once: filtered or missing samples are skipped, never filled. `n_valid` in the output is the number of samples behind each value.
 
@@ -50,7 +50,7 @@ Each metric needs these inputs:
 
 ### Arguments
 - `--metric` — repeatable; every metric goes into one output Zarr.
-- `--dim` — repeatable; a dim to pool samples over.
+- `--keep` — repeatable; a dim to keep. Every other dim is pooled.
 - `--by` — repeatable; a label coord (from `label-group`) to pool samples by, one value per label.
 - `--lat-weighted` — weigh each grid cell by cos(latitude) when pooling.
 - `--forecast`, `--obs` — the dataset to score and its reference: any two datasets (a forecast, a satellite product, stations). Bias is forecast − obs; events are counted on the obs.
@@ -80,16 +80,16 @@ Each metric needs these inputs:
 - `far` is the false alarm ratio FP / (TP + FP); `pofd` is the false alarm rate FP / (FP + TN).
 - `csi` is TP / (TP + FP + FN). `balanced_error_rate` is the mean of the miss rate FN / (TP + FN) and `pofd`: 0 is perfect, 0.5 is no better than chance, whatever the event's base rate.
 - `spread` is √(mean ensemble variance / mean mse of the ensemble mean): 1 is ideal, below 1 under-dispersive, above 1 over-dispersive.
-- `pearson` pooled over space and season includes spatial and seasonal variance, so it is not an anomaly correlation; use `acc` with `--clim` for that, or group per cell (`--dim time`). `acc` is uncentred: anomalies from `--clim` are not re-centred on their group mean.
+- `pearson` pooled over space and season includes spatial and seasonal variance, so it is not an anomaly correlation; use `acc` with `--clim` for that, or score per cell (`--keep latitude --keep longitude`). `acc` is uncentred: anomalies from `--clim` are not re-centred on their group mean.
 - `smape` is |f − o| / (|f| + |o|), 0–1, without the factor 2. `mape` divides by the obs, so it explodes on dry days; prefer `mae` or `smape` for rainfall.
-- To compare models with the same member count, `concat --new-dim model` the forecasts and verify once; the `model` dim passes through. With different member counts (ECMWF 51, GEFS 31) verify each model separately, then `concat --new-dim model` the outputs: concatenating the forecasts pads the smaller ensemble with NaN members, which drops all its samples.
+- To compare models with the same member count, `concat --new-dim model` the forecasts and verify once with `--keep model`. With different member counts (ECMWF 51, GEFS 31) verify each model separately, then `concat --new-dim model` the outputs: concatenating the forecasts pads the smaller ensemble with NaN members, which drops all its samples.
 - Stations: sample the grid at the station points first, then pass the sample and the station Zarr.
 
 ### Example
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py --forecast gefs_weekly.zarr --obs chirps_weekly.zarr \
   --metric rmse --metric pearson --metric csi --threshold 5 \
-  --dim time --dim latitude --dim longitude --lat-weighted -o skill_by_lead.zarr
+  --keep step --lat-weighted -o skill_by_lead.zarr
 ```
 Writes the area-weighted RMSE, correlation and CSI (weeks averaging ≥ 5 mm/day) of past GEFS forecasts (several inits, weekly leads) for each lead.
 
