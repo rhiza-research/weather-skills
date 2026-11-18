@@ -84,6 +84,8 @@ def test_range_bbox_units(mod, monkeypatch, tmp_path):
         "analysis",
         "--start-time",
         "2026-10-19",
+        "--end-time",
+        "2026-10-19",
         "--bbox",
         "30/0/-30/60",
         "-v",
@@ -160,6 +162,8 @@ def test_range_outside_served_errors(mod, monkeypatch, tmp_path):
             "analysis",
             "--start-time",
             "2026-09-01",
+            "--end-time",
+            "2026-09-02",
             "-o",
             str(tmp_path / "x.zarr"),
         )

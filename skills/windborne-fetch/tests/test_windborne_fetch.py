@@ -13,7 +13,7 @@ def mod():
     return load_skill("windborne-fetch", "fetch")
 
 
-def _zipped_zarr(tmp_path, lead, arrays):
+def _zipped_zarr(tmp_path, lead, arrays, forecast_zero="2026-10-19T18:00:00Z"):
     """Build a gridded response like the API's: a zipped Zarr v3 group."""
     import zarr
 
@@ -24,7 +24,7 @@ def _zipped_zarr(tmp_path, lead, arrays):
         mode="w",
         attributes={
             "forecast_hour": lead,
-            "forecast_zero": "2026-10-19T18:00:00Z",
+            "forecast_zero": forecast_zero,
             "initialization_time": "2026-10-19T20:00:00Z",
         },
     )
@@ -62,6 +62,8 @@ def _fake_api(monkeypatch, mod, tmp_path, gridded):
                 return _Resp(200, {"available": ["2026-10-19T00:00:00Z", "2026-10-19T20:00:00Z"]})
             if url.endswith("/initialization_times/archive"):
                 # Archive pages run backwards from page_end; 28 Sep has two runs.
+                if params.get("page", 0) > 0:
+                    return _Resp(200, {"archived_initialization_times": []})
                 return _Resp(
                     200,
                     {
@@ -84,7 +86,10 @@ def _fake_api(monkeypatch, mod, tmp_path, gridded):
                     },
                 )
             lead = params["forecast_hour"]
-            return _Resp(200, content=_zipped_zarr(tmp_path, lead, gridded(params)))
+            # The off-synoptic 20Z run counts its leads from 18Z; 00Z runs from their init.
+            init = params["initialization_time"]
+            zero = "2026-10-19T18:00:00Z" if init == "2026-10-19T20:00:00Z" else init
+            return _Resp(200, content=_zipped_zarr(tmp_path, lead, gridded(params), zero))
 
     monkeypatch.setattr(requests, "Session", _Session)
     monkeypatch.setenv("WB_CLIENT_ID", "id")
@@ -281,3 +286,111 @@ def test_point_product_needs_point(mod, monkeypatch, tmp_path, capsys):
         run_skill(mod.fetch, "--product", "sounding", "-o", str(tmp_path / "x"))
     assert exc.value.code == 2
     assert "needs --point" in capsys.readouterr().err
+
+
+def test_init_windows_take_00z_runs_on_a_time_axis(mod, monkeypatch, tmp_path, capsys):
+    import xarray as xr
+
+    def gridded(params):
+        day = int(params["initialization_time"][8:10])
+        return {"temperature_2m": (np.full((5, 3), 273.15 + day, "float32"), "K")}
+
+    calls = _fake_api(monkeypatch, mod, tmp_path, gridded)
+    out = tmp_path / "x.zarr"
+    run_skill(
+        mod.fetch,
+        "--start-time",
+        "2026-09-28",
+        "--end-time",
+        "2026-09-29",
+        "--start-time",
+        "2026-10-18",
+        "--end-time",
+        "2026-10-19",
+        "-v",
+        "t2m",
+        "--max-lead",
+        "3",
+        "-o",
+        str(out),
+    )
+    ds = xr.open_zarr(out)
+    # 18 Oct has no 00Z run (skipped, not filled); 28 Sep 12Z is not a 00Z run.
+    assert list(ds["time"].values) == [
+        np.datetime64("2026-09-28T00:00"),
+        np.datetime64("2026-09-29T00:00"),
+        np.datetime64("2026-10-19T00:00"),
+    ]
+    assert ds["t2m"].dims == ("time", "step", "latitude", "longitude")
+    np.testing.assert_allclose(ds["t2m"].isel(step=0, latitude=0, longitude=0), [28, 29, 19])
+    assert ds["t2m"].attrs["data_interval"] == "3 hour"
+    assert "2026-10-18 00Z" in capsys.readouterr().err
+    archive = [c for c in calls if c[0] == "archive"]
+    assert archive == [
+        ("archive", {"page_end": "2026-10-20T00:00:00Z", "page_size": 500, "page": 0})
+    ]
+    assert ds.attrs["windborne_initialization_time"] == (
+        "2026-09-28T00:00:00Z 2026-09-29T00:00:00Z 2026-10-19T00:00:00Z"
+    )
+
+
+def test_init_window_run_hour(mod, monkeypatch, tmp_path):
+    import xarray as xr
+
+    def gridded(params):
+        return {"temperature_2m": (np.full((5, 3), 300.0, "float32"), "K")}
+
+    _fake_api(monkeypatch, mod, tmp_path, gridded)
+    out = tmp_path / "x.zarr"
+    run_skill(
+        mod.fetch,
+        "--start-time",
+        "2026-09-27",
+        "--end-time",
+        "2026-09-28",
+        "--run",
+        "12",
+        "-v",
+        "t2m",
+        "--max-lead",
+        "0",
+        "-o",
+        str(out),
+    )
+    assert list(xr.open_zarr(out)["time"].values) == [np.datetime64("2026-09-28T12:00")]
+
+
+def test_init_window_with_date_errors(mod, monkeypatch, tmp_path, capsys):
+    _fake_api(monkeypatch, mod, tmp_path, lambda p: {})
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            mod.fetch,
+            "--date",
+            "2026-10-19",
+            "--start-time",
+            "2026-10-18",
+            "--end-time",
+            "2026-10-19",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 2
+    assert "not both" in capsys.readouterr().err
+
+
+def test_init_window_with_no_run_errors(mod, monkeypatch, tmp_path, capsys):
+    calls = _fake_api(monkeypatch, mod, tmp_path, lambda p: {})
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            mod.fetch,
+            "--start-time",
+            "2026-09-01",
+            "--end-time",
+            "2026-09-03",
+            "-o",
+            str(tmp_path / "x.zarr"),
+        )
+    assert exc.value.code == 1
+    assert "2026-09-01..2026-09-03" in capsys.readouterr().err
+    # Pages run back past the archive's oldest run (an empty page), then stop.
+    assert [c[1]["page"] for c in calls if c[0] == "archive"] == [0, 1]

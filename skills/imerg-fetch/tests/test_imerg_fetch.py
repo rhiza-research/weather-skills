@@ -39,7 +39,9 @@ def _raw_daily(n_time=2, start="2026-01-01", units="mm/day"):
 
 
 def _run(mod, fetch, out, raw, results=None, *args):
+    """GES DISC path: the catalog is unreachable, so Late falls back to GES DISC."""
     with (
+        patch.object(mod, "_open_catalog", side_effect=OSError("offline")),
         patch.object(mod, "_login"),
         patch(
             "earthaccess.search_data", return_value=[MagicMock()] if results is None else results
@@ -149,6 +151,7 @@ def test_bbox_cuts_each_granule_and_reads_one_at_a_time(tmp_path, mod, fetch):
 
     out = tmp_path / "out.zarr"
     with (
+        patch.object(mod, "_open_catalog", side_effect=OSError("offline")),
         patch.object(mod, "_login"),
         patch("earthaccess.search_data", return_value=[MagicMock(), MagicMock()]),
         patch("earthaccess.download", side_effect=download),
@@ -170,3 +173,132 @@ def test_bbox_cuts_each_granule_and_reads_one_at_a_time(tmp_path, mod, fetch):
     assert ds.sizes["time"] == 2
     np.testing.assert_array_equal(ds["latitude"].values, [1.0, 2.0])
     np.testing.assert_array_equal(ds["longitude"].values, [11.0])
+
+
+def _catalog_ds():
+    """Mock dynamical.org IMERG store: half-hourly, latitude descending, SI precip units."""
+    times = np.arange(
+        np.datetime64("2026-01-01T00:00"),
+        np.datetime64("2026-01-03T00:00"),
+        np.timedelta64(30, "m"),
+    )
+    shape = (times.size, 2, 2)
+    return xr.Dataset(
+        {
+            "precipitation_surface": (
+                ("time", "latitude", "longitude"),
+                np.full(shape, 1e-4),
+                {"units": "kg m-2 s-1"},
+            ),
+            "precipitation_quality_index_surface": (
+                ("time", "latitude", "longitude"),
+                np.full(shape, 0.8),
+                {"units": "1"},
+            ),
+        },
+        coords={"time": times, "latitude": [2.0, 1.0], "longitude": [10.0, 11.0]},
+    )
+
+
+def test_late_reads_catalog_half_hourly_without_login(tmp_path, mod, fetch):
+    out = tmp_path / "out.zarr"
+    with (
+        patch.object(mod, "_open_catalog", return_value=_catalog_ds()) as opened,
+        patch.object(mod, "_login") as login,
+    ):
+        run_skill(fetch, "--start-time", "2026-01-01", "--end-time", "2026-01-01", "-o", str(out))
+    opened.assert_called_once_with("nasa-imerg-analysis-late")
+    login.assert_not_called()
+    ds = xr.open_zarr(out, consolidated=True)
+    assert list(ds.data_vars) == ["precip"]
+    assert ds["precip"].dims == ("time", "latitude", "longitude")
+    assert ds.sizes["time"] == 48
+    np.testing.assert_array_equal(ds["latitude"].values, [1.0, 2.0])
+    assert ds["precip"].attrs["units"] == "mm day-1"
+    assert ds["precip"].attrs["data_interval"] == "30 minute"
+    np.testing.assert_allclose(ds["precip"].values, 1e-4 * 86400)
+    assert ds.attrs["weather_skills_source"] == "dynamical:nasa-imerg-analysis-late"
+    assert ds.attrs["imerg_version"] == "late"
+
+
+def test_late_falls_back_to_ges_disc_when_catalog_fails(tmp_path, mod, fetch, capsys):
+    out = tmp_path / "out.zarr"
+    _run(mod, fetch, out, _raw_daily())
+    err = capsys.readouterr().err
+    assert "offline" in err and "GPM_3IMERGDL" in err and "DAILY" in err
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds.attrs["weather_skills_source"] == "imerg"
+    assert ds.attrs["imerg_version"] == "late"
+    assert ds["precip"].attrs["data_interval"] == "1 day"
+
+
+def test_late_falls_back_when_catalog_has_no_data_in_window(tmp_path, mod, fetch, capsys):
+    out = tmp_path / "out.zarr"
+    with (
+        patch.object(mod, "_open_catalog", return_value=_catalog_ds().isel(time=slice(0, 0))),
+        patch.object(mod, "_login"),
+        patch("earthaccess.search_data", return_value=[MagicMock()]),
+        patch("earthaccess.download", return_value=["/tmp/fake.nc4"]),
+        patch("xarray.open_dataset", return_value=_raw_daily()),
+    ):
+        run_skill(fetch, "--start-time", "2026-01-01", "--end-time", "2026-01-02", "-o", str(out))
+    assert "has no data in 2026-01-01..2026-01-02" in capsys.readouterr().err
+    assert xr.open_zarr(out, consolidated=True).attrs["weather_skills_source"] == "imerg"
+
+
+def test_early_has_no_fallback(tmp_path, mod, fetch, capsys):
+    with (
+        patch.object(mod, "_open_catalog", side_effect=OSError("offline")),
+        patch("earthaccess.search_data") as search,
+    ):
+        with pytest.raises(SystemExit) as exc:
+            run_skill(
+                fetch,
+                "--version",
+                "early",
+                "--start-time",
+                "2026-01-01",
+                "--end-time",
+                "2026-01-01",
+                "-o",
+                str(tmp_path / "out.zarr"),
+            )
+    assert exc.value.code == 1
+    search.assert_not_called()
+    assert "nasa-imerg-analysis-early" in capsys.readouterr().err
+
+
+def test_final_never_touches_catalog(tmp_path, mod, fetch):
+    out = tmp_path / "out.zarr"
+    with (
+        patch.object(mod, "_open_catalog") as opened,
+        patch.object(mod, "_login"),
+        patch("earthaccess.search_data", return_value=[MagicMock()]),
+        patch("earthaccess.download", return_value=["/tmp/fake.nc4"]),
+        patch("xarray.open_dataset", return_value=_raw_daily()),
+    ):
+        run_skill(
+            fetch,
+            "--version",
+            "final",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-02",
+            "-o",
+            str(out),
+        )
+    opened.assert_not_called()
+    assert xr.open_zarr(out, consolidated=True).attrs["imerg_version"] == "final"
+
+
+def test_probe_latest_late_reads_catalog_and_flags_partial_day(mod, fetch, capsys):
+    with (
+        patch.object(mod, "_open_catalog", return_value=_catalog_ds()),
+        patch("earthaccess.search_data") as search,
+    ):
+        run_skill(fetch, "--probe-latest", "late")
+    search.assert_not_called()
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "2026-01-02"
+    assert "partial" in captured.err

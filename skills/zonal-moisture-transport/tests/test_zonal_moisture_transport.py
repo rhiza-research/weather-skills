@@ -151,7 +151,7 @@ def test_as_pa_hpa_and_already_pa(mod):
 
 
 def test_dynamical_names_auto_detected(tmp_path, zmt):
-    """dynamical-fetch 46-day pressure_level writes specific_humidity / wind_u."""
+    """Catalog-style pressure-level names specific_humidity / wind_u are detected."""
     src = write_zarr(
         make_qu().rename({"q": "specific_humidity", "u": "wind_u"}), tmp_path / "in.zarr"
     )

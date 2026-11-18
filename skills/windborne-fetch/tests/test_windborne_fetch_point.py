@@ -253,3 +253,35 @@ def test_missing_credentials_exit(mod, monkeypatch, tmp_path):
             mod.fetch, "--product", "point", "--point", "-1,36", "-o", str(tmp_path / "x.zarr")
         )
     assert exc.value.code == 2
+
+
+def test_init_window_takes_live_runs_only(mod, monkeypatch, tmp_path, capsys):
+    import xarray as xr
+
+    def respond(url, params):
+        assert params["initialization_time"] == "2026-10-19T00:00:00Z"
+        return _body(_series(-1.29, 36.82, {"temperature_2m": [18, 17, 22]}))
+
+    calls = _fake_api(monkeypatch, respond)
+    out = tmp_path / "pt.zarr"
+    run_skill(
+        mod.fetch,
+        "--product",
+        "point",
+        "--point",
+        "-1.29,36.82,nairobi",
+        "-v",
+        "t2m",
+        "--start-time",
+        "2026-10-18",
+        "--end-time",
+        "2026-10-19",
+        "-o",
+        str(out),
+    )
+    ds = xr.open_zarr(out)
+    assert ds["t2m"].dims == ("time", "step", "station_id")
+    assert ds.sizes["time"] == 1
+    # The point endpoint has no archive: 18 Oct is not in the live list, so it is skipped.
+    assert not any(c[0] == "archive" for c in calls)
+    assert "2026-10-18 00Z" in capsys.readouterr().err

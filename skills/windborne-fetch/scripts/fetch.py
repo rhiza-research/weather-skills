@@ -38,8 +38,28 @@ _WORKERS = 8
 
 # The flags each --product reads; any other flag given exits 2.
 _PRODUCT_FLAGS = {
-    "grid": {"bbox", "date", "run", "variable", "level", "ensemble", "max_lead"},
-    "point": {"point", "date", "run", "variable", "level", "distribution", "max_lead"},
+    "grid": {
+        "bbox",
+        "date",
+        "run",
+        "start_time",
+        "end_time",
+        "variable",
+        "level",
+        "ensemble",
+        "max_lead",
+    },
+    "point": {
+        "point",
+        "date",
+        "run",
+        "start_time",
+        "end_time",
+        "variable",
+        "level",
+        "distribution",
+        "max_lead",
+    },
     "sounding": {"point", "date", "run", "lead"},
     "conditions": {"point", "period"},
     "clim": {"point", "start_time", "end_time", "rolling_days"},
@@ -277,12 +297,21 @@ def _pick_init(session, available, date, run, *, archive):
     type=int,
     choices=range(24),
     metavar="HOUR",
-    help="Init hour UTC (0-23). Default: the latest available run on --date.",
+    help=(
+        "Init hour UTC (0-23). Default: the latest available run on --date; 00 with "
+        "--start-time/--end-time."
+    ),
 )
 @weather_skill.argument(
-    "--start-time", help="clim (required), analysis: first date. analysis default: the latest."
+    "--start-time",
+    action="append",
+    help=(
+        "Window start. grid, point: init window (every --run init in it); repeat with "
+        "--end-time for several windows (each January). analysis: analysis window, also "
+        "repeatable; default the latest. clim (required): one window."
+    ),
 )
-@weather_skill.argument("--end-time", help="clim (required), analysis: last date.")
+@weather_skill.argument("--end-time", action="append", help="Window end, paired with --start-time.")
 @weather_skill.argument(
     "--variable",
     "-v",
@@ -410,16 +439,19 @@ def fetch(
     # A client ID + key pair authenticates as HTTP Basic; Bearer returns 401.
     session.auth = (client_id, api_key)
 
+    # One (start, end) pair per window; --end-time is an inclusive calendar day.
+    windows = list(zip(start_time or [], end_time or [], strict=True))
     if product == "analysis":
-        return _analysis(session, bbox, start_time, end_time, variable, level, probe_latest)
+        return _analysis(session, bbox, windows, variable, level, probe_latest)
 
     needs_point = product in ("point", "sounding", "conditions", "clim")
     if needs_point and not point and probe_latest is None:
         raise UsageError(f"--product {product} needs --point LAT,LON[,ID].")
     if product == "clim":
-        if start_time is None or end_time is None:
-            raise UsageError("--product clim needs --start-time and --end-time.")
-        return _clim(session, point, start_time, end_time, rolling_days or 0)
+        if len(windows) != 1:
+            raise UsageError("--product clim needs one --start-time and --end-time.")
+        ((start, end),) = windows
+        return _clim(session, point, start, end, rolling_days or 0)
     if product == "conditions" and probe_latest is None:
         # Always the latest run: the endpoint takes no init.
         return _conditions(session, point, period or "daily")
@@ -441,6 +473,83 @@ def fetch(
         )
         print(latest.strftime("%Y-%m-%d"))
         return
+
+    if windows and product in ("grid", "point"):
+        import xarray as xr
+
+        if date is not None:
+            raise UsageError(
+                "pass --date for one init, or --start-time/--end-time for a range of inits "
+                "(not both)."
+            )
+        # The --run init (default 00 UTC) on every day of the windows: the windows
+        # select init times, not valid times.
+        hour = dt.time(0 if run is None else run)
+        wanted = sorted(
+            {
+                dt.datetime.combine(start + dt.timedelta(days=i), hour)
+                for start, end in windows
+                for i in range((end - start).days + 1)
+            }
+        )
+        published = set(available)
+        if product == "grid":
+            # Archived runs page backwards (newest first, at most 500 a page) from the
+            # day after the last init; stop once a page reaches the first init.
+            page = 0
+            while True:
+                listed = _get(
+                    session,
+                    f"{_WM6}/initialization_times/archive",
+                    {
+                        "page_end": f"{wanted[-1] + dt.timedelta(days=1):%Y-%m-%dT00:00:00Z}",
+                        "page_size": 500,
+                        "page": page,
+                    },
+                )
+                times = [_parse_time(t) for t in listed.get("archived_initialization_times", [])]
+                published |= set(times)
+                if not times or min(times) <= wanted[0]:
+                    break
+                page += 1
+        inits = [t for t in wanted if t in published]
+        if not inits:
+            window_text = ", ".join(f"{a}..{b}" for a, b in windows)
+            where = (
+                "in the live or archived run lists" if product == "grid" else "among the live runs"
+            )
+            raise DataError(
+                f"no {hour:%H} UTC WeatherMesh-6 run in {window_text} {where}; live runs end "
+                f"{max(available):%Y-%m-%d %HZ}."
+                + (
+                    ""
+                    if product == "grid"
+                    else " point serves only the live runs (--probe-latest lists them)."
+                )
+            )
+        for t in wanted:
+            if t not in published:
+                print(
+                    f"WARNING: no WeatherMesh-6 run at {t:%Y-%m-%d %HZ}; skipped.", file=sys.stderr
+                )
+        print(f"Selected {len(inits)} inits.", file=sys.stderr)
+        if product == "grid":
+            pieces = [
+                _grid(session, init, bbox, variable, level, ensemble or "mean", max_lead)
+                for init in inits
+            ]
+        else:
+            pieces = [
+                _point(session, init, point, variable, level, distribution, max_lead)
+                for init in inits
+            ]
+        # A range of inits: a `time` axis (forecast zero of each init). A lead one
+        # init lacks stays NaN (not filled).
+        ds = xr.concat(pieces, "time", join="outer").transpose("time", "step", ...)
+        ds.attrs["windborne_initialization_time"] = " ".join(
+            piece.attrs["windborne_initialization_time"] for piece in pieces
+        )
+        return ds
 
     # Only the gridded endpoint serves archived runs; the others take the live list.
     init = _pick_init(session, available, date, run, archive=product == "grid")
@@ -645,7 +754,7 @@ def _grid(session, init, bbox, variable, level, ensemble, max_lead):
                 converted, _ = convert_dataarray(ds[name], "degree_Celsius")
                 converted.attrs["units"] = "degree_Celsius"
                 ds[name] = converted
-    return stamp_data_interval(ds, "3 hour")
+    return stamp_data_interval(ds, "3 hour", dim="step")
 
 
 def _point_units(wb_name: str) -> str | None:
@@ -816,7 +925,7 @@ def _point(session, init, point, variable, level, distribution, max_lead):
         windborne_ensemble="mean",
     )
     stamp_cf_attrs(ds)
-    return stamp_data_interval(ds, "3 hour")
+    return stamp_data_interval(ds, "3 hour", dim="step")
 
 
 def _sounding(session, init, point, lead):
@@ -1006,7 +1115,7 @@ def _clim(session, point, start_time, end_time, rolling_days):
     return stamp_data_interval(ds, "1 hour")
 
 
-def _analysis(session, bbox, start_time, end_time, variable, level, probe_latest):
+def _analysis(session, bbox, windows, variable, level, probe_latest):
     """ECMWF IFS deterministic analysis served by WindBorne, one NetCDF per field and time."""
     import numpy as np
     import xarray as xr
@@ -1023,16 +1132,14 @@ def _analysis(session, bbox, start_time, end_time, variable, level, probe_latest
         print(available[-1].strftime("%Y-%m-%d"))
         return
 
-    if start_time is None and end_time is not None:
-        raise UsageError("--end-time needs --start-time.")
-    if start_time is None:
+    if not windows:
         times = [available[-1]]
     else:
-        last = end_time or start_time
-        times = [t for t in available if start_time <= t.date() <= last]
+        times = [t for t in available if any(a <= t.date() <= b for a, b in windows)]
         if not times:
+            window_text = ", ".join(f"{a}..{b}" for a, b in windows)
             raise DataError(
-                f"no analyses between {start_time} and {last}; served: "
+                f"no analyses in {window_text}; served: "
                 f"{available[0]:%Y-%m-%d} to {available[-1]:%Y-%m-%d}."
             )
 
