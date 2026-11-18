@@ -421,7 +421,7 @@ def test_script_keeps_recorded_input_flags(tmp_path, provenance, capsys):
 
     spec = """'{"data": [{"type": "heatmap", "z": "@G.precip"}]}'"""
     assert (
-        "plot --const top=5 --input /x/grid.zarr=G --input /x/coast.geojson=C "
+        'plot)" --const top=5 --input /x/grid.zarr=G --input /x/coast.geojson=C '
         f"--spec {spec} --output rep.zarr"
     ) in captured
     assert "<UPSTREAM>" not in captured
@@ -435,9 +435,9 @@ def test_script_links_recorded_input_to_upstream(tmp_path, provenance, capsys):
     captured = _script(provenance, out, capsys)
 
     spec = """'{"data": [{"type": "heatmap", "z": "@G.precip"}]}'"""
-    assert "chirps-fetch --output step1.zarr" in captured
+    assert 'chirps-fetch)" --output step1.zarr' in captured
     assert (
-        "plot --const top=5 --input step1.zarr=G --input /x/coast.geojson=C "
+        'plot)" --const top=5 --input step1.zarr=G --input /x/coast.geojson=C '
         f"--spec {spec} --output rep.zarr"
     ) in captured
     assert captured.count("--input") == 2
@@ -456,8 +456,8 @@ def test_script_reads_imported_file_from_its_recorded_flag(tmp_path, provenance,
 
     captured = _script(provenance, out, capsys)
 
-    assert "csv-io --csv /x/rain.csv --output step1.zarr" in captured
-    assert "drop --input step1.zarr --output rep.zarr" in captured
+    assert 'csv-io)" --csv /x/rain.csv --output step1.zarr' in captured
+    assert 'drop)" --input step1.zarr --output rep.zarr' in captured
     assert "<UPSTREAM>" not in captured
 
 
@@ -476,7 +476,7 @@ def test_script_keeps_imported_join_files_at_recorded_paths(tmp_path, provenance
 
     captured = _script(provenance, out, capsys)
 
-    assert "netcdf-io --netcdf /x/a.nc --netcdf /x/b.nc --output rep.zarr" in captured
+    assert 'netcdf-io)" --netcdf /x/a.nc --netcdf /x/b.nc --output rep.zarr' in captured
     assert "--input" not in captured
     assert "yourself" not in captured
 
@@ -503,10 +503,10 @@ def test_script_relinks_every_input_named_in_args(tmp_path, provenance, capsys):
 
     captured = _script(provenance, out, capsys)
 
-    assert "chirps-fetch --output a.zarr" in captured
-    assert "imerg-fetch --output b.zarr" in captured
+    assert 'chirps-fetch)" --output a.zarr' in captured
+    assert 'imerg-fetch)" --output b.zarr' in captured
     assert (
-        "coarsen --input a.zarr --method conservative --reference-grid b.zarr --output step1.zarr"
+        'coarsen)" --input a.zarr --method conservative --reference-grid b.zarr --output step1.zarr'
     ) in captured
-    assert "drop --input step1.zarr --output rep.zarr" in captured
+    assert 'drop)" --input step1.zarr --output rep.zarr' in captured
     assert captured.count("--input") == 2
