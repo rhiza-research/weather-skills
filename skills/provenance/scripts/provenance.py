@@ -393,7 +393,7 @@ def _with_checkout_helper(lines: list) -> list:
         return lines
     helper = [
         "# Clone each repo once per ref into ./_checkouts and print the skill's script.",
-        "# Skills sit at skills/<pack>/<skill>, or skills/<skill> in older commits.",
+        "# Skills sit at skills/<pack>/<skill>.",
         "_script() {",
         '  local dir="_checkouts/${1##*/}@$2"',
         '  if [ ! -d "$dir" ]; then',
@@ -404,7 +404,7 @@ def _with_checkout_helper(lines: list) -> list:
         "      return 1",
         "    fi",
         "  fi",
-        '  for f in "$dir"/skills/*/"$3"/scripts/*.py "$dir"/skills/"$3"/scripts/*.py; do',
+        '  for f in "$dir"/skills/*/"$3"/scripts/*.py; do',
         '    if [ -e "$f" ]; then echo "$f"; return; fi',
         "  done",
         '  echo "_script: no script for $3 in $dir" >&2',

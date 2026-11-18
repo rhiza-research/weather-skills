@@ -209,8 +209,8 @@ def test_script_unpinned_step_runs_from_main(tmp_path, provenance, capsys):
     assert "uvx" not in captured
 
 
-def test_script_helper_finds_both_layouts(tmp_path, provenance, capsys):
-    # skills/<pack>/<skill> now; skills/<skill> in commits before the move.
+def test_script_helper_finds_pack_layout(tmp_path, provenance, capsys):
+    # Only skills/<pack>/<skill> is found; the old flat skills/<skill> is not.
     out = _stamp_history(tmp_path / "f.zarr", [_fetch("chirps-fetch")])
     script = _script(provenance, out, capsys)
     helper = script[script.index("_script() {") : script.index("}\n") + 1]
@@ -219,23 +219,24 @@ def test_script_helper_finds_both_layouts(tmp_path, provenance, capsys):
         (tmp_path / "_checkouts" / f"{name}@r" / layout / "scripts" / "a.py").touch()
 
     found = subprocess.run(
-        ["bash", "-c", f"{helper}\n_script x/new r a; _script x/old r a"],
+        ["bash", "-c", f"{helper}\n_script x/new r a"],
         cwd=tmp_path,
         capture_output=True,
         text=True,
         check=True,
     ).stdout.split()
 
-    assert found == [
-        "_checkouts/new@r/skills/weather-skills/a/scripts/a.py",
-        "_checkouts/old@r/skills/a/scripts/a.py",
-    ]
-    missing = subprocess.run(
-        ["bash", "-c", f"{helper}\n_script x/new r b"], cwd=tmp_path, capture_output=True, text=True
-    )
-    assert missing.returncode == 1
-    assert missing.stdout == ""
-    assert "no script for b" in missing.stderr
+    assert found == ["_checkouts/new@r/skills/weather-skills/a/scripts/a.py"]
+    for args, name in [("x/new r b", "b"), ("x/old r a", "a")]:
+        missing = subprocess.run(
+            ["bash", "-c", f"{helper}\n_script {args}"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
+        assert missing.returncode == 1
+        assert missing.stdout == ""
+        assert f"no script for {name}" in missing.stderr
 
 
 def test_script_runs_other_repo_skill_from_checkout(tmp_path, provenance, capsys):
