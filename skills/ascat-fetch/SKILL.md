@@ -39,7 +39,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- `soil_moisture_saturation` on `(time, latitude, longitude)`, daily, 0.25°, in `percent`: how wet the top ~2 cm of soil is relative to its own wettest (100 = saturated). Not volumetric (m3 m-3), so it does not compare with smap-fetch's values directly; compare anomalies or ranks.
+- `soil_moisture_saturation` on `(time, latitude, longitude)`, daily, 0.25°, in `percent`: how wet the top ~2 cm of soil is relative to its own wettest (100 = saturated). Not volumetric (m3 m-3), so it does not compare with smap-smos-fetch's values directly; compare anomalies or ranks.
 - `weather_skills_source=cds:satellite-soil-moisture:active`; `source` names the product versions used.
 
 ### Notes

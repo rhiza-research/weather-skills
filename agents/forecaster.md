@@ -135,7 +135,7 @@ Required names (from each skill's `metadata.required-env`; its
 `compatibility` line describes each one and any optional extras):
 
 - `ecmwf-fetch` — `ECMWF_DATASTORES_KEY` (ECDS fallback only)
-- `imerg-fetch` / `smap-fetch` — `EARTHDATA_USERNAME`, `EARTHDATA_PASSWORD`
+- `imerg-fetch` / `smap-smos-fetch` — `EARTHDATA_USERNAME`, `EARTHDATA_PASSWORD` (not needed for `smap-smos-fetch --sensor smos`)
 - `tahmo-fetch` — `TAHMO_API_USERNAME`, `TAHMO_API_PASSWORD` (station mode); `GCLOUD_SERVICE_CREDENTIALS` with `--gridded`
 - `openaq-fetch` — `OPENAQ_API_KEY`
 - `cams-fetch` — `ADS_API_KEY` (not needed for `--probe-latest`)
@@ -148,7 +148,7 @@ Required names (from each skill's `metadata.required-env`; its
 - `neuralgcm-fetch` / `pbc-fetch` / `weathernext-fetch` — `GCLOUD_SERVICE_CREDENTIALS` (plus `GOOGLE_CLOUD_PROJECT` for the requester-pays WeatherNext 3 ensemble)
 
 `--probe-latest` still needs credentials when the probe talks to a keyed
-API (`openaq-fetch`, `tahmo-fetch`, `imerg-fetch`, `smap-fetch`, `meteosat-fetch`,
+API (`openaq-fetch`, `tahmo-fetch`, `imerg-fetch`, `smap-smos-fetch`, `meteosat-fetch`,
 `3dpaws-fetch`, `windborne-fetch`). ECMWF
 `--probe-latest` reads the public catalog and does not. Never read, print, or echo the
 values, and never open a `.env` or credential file. If a named secret is not
