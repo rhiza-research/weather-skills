@@ -1,11 +1,11 @@
 ---
 name: clim-fetch
-description: "Fetch a precomputed daily climatology (mean and standard deviation for each day of the year) of precipitation, sea-surface temperature, 2 m temperature or 10 m wind from a public Sheerwater mirror of IMERG, ERA5, CHIRPS, ECMWF IFS, GEFS, OISST or NOAA CPC RFE2 (Africa), laid onto a real calendar date range, as a weather-skills Zarr. Use when a task needs a climatological baseline for anomalies, verification or comparison."
+description: "Fetch a precomputed daily climatology (mean and standard deviation for each day of the year) of precipitation, sea-surface temperature, 2 m temperature or 10 m wind from a public Sheerwater mirror of IMERG, ERA5, CHIRPS, ECMWF IFS, GEFS, OISST or NOAA CPC RFE2 (Africa) (each averaged over a fixed base period between 1990 and 2025), laid onto a real calendar date range, as a weather-skills Zarr. Use when a task needs a climatological baseline for anomalies, verification or comparison."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads a static climatology Zarr from the public GCS bucket sheerwater-public-datalake over anonymous HTTPS; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.9"
+  version: "0.0.10"
   catalog-group: fetchers
   variables:
     - precip
@@ -23,15 +23,17 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --start-time YYYY-MM-DD
   [-v VAR] [--prediction-timedelta DAYS] [--window DAYS] [--align left|right|center] [--bbox N/W/S/E]
 ```
 
-| `--dataset` | `--variable` | Grid | Leads (days) |
-| --- | --- | --- | --- |
-| `imerg_final` | `precip` | 0.1° | 0 |
-| `era5` | `precip` | 0.25° | 0 |
-| `chirps` | `precip` | 0.05° | 0 |
-| `ecmwf_ifs` | `precip`, `sst`, `uwind10m`, `vwind10m` | 1.5° | 0–45 |
-| `gefs` | `precip`, `tmp2m` (2 m temperature) | 1° | 0–34 |
-| `oisst` | `sst` | 0.25° | 0 |
-| `rfe` | `precip` (NOAA CPC RFE2, Africa 40S–40N, 20W–55E) | 0.1° | 0 |
+| `--dataset` | `--variable` | Grid | Leads (days) | Base period |
+| --- | --- | --- | --- | --- |
+| `imerg_final` | `precip` | 0.1° | 0 | 1998–2024 |
+| `era5` | `precip` | 0.25° | 0 | 1990–2019 |
+| `chirps` | `precip` | 0.05° | 0 | 1998–2024 |
+| `ecmwf_ifs` | `precip`, `sst`, `uwind10m`, `vwind10m` | 1.5° | 0–45 | 2006–2024 |
+| `gefs` | `precip`, `tmp2m` (2 m temperature) | 1° | 0–34 | 1999–2018 |
+| `oisst` | `sst` | 0.25° | 0 | 1990–2025 |
+| `rfe` | `precip` (NOAA CPC RFE2, Africa 40S–40N, 20W–55E) | 0.1° | 0 | 2001–2024 |
+
+Base period: the whole years each mirror averaged over, Jan 1 to Dec 31, as recorded in the mirror (read 2026-11-18). The climatology is daily (one value per day of the year) and has no date limit of its own: `--start-time` / `--end-time` can be any calendar dates, past or future.
 
 An unmirrored pair (e.g. `era5` `tmp2m`) exits 1 and lists the available pairs.
 
@@ -49,7 +51,7 @@ An unmirrored pair (e.g. `era5` `tmp2m`) exits 1 and lists the available pairs.
 - Dims `(latitude, longitude, time)`, one row per calendar day in the window.
 - Variables `<var>_avg` (mean) and `<var>_std` (standard deviation), e.g. `precip_avg`, `precip_std`. Precip is `mm day-1`; `sst` and `tmp2m` are `degree_Celsius`; winds are `m/s`.
 - Each variable has `aggregation_period` `"<window> day"`; `data_interval` is `1 day`. Global attrs `climatology_dataset`, `climatology_variable`, `climatology_prediction_timedelta_days`, `climatology_window_days`.
-- `climatology_start_time` and `climatology_end_time` give the first and last dates the mirror averaged over (e.g. `1998-01-01` and `2024-12-31`). They are present only when the mirror records them, and stderr prints them too; when the mirror doesn't record them, stderr says so and the base period is unknown. For a known base period, or a dataset or variable not mirrored here, compute one with `climatology` from a multi-year daily fetch.
+- `climatology_start_time` and `climatology_end_time` give the first and last dates the mirror averaged over (e.g. `1998-01-01` and `2024-12-31`). Every current mirror records them, and stderr prints them too; a mirror that doesn't makes stderr say so, and the base period is then unknown. For a known base period, or a dataset or variable not mirrored here, compute one with `climatology` from a multi-year daily fetch.
 
 ### Notes
 - Always pass `--bbox` for `chirps` and `imerg_final`; without it the whole global year is read (tens of GB).

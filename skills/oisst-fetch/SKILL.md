@@ -1,11 +1,11 @@
 ---
 name: oisst-fetch
-description: "Fetch NOAA OISST v2.1 daily 0.25° sea-surface temperature (1981-09 to present) for a date range and region from NOAA PSL's public OPeNDAP server, as a weather-skills Zarr. No credentials needed. Use when a task needs gridded SST observations, e.g. for ocean analysis or comparison against forecasts or reanalysis."
+description: "Fetch NOAA OISST v2.1 daily 0.25° sea-surface temperature (1981-09 to a few days ago) for a date range and region from NOAA PSL's public OPeNDAP server, as a weather-skills Zarr. No credentials needed. Use when a task needs gridded SST observations, e.g. for ocean analysis or comparison against forecasts or reanalysis."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads NOAA OISST v2.1 from NOAA PSL's OPeNDAP server (psl.noaa.gov) over HTTPS; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.9"
+  version: "0.0.10"
   catalog-group: fetchers
   variables:
     - sst
@@ -23,8 +23,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time Y
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
+**Coverage:** daily from 1981-09-01 to about 2–3 days ago; days under about 15 days old are preliminary.
+
 ### Arguments
-- `--start-time`, `--end-time` — inclusive date range.
+- `--start-time`, `--end-time` — inclusive date range. A window reaching before 1981 exits 1.
 - `--bbox` — `N/W/S/E` decimal degrees, either longitude convention; W > E crosses the antimeridian. Omit for the full globe.
 - `--probe-latest` — print the latest published day (`YYYY-MM-DD`) and exit. Takes no id; passing one exits 2.
 - `--output`, `-o` — output Zarr, overwritten.

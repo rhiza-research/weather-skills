@@ -1,11 +1,11 @@
 ---
 name: cumulus-downscaled-fetch
-description: "Fetch the Cumulus AI downscaled precipitation forecast (the Aurora S2S run downscaled to 0.1° over East and West Africa, 46 daily leads; diffusion, flow-matching or UNet model; ensemble mean or 10 members) for one init date and optional region from a private Azure Blob container, as a weather-skills Zarr. Needs an Azure read token (AZURE_STORAGE_SAS_TOKEN). Use when a task needs the high-resolution Cumulus forecast over Africa."
+description: "Fetch the Cumulus AI downscaled precipitation forecast (the Aurora S2S run downscaled to 0.1° over East and West Africa, 46 daily leads; diffusion, flow-matching or UNet model; ensemble mean or 10 members; daily inits from 2026-09-01) for one init date and optional region from a private Azure Blob container, as a weather-skills Zarr. Needs an Azure read token (AZURE_STORAGE_SAS_TOKEN). Use when a task needs the high-resolution Cumulus forecast over Africa."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads private NetCDF from Azure Blob italynorthdata/data/live_forecasts/downscaled_models via adlfs. Requires AZURE_STORAGE_SAS_TOKEN (a read SAS with list and read, sp=rl).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.3"
+  version: "0.0.4"
   catalog-group: fetchers
   variables:
     - precip
@@ -34,16 +34,24 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--source SUBFOLDER] [--date YYYY-MM
 ```
 
 ### Arguments
-- `--source` — subfolder of `downscaled_models/` to read: its full name, or a substring that matches only one (`imerg` picks `aurora-imerg`; an exact name wins, so `aurora` stays `aurora`). Default: `aurora`. Other subfolders, such as `aurora-imerg`, hold other downscaling runs. Each subfolder has its own inits, models and checkpoints, so `--probe-latest` and the defaults are worked out per `--source`. An unknown subfolder exits 1 and lists the ones there.
+- `--source` — subfolder of `downscaled_models/` to read: its full name, or a substring that matches only one (`if` picks `ifs`; an exact name wins). Default: `aurora`. Other subfolders, such as `ifs`, hold other downscaling runs. Each subfolder has its own inits, models and checkpoints, so `--probe-latest` and the defaults are worked out per `--source`. An unknown subfolder exits 1 and lists the ones there.
 - `--model` — downscaling model. Default: `diffusion`. A short name matches the model folder whose name starts with `model_diffusion_`, `model_flow_matching_` or `model_unet_`, so it works across sources whose folder names differ. Any other value is a model folder name or a substring of one, e.g. `input_output` to pick the diffusion model that also takes surface inputs. When the value matches several folders at one init, the skill exits 1 and lists them.
 
-  For `--source aurora`:
+  `diffusion` and `flow-matching` give an ensemble mean and 10 members, `unet` one field.
 
-  | `--model` | Model | Output | Inits from |
-  | --- | --- | --- | --- |
-  | `diffusion` | diffusion UNet | ensemble mean + 10 members | 2026-10-04 |
-  | `flow-matching` | flow-matching UNet | ensemble mean + 10 members | 2026-10-27 |
-  | `unet` | deterministic UNet | one field | 2026-10-04 |
+  Inits are 00 UTC. `--source aurora` has one a day from 2026-09-01 to yesterday; its model folders:
+
+  | Model folder (`--model`) | Short name | Inits |
+  | --- | --- | --- |
+  | `model_diffusion_unet_precip_output_residual_shiftedlog_calibrated_silu_selfcond_precip24h_only` | `diffusion` | 2026-09-01 on |
+  | `model_diffusion_unet_precip_input_output_residual_shiftedlog_calibrated_silu_selfcond_precip24h_only` | `diffusion` | 2026-10-04 on |
+  | `model_diffusion_unet_precip_input_output_residual_shiftedlog_calibrated_silu_selfcond` | `diffusion` | 2026-09-15 to 2026-10-09 |
+  | `model_flow_matching_unet_multivar_residual_shifted_log_precip24h_only` | `flow-matching` | 2026-09-01 on |
+  | `model_flow_matching_unet_precip_input_residual_shifted_log_precip24h_only` | `flow-matching` | 2026-10-26 on |
+  | `model_unet_precip_output_residual_fs128` | `unet` | 2026-10-04 on |
+  | `model_unet_precip` | `unet` | 2026-09-15 to 2026-10-09 |
+
+  Where a short name matches several folders at an init (`diffusion` from 2026-09-15, `flow-matching` from 2026-10-26, `unet` 2026-10-04 to 2026-10-09), it exits 1 listing them: pass the full folder name. `--source ifs` has 28 inits, 2026-09-15 and then about every second day from 2026-09-25 to 2026-11-15, with its own model folders; run `--list` for them.
 - `--target` — precipitation product the model was trained to reproduce: a target folder name as `--list` prints it, or a substring of one such as `era5` or `imerg`. Default: the only target folder the checkpoint has, else `era5`. A value that matches none or several exits 1 and lists what the checkpoint has.
 - `--members` — fetch the individual members instead of the ensemble mean. A model with one field (`unet`) exits 1.
 - `--checkpoint` — substring of the checkpoint folder. When an init has several and this is omitted, the skill keeps the one later inits carry on running and warns; if that does not settle it, it exits 1 and lists them.
@@ -75,9 +83,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox 5.5/33.5/-5/42.5 -o cumulus_d
 Writes the latest init's diffusion ensemble-mean daily precipitation rates over Kenya for 46 days.
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --source aurora-imerg --model flow-matching --bbox 14/2/4/15 -o cumulus_ds_imerg_nigeria.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --source ifs --model unet --bbox 14/2/4/15 -o cumulus_ds_ifs_nigeria.zarr
 ```
-Writes the flow-matching ensemble mean from the `aurora-imerg` run over Nigeria.
+Writes the latest UNet forecast from the `ifs` run over Nigeria.
 
 ## Details
 
