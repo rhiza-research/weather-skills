@@ -37,32 +37,44 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --list-variables
 
 **Forecast ids** (use `--date`, or `--start-time`/`--end-time` for many inits). Every one has a 00 UTC init each day from its first init to today, unless noted.
 
-| Id | Members | First init |
-|---|---|---|
-| `ecmwf-ifs-ens-forecast-15-day-0-25-degree` | 51 | 2020-10-15 |
-| `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`, `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | 101 | 2026-01-01 (earlier inits: ecmwf-fetch) |
-| `ecmwf-aifs-ens-forecast` | 51 | 2025-07-02 |
-| `ecmwf-aifs-single-forecast` | 1 | 2024-04-01 |
-| `noaa-gefs-forecast-35-day` | 31 | 2020-10-01 |
-| `noaa-gfs-forecast` | 1 | 2021-05-01 |
-| `google-weathernext2-forecast-historical-virtual` | 64 | 2022-01-01, last 2024-12-31 |
-| `google-weathernext2-forecast-operational-virtual` | 64 | 2025-01-01 |
-| `google-weathernext3-forecast-15-day-0-1-degree-virtual`, `google-weathernext3-forecast-48-hour-0-1-degree-virtual` | mean and percentiles, 0.1° | 2026-01-01 |
-| `google-weathernext3-forecast-15-day-0-05-degree-virtual`, `google-weathernext3-forecast-48-hour-0-05-degree-virtual` | same, 0.05°, `t2m` and `d2m` only | 2026-01-01 |
-| `dwd-icon-eu-forecast-5-day` (Europe) | 1 | 2026-02-10 |
+| Id | Grid | Members | Leads | First init |
+|---|---|---|---|---|
+| `ecmwf-ifs-ens-forecast-15-day-0-25-degree` | 0.25° | 51 | 15 days | 2020-10-15 |
+| `ecmwf-ifs-ens-forecast-15-day-0-25-degree-virtual` ★ | 0.25° | 51 | 15 days | 2024-04-01 |
+| `ecmwf-ifs-ens-forecast-6-day-0-25-degree-virtual` ★ | 0.25° | 51 | 6 days | 2024-04-01 |
+| `ecmwf-ifs-ens-forecast-15-day-0-1-degree-virtual` ★ | 0.1° | 51 | 15 days | 2026-10-21 |
+| `ecmwf-ifs-ens-forecast-6-day-0-1-degree-virtual` ★ | 0.1° | 51 | 6 days | 2026-10-21 |
+| `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`, `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | 1.5° | 101 | 46 days | 2026-01-01 (earlier inits: ecmwf-fetch) |
+| `ecmwf-aifs-ens-forecast`, `ecmwf-aifs-ens-forecast-virtual` ★ | 0.25° | 51 | 15 days | 2025-07-02 |
+| `ecmwf-aifs-single-forecast`, `ecmwf-aifs-single-forecast-virtual` ★ | 0.25° | 1 | 15 days | 2024-04-01 |
+| `noaa-gefs-forecast-35-day` | 0.25° to 10 days, then 0.5° | 31 | 35 days | 2020-10-01 |
+| `noaa-gefs-forecast-35-day-0-5-degree-virtual` ★ | 0.5° | 31 | 35 days | 2020-10-01 |
+| `noaa-gefs-forecast-16-day-0-5-degree-virtual` ★ | 0.5° | 31 | 16 days | 2020-10-01 |
+| `noaa-gefs-forecast-10-day-0-25-degree-virtual` ★ | 0.25° | 31 | 10 days | 2020-10-01 |
+| `noaa-gfs-forecast`, `noaa-gfs-forecast-virtual` ★ | 0.25° | 1 | 16 days | 2021-05-01 |
+| `google-weathernext2-forecast-historical-virtual` | 0.25° | 64 | 15 days | 2022-01-01, last 2024-12-31 |
+| `google-weathernext2-forecast-operational-virtual` | 0.25° | 64 | 15 days | 2025-01-01 |
+| `google-weathernext3-forecast-15-day-0-1-degree-virtual`, `google-weathernext3-forecast-48-hour-0-1-degree-virtual` | 0.1° | mean and percentiles | 15 days / 48 h | 2026-01-01 |
+| `google-weathernext3-forecast-15-day-0-05-degree-virtual`, `google-weathernext3-forecast-48-hour-0-05-degree-virtual` | 0.05°, `t2m` and `d2m` only | mean and percentiles | 15 days / 48 h | 2026-01-01 |
+| `dwd-icon-eu-forecast-5-day` (Europe) | 0.0625° | 1 | 5 days | 2026-02-10 |
 
 **Analysis ids** (use `--start-time`/`--end-time`), each from its first day to a few hours or days ago:
 
-| Id | First day |
-|---|---|
-| `ucsb-chc-chirps-analysis-final` (land, 60°S–60°N) | 1981-01-01, ends about 3 weeks ago |
-| `ucsb-chc-chirps-analysis-preliminary` (land, 60°S–60°N) | 2025-01-01 |
-| `nasa-imerg-analysis-early`, `nasa-imerg-analysis-late` | 1998-01-01 |
-| `noaa-gefs-analysis` | 2000-01-01 |
-| `noaa-gfs-analysis` | 2021-05-01 |
-| `noaa-mrms-conus-analysis-hourly` (CONUS) | 2014-11-01 |
+| Id | Grid | First day |
+|---|---|---|
+| `ucsb-chc-chirps-analysis-final` (land, 60°S–60°N) | 0.05° | 1981-01-01, ends about 3 weeks ago |
+| `ucsb-chc-chirps-analysis-preliminary` (land, 60°S–60°N) | 0.05° | 2025-01-01 |
+| `nasa-imerg-analysis-early`, `nasa-imerg-analysis-late` | 0.1° | 1998-01-01 |
+| `noaa-gefs-analysis` | 0.25° | 2000-01-01 |
+| `noaa-gefs-analysis-0-25-degree-virtual` ★ | 0.25° | 2020-10-01 |
+| `noaa-gfs-analysis`, `noaa-gfs-analysis-virtual` ★ | 0.25° | 2021-05-01 |
+| `noaa-mrms-conus-analysis-hourly` (CONUS) | 0.01° | 2014-11-01 |
 
-HRRR ids are rejected (projected grid). An init or day before a dataset's first one exits 1; check this table before telling anyone a date is unavailable.
+★ **Virtual ids** read the provider's original files in place. They carry many more fields than the stores above (more pressure levels, CAPE, cloud layers, fluxes; `--list-variables`), but their precipitation is not a rate: GFS and GEFS virtual `total_precipitation_surface` (what `-v precip` picks there) and ECMWF virtual `total_precipitation_run_total_surface` are accumulations in kg m-2, written with a wrong `mm day-1` label. For precipitation use the plain id on the same row, or ECMWF virtual `precipitation_rate_surface` (an instantaneous rate; `-v precip` finds no field in the ECMWF virtual ids).
+
+**Rejected ids** (projected 2-D grids, exit 2): every HRRR id, `eccc-hrdps-forecast` (Canada), `noaa-rrfs-*`, `noaa-refs-*`, `noaa-rtma-analysis-virtual`, `noaa-rtma-ru-analysis-virtual`, `noaa-urma-analysis-virtual` (all CONUS except HRDPS).
+
+An init or day before a dataset's first one exits 1; check these tables before telling anyone a date or dataset is unavailable.
 
 ### Arguments
 - `--dataset` — catalog id from the lists above.
