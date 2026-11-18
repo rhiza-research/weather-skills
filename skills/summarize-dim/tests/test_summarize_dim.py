@@ -126,6 +126,7 @@ def test_lat_weighted_mean_celsius_over_lat_and_lon(tmp_path, summarize_dim):
     ds = xr.open_zarr(out, consolidated=True)
     assert ds["t2m"].dims == ("time",)
     assert ds["t2m"].values == pytest.approx(50.0 / 3.0)
+    assert ds["t2m"].attrs["cell_methods"].endswith("latitude: longitude: mean (latitude-weighted)")
 
 
 def test_lat_weighted_mean_precip_unchanged(tmp_path, summarize_dim):
