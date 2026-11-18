@@ -27,7 +27,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.11"
 
 # Named --period / --window → (aggregation_period stamped, resample freq, length in days).
 NAMED_PERIODS = {
@@ -37,6 +37,8 @@ NAMED_PERIODS = {
     "monthly": ("1 month", "MS", 30),
 }
 _METHOD_TO_CF = {"mean": "mean", "max": "maximum", "min": "minimum"}
+# cell_methods comment on rates built from overlapping samples; convert-to-totals reads it.
+OVERLAPPING_SAMPLES = "overlapping samples"
 
 
 def _as_ns(val):
@@ -163,6 +165,10 @@ def aggregate(
     if not (isinstance(bounds_name, str) and bounds_name in ds):
         bounds_name = f"{dim}_bounds" if f"{dim}_bounds" in ds else None
     bounds = native_interval = cell = None
+    # Rates built from overlapping samples stay rates: convert-to-totals refuses them.
+    overlapping = any(
+        OVERLAPPING_SAMPLES in str(ds[name].attrs.get("cell_methods", "")) for name in ds.data_vars
+    )
     if bounds_name is not None:
         bounds = np.asarray(ds[bounds_name].values)
         if bounds.ndim != 2 or bounds.shape[-1] != 2:
@@ -195,6 +201,7 @@ def aggregate(
                 bounds = np.stack([raw, raw + np.timedelta64(cell_ns, "ns")], axis=1)
                 starts, ends = _as_ns(bounds[:, 0]), _as_ns(bounds[:, 1])
                 cell = None
+                overlapping = True
 
     key = period or window
     flag = "--period" if period else "--window"
@@ -516,6 +523,12 @@ def aggregate(
     # Rolling windows overlap, one per sample, so the output keeps the input spacing.
     data_interval = native_interval if window is not None or same else agg
     cell_methods = format_cell_methods(dim, _METHOD_TO_CF[method], interval=native_interval)
+    if overlapping:
+        note = f"comment: {OVERLAPPING_SAMPLES}"
+        if cell_methods.endswith(")"):
+            cell_methods = f"{cell_methods[:-1]} {note})"
+        else:
+            cell_methods = f"{cell_methods} ({note})"
     for name in out.data_vars:
         attrs = {**out[name].attrs, AGGREGATION_PERIOD_ATTR: agg, "cell_methods": cell_methods}
         if data_interval:
