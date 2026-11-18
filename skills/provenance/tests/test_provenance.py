@@ -198,14 +198,14 @@ def _script(provenance, path, capsys):
     return capsys.readouterr().out
 
 
-def test_script_unpinned_step_runs_from_dev(tmp_path, provenance, capsys):
+def test_script_unpinned_step_runs_from_main(tmp_path, provenance, capsys):
     # Every step runs its script from a checkout, whatever the repo's CLI is called.
     out = _stamp_history(tmp_path / "f.zarr", [_fetch("chirps-fetch")])
 
     captured = _script(provenance, out, capsys)
 
-    repo = "https://github.com/rhiza-research/weather-skills"
-    assert f'uv run --script "$(_script {repo} dev chirps-fetch)"' in captured
+    repo = "https://github.com/weather-skills/weather-skills-catalog"
+    assert f'uv run --script "$(_script {repo} main chirps-fetch)"' in captured
     assert "uvx" not in captured
 
 

@@ -21,9 +21,9 @@ from weather_skills_core.provenance import (
     validate_chain,
 )
 
-DEFAULT_REPO = "https://github.com/rhiza-research/weather-skills"
+DEFAULT_REPO = "https://github.com/weather-skills/weather-skills-catalog"
 # Ref a step runs from when it recorded no commit.
-DEFAULT_REF = "dev"
+DEFAULT_REF = "main"
 # Joins whose inputs are not a repeated --input, in the order the decorator
 # records them (declaration order).
 JOIN_FLAGS = {
