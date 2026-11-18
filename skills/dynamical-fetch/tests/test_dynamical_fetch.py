@@ -83,6 +83,20 @@ def test_forecast_fetch_wraps_0_360_longitude(tmp_path, mod, fetch):
     assert float(written["tp"].isel(step=0, latitude=0).sel(longitude=-90.0)) == 7.0
 
 
+def test_forecast_fetch_writes_latitude_south_to_north(tmp_path, mod, fetch):
+    out = tmp_path / "out.zarr"
+    ds = _forecast_catalog_ds().isel(latitude=slice(None, None, -1))
+    ds["tp"].values[..., 0, :] = 5.0  # the northern row, first in the store
+    state = {"ds": ds, "shape": "forecast"}
+
+    with patch.object(mod, "_open_dataset", return_value=state):
+        run_skill(fetch, "--dataset", "test-forecast", "--date", "2026-01-01", "-o", str(out))
+
+    written = xr.open_zarr(out, consolidated=True)
+    assert list(written["latitude"].values) == [1.0, 2.0]
+    assert float(written["tp"].isel(step=0).sel(latitude=2.0, longitude=10.0)) == 5.0
+
+
 def _imerg_like_analysis_ds():
     times = np.array([np.datetime64("2026-01-01T00:00"), np.datetime64("2026-01-01T00:30")])
     lats = [1.0, 2.0]
@@ -459,6 +473,36 @@ def test_accum_totals_without_lead0_relabelled_to_start_as_rates(tmp_path, mod, 
     # 1.5 mm per 6 h is 6 mm day-1; the negative total is zeroed.
     assert float(precip.max()) == pytest.approx(6.0)
     assert float(precip.min()) == 0.0
+
+
+def test_avg_rates_without_lead0_relabelled_to_start(tmp_path, mod, fetch):
+    """WeatherNext 3: a statistic dim, no lead 0, 1 h mean precip rates (step_type avg)."""
+    dims = ("init_time", "lead_time", "statistic", "latitude", "longitude")
+    ds = xr.Dataset(
+        {
+            "precipitation_surface": (
+                dims,
+                np.full((1, 3, 2, 2, 2), 1e-4),
+                {"units": "kg m-2 s-1", "step_type": "avg"},
+            )
+        },
+        coords={
+            "init_time": [np.datetime64("2026-01-01")],
+            "lead_time": np.array([1, 2, 3], dtype="timedelta64[h]").astype("timedelta64[ns]"),
+            "statistic": ["mean", "p90"],
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "forecast"}):
+        run_skill(fetch, "--dataset", "t", "--date", "2026-01-01", "-v", "precip", "-o", str(out))
+    written = xr.open_zarr(out, consolidated=True)
+    precip = written["precipitation_surface"]
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0, 1, 2]
+    assert precip.dims == ("step", "statistic", "latitude", "longitude")
+    assert precip.attrs["units"] == "mm day-1"
+    assert float(precip.max()) == pytest.approx(8.64)  # 1e-4 mm s-1 is 8.64 mm day-1
 
 
 def test_accum_totals_in_an_init_window_divide_by_the_lead_spacing(tmp_path, mod, fetch):

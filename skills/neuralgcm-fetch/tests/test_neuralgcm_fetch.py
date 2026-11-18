@@ -103,17 +103,17 @@ def test_fetch_writes_zarr_and_stamps_history(tmp_path, fetch_mod, monkeypatch):
     assert seen["stamp"] == "20260911T12"
     assert Path(out).exists()
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert "tp" in ds.data_vars
+        assert "precip" in ds.data_vars
         assert "total_precipitation_6hr" not in ds.data_vars
         assert {"number", "step", "latitude", "longitude"} <= set(ds.sizes)
-        assert ds["tp"].attrs["units"] == "mm day-1"
-        assert ds["tp"].attrs.get("data_interval")
+        assert ds["precip"].attrs["units"] == "mm day-1"
+        assert ds["precip"].attrs.get("data_interval")
         hours = np.asarray(ds["step"].values).astype("timedelta64[h]").astype(int)
         assert list(hours) == [0, 6, 12, 18]
         # 0.001 m / 6h = 4 mm day-1
-        np.testing.assert_allclose(ds["tp"].values[0, :, 0, 0], [4.0, 4.0, 4.0, 4.0], rtol=1e-5)
+        np.testing.assert_allclose(ds["precip"].values[0, :, 0, 0], [4.0, 4.0, 4.0, 4.0], rtol=1e-5)
         assert "neuralgcm:imerg:precip:" in ds.attrs.get("weather_skills_source", "")
-        assert "aggregation_period" not in ds["tp"].attrs
+        assert "aggregation_period" not in ds["precip"].attrs
     history = load_history(out)
     assert history[-1]["skill"] == "neuralgcm-fetch"
 
@@ -130,7 +130,7 @@ def test_fetch_does_not_deaccumulate_period_totals(tmp_path, fetch_mod, monkeypa
     run_skill(fetch_mod.fetch, "--date", "2026-09-11", "-o", str(out))
 
     with xr.open_zarr(out, consolidated=True) as ds:
-        np.testing.assert_allclose(ds["tp"].values[0, :, 0, 0], [8.0, 4.0, 0.0, 2.0], rtol=1e-5)
+        np.testing.assert_allclose(ds["precip"].values[0, :, 0, 0], [8.0, 4.0, 0.0, 2.0], rtol=1e-5)
 
 
 def test_fetch_honors_date_cycle_variable_and_bbox(tmp_path, fetch_mod, monkeypatch):
@@ -293,7 +293,7 @@ _WINDOW_STAMPS = ["20250130T00", "20250131T00", "20250201T00", "20250201T12", "2
 
 
 def _mock_windows(monkeypatch, fetch_mod, *, missing=(), opened=None):
-    """Per-init stores whose tp is the init's day of month (in m per 6 h, x 1e-3)."""
+    """Per-init stores whose precip is the init's day of month (in m per 6 h, x 1e-3)."""
 
     def fake_open(stamp, dataset):
         if opened is not None:
@@ -317,13 +317,13 @@ def test_init_window_keeps_00utc_inits_on_a_time_axis(tmp_path, fetch_mod, monke
     # 20250201T12 is not a 00 UTC init.
     assert opened == ["20250131T00", "20250201T00"]
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert ds["tp"].dims == ("time", "step", "number", "latitude", "longitude")
+        assert ds["precip"].dims == ("time", "step", "number", "latitude", "longitude")
         # The 6 h lead spacing, not the 1-day gap between inits.
-        assert ds["tp"].attrs["data_interval"] == "6 hour"
+        assert ds["precip"].attrs["data_interval"] == "6 hour"
         days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
         assert days == ["2025-01-31", "2025-02-01"]
         # Day 31 → 0.031 m / 6 h = 124 mm day-1; day 1 → 4 mm day-1.
-        np.testing.assert_allclose(ds["tp"].values[:, 0, 0, 0, 0], [124.0, 4.0], rtol=1e-5)
+        np.testing.assert_allclose(ds["precip"].values[:, 0, 0, 0, 0], [124.0, 4.0], rtol=1e-5)
     assert load_history(out)[-1]["args"]["start_time"] == ["2025-01-31"]
 
 
@@ -370,8 +370,8 @@ def test_init_window_warns_on_missing_and_short_inits(tmp_path, fetch_mod, monke
         days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
         assert days == ["2025-01-30", "2025-02-01"]
         # The short init's late leads stay NaN; the other keeps every lead.
-        assert ds["tp"].isel(time=1, step=slice(2, None)).isnull().all()
-        assert ds["tp"].isel(time=0).notnull().all()
+        assert ds["precip"].isel(time=1, step=slice(2, None)).isnull().all()
+        assert ds["precip"].isel(time=0).notnull().all()
 
 
 def test_date_and_init_window_together_exit_2(tmp_path, fetch_mod, monkeypatch):

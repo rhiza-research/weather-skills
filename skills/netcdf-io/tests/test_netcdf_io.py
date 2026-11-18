@@ -40,6 +40,8 @@ def test_grid_round_trip_keeps_values_attrs_and_history(tmp_path, netcdf_io):
     np.testing.assert_allclose(res["precip"].values, ds["precip"].values, equal_nan=True)
     assert units_equal(res["precip"].attrs["units"], "mm day-1")
     assert load_history(back)[-1]["skill"] == "netcdf-io"
+    # The imported file is an input with no history, so a figure made from it is not stamped.
+    assert load_history(back)[-1]["input"]["basename"] == "out.nc"
     assert res.attrs["weather_skills_source"] == "netcdf:out.nc"
 
 
@@ -241,3 +243,16 @@ def test_export_refuses_a_dataset_with_no_data_variables(tmp_path, netcdf_io, ca
         run_skill(netcdf_io, "-i", str(src), "-o", str(tmp_path / "out.nc"))
     assert exc.value.code == 2
     assert not (tmp_path / "out.nc").exists()
+
+
+def test_read_refuses_a_file_a_skill_exported(tmp_path, netcdf_io, capsys):
+    mid = tmp_path / "mid.zarr"
+    nc = tmp_path / "out.nc"
+    make_gridded().to_netcdf(tmp_path / "seed.nc")
+    run_skill(netcdf_io, "--netcdf", str(tmp_path / "seed.nc"), "-o", str(mid))
+    run_skill(netcdf_io, "-i", str(mid), "-o", str(nc))
+
+    with pytest.raises(SystemExit) as exc:
+        run_skill(netcdf_io, "--netcdf", str(nc), "-o", str(tmp_path / "back.zarr"))
+    assert exc.value.code == 2
+    assert "use the Zarr it came from" in capsys.readouterr().err

@@ -98,7 +98,7 @@ def test_range_bbox_units(mod, monkeypatch, tmp_path):
         str(out),
     )
     ds = xr.open_zarr(out)
-    # tp covers the hour before each analysis and is labelled at its start;
+    # precip covers the hour before each analysis and is labelled at its start;
     # t2m keeps the analysis times. Each is NaN at the other's times.
     assert list(ds["time"].values) == [
         np.datetime64("2026-10-19T05:00"),
@@ -107,12 +107,12 @@ def test_range_bbox_units(mod, monkeypatch, tmp_path):
         np.datetime64("2026-10-19T12:00"),
     ]
     t2m = ds["t2m"].isel(latitude=0, longitude=0).values
-    tp = ds["tp"].isel(latitude=0, longitude=0).values
+    precip = ds["precip"].isel(latitude=0, longitude=0).values
     np.testing.assert_allclose(t2m, [np.nan, 26.85, np.nan, 26.85], rtol=1e-5)
-    np.testing.assert_allclose(tp, [12.0, np.nan, 12.0, np.nan])
+    np.testing.assert_allclose(precip, [12.0, np.nan, 12.0, np.nan])
     assert list(ds["longitude"].values) == [0, 30, 60]
     assert list(ds["latitude"].values) == [-30, 0, 30]
-    assert ds["tp"].attrs["data_interval"] == "1 hour"
+    assert ds["precip"].attrs["data_interval"] == "1 hour"
     assert ds["t2m"].attrs["data_interval"] == "6 hour"
     assert ds["z"].dims == ("time", "vertical", "latitude", "longitude")
 

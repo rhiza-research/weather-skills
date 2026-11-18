@@ -61,4 +61,4 @@ After weekly-rolling an ECMWF forecast and its 20-year hindcast for Kenya, and `
 uv run ${CLAUDE_SKILL_DIR}/scripts/pbc_correct.py --forecast ecmwf_kenya_weekly.zarr \
   --hindcast ecmwf_kenya_hindcast_weekly.zarr --obs chirps_kenya_7day.zarr --step 14 -o pbc_kenya_week3.zarr
 ```
-Writes PBC-with-Climatology++ quintile probabilities for week 3 over Kenya. Score it with `verify --metric rps`.
+Writes PBC-with-Climatology++ quintile probabilities for week 3 over Kenya. Score it with `verify --metric rpss --lat-weighted`.

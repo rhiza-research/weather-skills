@@ -21,13 +21,13 @@ Built as [Agent Skills](https://agentskills.io) by Rhiza Research.
 ### Fetchers (ingress — source-specific)
 
 Prefer `dynamical-fetch` when the dynamical.org catalog has the dataset
-(GFS, GEFS, ECMWF IFS-ENS, AIFS, Google WeatherNext 2, ICON-EU, analyses,
+(GFS, GEFS, ECMWF IFS-ENS, AIFS, Google WeatherNext 2 and 3, ICON-EU, analyses,
 IMERG, CHIRPS). Use a
 credentialed or source-specific fetcher only when it does not.
 
 | Skill | What it does |
 |---|---|
-| `dynamical-fetch` | **Preferred when the catalog has it.** dynamical.org open catalog (GFS, GEFS, ECMWF IFS-ENS 15-day and 46-day, AIFS, Google WeatherNext 2, ICON-EU, MRMS, analyses, **IMERG**, **CHIRPS**) via `--dataset`, credential-free → Zarr. Forecasts: one init (`--date`) or a range of inits (repeatable `--start-time`/`--end-time`). Default IMERG source: `nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`. CHIRPS products: `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`. |
+| `dynamical-fetch` | **Preferred when the catalog has it.** dynamical.org open catalog (GFS, GEFS, ECMWF IFS-ENS 15-day and 46-day, AIFS, Google WeatherNext 2, WeatherNext 3 mean and percentiles, ICON-EU, MRMS, analyses, **IMERG**, **CHIRPS**) via `--dataset`, credential-free → Zarr. Forecasts: one init (`--date`) or a range of inits (repeatable `--start-time`/`--end-time`). Default IMERG source: `nasa-imerg-analysis-late` / `nasa-imerg-analysis-early`. CHIRPS products: `ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`. |
 | `ecmwf-fetch` | ECDS **fallback** for ECMWF S2S / ER (pre-2026, ocean, unmapped fields). Prefer `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` for 2026+ catalog fields. |
 | `chirps-fetch` | Default CHIRPS source: dynamical.org final + prelim fallback → `precip` Zarr |
 | `imerg-fetch` | Earthdata **daily** IMERG Final (`GPM_3IMERGDF`) → Zarr. All IMERG Late/Early comes from `dynamical-fetch`. |
@@ -35,7 +35,7 @@ credentialed or source-specific fetcher only when it does not.
 | `tahmo-fetch` | TAHMO station observations (daily-aggregated) → Zarr |
 | `3dpaws-fetch` | 3D-PAWS station observations from a CHORDS portal (default: FEWS NET Kenya; daily precip, temperature, humidity, pressure, wind) → station Zarr. Requires credentials. |
 | `cumulus-fetch` | Cumulus AI operational ensemble precip (Aurora S2S run) — 30 members, 46 daily leads, 0.25° or 1° global (`--dataset precip`, `precip_1deg`, `precip_era5`), one init or a range of inits → Zarr. Requires credentials. |
-| `neuralgcm-fetch` | NeuralGCM S2S ensemble (IMERG precip `tp`, ERA5 surface `t2m`/`d2m`) — up to 50 members, 6-hour leads to 60 days, ~2.8°, one init or a range of inits → Zarr. Requires credentials. |
+| `neuralgcm-fetch` | NeuralGCM S2S ensemble (IMERG precip `precip`, ERA5 surface `t2m`/`d2m`) — up to 50 members, 6-hour leads to 60 days, ~2.8°, one init or a range of inits → Zarr. Requires credentials. |
 | `weathernext-fetch` | Google WeatherNext 2 ensemble (2025 on; 64 members, 6-hour leads to 15 days, 0.25°, 13 pressure levels) or WeatherNext 3 (2026 on; 64-member ensemble, requester pays, or free ensemble mean/percentiles; hourly leads to 15 days, 0.1°) → Zarr. One init or a range of inits. Pass `-v` and `--member` or `--statistic` (full cubes are ~1 TB). Requires credentials. |
 | `windborne-fetch` | WindBorne data, one `--product` per call: WeatherMesh-6 ensemble grids (live or archived runs from mid-2026; 128 members as mean, std or all; 3-hour leads to 15 days, 0.25°), point forecasts with spread, percentiles and rain-exceedance probabilities, vertical soundings, plain-language site summaries, ERA5 1991–2020 hourly normals at points, the recent ECMWF IFS analysis, or US state heating/cooling degree days → Zarr. Requires credentials. |
 | `pbc-fetch` | PBC / StillLearning AI Weather Quest precip **quintile probabilities** (`era5-p_pr_19` week 3, `era5-p_pr_26` week 4), 1.5° global, one init or a range of inits → Zarr. Requires credentials. |
@@ -44,6 +44,7 @@ credentialed or source-specific fetcher only when it does not.
 | `cmip6-fetch` | One CMIP6 model run (historical 1850–2014 or `ssp*` to 2100) → Zarr. No credentials. |
 | `rfe-fetch` | NOAA CPC African Rainfall Estimate (RFE2) — daily, 0.1° over Africa, from 2001 → Zarr. No credentials. |
 | `gsmap-fetch` | JAXA GSMaP v6 gauge-corrected hourly 0.1° precip (from April 2025, 60°N–60°S) → Zarr. No credentials. |
+| `pardig-fetch` | Google PARDIG AI precip estimate, 15-minute 0.1° (NRT 2016 to a few hours ago, LR 1999–2023) → Zarr. No credentials. |
 | `oisst-fetch` | NOAA OISST v2.1 daily 0.25° sea-surface temperature (1981-09 on) → Zarr. No credentials. |
 | `smap-fetch` | NASA SMAP Enhanced L3 (`SPL3SMP_E`) daily 9 km surface soil moisture → Zarr. Requires credentials. |
 | `ghcn-daily-fetch` | NOAA GHCN-Daily station observations (daily precip and max/min/mean temperature, ~130,000 stations) → station Zarr. No credentials. |
@@ -65,6 +66,7 @@ credentialed or source-specific fetcher only when it does not.
 | `downscale` | Spatial downscaling onto a finer grid (by factor, finer resolution, or a reference grid) via `--algorithm` (`linear-interpolation` or `q-q` empirical quantile mapping) |
 | `coarsen` | Coarsen or align a grid onto a target `(resolution, offset)` or another Zarr's grid, by linear interpolation or an area-weighted (conservative) mean — adds no information |
 | `edit-coords` | Rename data variables, coordinates, or dims (`--rename OLD=NEW`) and re-index a dim by another 1-D coordinate (`--swap-dims OLD=NEW`); refuses edits that lose an ontology dim |
+| `clip-values` | Limit values to `--min` / `--max` (e.g. `--min 0` to remove negative rainfall); NaN stays NaN |
 | `drop` | Drop named data variables or non-index coordinates (`--name`) — e.g. stray `valid_time` / `spatial_ref` before `concat` |
 | `concat` | Join Zarr stores along a named dim (incl. new dims with coord values) |
 | `merge` | Combine the variables of several Zarrs into one dataset on their shared coordinates |
@@ -72,12 +74,13 @@ credentialed or source-specific fetcher only when it does not.
 | `summarize-dim` | Summarize named dims with a statistic (mean/std/min/max/sum/median/quantile) — e.g. ensemble spread as the std across `number`, a 10–90% band with `--method quantile -q 0.1 -q 0.9`, or a time-mean baseline. `--by LABEL` gives one value per label (per county, per season), e.g. after `label-group` |
 | `point-value` | Sample a gridded dataset at point locations (station Zarr, `--point LAT,LON[,ID]`, or CSV) into a `station_id` point_obs dataset — nearest, bilinear, or N×N cell-mean — for grid-vs-station `difference` / `verify` |
 | `local-extrema` | Find the local highs or lows of a gridded field (pressure centres, rainfall maxima) into a `station_id` point_obs dataset of locations and central values — for H / L map labels or listing centres |
-| `csv-io` | Export a Zarr to a CSV or Excel table (units in the headers; `--pivot` for one column per date), or read a CSV or Excel sheet — station records, a gridded table, or one gauge (`--point`) — into a Zarr. Day-first dates need `--date-format`; missing codes need `--na-value`. |
+| `csv-io` | Export a Zarr as it is to a CSV or Excel table (units in the headers), or read a CSV or Excel sheet — station records, a gridded table, or one gauge (`--point`) — into a Zarr. Day-first dates need `--date-format`; missing codes need `--na-value`. |
 | `netcdf-io` | Export a Zarr to a NetCDF `.nc` file (attrs and history kept), or read one or more `.nc` files into a Zarr. Variables without units need `--units VAR=UNITS`. |
 | `difference` | Subtract one dataset from another (A − B) with inner-join alignment and broadcasting — anomalies vs a baseline, scenario-minus-historical change maps |
 | `standardize-anomaly` | Standardized anomaly aka z-score: `(field − clim_avg) / clim_std` against a climatology (e.g. `clim-fetch`) — dimensionless output, errors on units mismatch. For a plain physical-unit anomaly, use `difference` instead. |
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
-| `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). |
+| `wind-speed-direction` | Wind speed (`hypot(u, v)`) and the directions the wind blows from and to (degrees clockwise from north) from a `--u` / `--v` component pair; calm cells (speed ≤ `--calm-speed`) get NaN direction |
+| `verify` | Forecast verification for every lead: pairs forecast and obs (optional `--filter` masks), pools the samples into one score or keeps dims (`--keep`) or `--by` labels, optionally `--lat-weighted`, and writes RMSE, correlation, ACC, POD/FAR/ETS, Heidke, BSS, RPSS, spread, reliability and ROC, with the sample count behind each value. |
 | `pbc-correct` | Probabilistic bias correction (PBC) of an ensemble's quintile probabilities: Debias++, Persistence++ and Climatology++ trained on hindcasts and obs; `--components raw` puts a raw ensemble on the same quintiles. |
 | `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
 
@@ -87,7 +90,7 @@ dataset output.
 
 | Skill | What it does |
 |---|---|
-| `resolve-region` | Resolve a country, multi-country region, ocean box, state/province/county, or landmark to a `--bbox N/W/S/E` (and optional boundary polygon GeoJSON). |
+| `resolve-region` | Resolve a country, multi-country region, ocean box, state/province/county, or landmark to a `--bbox N/W/S/E` (and optional boundary polygon GeoJSON, or with `--level admin_1` every county of a country in one file). |
 | `resolve-time` | Resolve relative calendar dates ("the last two weeks", `latest`, `now-3d`) to absolute `--start-time`/`--end-time` or `--date`. Latest published day is the fetcher's `--probe-latest`, not this skill. |
 | `inspect-zarr` | Print dims, coordinate values, and a bounded data-variable summary of a Zarr (stdout; no write). Data arrays can be huge — this skill never dumps them in full. |
 | `provenance` | Inspect `weather_skills_history` on a Zarr, figure (PNG/JPEG/GIF/HTML/PDF/SVG), GeoJSON, or CSV/Excel table (DAG lineage, JSON, or a commit-pinned reproduction script). |

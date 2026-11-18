@@ -83,11 +83,11 @@ def test_default_bundle_two_points(mod, monkeypatch, tmp_path):
     ds = xr.open_zarr(out)
     assert list(ds["station_id"].values) == ["nairobi", "P1"]
     assert ds["time"].values == np.datetime64("2026-10-19T18:00")
-    # tp at lead h covers (h-3, h]: lead 0 (3 h before forecast zero) dropped,
+    # precip at lead h covers (h-3, h]: lead 0 (3 h before forecast zero) dropped,
     # the rest labelled at the interval start; nothing covers [6 h, 9 h).
     assert list(ds["step"].values.astype("timedelta64[h]").astype(int)) == [0, 3, 6]
-    np.testing.assert_allclose(ds["tp"].sel(station_id="nairobi").values, [4.0, 8.0, np.nan])
-    assert ds["tp"].attrs["units"] == "mm day-1"
+    np.testing.assert_allclose(ds["precip"].sel(station_id="nairobi").values, [4.0, 8.0, np.nan])
+    assert ds["precip"].attrs["units"] == "mm day-1"
     # t2m is instantaneous and keeps its lead.
     np.testing.assert_allclose(ds["t2m"].sel(station_id="P1").values, [15, 14, 20])
     assert ds["t2m"].attrs["units"] == "degree_Celsius"
@@ -138,7 +138,7 @@ def test_level_and_distribution(mod, monkeypatch, tmp_path):
     assert ds.sizes["step"] == 3
 
 
-def test_tp_distribution_shifts_with_tp(mod, monkeypatch, tmp_path):
+def test_precip_distribution_shifts_with_precip(mod, monkeypatch, tmp_path):
     import xarray as xr
 
     def respond(url, params):
@@ -162,7 +162,7 @@ def test_tp_distribution_shifts_with_tp(mod, monkeypatch, tmp_path):
         "--point",
         "-1.29,36.82",
         "-v",
-        "tp",
+        "precip",
         "--distribution",
         "--max-lead",
         "2D",
@@ -170,11 +170,11 @@ def test_tp_distribution_shifts_with_tp(mod, monkeypatch, tmp_path):
         str(out),
     )
     ds = xr.open_zarr(out)
-    assert set(ds.data_vars) == {"tp", "tp_std", "tp_p90", "tp_gt_0p25mm"}
+    assert set(ds.data_vars) == {"precip", "precip_std", "precip_p90", "precip_gt_0p25mm"}
     assert list(ds["step"].values.astype("timedelta64[h]").astype(int)) == [0, 3]
-    np.testing.assert_allclose(ds["tp_p90"].values[0], [16.0, 32.0])
-    np.testing.assert_allclose(ds["tp_gt_0p25mm"].values[0], [0.5, 0.5])
-    assert ds["tp_gt_0p25mm"].attrs["units"] == "1"
+    np.testing.assert_allclose(ds["precip_p90"].values[0], [16.0, 32.0])
+    np.testing.assert_allclose(ds["precip_gt_0p25mm"].values[0], [0.5, 0.5])
+    assert ds["precip_gt_0p25mm"].attrs["units"] == "1"
 
 
 def test_point_units_for_unknown_field_left_unset(mod):

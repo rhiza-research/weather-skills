@@ -92,7 +92,7 @@ def _fake_api(monkeypatch, mod, tmp_path, gridded):
     return calls
 
 
-def test_tp_becomes_rate_at_interval_start_from_forecast_zero(mod, monkeypatch, tmp_path):
+def test_precip_becomes_rate_at_interval_start_from_forecast_zero(mod, monkeypatch, tmp_path):
     import xarray as xr
 
     def gridded(params):
@@ -110,14 +110,14 @@ def test_tp_becomes_rate_at_interval_start_from_forecast_zero(mod, monkeypatch, 
     assert ds.attrs["windborne_initialization_time"] == "2026-10-19T20:00:00Z"
     # Lead h holds (h-3, h]: lead 0 dropped, others relabelled to h-3, mm/3h -> mm/day.
     assert list(ds["step"].values.astype("timedelta64[h]").astype(int)) == [0, 3, 6]
-    np.testing.assert_allclose(ds["tp"].isel(latitude=0, longitude=0).values, [8.0, 16.0, 24.0])
-    assert ds["tp"].attrs["units"] == "mm day-1"
+    np.testing.assert_allclose(ds["precip"].isel(latitude=0, longitude=0).values, [8.0, 16.0, 24.0])
+    assert ds["precip"].attrs["units"] == "mm day-1"
     # bbox window, latitude ascending.
     assert list(ds["latitude"].values) == [1.0, 1.25, 1.5]
     assert list(ds["longitude"].values) == [36.25, 36.5]
 
 
-def test_tp_shifts_but_t2m_keeps_its_lead(mod, monkeypatch, tmp_path):
+def test_precip_shifts_but_t2m_keeps_its_lead(mod, monkeypatch, tmp_path):
     import xarray as xr
 
     def gridded(params):
@@ -133,14 +133,16 @@ def test_tp_shifts_but_t2m_keeps_its_lead(mod, monkeypatch, tmp_path):
     assert list(ds["step"].values.astype("timedelta64[h]").astype(int)) == [0, 3, 6]
     # t2m is instantaneous: lead h holds the value at forecast zero + h.
     np.testing.assert_allclose(ds["t2m"].isel(latitude=0, longitude=0).values, [0.0, 3.0, 6.0])
-    # tp at lead h covers (h-3, h]: relabelled to h-3; nothing covers [6 h, 9 h).
-    np.testing.assert_allclose(ds["tp"].isel(latitude=0, longitude=0).values, [8.0, 16.0, np.nan])
+    # precip at lead h covers (h-3, h]: relabelled to h-3; nothing covers [6 h, 9 h).
+    np.testing.assert_allclose(
+        ds["precip"].isel(latitude=0, longitude=0).values, [8.0, 16.0, np.nan]
+    )
 
 
-def test_max_lead_zero_with_tp_errors(mod, monkeypatch, tmp_path, capsys):
+def test_max_lead_zero_with_precip_errors(mod, monkeypatch, tmp_path, capsys):
     _fake_api(monkeypatch, mod, tmp_path, lambda p: {})
     with pytest.raises(SystemExit) as exc:
-        run_skill(mod.fetch, "-v", "tp", "--max-lead", "0", "-o", str(tmp_path / "x.zarr"))
+        run_skill(mod.fetch, "-v", "precip", "--max-lead", "0", "-o", str(tmp_path / "x.zarr"))
     assert exc.value.code == 2
     assert "no value at lead 0" in capsys.readouterr().err
     assert not (tmp_path / "x.zarr").exists()

@@ -57,7 +57,7 @@ def remote(fetch_mod, monkeypatch):
 
 def test_to_standard_maps_live_layout(fetch_mod):
     out = fetch_mod._to_standard(_live_store())
-    assert out["tp"].dims == ("number", "step", "latitude", "longitude")
+    assert out["precip"].dims == ("number", "step", "latitude", "longitude")
     assert out["time"].values == np.datetime64("2026-09-18", "ns")
     hours = out["step"].values.astype("timedelta64[h]").astype(int)
     assert list(hours) == [0, 24, 48]
@@ -71,12 +71,12 @@ def test_fetch_writes_latest_init_as_rates(tmp_path, fetch_mod, remote):
     assert remote["url"].endswith("/zarr/total_precipitation_24h_acc_imerg_0p25/2026-09-18-00.zarr")
     assert Path(out).exists()
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert list(ds.data_vars) == ["tp"]
-        assert ds["tp"].attrs["units"] == "mm day-1"
-        assert ds["tp"].attrs.get("data_interval")
+        assert list(ds.data_vars) == ["precip"]
+        assert ds["precip"].attrs["units"] == "mm day-1"
+        assert ds["precip"].attrs.get("data_interval")
         days = np.asarray(ds["step"].values).astype("timedelta64[D]").astype(int)
         assert list(days) == [0, 1, 2]
-        np.testing.assert_allclose(ds["tp"].values[0, :, 0, 0], [5.0, 5.0, 5.0])
+        np.testing.assert_allclose(ds["precip"].values[0, :, 0, 0], [5.0, 5.0, 5.0])
         assert ds.attrs["weather_skills_source"] == "cumulus:total_precipitation_24h_acc_imerg_0p25"
     assert load_history(out)[-1]["skill"] == "cumulus-fetch"
 
@@ -86,7 +86,7 @@ def test_fetch_does_not_deaccumulate_period_totals(tmp_path, fetch_mod, monkeypa
     out = tmp_path / "cumulus_period.zarr"
     run_skill(fetch_mod.fetch, "-o", str(out))
     with xr.open_zarr(out, consolidated=True) as ds:
-        np.testing.assert_allclose(ds["tp"].values[0, :, 0, 0], [5.0, 2.0, 0.0])
+        np.testing.assert_allclose(ds["precip"].values[0, :, 0, 0], [5.0, 2.0, 0.0])
 
 
 def test_fetch_honors_dataset_date_and_bbox(tmp_path, fetch_mod, remote):
@@ -186,7 +186,7 @@ def test_nonpositive_workers_exits_2(tmp_path, fetch_mod, remote, workers):
 
 @pytest.mark.parametrize("flag", ["--dataset", "--probe-latest"])
 def test_unknown_dataset_exits_2(tmp_path, fetch_mod, remote, flag):
-    # Any other folder's field would be renamed to tp and stamped as precipitation.
+    # Any other folder's field would be renamed to precip and stamped as precipitation.
     with pytest.raises(SystemExit) as exc:
         run_skill(fetch_mod.fetch, flag, "2m_temperature", "-o", str(tmp_path / "out.zarr"))
     assert exc.value.code == 2
@@ -217,7 +217,7 @@ def test_trailing_empty_leads_dropped_and_reported(
         days = np.asarray(ds["step"].values).astype("timedelta64[D]").astype(int)
         assert list(days) == [0, 1, 2]
         # The interior gap stays NaN: never filled.
-        np.testing.assert_allclose(ds["tp"].values[0, :, 0, 0], [5.0, np.nan, 2.0])
+        np.testing.assert_allclose(ds["precip"].values[0, :, 0, 0], [5.0, np.nan, 2.0])
 
 
 def test_all_empty_store_exits_1(tmp_path, fetch_mod, monkeypatch, remote):
@@ -244,7 +244,7 @@ _WINDOW_STORES = [
 
 
 def _mock_windows(monkeypatch, fetch_mod, opened=None, short=()):
-    """Per-init stores whose tp is the init's day of month; ``short`` inits lack leads 2+."""
+    """Per-init stores whose precip is the init's day of month; ``short`` inits lack leads 2+."""
 
     def fake_open(url, bbox, workers):
         name = url.rsplit("/", 1)[-1]
@@ -269,10 +269,10 @@ def test_init_window_keeps_00utc_inits_on_a_time_axis(tmp_path, fetch_mod, monke
     # 2025-02-01-12 is not a 00 UTC init.
     assert opened == ["2025-01-31-00.zarr", "2025-02-01-00.zarr"]
     with xr.open_zarr(out, consolidated=True) as ds:
-        assert ds["tp"].dims == ("time", "step", "number", "latitude", "longitude")
+        assert ds["precip"].dims == ("time", "step", "number", "latitude", "longitude")
         days = ds["time"].values.astype("datetime64[D]").astype(str).tolist()
         assert days == ["2025-01-31", "2025-02-01"]
-        np.testing.assert_allclose(ds["tp"].values[:, 0, 0, 0, 0], [31.0, 1.0])
+        np.testing.assert_allclose(ds["precip"].values[:, 0, 0, 0, 0], [31.0, 1.0])
     assert load_history(out)[-1]["args"]["start_time"] == ["2025-01-31"]
 
 
@@ -306,8 +306,8 @@ def test_init_window_keeps_short_init_nan(tmp_path, fetch_mod, monkeypatch, caps
     assert "Cumulus init 2025-01-31 has no data from step 1 d" in capsys.readouterr().err
     with xr.open_zarr(out, consolidated=True) as ds:
         assert ds.sizes["step"] == 3
-        assert ds["tp"].isel(time=1, step=slice(1, None)).isnull().all()
-        assert ds["tp"].isel(time=0).notnull().all()
+        assert ds["precip"].isel(time=1, step=slice(1, None)).isnull().all()
+        assert ds["precip"].isel(time=0).notnull().all()
 
 
 def test_date_and_init_window_together_exit_2(tmp_path, fetch_mod, monkeypatch):
