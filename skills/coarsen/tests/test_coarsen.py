@@ -82,6 +82,10 @@ def test_coarsen_reference_grid_copies_exact_coords(tmp_path, coarsen):
     expected = normalize_latlon_coords(xr.open_zarr(ref_path, consolidated=True))
     assert np.array_equal(result["latitude"].values, expected["latitude"].values)
     assert np.array_equal(result["longitude"].values, expected["longitude"].values)
+    # The reference grid is recorded as an input, so the history covers it.
+    inputs = load_history(out)[-1]["input"]
+    assert [i["basename"] for i in inputs] == ["fine.zarr", "ref.zarr"]
+    assert all("history" in i for i in inputs)
 
 
 def test_coarsen_reference_grid_rejects_finer(tmp_path, coarsen):
