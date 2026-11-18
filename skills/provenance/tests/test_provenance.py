@@ -2,6 +2,7 @@
 
 import json
 import re
+import subprocess
 
 import pytest
 from conftest import load_skill, make_gridded, run_skill, write_zarr
@@ -144,8 +145,8 @@ def test_script_pins_commit_and_reproduces_join(tmp_path, provenance, capsys):
     run_skill(provenance, "-i", str(out), "--format", "script")
 
     captured = capsys.readouterr().out
-    assert "uvx --from git+https://github.com/example/weather-skills@aaaaaaaaaaaa" in captured
-    assert "uvx --from git+https://github.com/example/weather-skills@deadbeefcafebabe" in captured
+    assert "$(_script https://github.com/example/weather-skills aaaaaaaaaaaa" in captured
+    assert "$(_script https://github.com/example/weather-skills deadbeefcafebabe" in captured
     assert "chirps-fetch" in captured
     assert "dynamical-fetch" in captured
     assert "concat" in captured
@@ -197,12 +198,45 @@ def _script(provenance, path, capsys):
     return capsys.readouterr().out
 
 
-def test_script_unpinned_step_runs_from_dev(tmp_path, provenance, capsys):
+def test_script_unpinned_step_runs_from_main(tmp_path, provenance, capsys):
+    # Every step runs its script from a checkout, whatever the repo's CLI is called.
     out = _stamp_history(tmp_path / "f.zarr", [_fetch("chirps-fetch")])
 
     captured = _script(provenance, out, capsys)
 
-    assert "git+https://github.com/rhiza-research/weather-skills@dev weather-skills" in captured
+    repo = "https://github.com/weather-skills/weather-skills-catalog"
+    assert f'uv run --script "$(_script {repo} main chirps-fetch)"' in captured
+    assert "uvx" not in captured
+
+
+def test_script_helper_finds_pack_layout(tmp_path, provenance, capsys):
+    # Only skills/<pack>/<skill> is found; the old flat skills/<skill> is not.
+    out = _stamp_history(tmp_path / "f.zarr", [_fetch("chirps-fetch")])
+    script = _script(provenance, out, capsys)
+    helper = script[script.index("_script() {") : script.index("}\n") + 1]
+    for name, layout in [("new", "skills/weather-skills/a"), ("old", "skills/a")]:
+        (tmp_path / "_checkouts" / f"{name}@r" / layout / "scripts").mkdir(parents=True)
+        (tmp_path / "_checkouts" / f"{name}@r" / layout / "scripts" / "a.py").touch()
+
+    found = subprocess.run(
+        ["bash", "-c", f"{helper}\n_script x/new r a"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+
+    assert found == ["_checkouts/new@r/skills/weather-skills/a/scripts/a.py"]
+    for args, name in [("x/new r b", "b"), ("x/old r a", "a")]:
+        missing = subprocess.run(
+            ["bash", "-c", f"{helper}\n_script {args}"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
+        assert missing.returncode == 1
+        assert missing.stdout == ""
+        assert f"no script for {name}" in missing.stderr
 
 
 def test_script_runs_other_repo_skill_from_checkout(tmp_path, provenance, capsys):
@@ -222,9 +256,8 @@ def test_script_runs_other_repo_skill_from_checkout(tmp_path, provenance, capsys
 
     captured = _script(provenance, out, capsys)
 
-    assert "_checkout() {" in captured
-    assert f'uv run --script "$(_checkout {repo} bbbb)"/skills/make-map/scripts/*.py' in captured
-    assert f"{repo}@bbbb weather-skills" not in captured
+    assert "_script() {" in captured
+    assert f'uv run --script "$(_script {repo} bbbb make-map)"' in captured
 
 
 def test_script_emits_structured_args(tmp_path, provenance, capsys):
@@ -247,7 +280,7 @@ def test_script_verify_join_uses_forecast_and_obs(tmp_path, provenance, capsys):
 
     captured = _script(provenance, out, capsys)
 
-    assert "verify --forecast a.zarr --obs b.zarr --output v.zarr" in captured
+    assert 'verify)" --forecast a.zarr --obs b.zarr --output v.zarr' in captured
 
 
 def test_script_reproduces_join_before_later_step(tmp_path, clip_region, provenance, capsys):
@@ -277,10 +310,10 @@ def test_script_reproduces_join_before_later_step(tmp_path, clip_region, provena
     # <UPSTREAM> for a core that leaves inputs out of args.
     for out in ("a", "b"):
         assert re.search(
-            rf"clip-region --bbox -1/10/-3/13 --input \S+ --output {out}\.zarr", captured
+            rf'clip-region\)" --bbox -1/10/-3/13 --input \S+ --output {out}\.zarr', captured
         )
-    assert "difference --input a.zarr --input b.zarr --output step1.zarr" in captured
-    assert "clip-region --bbox -1/10/-2/12 --input step1.zarr --output final.zarr" in captured
+    assert 'difference)" --input a.zarr --input b.zarr --output step1.zarr' in captured
+    assert 'clip-region)" --bbox -1/10/-2/12 --input step1.zarr --output final.zarr' in captured
 
 
 def test_malformed_entries_do_not_traceback(tmp_path, provenance, capsys):
@@ -296,7 +329,7 @@ def test_malformed_entries_do_not_traceback(tmp_path, provenance, capsys):
 
     assert "args: (malformed: not an object)" in human
     assert "input: [?, ?]" in human
-    assert "concat --input step1.zarr --input '?'" in captured
+    assert "concat)\" --input step1.zarr --input '?'" in captured
 
 
 def test_reads_html_and_jpeg_figures(tmp_path, provenance, capsys):
@@ -366,7 +399,7 @@ def test_script_reruns_resolve_region_geojson(tmp_path, provenance, capsys):
 
     captured = _script(provenance, geo, capsys)
 
-    assert "resolve-region 'Indian Ocean' --pad 0.25 --geojson io.geojson" in captured
+    assert "resolve-region)\" 'Indian Ocean' --pad 0.25 --geojson io.geojson" in captured
     assert "--code" not in captured
 
 
@@ -388,7 +421,7 @@ def test_script_keeps_recorded_input_flags(tmp_path, provenance, capsys):
 
     spec = """'{"data": [{"type": "heatmap", "z": "@G.precip"}]}'"""
     assert (
-        "plot --const top=5 --input /x/grid.zarr=G --input /x/coast.geojson=C "
+        'plot)" --const top=5 --input /x/grid.zarr=G --input /x/coast.geojson=C '
         f"--spec {spec} --output rep.zarr"
     ) in captured
     assert "<UPSTREAM>" not in captured
@@ -402,9 +435,9 @@ def test_script_links_recorded_input_to_upstream(tmp_path, provenance, capsys):
     captured = _script(provenance, out, capsys)
 
     spec = """'{"data": [{"type": "heatmap", "z": "@G.precip"}]}'"""
-    assert "chirps-fetch --output step1.zarr" in captured
+    assert 'chirps-fetch)" --output step1.zarr' in captured
     assert (
-        "plot --const top=5 --input step1.zarr=G --input /x/coast.geojson=C "
+        'plot)" --const top=5 --input step1.zarr=G --input /x/coast.geojson=C '
         f"--spec {spec} --output rep.zarr"
     ) in captured
     assert captured.count("--input") == 2
@@ -423,8 +456,8 @@ def test_script_reads_imported_file_from_its_recorded_flag(tmp_path, provenance,
 
     captured = _script(provenance, out, capsys)
 
-    assert "csv-io --csv /x/rain.csv --output step1.zarr" in captured
-    assert "drop --input step1.zarr --output rep.zarr" in captured
+    assert 'csv-io)" --csv /x/rain.csv --output step1.zarr' in captured
+    assert 'drop)" --input step1.zarr --output rep.zarr' in captured
     assert "<UPSTREAM>" not in captured
 
 
@@ -443,7 +476,7 @@ def test_script_keeps_imported_join_files_at_recorded_paths(tmp_path, provenance
 
     captured = _script(provenance, out, capsys)
 
-    assert "netcdf-io --netcdf /x/a.nc --netcdf /x/b.nc --output rep.zarr" in captured
+    assert 'netcdf-io)" --netcdf /x/a.nc --netcdf /x/b.nc --output rep.zarr' in captured
     assert "--input" not in captured
     assert "yourself" not in captured
 
@@ -470,10 +503,10 @@ def test_script_relinks_every_input_named_in_args(tmp_path, provenance, capsys):
 
     captured = _script(provenance, out, capsys)
 
-    assert "chirps-fetch --output a.zarr" in captured
-    assert "imerg-fetch --output b.zarr" in captured
+    assert 'chirps-fetch)" --output a.zarr' in captured
+    assert 'imerg-fetch)" --output b.zarr' in captured
     assert (
-        "coarsen --input a.zarr --method conservative --reference-grid b.zarr --output step1.zarr"
+        'coarsen)" --input a.zarr --method conservative --reference-grid b.zarr --output step1.zarr'
     ) in captured
-    assert "drop --input step1.zarr --output rep.zarr" in captured
+    assert 'drop)" --input step1.zarr --output rep.zarr' in captured
     assert captured.count("--input") == 2
