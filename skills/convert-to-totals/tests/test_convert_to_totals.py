@@ -443,3 +443,49 @@ def test_convert_no_complete_interval_error_suggests_fix(tmp_path, convert_to_to
         run_skill(convert_to_totals, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
     err = capsys.readouterr().err
     assert "--probe-latest" in err and "2026-01-01" in err
+
+
+def _weekly_means(step_days, n):
+    """One 7-day mean rate every ``step_days`` days, as for a week-1 lead at each init."""
+    times = np.datetime64("2026-01-01", "ns") + np.arange(n) * np.timedelta64(step_days, "D")
+    attrs = {"units": "mm day-1", "standard_name": "lwe_precipitation_rate"}
+    attrs[DATA_INTERVAL_ATTR] = "7 day"
+    return xr.Dataset(
+        {"precip": (("time", "latitude", "longitude"), np.full((n, 1, 1), 2.0), attrs)},
+        coords={"time": times, "latitude": [1.0], "longitude": [10.0]},
+    )
+
+
+def test_refuses_rates_built_from_overlapping_samples(tmp_path, aggregate, convert_to_totals):
+    """Weekly means every 2 days aggregate to a 28-day rate, but not to a total."""
+    src = write_zarr(_weekly_means(2, 14), tmp_path / "in.zarr")
+    agg = tmp_path / "agg.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(agg), "--period", "28 day")
+    assert "overlapping samples" in xr.open_zarr(agg)["precip"].attrs["cell_methods"]
+    with pytest.raises(SystemExit) as exc:
+        run_skill(convert_to_totals, "-i", str(agg), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
+
+    # Re-aggregating keeps the mark, so a coarser period is refused too.
+    agg2 = tmp_path / "agg2.zarr"
+    run_skill(aggregate, "-i", str(agg), "-o", str(agg2), "--period", "56 day")
+    assert "overlapping samples" in xr.open_zarr(agg2)["precip"].attrs["cell_methods"]
+
+
+def test_non_overlapping_subset_converts(tmp_path, aggregate, convert_to_totals):
+    """The same weekly means, one init every 7 days, tile 28 days and convert."""
+    ds = _weekly_means(7, 4)
+    agg = tmp_path / "agg.zarr"
+    run_skill(
+        aggregate,
+        "-i",
+        str(write_zarr(ds, tmp_path / "in.zarr")),
+        "-o",
+        str(agg),
+        "--period",
+        "28 day",
+    )
+    assert "overlapping" not in xr.open_zarr(agg)["precip"].attrs["cell_methods"]
+    out = tmp_path / "out.zarr"
+    run_skill(convert_to_totals, "-i", str(agg), "-o", str(out))
+    assert xr.open_zarr(out)["precip"].values.ravel().tolist() == pytest.approx([56.0])

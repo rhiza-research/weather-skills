@@ -27,7 +27,10 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.8"
+_SKILL_VERSION = "0.0.9"
+
+# Written into cell_methods by aggregate-temporal on rates built from overlapping samples.
+OVERLAPPING_SAMPLES = "overlapping samples"
 
 
 def _resolve_dim(ds, time_dim):
@@ -156,6 +159,13 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
                 "run aggregate-temporal first"
             )
         cell_methods = str(da.attrs.get("cell_methods", ""))
+        if OVERLAPPING_SAMPLES in cell_methods:
+            raise UsageError(
+                f"variable {name!r} is a mean rate built from overlapping samples "
+                f"(cell_methods {cell_methods!r}); a total would count the same days "
+                "more than once. Select non-overlapping samples that tile the period "
+                "(e.g. every 7th init of a weekly mean), then aggregate-temporal again."
+            )
         if re.search(r":\s*(maximum|minimum)\b", cell_methods):
             raise UsageError(
                 f"variable {name!r} is an extreme, not a mean rate "
