@@ -14,6 +14,7 @@
 
 import json
 import sys
+from collections import namedtuple
 from functools import partial
 
 import numpy as np
@@ -178,89 +179,39 @@ def _roc_warned(p, event):
 
 
 # Statistics: per-sample values whose mean over any group feeds a metric.
-# Each has a long name, its units ("units" of the forecast, "units^2", or None for unitless)
-# and its function.
 _STATISTICS = {
-    "fcst": ("Forecast", "units", _fcst),
-    "obs": ("Observation", "units", _obs),
-    "bias": ("Forecast minus observation", "units", _bias),
-    "mae": ("Absolute error", "units", _mae),
-    "mse": ("Squared error", "units^2", _mse),
-    "mape": ("Absolute error relative to the observation", None, _mape),
-    "smape": ("Symmetric absolute percentage error", None, _smape),
-    "squared_fcst": ("Squared forecast", "units^2", _squared_fcst),
-    "squared_obs": ("Squared observation", "units^2", _squared_obs),
-    "covariance": ("Forecast times observation", "units^2", _covariance),
-    "squared_fcst_anom": ("Squared forecast anomaly", "units^2", _squared_fcst_anom),
-    "squared_obs_anom": ("Squared observation anomaly", "units^2", _squared_obs_anom),
-    "anom_covariance": (
-        "Forecast anomaly times observation anomaly",
-        "units^2",
-        _anom_covariance,
-    ),  # fmt: skip
-    "true_positives": (
-        "Hit (forecast and observed event)",
-        None,
-        partial(_contingency, fc_event=True, obs_event=1),
-    ),  # fmt: skip
-    "false_positives": (
-        "False alarm (forecast event, none observed)",
-        None,
-        partial(_contingency, fc_event=True, obs_event=0),
-    ),  # fmt: skip
-    "false_negatives": (
-        "Miss (observed event, none forecast)",
-        None,
-        partial(_contingency, fc_event=False, obs_event=1),
-    ),  # fmt: skip
-    "true_negatives": (
-        "Correct negative (no event forecast or observed)",
-        None,
-        partial(_contingency, fc_event=False, obs_event=0),
-    ),  # fmt: skip
-    "obs_event": ("Observed event", None, _obs_event),
-    "brier": ("Brier score", None, _brier),
-    "crps": ("Continuous ranked probability score", "units", partial(_crps, fair=False)),
-    "crps_fair": ("Fair continuous ranked probability score", "units", partial(_crps, fair=True)),
-    "ensemble_variance": (
-        "Ensemble variance (finite-ensemble corrected)",
-        "units^2",
-        _ensemble_variance,
-    ),  # fmt: skip
-    "rps": ("Ranked probability score", None, partial(_rps, clim=False)),
-    "rps_clim": ("Ranked probability score of climatology", None, partial(_rps, clim=True)),
-    "n_correct": (
-        "Forecast and observation in the same category",
-        None,
-        partial(_categories, which="both"),
-    ),  # fmt: skip
-    "n_fcst_bin": ("Forecast in the category", None, partial(_categories, which="fcst")),
-    "n_obs_bin": ("Observation in the category", None, partial(_categories, which="obs")),
-    "reliability_count": (
-        "Forecast probability in the bin",
-        None,
-        partial(_reliability_bin, weight="count"),
-    ),  # fmt: skip
-    "reliability_fcst": (
-        "Forecast probability, counted in its bin",
-        None,
-        partial(_reliability_bin, weight="fcst"),
-    ),  # fmt: skip
-    "reliability_obs": (
-        "Observed event, counted in the forecast probability's bin",
-        None,
-        partial(_reliability_bin, weight="obs"),
-    ),  # fmt: skip
-    "roc_hits": (
-        "Observed event warned at the probability threshold",
-        None,
-        partial(_roc_warned, event=1),
-    ),  # fmt: skip
-    "roc_false_alarms": (
-        "Non-event warned at the probability threshold",
-        None,
-        partial(_roc_warned, event=0),
-    ),  # fmt: skip
+    "fcst": _fcst,
+    "obs": _obs,
+    "bias": _bias,
+    "mae": _mae,
+    "mse": _mse,
+    "mape": _mape,
+    "smape": _smape,
+    "squared_fcst": _squared_fcst,
+    "squared_obs": _squared_obs,
+    "covariance": _covariance,
+    "squared_fcst_anom": _squared_fcst_anom,
+    "squared_obs_anom": _squared_obs_anom,
+    "anom_covariance": _anom_covariance,
+    "true_positives": partial(_contingency, fc_event=True, obs_event=1),
+    "false_positives": partial(_contingency, fc_event=True, obs_event=0),
+    "false_negatives": partial(_contingency, fc_event=False, obs_event=1),
+    "true_negatives": partial(_contingency, fc_event=False, obs_event=0),
+    "obs_event": _obs_event,
+    "brier": _brier,
+    "crps": partial(_crps, fair=False),
+    "crps_fair": partial(_crps, fair=True),
+    "ensemble_variance": _ensemble_variance,
+    "rps": partial(_rps, clim=False),
+    "rps_clim": partial(_rps, clim=True),
+    "n_correct": partial(_categories, which="both"),
+    "n_fcst_bin": partial(_categories, which="fcst"),
+    "n_obs_bin": partial(_categories, which="obs"),
+    "reliability_count": partial(_reliability_bin, weight="count"),
+    "reliability_fcst": partial(_reliability_bin, weight="fcst"),
+    "reliability_obs": partial(_reliability_bin, weight="obs"),
+    "roc_hits": partial(_roc_warned, event=1),
+    "roc_false_alarms": partial(_roc_warned, event=0),
 }
 _CONTINGENCY = ("true_positives", "false_positives", "false_negatives", "true_negatives")
 
@@ -308,8 +259,7 @@ def _csi(g):
 
 
 def _balanced_error_rate(g):
-    miss_rate = g["false_negatives"] / (g["true_positives"] + g["false_negatives"])
-    return (miss_rate + _pofd(g)) / 2
+    return (1 - _pod(g) + _pofd(g)) / 2  # mean of the miss rate and pofd
 
 
 def _frequency_bias(g):
@@ -361,113 +311,94 @@ def _roc(g):
     }
 
 
-def _metric_entry(statistics, function, names, needs=(), allows=()):
-    """A metric: its statistics, its function, the long name of each output, the inputs it
-    needs and the optional inputs it takes ("ensemble" = a forecast with >= 2 members)."""
-    return {
-        "statistics": statistics,
-        "function": function,
-        "names": names,
-        "needs": set(needs),
-        "allows": set(allows),
-    }
-
-
-_EVENT = {"needs": ("--threshold",), "allows": ("--member-fraction",)}
-_PROBABILITY = {"needs": ("--threshold",), "allows": ("--probability",)}
-_EDGES = {"allows": ("--fc-edges", "--obs-edges")}
-
-# Metrics. An _identity metric is the group mean of its own statistic and keeps its units.
+# A metric: its statistics, its function, the long name of each output, the inputs it needs
+# and the optional inputs it takes ("ensemble" = a forecast with >= 2 members), and the units
+# of its outputs ("units" of the forecast, "units^2", or None for unitless).
+Metric = namedtuple(
+    "Metric", "statistics function names needs allows units", defaults=(set(), set(), None)
+)
+_EVENT = {"needs": {"--threshold"}, "allows": {"--member-fraction"}}
+_PROBABILITY = {"needs": {"--threshold"}, "allows": {"--probability"}}
+_EDGES = {"allows": {"--fc-edges", "--obs-edges"}}
 _METRICS = {
-    "fcst": _metric_entry(("fcst",), _identity, {"fcst": "Mean forecast"}),
-    "obs": _metric_entry(("obs",), _identity, {"obs": "Mean observation"}),
-    "bias": _metric_entry(("bias",), _identity, {"bias": "Mean bias (forecast - observation)"}),
-    "mae": _metric_entry(("mae",), _identity, {"mae": "Mean absolute error"}),
-    "mse": _metric_entry(("mse",), _identity, {"mse": "Mean square error"}),
-    "mape": _metric_entry(("mape",), _identity, {"mape": "Mean absolute percentage error"}),
-    "smape": _metric_entry(
-        ("smape",), _identity, {"smape": "Symmetric mean absolute percentage error"}
+    "fcst": Metric(("fcst",), _identity, {"fcst": "Mean forecast"}, units="units"),
+    "obs": Metric(("obs",), _identity, {"obs": "Mean observation"}, units="units"),
+    "bias": Metric(("bias",), _identity, {"bias": "Mean forecast - observation"}, units="units"),
+    "mae": Metric(("mae",), _identity, {"mae": "Mean absolute error"}, units="units"),
+    "mse": Metric(("mse",), _identity, {"mse": "Mean square error"}, units="units^2"),
+    "rmse": Metric(("mse",), _rmse, {"rmse": "Root mean square error"}, units="units"),
+    "mape": Metric(("mape",), _identity, {"mape": "Mean absolute percentage error"}),
+    "smape": Metric(("smape",), _identity, {"smape": "Symmetric mean absolute percentage error"}),
+    "crps": Metric(
+        ("crps",), _identity, {"crps": "Continuous ranked probability score"}, units="units"
     ),
-    "crps": _metric_entry(("crps",), _identity, {"crps": "Continuous ranked probability score"}),
-    "crps_fair": _metric_entry(
+    "crps_fair": Metric(
         ("crps_fair",),
         _identity,
         {"crps_fair": "Fair continuous ranked probability score"},
-        needs=("ensemble",),
-    ),  # fmt: skip
-    "brier": _metric_entry(("brier",), _identity, {"brier": "Brier score"}, **_PROBABILITY),
-    "rps": _metric_entry(("rps",), _identity, {"rps": "Ranked probability score"}, **_EDGES),
-    "rmse": _metric_entry(("mse",), _rmse, {"rmse": "Root mean square error"}),
-    "pearson": _metric_entry(
+        needs={"ensemble"},
+        units="units",
+    ),
+    "spread": Metric(
+        ("ensemble_variance", "mse"),
+        _spread,
+        {"spread": "Ensemble spread / RMSE of the ensemble mean"},
+        needs={"ensemble"},
+    ),
+    "pearson": Metric(
         ("fcst", "obs", "squared_fcst", "squared_obs", "covariance"),
         _pearson,
         {"pearson": "Pearson correlation"},
-    ),  # fmt: skip
-    "acc": _metric_entry(
+    ),
+    "acc": Metric(
         ("squared_fcst_anom", "squared_obs_anom", "anom_covariance"),
         _acc,
         {"acc": "Anomaly correlation coefficient"},
-        needs=("--clim",),
-    ),  # fmt: skip
-    "bss": _metric_entry(
-        ("brier", "obs_event"),
-        _bss,
-        {"bss": "Brier skill score (reference: observed base rate)"},
-        **_PROBABILITY,
-    ),  # fmt: skip
-    "pod": _metric_entry(
+        needs={"--clim"},
+    ),
+    "pod": Metric(
         ("true_positives", "false_negatives"),
         _pod,
         {"pod": "Probability of detection"},
         **_EVENT,
-    ),  # fmt: skip
-    "far": _metric_entry(
+    ),
+    "far": Metric(
         ("true_positives", "false_positives"), _far, {"far": "False alarm ratio"}, **_EVENT
     ),
-    "pofd": _metric_entry(
+    "pofd": Metric(
         ("false_positives", "true_negatives"),
         _pofd,
         {"pofd": "Probability of false detection (false alarm rate)"},
         **_EVENT,
-    ),  # fmt: skip
-    "csi": _metric_entry(
-        ("true_positives", "false_positives", "false_negatives"),
-        _csi,
-        {"csi": "Critical success index"},
-        **_EVENT,
-    ),  # fmt: skip
-    "balanced_error_rate": _metric_entry(
+    ),
+    "csi": Metric(_CONTINGENCY[:3], _csi, {"csi": "Critical success index"}, **_EVENT),
+    "balanced_error_rate": Metric(
         _CONTINGENCY,
         _balanced_error_rate,
         {"balanced_error_rate": "Balanced error rate (mean of miss rate and false alarm rate)"},
         **_EVENT,
-    ),  # fmt: skip
-    "frequency_bias": _metric_entry(
-        ("true_positives", "false_positives", "false_negatives"),
+    ),
+    "frequency_bias": Metric(
+        _CONTINGENCY[:3],
         _frequency_bias,
         {"frequency_bias": "Frequency bias (forecast events / observed events)"},
         **_EVENT,
-    ),  # fmt: skip
-    "ets": _metric_entry(_CONTINGENCY, _ets, {"ets": "Equitable threat score"}, **_EVENT),
-    "heidke": _metric_entry(
+    ),
+    "ets": Metric(_CONTINGENCY, _ets, {"ets": "Equitable threat score"}, **_EVENT),
+    "heidke": Metric(
         ("n_correct", "n_fcst_bin", "n_obs_bin"),
         _heidke,
         {"heidke": "Heidke skill score"},
-        needs=("--bins",),
-    ),  # fmt: skip
-    "spread": _metric_entry(
-        ("ensemble_variance", "mse"),
-        _spread,
-        {"spread": "Ensemble spread / RMSE of the ensemble mean"},
-        needs=("ensemble",),
-    ),  # fmt: skip
-    "rpss": _metric_entry(
-        ("rps", "rps_clim"),
-        _rpss,
-        {"rpss": "Ranked probability skill score (reference: equal category odds)"},
-        **_EDGES,
-    ),  # fmt: skip
-    "reliability": _metric_entry(
+        needs={"--bins"},
+    ),
+    "brier": Metric(("brier",), _identity, {"brier": "Brier score"}, **_PROBABILITY),
+    "bss": Metric(
+        ("brier", "obs_event"),
+        _bss,
+        {"bss": "Brier skill score (reference: observed base rate)"},
+        **_PROBABILITY,
+    ),
+    "reliability": Metric(
         ("reliability_count", "reliability_fcst", "reliability_obs"),
         _reliability,
         {
@@ -476,8 +407,8 @@ _METRICS = {
             "sample_fraction": "Share of forecasts in the bin",
         },
         **_PROBABILITY,
-    ),  # fmt: skip
-    "roc": _metric_entry(
+    ),
+    "roc": Metric(
         ("roc_hits", "roc_false_alarms", "obs_event"),
         _roc,
         {
@@ -486,7 +417,14 @@ _METRICS = {
             "roc_area": "Area under the ROC curve",
         },
         **_PROBABILITY,
-    ),  # fmt: skip
+    ),
+    "rps": Metric(("rps",), _identity, {"rps": "Ranked probability score"}, **_EDGES),
+    "rpss": Metric(
+        ("rps", "rps_clim"),
+        _rpss,
+        {"rpss": "Ranked probability skill score (reference: equal category odds)"},
+        **_EDGES,
+    ),
 }
 
 
@@ -531,7 +469,7 @@ def _to_units(da, units, role):
     if units is None or da.pint.units is None:
         if (units is None) != (variable_units(da) is None):
             raise UsageError(f"{role} and the forecast must both carry units (or neither).")
-        return da.pint.dequantify() if da.pint.units is not None else da
+        return da.pint.dequantify()
     try:
         return da.pint.to(units).pint.dequantify()
     except (pint.DimensionalityError, pint_xarray.errors.PintExceptionGroup):
@@ -644,7 +582,7 @@ def verify(
     if forecast is None or obs is None:
         raise UsageError("verify needs --forecast and --obs.")
     # Every statistic the metrics need, each once.
-    statistics = list(dict.fromkeys(c for m in metrics for c in _METRICS[m]["statistics"]))
+    statistics = list(dict.fromkeys(c for m in metrics for c in _METRICS[m].statistics))
 
     fc_name = variable or auto_variable(forecast)
     obs_name = variable or auto_variable(obs)
@@ -660,11 +598,11 @@ def verify(
     # Each metric's inputs: every one it needs is given, and every input given is used.
     have = given | ({"ensemble"} if fc.sizes.get("number", 0) >= 2 else set())
     for m in metrics:
-        for need in sorted(_METRICS[m]["needs"] - have):
+        for need in sorted(_METRICS[m].needs - have):
             what = "an ensemble forecast with at least 2 members" if need == "ensemble" else need
             raise UsageError(f"--metric {m} needs {what}.")
     for flag in sorted(given - {"--forecast", "--obs", "--filter"}):
-        if not any(flag in _METRICS[m]["needs"] | _METRICS[m]["allows"] for m in metrics):
+        if not any(flag in _METRICS[m].needs | _METRICS[m].allows for m in metrics):
             raise UsageError(f"{flag} is not used by any of: {', '.join(metrics)}.")
     # Checks that depend on the data, not only on which flags are given.
     if (fc_edges is None) != (obs_edges is None):
@@ -698,22 +636,16 @@ def verify(
             "--method quantile."
         )
 
+    # Grid spacing must match: the median step of each lat/lon dim both inputs have.
     mismatched = []
     for axis, names in (("latitude", ("latitude", "lat")), ("longitude", ("longitude", "lon"))):
-        a = next((n for n in names if n in forecast.dims), None)
-        b = next((n for n in names if n in obs.dims), None)
-        if not a or not b:
-            continue
-        fa = np.asarray(forecast[a].values, dtype=float)
-        fb = np.asarray(obs[b].values, dtype=float)
-        if fa.size < 2 or fb.size < 2:
-            continue
-        if not np.isclose(
-            float(np.median(np.abs(np.diff(fa)))),
-            float(np.median(np.abs(np.diff(fb)))),
-            rtol=0.01,
-            atol=1e-6,
-        ):
+        spacing = [
+            np.median(np.abs(np.diff(np.asarray(d[n].values, dtype=float))))
+            for d in (forecast, obs)
+            for n in names
+            if n in d.dims and d.sizes[n] > 1
+        ]
+        if len(spacing) == 2 and not np.isclose(*spacing, rtol=0.01, atol=1e-6):
             mismatched.append(axis)
     if mismatched:
         raise UsageError(
@@ -736,10 +668,12 @@ def verify(
             "windows first."
         )
     # Partial windows (aggregation_coverage < 1) are left out, never scored as complete.
-    if AGGREGATION_COVERAGE_COORD in fc.coords:
-        fc = fc.where(fc[AGGREGATION_COVERAGE_COORD] >= 1 - 1e-6)
-    if AGGREGATION_COVERAGE_COORD in truth.coords:
-        truth = truth.where(truth[AGGREGATION_COVERAGE_COORD] >= 1 - 1e-6)
+    fc, truth = (
+        da.where(da[AGGREGATION_COVERAGE_COORD] >= 1 - 1e-6)
+        if AGGREGATION_COVERAGE_COORD in da.coords
+        else da
+        for da in (fc, truth)
+    )
 
     if "time" in fc.coords and fc["time"].ndim == 0:
         fc = fc.expand_dims("time")
@@ -752,7 +686,7 @@ def verify(
         # Category probabilities: the units belong to the quintile_threshold edges.
         edge_units = fc["quintile_threshold"].attrs.get("units")
         units = ureg.Unit(edge_units) if edge_units else None
-        fc = fc.pint.dequantify() if fc.pint.units is not None else fc
+        fc = fc.pint.dequantify()
     elif units is not None:
         if ureg.Quantity(0.0, units).to_base_units().magnitude != 0:
             # Squares and products of °C are meaningless; score offset units as kelvin.
@@ -793,7 +727,7 @@ def verify(
     for key, da, role in side:
         da = _at_valid_times(da, fc, role)
         if key.startswith("filter"):
-            da = da.pint.dequantify() if da.pint.units is not None else da
+            da = da.pint.dequantify()
             # Missing mask values leave the sample out, as 0 does.
             extras[key] = da.fillna(0) != 0
         else:
@@ -847,7 +781,7 @@ def verify(
             paired["fc_event"] = paired["prob"] >= member_fraction
         else:
             paired["fc_event"] = mean >= cutoff
-    fields = {c: _STATISTICS[c][2](paired) for c in statistics}
+    fields = {c: _STATISTICS[c](paired) for c in statistics}
 
     # One sample set for every statistic: a NaN in any statistic drops that sample from all,
     # so their group means pool the same samples.
@@ -890,9 +824,10 @@ def verify(
     for c, x in fields.items():
         x = x.where(valid)
         w = 1.0 if c == "n_valid" else weight
-        total, count = (x * w).sum(first), (x.notnull() * w).sum(first)
+        sums = [(x * w).sum(first), (x.notnull() * w).sum(first)]
         if labels:
-            total, count = total.groupby(list(labels)).sum(), count.groupby(list(labels)).sum()
+            sums = [s.groupby(list(labels)).sum() for s in sums]
+        total, count = sums
         # n_valid stays a count of the samples pooled.
         grouped[c] = total if c == "n_valid" else total / count
     step = f"{': '.join([*first, *label_dims])}: mean" if first or labels else ""
@@ -918,18 +853,15 @@ def verify(
     for m in metrics:
         entry = _METRICS[m]
         with np.errstate(divide="ignore", invalid="ignore"):
-            results = entry["function"]({c: grouped[c] for c in entry["statistics"]})
+            results = entry.function({c: grouped[c] for c in entry.statistics})
         if not isinstance(results, dict):
             results = {m: results}
-        if entry["function"] is _identity:
-            u = unit_of[_STATISTICS[entry["statistics"][0]][1]]
-        else:
-            u = units if m == "rmse" else None
+        u = unit_of[entry.units]
         for name, field in results.items():
             # A zero denominator (no observed event in a group) gives NaN, never ±inf.
             field = field.where(np.isfinite(field)).astype("float32")
             field.attrs = {
-                "long_name": entry["names"][name],
+                "long_name": entry.names[name],
                 "cell_methods": step,
                 "verify_metric": m,
                 "verify_config": json.dumps(config),
