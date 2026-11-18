@@ -30,7 +30,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset, units_convertible
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.11"
 
 # CSV header (lowercased) -> canonical coordinate name.
 COLUMN_ROLES = {
@@ -504,16 +504,16 @@ def _read(
         raise UsageError(f"{path} has no rows")
     # --na-value and --replace codes mark measurements, never station ids, times, lat/lon,
     # levels or members; a numeric code also matches the number however it is written.
-    codes = [(code.strip(), np.nan) for code in na_value or []]
+    codes = [(code.strip(), np.nan, True) for code in na_value or []]
     for spec in replace or []:
         code, sep, number = spec.partition("=")
         try:
-            codes.append((code.strip(), float(number)))
+            codes.append((code.strip(), float(number), False))
         except ValueError:
             raise UsageError(f"--replace expects TEXT=NUMBER, e.g. tr=0; got {spec!r}") from None
         if not code.strip():
             raise UsageError(f"--replace needs the text to replace, e.g. tr=0; got {spec!r}")
-    for code, number in codes:
+    for code, number, guarded in codes:
         try:
             as_number = float(code)
         except ValueError:
@@ -525,8 +525,9 @@ def _read(
             hit = df[col].astype(object) == code
             if as_number is not None:
                 hit |= pd.to_numeric(df[col], errors="coerce") == as_number
-            # A text code ("M") is a missing value in a column of numbers, or one whose
-            # header has units; in a column of names it is a name.
+            # --replace swaps every matching cell. A text --na-value code ("M") is a
+            # missing value in a column of numbers, or one whose header has units; in a
+            # column of names it is a name.
             rest = pd.to_numeric(
                 df[col].mask(hit | df[col].isin(NA_TEXT)).dropna(), errors="coerce"
             )
@@ -541,7 +542,7 @@ def _read(
                 or stacked_header
                 or (unit is not None and units_convertible(unit, unit))
             )
-            if as_number is None and (rest.isna().any() or not measured):
+            if guarded and as_number is None and (rest.isna().any() or not measured):
                 continue
             if hit.any():
                 df[col] = df[col].astype(object).mask(hit, number)

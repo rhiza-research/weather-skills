@@ -415,6 +415,24 @@ def test_replace_in_excel_with_numbers_stored_as_text(tmp_path, csv_io):
     np.testing.assert_allclose(_open(out)["rain"].values, [[1.5, 0.0, 2.5]])
 
 
+@pytest.mark.parametrize("unpivot", [True, False])
+def test_replace_two_spellings_in_one_column(tmp_path, csv_io, unpivot):
+    # Each code replaces its cells even while the other spelling is still text.
+    src = tmp_path / "in.xlsx"
+    pd.DataFrame(
+        {"station": ["A", "B", "C"], "lat": [0, 1, 2], "lon": [36, 37, 38],
+         "2026-05-11": ["TR", 0.5, "tr"], "2026-05-12": [1, "TR", 2]}
+    ).to_excel(src, index=False)  # fmt: skip
+    out = tmp_path / "out.zarr"
+    args = ["--unpivot", "time=precip"] if unpivot else []
+    run_skill(
+        csv_io, "--csv", str(src), "-o", str(out), *args, "--replace", "tr=0", "--replace", "TR=0"
+    )
+    res = _open(out)
+    first = res["precip"].isel(time=0) if unpivot else res["2026_05_11"]
+    np.testing.assert_allclose(first.sel(station_id=["A", "B", "C"]).values, [0.0, 0.5, 0.0])
+
+
 def test_na_words_are_missing_only_in_number_columns(tmp_path, csv_io):
     # "NA" is Namibia as a station id or country, but missing in a rain column.
     src = _write(

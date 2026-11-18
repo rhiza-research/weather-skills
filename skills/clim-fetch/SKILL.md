@@ -1,11 +1,11 @@
 ---
 name: clim-fetch
-description: "Fetch a precomputed daily climatology (mean and standard deviation for each day of the year) of precipitation, sea-surface temperature, 2 m temperature or 10 m wind from a public Sheerwater mirror of IMERG, ERA5, CHIRPS, ECMWF IFS, GEFS or OISST, laid onto a real calendar date range, as a weather-skills Zarr. Use when a task needs a climatological baseline for anomalies, verification or comparison."
+description: "Fetch a precomputed daily climatology (mean and standard deviation for each day of the year) of precipitation, sea-surface temperature, 2 m temperature or 10 m wind from a public Sheerwater mirror of IMERG, ERA5, CHIRPS, ECMWF IFS, GEFS, OISST or NOAA CPC RFE2 (Africa), laid onto a real calendar date range, as a weather-skills Zarr. Use when a task needs a climatological baseline for anomalies, verification or comparison."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads a static climatology Zarr from the public GCS bucket sheerwater-public-datalake over anonymous HTTPS; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.8"
+  version: "0.0.9"
   catalog-group: fetchers
   variables:
     - precip
@@ -31,6 +31,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --start-time YYYY-MM-DD
 | `ecmwf_ifs` | `precip`, `sst`, `uwind10m`, `vwind10m` | 1.5° | 0–45 |
 | `gefs` | `precip`, `tmp2m` (2 m temperature) | 1° | 0–34 |
 | `oisst` | `sst` | 0.25° | 0 |
+| `rfe` | `precip` (NOAA CPC RFE2, Africa 40S–40N, 20W–55E) | 0.1° | 0 |
 
 An unmirrored pair (e.g. `era5` `tmp2m`) exits 1 and lists the available pairs.
 

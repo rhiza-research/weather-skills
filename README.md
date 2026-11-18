@@ -44,6 +44,7 @@ credentialed or source-specific fetcher only when it does not.
 | `cmip6-fetch` | One CMIP6 model run (historical 1850–2014 or `ssp*` to 2100) → Zarr. No credentials. |
 | `rfe-fetch` | NOAA CPC African Rainfall Estimate (RFE2) — daily, 0.1° over Africa, from 2001 → Zarr. No credentials. |
 | `gsmap-fetch` | JAXA GSMaP v6 gauge-corrected hourly 0.1° precip (from April 2025, 60°N–60°S) → Zarr. No credentials. |
+| `pardig-fetch` | Google PARDIG AI precip estimate, 15-minute 0.1° (NRT 2016 to a few hours ago, LR 1999–2023) → Zarr. No credentials. |
 | `oisst-fetch` | NOAA OISST v2.1 daily 0.25° sea-surface temperature (1981-09 on) → Zarr. No credentials. |
 | `smap-fetch` | NASA SMAP Enhanced L3 (`SPL3SMP_E`) daily 9 km surface soil moisture → Zarr. Requires credentials. |
 | `ghcn-daily-fetch` | NOAA GHCN-Daily station observations (daily precip and max/min/mean temperature, ~130,000 stations) → station Zarr. No credentials. |
@@ -65,6 +66,7 @@ credentialed or source-specific fetcher only when it does not.
 | `downscale` | Spatial downscaling onto a finer grid (by factor, finer resolution, or a reference grid) via `--algorithm` (`linear-interpolation` or `q-q` empirical quantile mapping) |
 | `coarsen` | Coarsen or align a grid onto a target `(resolution, offset)` or another Zarr's grid, by linear interpolation or an area-weighted (conservative) mean — adds no information |
 | `edit-coords` | Rename data variables, coordinates, or dims (`--rename OLD=NEW`) and re-index a dim by another 1-D coordinate (`--swap-dims OLD=NEW`); refuses edits that lose an ontology dim |
+| `clip-values` | Limit values to `--min` / `--max` (e.g. `--min 0` to remove negative rainfall); NaN stays NaN |
 | `drop` | Drop named data variables or non-index coordinates (`--name`) — e.g. stray `valid_time` / `spatial_ref` before `concat` |
 | `concat` | Join Zarr stores along a named dim (incl. new dims with coord values) |
 | `merge` | Combine the variables of several Zarrs into one dataset on their shared coordinates |
@@ -78,7 +80,7 @@ credentialed or source-specific fetcher only when it does not.
 | `standardize-anomaly` | Standardized anomaly aka z-score: `(field − clim_avg) / clim_std` against a climatology (e.g. `clim-fetch`) — dimensionless output, errors on units mismatch. For a plain physical-unit anomaly, use `difference` instead. |
 | `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
 | `wind-speed-direction` | Wind speed (`hypot(u, v)`) and the directions the wind blows from and to (degrees clockwise from north) from a `--u` / `--v` component pair; calm cells (speed ≤ `--calm-speed`) get NaN direction |
-| `verify` | Forecast vs obs verification: `--metric hits|bias|mae` (hits = event classification). |
+| `verify` | Forecast verification for every lead: pairs forecast and obs (optional `--filter` masks), pools the samples into one score or keeps dims (`--keep`) or `--by` labels, optionally `--lat-weighted`, and writes RMSE, correlation, ACC, POD/FAR/ETS, Heidke, BSS, RPSS, spread, reliability and ROC, with the sample count behind each value. |
 | `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
 
 ### Agent capabilities

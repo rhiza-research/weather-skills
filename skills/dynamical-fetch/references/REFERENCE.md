@@ -29,6 +29,7 @@ grid and are rejected (see below).
 | `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | ensemble forecast | `init_time, lead_time, ensemble_member, latitude, longitude` | 101 |
 | `ecmwf-aifs-ens-forecast` | ensemble forecast | `init_time, lead_time, ensemble_member, latitude, longitude` | 51 |
 | `google-weathernext2-forecast-operational-virtual`, `google-weathernext2-forecast-historical-virtual` | ensemble forecast | `init_time, ensemble_member, lead_time, y, x` (`y`/`x` renamed to `latitude`/`longitude`) | 64 |
+| `google-weathernext3-forecast-15-day-0-1-degree-virtual`, `google-weathernext3-forecast-15-day-0-05-degree-virtual`, `google-weathernext3-forecast-48-hour-0-1-degree-virtual`, `google-weathernext3-forecast-48-hour-0-05-degree-virtual` | forecast (ensemble statistics) | `init_time, statistic, lead_time, y, x` (`y`/`x` renamed to `latitude`/`longitude`) | — (mean, p10–p90) |
 | `noaa-gfs-forecast` | deterministic forecast | `init_time, lead_time, latitude, longitude` | — |
 | `ecmwf-aifs-single-forecast` | deterministic forecast | `init_time, lead_time, latitude, longitude` | — |
 | `dwd-icon-eu-forecast-5-day` | deterministic forecast | `init_time, lead_time, latitude, longitude` | — |
@@ -88,7 +89,7 @@ opens that group and renames the dim to `vertical`.
 | `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` | `group=pressure_level`: `temperature`, `geopotential_height`, `wind_u`, `wind_v`, `vertical_velocity`, `specific_humidity` on 10 levels |
 | `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | none (surface only: precip, 10 m wind, 6 h max/min 2 m temperature) |
 | `noaa-gefs-forecast-35-day`, `noaa-gefs-analysis` | `geopotential_height_500hpa` only |
-| `noaa-gfs-forecast`, `noaa-gfs-analysis`, `dwd-icon-eu-forecast-5-day`, WeatherNext 2, IMERG, CHIRPS, MRMS | none |
+| `noaa-gfs-forecast`, `noaa-gfs-analysis`, `dwd-icon-eu-forecast-5-day`, WeatherNext 2 and 3, IMERG, CHIRPS, MRMS | none |
 
 `-v t` / `-v gh` (or the prefixes `temperature` / `geopotential_height`) expand
 to every `*_Nhpa` field of that prefix. `temperature_2m` is not included.

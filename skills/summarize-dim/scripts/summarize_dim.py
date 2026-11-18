@@ -28,7 +28,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.11"
+_SKILL_VERSION = "0.0.12"
 
 _TIME_LABELS = ("month", "year", "dayofyear", "month_group")
 _INITIALS = "JFMAMJJASOND"
@@ -497,6 +497,8 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
         step = f"{': '.join(rdims)}: {cf_method.get(method, method)}"
         if method == "quantile":
             step += f" {', '.join(f'{q:g}' for q in quantile)}"
+        if method == "mean" and lat_weighted and lat_dim in rdims:
+            step += " (latitude-weighted)"
         if by:
             step += f" (grouped by {', '.join(by)})"
         attrs["cell_methods"] = (
