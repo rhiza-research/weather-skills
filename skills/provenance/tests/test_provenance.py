@@ -398,7 +398,7 @@ def test_script_reruns_resolve_region_geojson(tmp_path, provenance, capsys):
 
     captured = _script(provenance, geo, capsys)
 
-    assert "resolve-region 'Indian Ocean' --pad 0.25 --geojson io.geojson" in captured
+    assert "resolve-region)\" 'Indian Ocean' --pad 0.25 --geojson io.geojson" in captured
     assert "--code" not in captured
 
 
