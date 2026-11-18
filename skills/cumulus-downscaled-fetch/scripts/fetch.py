@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 import sys
 
 from weather_skills_core import DataError, UsageError, weather_skill
@@ -25,7 +26,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.5"
+_SKILL_VERSION = "0.0.6"
 
 _ACCOUNT = "italynorthdata"
 _CONTAINER = "data"
@@ -34,6 +35,9 @@ _SAS_ENV = "AZURE_STORAGE_SAS_TOKEN"
 #   YYYY-MM-DD-00-LLLL.nc                 ensemble mean, one file per 24 h lead
 #   member_NNN/YYYY-MM-DD-00-LLLL.nc      individual members
 _BASE = f"{_CONTAINER}/live_forecasts/downscaled_models"
+# Maintained by the data owner: a table of live models with a status (default, fallback,
+# other, baseline) and the args of this skill for each row.
+_LIVE_MD = "MODELS_LIVE.md"
 _DOMAIN = "east_africa-ghana-kenya-senegal-west_africa"
 _INIT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _FILE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-(\d{4})\.nc$")
@@ -97,14 +101,16 @@ def _azure_error(exc: Exception, what: str) -> DataError:
 )
 @weather_skill.argument(
     "--model",
-    default="diffusion",
-    help=f"One of {', '.join(_MODELS)} (default diffusion), or a model folder name or substring.",
+    help=(
+        f"One of {', '.join(_MODELS)}, or a model folder name or substring "
+        f"(default: the default row of {_LIVE_MD} for --source)."
+    ),
 )
 @weather_skill.argument(
     "--target",
     help=(
-        "Target folder name or substring, e.g. imerg: the precipitation product the model "
-        "was trained to (default: the only one the checkpoint has, else era5)."
+        "Target folder name or substring, e.g. imerg or era5: which source precipitation "
+        "output that was downscaled (default: the only one the checkpoint has, else imerg)."
     ),
 )
 @weather_skill.argument(
@@ -196,7 +202,9 @@ def fetch(
         """The folder named ``sub`` exactly, else every folder whose name contains ``sub``."""
         return [n for n in names if n == sub] or [n for n in names if sub in n]
 
-    sources = match(ls(_BASE), source.strip("/"))
+    base = ls(_BASE)
+    # Files beside the source folders (MODELS_LIVE.md) have an extension.
+    sources = match([n for n in base if "." not in n], source.strip("/"))
     if len(sources) > 1:
         raise UsageError(
             f"--source {source!r} matches {', '.join(sources)}: pass more of the name."
@@ -213,16 +221,28 @@ def fetch(
         return match(names, model)
 
     def checkpoints(init):
-        """(model folder, checkpoint folders) for ``--model`` at ``init``; ``(None, [])`` when absent."""
+        """(model folder, checkpoint folders) for ``--model`` at ``init``; ``(None, [])`` when absent.
+
+        A model with no checkpoint level (target folders right under it) gets ``[""]``.
+        """
         folders = model_folders(init)
+        if len(folders) > 1 and checkpoint:
+            # --checkpoint can pick the model folder when several match --model.
+            folders = [
+                f for f in folders if any(checkpoint in c for c in ls(f"{root}/{init}/{f}"))
+            ] or folders
         if len(folders) > 1:
             raise DataError(
                 f"init {init} under az://{_ACCOUNT}/{root}/ has {len(folders)} model folders "
-                f"for --model {model}: {', '.join(folders)}. Pass the full folder name as --model."
+                f"for --model {model}: {', '.join(folders)}. Pass the full folder name as --model, "
+                "or a --checkpoint that only one of them has."
             )
         if not folders:
             return None, []
-        return folders[0], ls(f"{root}/{init}/{folders[0]}")
+        ckpts = ls(f"{root}/{init}/{folders[0]}")
+        if ckpts and "precip_24h" in ls(f"{root}/{init}/{folders[0]}/{ckpts[0]}"):
+            return folders[0], [""]
+        return folders[0], ckpts
 
     def read(path):
         """One lead NetCDF: the 24 h total ending at init + lead."""
@@ -233,10 +253,13 @@ def fetch(
         with xr.open_dataset(io.BytesIO(raw), engine="h5netcdf") as ds:
             return ds["precip_24h"].squeeze("time", drop=True).load()
 
+    live = fs.cat_file(f"{_BASE}/{_LIVE_MD}").decode() if _LIVE_MD in base else ""
     all_inits = [i for i in ls(root) if _INIT_RE.fullmatch(i)]
     if list_:
         # One call shows every name --source, --model, --checkpoint and --target accept.
-        print(f"sources: {', '.join(ls(_BASE)) or 'none'}")
+        if live:
+            print(f"{_LIVE_MD}:\n{live.rstrip()}\n")
+        print(f"sources: {', '.join(n for n in base if '.' not in n) or 'none'}")
         print(f"inits of {source}: {', '.join(all_inits) or 'none'}")
         shown = date.isoformat() if date else (all_inits[-1] if all_inits else None)
         if shown not in all_inits:
@@ -248,8 +271,49 @@ def fetch(
             print(f"  model {folder}")
             for ckpt in ls(f"{root}/{shown}/{folder}"):
                 found = [t for t in ls(f"{root}/{shown}/{folder}/{ckpt}") if "." not in t]
-                print(f"    checkpoint {ckpt} (targets: {', '.join(found) or 'none'})")
+                if "precip_24h" in found:
+                    print(f"    target {ckpt} (no checkpoint level)")
+                else:
+                    print(f"    checkpoint {ckpt} (targets: {', '.join(found) or 'none'})")
         return
+    if model is None:
+        # The default row's args fill whatever was not passed.
+        lines = [line.strip().strip("|") for line in live.splitlines() if line.startswith("|")]
+        header = [c.strip() for c in lines[0].split("|")] if lines else []
+        rows = [
+            dict(zip(header, (c.strip() for c in line.split("|")), strict=False))
+            for line in lines[2:]
+        ]
+        row = next(
+            (
+                r
+                for r in rows
+                if r.get("status") == "default" and r.get("source", "").split(" ")[0] == source
+            ),
+            None,
+        )
+        args_col = next((h for h in header if "args" in h), "")
+        found = re.search(r"`([^`]*)`", row.get(args_col, "")) if row else None
+        if found is None and live:
+            listed = [
+                f"{r.get('model')} ({r.get('status')})"
+                for r in rows
+                if r.get("source", "").split(" ")[0] == source
+            ]
+            raise UsageError(
+                f"{_LIVE_MD} has no default model for --source {source}"
+                + (f" (it lists: {', '.join(listed)})" if listed else "")
+                + ". Pass --model; --list prints the table with each row's args."
+            )
+        if found is None:
+            model = "diffusion"
+        else:
+            tokens = shlex.split(found.group(1))
+            args = dict(zip(tokens[::2], tokens[1::2], strict=False))
+            model = args.get("--model", "diffusion")
+            checkpoint = checkpoint or args.get("--checkpoint", "")
+            target = target or args.get("--target")
+            print(f"Model: {row['model']}, the {_LIVE_MD} default for {source}.", file=sys.stderr)
     # Walk back from the newest init to the first that has this model.
     inits = all_inits
     if date is not None:
@@ -314,7 +378,7 @@ def fetch(
             + f": {', '.join(ckpts)}. Pass --checkpoint with a substring that picks one."
         )
     (ckpt,) = ckpts
-    print(f"Checkpoint: {ckpt}", file=sys.stderr)
+    print(f"Checkpoint: {ckpt or 'none'}", file=sys.stderr)
     # Comparing setups is allowed, but say when this init is not on the live one.
     for newest in reversed(all_inits):
         newest_ckpts = checkpoints(newest)[1]
@@ -328,11 +392,11 @@ def fetch(
             file=sys.stderr,
         )
     # Target folders: the precipitation products this checkpoint was trained to.
-    ckpt_dir = f"{root}/{init}/{model_folder}/{ckpt}"
+    ckpt_dir = f"{root}/{init}/{model_folder}" + (f"/{ckpt}" if ckpt else "")
     # Target folders have no extension; files beside them (notes.yml) do.
     targets = [t for t in ls(ckpt_dir) if "." not in t]
     if target is None:
-        target = targets[0] if len(targets) == 1 else "era5"
+        target = targets[0] if len(targets) == 1 else "imerg"
     found = match(targets, target)
     if len(found) != 1:
         raise DataError(
@@ -404,7 +468,8 @@ def fetch(
     ds.attrs.update(
         Conventions="CF-1.13",
         weather_skills_source=(
-            f"cumulus-downscaled:{source.strip('/')}/{model_folder}/{ckpt}/{target_folder}"
+            "cumulus-downscaled:"
+            + "/".join(p for p in (source, model_folder, ckpt, target_folder) if p)
         ),
         cumulus_downscaled_member_set="members" if members else "ensemble_mean",
     )
