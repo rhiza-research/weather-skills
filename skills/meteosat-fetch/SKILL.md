@@ -1,11 +1,11 @@
 ---
 name: meteosat-fetch
-description: "Fetch Meteosat geostationary satellite imagery (FCI or SEVIRI) over a lat/lon box at chosen times on one day from the EUMETSAT Data Store, as a weather-skills Zarr of visible reflectance (%) and infrared brightness temperature (K) on a regular lat/lon grid. Covers Africa, Europe and the Indian Ocean every 10-15 minutes. Needs EUMETSAT credentials. Use for snapshots of cloud tops, convection, fog or dust: each scan is a 200-300 MB download, so calls are capped at 12 scans by default and long time series are out of scope."
+description: "Fetch Meteosat geostationary satellite imagery (FCI or SEVIRI) over a lat/lon box at chosen times on one day from the EUMETSAT Data Store, as a weather-skills Zarr of visible reflectance (%) and infrared brightness temperature (K) on a regular lat/lon grid. Covers Africa, Europe and the Indian Ocean every 10-15 minutes: SEVIRI from 2004 (Indian Ocean from 2017), FCI from 2024-09-24, to about 20 minutes ago. Needs EUMETSAT credentials. Use for snapshots of cloud tops, convection, fog or dust: each scan is a 200-300 MB download, so calls are capped at 12 scans by default and long time series are out of scope."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Requires EUMETSAT_CONSUMER_KEY and EUMETSAT_CONSUMER_SECRET in the environment, or an eumdac credentials file at ~/.eumdac/credentials (free with sign-up — register at https://user.eumetsat.int, then create the key at https://api.eumetsat.int/api-key/).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.6"
+  version: "0.0.7"
   catalog-group: fetchers
   variables:
     - ir
@@ -36,6 +36,17 @@ A scan is one full image of the Earth disk, taken every 10 minutes (FCI) or 15 m
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date YYYY-MM-DD --time HH:MM [--time HH:MM ...] --bbox N/W/S/E -v {vis,ir,BAND}[,...] [--service 0deg|iodc] [--instrument fci|seviri] [--max-scans N] [--workers N] -o OUT.zarr
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--service 0deg|iodc] [--instrument fci|seviri]
 ```
+
+### Date ranges
+Checked in the EUMETSAT Data Store on 2026-11-18. Each runs to the present; the newest scan is about 15-20 minutes old (`--probe-latest`).
+
+| `--service` / `--instrument` | First scan | Repeat |
+|---|---|---|
+| `0deg` `seviri` | 2004-01-19 10:30 UTC | 15 min |
+| `iodc` `seviri` | 2017-02-01 10:00 UTC | 15 min |
+| `0deg` `fci` | 2024-09-24 08:30 UTC | 10 min |
+
+`--instrument fci` with a date before 2024-09-24 exits 2; without `--instrument`, such dates use SEVIRI. A time with no scan in the archive exits 1.
 
 ### Arguments
 - `--date` — UTC day of the scans, `YYYY-MM-DD`. One day per call; run once per day for times spanning midnight.

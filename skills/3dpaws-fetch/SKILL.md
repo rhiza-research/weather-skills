@@ -1,11 +1,11 @@
 ---
 name: 3dpaws-fetch
-description: "Fetch daily 3D-PAWS (3D-Printed Automatic Weather Station) observations (rainfall, mean, max and min temperature, humidity, pressure, wind speed and gust) from a CHORDS portal, by default the FEWS NET network of Kenya Met Department and KALRO stations, for chosen station ids or every station in a lat/lon box, as a weather-skills station Zarr. Can also list the stations. Needs a CHORDS email and API key. Use when a task needs 3D-PAWS station data, for example to compare against gridded satellite or forecast data."
+description: "Fetch daily 3D-PAWS (3D-Printed Automatic Weather Station) observations (rainfall, mean, max and min temperature, humidity, pressure, wind speed and gust) from a CHORDS portal, by default the FEWS NET network of Kenya Met Department and KALRO stations, for chosen station ids or every station in a lat/lon box, as a weather-skills station Zarr; the portal keeps only about the last 2 years. Can also list the stations. Needs a CHORDS email and API key. Use when a task needs 3D-PAWS station data, for example to compare against gridded satellite or forecast data."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Requires CHORDS_EMAIL and CHORDS_API_KEY in the environment for downloads (not for --list-stations).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.6"
+  version: "0.0.7"
   catalog-group: fetchers
   variables:
     - precip
@@ -38,6 +38,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py (--station ID [--station ID ...] | -
 # Print the latest ended day, and exit
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--station ID | --bbox N/W/S/E]
 ```
+
+### Date range
+- The FEWS NET portal serves only about the last 2 years. On 2026-11-18 every station's earliest reading was 2024-11-18 00:00 UTC, exactly two years back, so the start likely moves forward each day (inferred, not confirmed by the portal).
+- Readings arrive within minutes; yesterday is the newest whole day (`--probe-latest`).
+- Raw readings every 1 to 15 minutes depending on the station, written as daily values.
+- Each station's own record is shorter: stations were added through 2025 and 2026 and many have long gaps or have stopped. `--list-stations` gives no dates. A fetch prints per station how many days have data, and `no readings in range` for a station with none; a range where no station has data exits 1.
 
 ### Arguments
 - `--list-stations` — print stations as TSV (`station_id`, `name`, `site`, `latitude`, `longitude`) and exit; `--bbox` filters. No credentials needed.
