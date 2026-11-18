@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.16"
+  version: "0.0.17"
   catalog-group: fetchers
   variables:
     - precipitation_surface
@@ -70,7 +70,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --list-variables
 | `noaa-gfs-analysis`, `noaa-gfs-analysis-virtual` ★ | 0.25° | 2021-05-01 |
 | `noaa-mrms-conus-analysis-hourly` (CONUS) | 0.01° | 2014-11-01 |
 
-★ **Virtual ids** read the provider's original files in place. They carry many more fields than the stores above (more pressure levels, CAPE, cloud layers, fluxes; `--list-variables`), but their precipitation is not a rate: GFS and GEFS virtual `total_precipitation_surface` (what `-v precip` picks there) and ECMWF virtual `total_precipitation_run_total_surface` are accumulations in kg m-2, written with a wrong `mm day-1` label. For precipitation use the plain id on the same row, or ECMWF virtual `precipitation_rate_surface` (an instantaneous rate; `-v precip` finds no field in the ECMWF virtual ids).
+★ **Virtual ids** read the provider's original files in place. They carry many more fields than the stores above (more pressure levels, CAPE, cloud layers, fluxes; `--list-variables`). Their precipitation is stored as provider totals in kg m-2: a run total since init (`*_run_total_*`, all ECMWF virtual ids) or GFS/GEFS `total_precipitation_surface`, which restarts every 6 h of lead. Fetch turns each into the mean rate since the previous lead, in `mm day-1`, matching the plain id on the same row; `-v precip` picks `total_precipitation_surface` or, in ECMWF virtual ids, `total_precipitation_run_total_surface`. The virtual analysis ids refuse these totals (exit 2): fetch precipitation from `noaa-gfs-analysis` or `noaa-gefs-analysis`.
 
 **Rejected ids** (projected 2-D grids, exit 2): every HRRR id, `eccc-hrdps-forecast` (Canada), `noaa-rrfs-*`, `noaa-refs-*`, `noaa-rtma-analysis-virtual`, `noaa-rtma-ru-analysis-virtual`, `noaa-urma-analysis-virtual` (all CONUS except HRDPS).
 

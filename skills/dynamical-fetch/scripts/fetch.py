@@ -19,13 +19,14 @@ from weather_skills_core.standard_utils import (
     np_to_date,
 )
 from weather_skills_core.units import (
+    classify_variable,
     precip_amounts_to_rates,
     stamp_data_interval,
     to_standard_units,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.16"
+_SKILL_VERSION = "0.0.17"
 
 # Forecast bookkeeping / CRS scalar coords dropped from the standard output.
 _DROP_COORDS = (
@@ -129,6 +130,13 @@ def _resolve_variables(requested, data_vars, dataset: str):
         # WeatherNext 2 stores 6-hour precip totals as total_precipitation_surface.
         if aliased and f"total_{aliased}" in name_set:
             aliased = f"total_{aliased}"
+        # ECMWF virtual stores have only the run total since init.
+        if (
+            aliased == "precipitation_surface"
+            and aliased not in name_set
+            and "total_precipitation_run_total_surface" in name_set
+        ):
+            aliased = "total_precipitation_run_total_surface"
         if aliased in name_set:
             _take(aliased)
             continue
@@ -400,6 +408,27 @@ def fetch(
     if variable:
         ds = ds[_resolve_variables(variable, ds.data_vars, dataset)]
 
+    # Provider accumulations (step_type accum): a run total since init, or GFS/GEFS
+    # buckets that restart every 6 h. Forecasts are turned into per-step amounts
+    # below; analyses would need the hours before each window, so they are refused.
+    accum_precip = [
+        name
+        for name in ds.data_vars
+        if ds[name].attrs.get("step_type") == "accum"
+        and classify_variable(
+            name,
+            units=ds[name].attrs.get("units"),
+            standard_name=ds[name].attrs.get("standard_name"),
+        )
+        == "precip_amount"
+    ]
+    if accum_precip and not is_forecast:
+        raise UsageError(
+            f"{dataset} stores {', '.join(accum_precip)} as totals over 1-6 h buckets, "
+            "not per-step amounts; fetch precipitation from noaa-gfs-analysis or "
+            "noaa-gefs-analysis (precipitation_surface rates)."
+        )
+
     if is_forecast:
         inits = ds["init_time"].values
         init_range = f"{np_to_date(inits.min()).isoformat()}..{np_to_date(inits.max()).isoformat()}"
@@ -493,6 +522,38 @@ def fetch(
         # forecast in one order. Only after the load: without dask, a lazy
         # transpose makes the read take gigabytes for a small bbox.
         ds = ds.transpose(*[d for d in ("time", "step", "number") if d in ds.dims], ...)
+        # Per-step amount = this lead's total minus the previous lead's when both
+        # are in the same accumulation (one run total, or the same 6 h bucket:
+        # lead L is in bucket ceil(L / 6 h)). WeatherNext 2's 6 h totals at 6 h
+        # leads are each their own bucket. Lead 0 covers no time: its total
+        # counts as 0 and its amount is NaN. Each amount is divided by its own
+        # gap, since lead spacing changes (1 h to 3 h, 3 h to 6 h); the result is
+        # a mean rate over (previous lead, lead], like the plain stores' avg fields.
+        # Small negative totals are model artifacts; the catalog says to zero them.
+        hours = ds["step"].values / np.timedelta64(1, "h")
+        # From 0 for the first lead (WeatherNext 2 has no lead 0); lead 0 has none.
+        gaps = np.diff(hours, prepend=0.0)
+        gap_seconds = ds["step"].copy(data=np.where(gaps > 0, gaps * 3600, np.nan))
+        for name in accum_precip:
+            da = ds[name]
+            bucket = np.zeros_like(hours) if "_run_total_" in name else np.ceil(hours / 6)
+            same = ds["step"].copy(data=np.concatenate([[False], bucket[1:] == bucket[:-1]]))
+            total = da.where(ds["step"] > np.timedelta64(0, "ns"), 0)
+            amount = (total - total.shift(step=1)).where(same, total).clip(min=0)
+            ds[name] = (amount / gap_seconds).assign_attrs(
+                {
+                    **da.attrs,
+                    "units": f"{da.attrs['units']} s-1",
+                    "standard_name": "precipitation_flux",
+                    "long_name": "Precipitation rate",
+                    "step_type": "avg",
+                    "comment": (
+                        "dynamical-fetch turned the provider total "
+                        f"({da.attrs.get('comment') or 'accumulated'}) into the mean rate "
+                        "since the previous lead."
+                    ),
+                }
+            )
         empty = np.ones(ds.sizes["step"], dtype=bool)
         for name in ds.data_vars:
             other = [d for d in ds[name].dims if d != "step"]
