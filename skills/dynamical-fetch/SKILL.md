@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.15"
+  version: "0.0.16"
   catalog-group: fetchers
   variables:
     - precipitation_surface
@@ -35,9 +35,34 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest ID
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --list-variables
 ```
 
-**Forecast ids** (use `--date`, or `--start-time`/`--end-time` for many inits): `noaa-gefs-forecast-35-day` (31 members), `ecmwf-ifs-ens-forecast-15-day-0-25-degree` (51), `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` (101), `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` (101), `ecmwf-aifs-ens-forecast` (51), `google-weathernext2-forecast-operational-virtual` (64, inits from 2025), `google-weathernext2-forecast-historical-virtual` (64, inits 2022–2024), `google-weathernext3-forecast-15-day-0-1-degree-virtual` and `google-weathernext3-forecast-48-hour-0-1-degree-virtual` (mean and percentiles, 0.1°, inits from 2026), `google-weathernext3-forecast-15-day-0-05-degree-virtual` and `google-weathernext3-forecast-48-hour-0-05-degree-virtual` (same, 0.05°, `t2m` and `d2m` only), `noaa-gfs-forecast`, `ecmwf-aifs-single-forecast`, `dwd-icon-eu-forecast-5-day` (Europe).
-**Analysis ids** (use `--start-time`/`--end-time`): `noaa-gfs-analysis`, `noaa-gefs-analysis`, `noaa-mrms-conus-analysis-hourly` (CONUS), `nasa-imerg-analysis-early`, `nasa-imerg-analysis-late`, `ucsb-chc-chirps-analysis-final`, `ucsb-chc-chirps-analysis-preliminary` (land, 60°S–60°N).
-HRRR ids are rejected (projected grid).
+**Forecast ids** (use `--date`, or `--start-time`/`--end-time` for many inits). Every one has a 00 UTC init each day from its first init to today, unless noted.
+
+| Id | Members | First init |
+|---|---|---|
+| `ecmwf-ifs-ens-forecast-15-day-0-25-degree` | 51 | 2020-10-15 |
+| `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`, `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | 101 | 2026-01-01 (earlier inits: ecmwf-fetch) |
+| `ecmwf-aifs-ens-forecast` | 51 | 2025-07-02 |
+| `ecmwf-aifs-single-forecast` | 1 | 2024-04-01 |
+| `noaa-gefs-forecast-35-day` | 31 | 2020-10-01 |
+| `noaa-gfs-forecast` | 1 | 2021-05-01 |
+| `google-weathernext2-forecast-historical-virtual` | 64 | 2022-01-01, last 2024-12-31 |
+| `google-weathernext2-forecast-operational-virtual` | 64 | 2025-01-01 |
+| `google-weathernext3-forecast-15-day-0-1-degree-virtual`, `google-weathernext3-forecast-48-hour-0-1-degree-virtual` | mean and percentiles, 0.1° | 2026-01-01 |
+| `google-weathernext3-forecast-15-day-0-05-degree-virtual`, `google-weathernext3-forecast-48-hour-0-05-degree-virtual` | same, 0.05°, `t2m` and `d2m` only | 2026-01-01 |
+| `dwd-icon-eu-forecast-5-day` (Europe) | 1 | 2026-02-10 |
+
+**Analysis ids** (use `--start-time`/`--end-time`), each from its first day to a few hours or days ago:
+
+| Id | First day |
+|---|---|
+| `ucsb-chc-chirps-analysis-final` (land, 60°S–60°N) | 1981-01-01, ends about 3 weeks ago |
+| `ucsb-chc-chirps-analysis-preliminary` (land, 60°S–60°N) | 2025-01-01 |
+| `nasa-imerg-analysis-early`, `nasa-imerg-analysis-late` | 1998-01-01 |
+| `noaa-gefs-analysis` | 2000-01-01 |
+| `noaa-gfs-analysis` | 2021-05-01 |
+| `noaa-mrms-conus-analysis-hourly` (CONUS) | 2014-11-01 |
+
+HRRR ids are rejected (projected grid). An init or day before a dataset's first one exits 1; check this table before telling anyone a date is unavailable.
 
 ### Arguments
 - `--dataset` — catalog id from the lists above.
