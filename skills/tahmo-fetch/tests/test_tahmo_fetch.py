@@ -582,6 +582,12 @@ def _gridded_store():
     precip[1, 1, 1] = 5.5  # cell (0.5, 37.25): one day only
     count = np.where(np.isnan(precip), 0, 1).astype("int16")
     count[0, 0, 0] = 2  # two stations in the cell on the first day
+    flag = np.zeros(precip.shape, dtype="int8")
+    flag[1, 1, 1] = 3  # unsupported_extreme and stuck_sensor
+    flag_attrs = {
+        "flag_masks": np.array([1, 2, 4], dtype="int8"),
+        "flag_meanings": "unsupported_extreme stuck_sensor failing_station",
+    }
     return xr.Dataset(
         {"precip": (("time", "latitude", "longitude"), precip)},
         coords={
@@ -589,6 +595,7 @@ def _gridded_store():
             "latitude": [-1.0, 0.5],
             "longitude": [36.0, 37.25],
             "precip_count": (("time", "latitude", "longitude"), count),
+            "precip_flag": (("time", "latitude", "longitude"), flag, flag_attrs),
         },
     )
 
@@ -632,7 +639,14 @@ def test_gridded_fills_regular_grid_without_tahmo_credentials(tmp_path, mod, fet
     assert list(n.sel(latitude=-1.0, longitude=36.0).values) == [2, 1, 1]
     # Rebuilt cells with no station count 0.
     assert int(n.sum()) == 5
-    assert "precip: 2 cells with data, 1 complete (all 3 days" in capsys.readouterr().err
+    f = ds["precip_flag"]
+    assert f.dims == p.dims
+    assert int(f.sel(latitude=0.5, longitude=37.25).isel(time=1)) == 3
+    assert int((f > 0).sum()) == 1
+    assert f.attrs["flag_meanings"] == "unsupported_extreme stuck_sensor failing_station"
+    err = capsys.readouterr().err
+    assert "precip: 2 cells with data, 1 complete (all 3 days" in err
+    assert "1 cell-days flagged" in err
     quantify_dataset(ds)
 
 

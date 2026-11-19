@@ -86,7 +86,8 @@ _TAHMO_UNITS = {
 
 
 # Historical daily precip for all of Africa: complete QC'd TAHMO station days
-# averaged within each 0.25° cell, with precip_count stations per cell-day.
+# averaged within each 0.25° cell, with precip_count stations per cell-day and
+# precip_flag, a bit mask of the quality flags of those stations.
 # Dims (time, lat, lon); lat/lon list only the rows and columns that have a
 # station, so the skill puts them back on the regular 0.25° grid.
 _GRIDDED_STORE = "sheerwater-datalake/hindcasts/tahmo_africa_precip.zarr"
@@ -129,7 +130,7 @@ def _open_gridded():
         ds = xr.open_zarr(_gcs().get_mapper(_GRIDDED_STORE), chunks=None)
     except Exception as exc:  # noqa: BLE001
         raise DataError(f"{_GRIDDED_AUTH_MSG} Opening it failed: {exc}") from None
-    ds = ds[["precip", "precip_count"]].set_coords("precip_count")
+    ds = ds[["precip", "precip_count", "precip_flag"]].set_coords(["precip_count", "precip_flag"])
     return ds.rename({"lat": "latitude", "lon": "longitude"})
 
 
@@ -158,8 +159,10 @@ def _fetch_gridded(start_time, end_time, bbox):
     if bbox is not None:
         ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
     ds = ds.load()
-    # Rebuilt cells had no station: their count is 0, not missing.
+    # Rebuilt cells had no station: their count and flags are 0, not missing.
+    flag_attrs = ds["precip_flag"].attrs
     ds["precip_count"] = ds["precip_count"].fillna(0).astype("int16")
+    ds["precip_flag"] = ds["precip_flag"].fillna(0).astype("int8")
     # Never fill: a day is a cell's mean of the stations that reported it.
     reported = ds["precip"].notnull()
     if not bool(reported.any()):
@@ -172,7 +175,8 @@ def _fetch_gridded(start_time, end_time, bbox):
     complete = reported.all("time")
     print(
         f"precip: {int(cells.sum())} cells with data, {int(complete.sum())} complete "
-        f"(all {n_days} days {start_time} → {end_time})",
+        f"(all {n_days} days {start_time} → {end_time}); "
+        f"{int((ds['precip_flag'] > 0).sum())} cell-days flagged (see precip_flag)",
         file=sys.stderr,
     )
 
@@ -186,6 +190,7 @@ def _fetch_gridded(start_time, end_time, bbox):
         "units": "1",
         "long_name": "number of TAHMO stations averaged into the cell-day",
     }
+    ds["precip_flag"].attrs = flag_attrs
     ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north", axis="Y")
     ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east", axis="X")
     ds["time"].attrs.update(
