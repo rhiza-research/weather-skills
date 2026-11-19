@@ -123,3 +123,33 @@ def test_no_interval_exits_2(tmp_path, resample):
     with pytest.raises(SystemExit) as exc:
         _run(resample, tmp_path, ds, "--period", "1 day")
     assert exc.value.code == 2
+
+
+def test_integer_variable_is_averaged_as_float(tmp_path, resample):
+    ds = _samples([(1, 2), (2, 3)], [1, 2])
+    ds["count"] = (("time", "lat"), np.array([[1], [2]]), {"units": "1"})
+    out = _run(resample, tmp_path, ds, "--period", "1 day")
+    np.testing.assert_allclose(out["count"].values[:, 0], [1, 1.5, 2])
+
+
+def test_init_axis_exits_2(tmp_path, resample, capsys):
+    """Inits labelled forecast_reference_time are not the dates the samples cover."""
+    ds = _samples([(1, 7), (2, 8)], [1, 2])
+    ds["time"].attrs["standard_name"] = "forecast_reference_time"
+    with pytest.raises(SystemExit) as exc:
+        _run(resample, tmp_path, ds, "--period", "1 day")
+    assert exc.value.code == 2
+    assert "step-to-time" in capsys.readouterr().err
+
+
+def test_single_sample_time_series_defaults_to_time(tmp_path, resample):
+    ds = _samples([(1, 3)], [5])
+    out = _run(resample, tmp_path, ds, "--period", "1 day")
+    np.testing.assert_allclose(out["precip"].values[:, 0], [5, 5, 5])
+
+
+def test_static_variable_passes_through(tmp_path, resample):
+    ds = _samples([(1, 2), (2, 3)], [1, 2])
+    ds["mask"] = (("lat",), [1.0])
+    out = _run(resample, tmp_path, ds, "--period", "1 day")
+    assert out["mask"].dims == ("lat",) and out["mask"].values.tolist() == [1.0]

@@ -59,9 +59,14 @@ def resample_time(ds, period, time_dim, **kwargs):
     import numpy as np
     import xarray as xr
 
-    dim = time_dim or ("time" if "time" in ds.dims and ds.sizes["time"] > 1 else "step")
+    dim = time_dim or ("step" if "step" in ds.dims and ds.sizes.get("time", 1) == 1 else "time")
     if dim not in ds.dims:
         raise UsageError(f"no {dim!r} axis to resample (dims: {list(ds.dims)})")
+    if ds[dim].attrs.get("standard_name") == "forecast_reference_time":
+        raise UsageError(
+            f"{dim} holds forecast inits, not valid times; run step-to-time first so each "
+            "sample sits on the dates it covers, or pass --time-dim step to resample leads"
+        )
     raw = np.asarray(ds[dim].values)
     # shortcut: cftime model calendars are refused; add them if a task needs one.
     if raw.dtype.kind not in "Mm":
@@ -143,7 +148,9 @@ def resample_time(ds, period, time_dim, **kwargs):
         # A cell missing samples that other cells have is NaN, not a mean of what it has.
         others = [d for d in count.dims if d != out_dim]
         mean = mean.where(count >= count.max(others)) if others else mean
-        mean = mean.rename({out_dim: dim}).transpose(*da.dims).astype(da.dtype, copy=False)
+        mean = mean.rename({out_dim: dim}).transpose(*da.dims)
+        if da.dtype.kind == "f":
+            mean = mean.astype(da.dtype, copy=False)
         attrs = {
             **da.attrs,
             AGGREGATION_PERIOD_ATTR: period_label,
