@@ -19,7 +19,7 @@
 #
 # Then fetch chosen station IDs (and/or every TA station in a bbox).
 #
-# With ``--gridded``, reads Sheerwater's historical 0.25° TAHMO precip grid
+# With ``--gridded``, reads Sheerwater's historical all-Africa 0.25° TAHMO precip grid
 # from private GCS instead (Google credentials, no TAHMO login).
 
 import csv
@@ -35,7 +35,7 @@ from weather_skills_core.standard_utils import bbox_subset, is_transient, requir
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.11"
+_SKILL_VERSION = "0.0.12"
 
 DEFAULT_WORKERS = 8
 _TAHMO_PREFIX = "TA"
@@ -85,10 +85,11 @@ _TAHMO_UNITS = {
 }
 
 
-# Historical daily precip: QC'd TAHMO station days averaged within each 0.25°
-# cell. Dims (time, lat, lon); lat/lon list only the cells that ever had a
+# Historical daily precip for all of Africa: complete QC'd TAHMO station days
+# averaged within each 0.25° cell, with precip_count stations per cell-day.
+# Dims (time, lat, lon); lat/lon list only the rows and columns that have a
 # station, so the skill puts them back on the regular 0.25° grid.
-_GRIDDED_STORE = "sheerwater-datalake/hindcasts/tahmo_precip.zarr"
+_GRIDDED_STORE = "sheerwater-datalake/hindcasts/tahmo_africa_precip.zarr"
 _GRID_STEP = 0.25
 _GRIDDED_AUTH_MSG = (
     f"cannot read gs://{_GRIDDED_STORE} (private GCS). Set "
@@ -128,7 +129,8 @@ def _open_gridded():
         ds = xr.open_zarr(_gcs().get_mapper(_GRIDDED_STORE), chunks=None)
     except Exception as exc:  # noqa: BLE001
         raise DataError(f"{_GRIDDED_AUTH_MSG} Opening it failed: {exc}") from None
-    return ds[["precip"]].rename({"lat": "latitude", "lon": "longitude"})
+    ds = ds[["precip", "precip_count"]].set_coords("precip_count")
+    return ds.rename({"lat": "latitude", "lon": "longitude"})
 
 
 def _fetch_gridded(start_time, end_time, bbox):
@@ -156,6 +158,8 @@ def _fetch_gridded(start_time, end_time, bbox):
     if bbox is not None:
         ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
     ds = ds.load()
+    # Rebuilt cells had no station: their count is 0, not missing.
+    ds["precip_count"] = ds["precip_count"].fillna(0).astype("int16")
     # Never fill: a day is a cell's mean of the stations that reported it.
     reported = ds["precip"].notnull()
     if not bool(reported.any()):
@@ -175,8 +179,12 @@ def _fetch_gridded(start_time, end_time, bbox):
     ds["precip"].attrs = {
         "standard_name": "lwe_precipitation_rate",
         "units": "mm day-1",
-        "long_name": "daily precipitation, mean of the TAHMO stations in each 0.25° cell",
+        "long_name": "daily precipitation, mean of the TAHMO stations with a complete day in each 0.25° cell",
         "cell_methods": "time: sum area: mean",
+    }
+    ds["precip_count"].attrs = {
+        "units": "1",
+        "long_name": "number of TAHMO stations averaged into the cell-day",
     }
     ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north", axis="Y")
     ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east", axis="X")
