@@ -980,3 +980,15 @@ def test_resampled_overlaps_aggregate_with_day_coverage(tmp_path, aggregate):
     assert float(out["precip"].values[0]) == pytest.approx((1 + 1.5 + 10 + 2.5 + 3 + 32) / 17)
     assert float(out[AGGREGATION_COVERAGE_COORD].values[0]) == pytest.approx(17 / 31)
     assert "overlapping samples" in out["precip"].attrs["cell_methods"]
+
+
+def test_weekly_to_monthly_points_to_resample_time(tmp_path, aggregate, capsys):
+    """Back-to-back weeks don't fit months whole; the error names the way through."""
+    weeks = _overlapping_weekly_means(1)
+    times = np.datetime64("2026-01-01", "ns") + np.arange(5) * np.timedelta64(7, "D")
+    weeks = xr.concat([weeks] * 5, "time").assign_coords(time=times)
+    src = write_zarr(weeks, tmp_path / "weeks.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--period", "monthly")
+    assert exc.value.code == 2
+    assert "resample-time" in capsys.readouterr().err
