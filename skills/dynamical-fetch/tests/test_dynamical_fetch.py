@@ -535,13 +535,13 @@ def test_accum_totals_in_an_init_window_divide_by_the_lead_spacing(tmp_path, mod
     "when", [["--date", "2026-01-01"], ["--start-time", "2026-01-01", "--end-time", "2026-01-02"]]
 )
 def test_accum_totals_cut_to_one_step_keep_the_6h_cell(tmp_path, mod, fetch, when):
-    """--max-lead below the second lead leaves one step: the cell is still 6 h, not inferred."""
+    """--max-lead at the first lead leaves one step: the cell is still 6 h, not inferred."""
     one = _weathernext2_like_ds().rename({"y": "latitude", "x": "longitude"})
     ds = xr.concat([one, one.assign_coords(init_time=[np.datetime64("2026-01-02")])], "init_time")
     out = tmp_path / "out.zarr"
     with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "ensemble"}):
         run_skill(
-            fetch, "--dataset", "t", *when, "-v", "precip", "--max-lead", "0h", "-o", str(out)
+            fetch, "--dataset", "t", *when, "-v", "precip", "--max-lead", "6h", "-o", str(out)
         )
     precip = xr.open_zarr(out, consolidated=True)["total_precipitation_surface"]
     assert precip.sizes["step"] == 1
@@ -766,22 +766,28 @@ def test_max_lead_zero_keeps_only_initial_state(tmp_path, mod, fetch):
     )
 
 
-def test_max_lead_counts_output_steps_of_end_labelled_field(tmp_path, mod, fetch):
+def test_max_lead_keeps_end_labelled_intervals_that_end_by_it(tmp_path, mod, fetch):
+    """3h leads then 6h: --max-lead 6h keeps [0, 3) and [3, 6), not [6, 12)."""
     ds = _end_labelled_forecast_ds()
-    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "--max-lead", "3h")
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "--max-lead", "6h")
     assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0, 3]
     np.testing.assert_array_equal(
         written["precipitation_surface"].values, ds["precipitation_surface"].values[0, 1:3]
     )
 
 
-def test_max_lead_zero_on_end_labelled_field_keeps_first_interval(tmp_path, mod, fetch):
+def test_max_lead_ending_inside_an_interval_drops_it(tmp_path, mod, fetch):
     ds = _end_labelled_forecast_ds()
-    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "--max-lead", "0h")
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "--max-lead", "5h")
     assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0]
-    np.testing.assert_array_equal(
-        written["precipitation_surface"].values, ds["precipitation_surface"].values[0, 1:2]
-    )
+
+
+def test_max_lead_before_first_interval_end_exits_2(tmp_path, mod, fetch, capsys):
+    ds = _end_labelled_forecast_ds()
+    with pytest.raises(SystemExit) as exc:
+        _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "--max-lead", "0h")
+    assert exc.value.code == 2
+    assert "first interval" in capsys.readouterr().err
 
 
 def test_max_lead_zero_with_mixed_fields_drops_interval_fields(tmp_path, mod, fetch, capsys):
