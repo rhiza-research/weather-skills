@@ -2,10 +2,10 @@
 name: hindcast-fetch
 description: "Fetch ECMWF (inits 1996–2025), GEFS (1998–2019) or Cumulus (1996 to 2026-08-31) subseasonal hindcasts (reforecasts) for one or more ranges of init dates over a region, as a multi-init weather-skills forecast Zarr of daily precipitation, 2 m temperature and (ECMWF) sea-surface temperature. Use when a task needs past forecasts for calibration, bias correction, model climatologies or skill scores."
 license: MIT
-compatibility: "Requires Python 3.12 and uv. ECMWF and GEFS need no credentials. Cumulus needs AZURE_STORAGE_SAS_TOKEN, the same Azure read SAS as cumulus-fetch."
+compatibility: "Requires Python 3.12 and uv. ECMWF and GEFS need no credentials. Cumulus needs AZURE_STORAGE_SAS_TOKEN, a read SAS (sp=rl) for Azure container italynorthdata/data."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.2"
+  version: "0.0.3"
   catalog-group: fetchers
   variables:
     - precip

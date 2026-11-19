@@ -16,7 +16,7 @@
 #   gefs — public Sheerwater store. CHC's GEFSv12 reforecast, Wednesday inits 1998-2019.
 #   cumulus — Cumulus's own Azure Zarr of its gratis-czajkowski-era5 Aurora hindcast,
 #     1° IMERG-trained precip and 2 m temperature, 186 inits a year 1996 to 2026-08-31, 30
-#     exchangeable members; read with the AZURE_STORAGE_SAS_TOKEN cumulus-fetch uses.
+#     exchangeable members; read with an AZURE_STORAGE_SAS_TOKEN read SAS.
 #   cumulus_0p25 — the same hindcast's IMERG-trained precip on its 0.25° grid.
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from weather_skills_core.standard_utils import (
 from weather_skills_core.units import stamp_data_interval, to_standard_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.2"
+_SKILL_VERSION = "0.0.3"
 
 _PUBLIC = "gs://sheerwater-public-datalake/hindcasts"
 _AZURE_ACCOUNT = "italynorthdata"
