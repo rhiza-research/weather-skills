@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py *)
 metadata:
-  version: "0.0.11"
+  version: "0.0.12"
   catalog-group: transforms
 ---
 
@@ -65,6 +65,8 @@ Writes 6-hour mean GFS precip rates; hourly and 3-hourly leads are weighted by t
 
 **Coverage.** A sample counts only when some cell has data (a fixed land mask does not count as missing; an all-NaN unpublished lead does). Re-aggregated input counts at its own coverage, so a 3/7 week inside a 14-day window gives 10/14.
 
-**Irregular axes.** Inputs with CF `{dim}_bounds` are weighted by sample duration (`sum(rate × dt) / sum(dt)`). Samples spaced closer than their `data_interval` (one weekly mean per forecast init, inits days apart) overlap, so each `[t, t + data_interval)` is weighted by its overlap with the bin the same way, at any period or `--end-time`; coverage counts each covered day once. The output stays a mean rate: `cell_methods` gains `comment: overlapping samples`, and convert-to-totals refuses it. For totals, select non-overlapping samples that tile the period first.
+**Irregular axes.** Inputs with CF `{dim}_bounds` are weighted by sample duration (`sum(rate × dt) / sum(dt)`).
+
+**Overlapping samples.** Samples spaced closer than their interval (one weekly mean per forecast init, inits days apart), or overlapping `{dim}_bounds`, exit 2: a bin would count some days more than once. Run resample-time first, which averages the samples covering each grid cell and stamps per-cell coverage, then aggregate its output. Its `cell_methods` comment `overlapping samples` is kept through aggregation.
 
 **Calendar dekads.** Fetch the dekad and pass its length with `--end-time` the day after it: 21–31 Oct is `--period '11 day' --end-time 2026-11-01`.
