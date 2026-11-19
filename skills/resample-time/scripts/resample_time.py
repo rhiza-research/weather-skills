@@ -28,21 +28,6 @@ _SKILL_VERSION = "0.0.1"
 OVERLAPPING_SAMPLES = "overlapping samples"
 
 
-def _ns(text, what):
-    """A fixed duration in integer nanoseconds; calendar months and years have no fixed length."""
-    if any(word in text for word in ("month", "year")):
-        raise UsageError(f"{what} {text!r} is a calendar length; resample-time needs a fixed one")
-    try:
-        ns = round(float(parse_aggregation_period(text).to("ns").magnitude))
-    except UsageError as exc:
-        raise UsageError(
-            f"{what} {text!r} is not a duration (e.g. '1 day', '15 minute'): {exc}"
-        ) from None
-    if ns <= 0:
-        raise UsageError(f"{what} {text!r} must be positive")
-    return ns
-
-
 @weather_skill(
     name="resample-time",
     version=_SKILL_VERSION,
@@ -71,33 +56,37 @@ def resample_time(ds, period, time_dim, **kwargs):
     # shortcut: cftime model calendars are refused; add them if a task needs one.
     if raw.dtype.kind not in "Mm":
         raise UsageError(f"{dim} must be datetime64 or timedelta64 (got {raw.dtype})")
-    period_ns = _ns(period, "--period")
-    period_label = format_duration(parse_aggregation_period(period))
+    ns_type = f"{raw.dtype.kind}8[ns]"
+    if "month" in period or "year" in period:
+        raise UsageError(f"--period {period!r} is a calendar length; use a fixed one")
+    period_q = parse_aggregation_period(period)
+    period_ns = round(float(period_q.to("ns").magnitude))
+    if period_ns <= 0:
+        raise UsageError(f"--period {period!r} must be positive")
+    period_label = format_duration(period_q)
 
     # Each sample covers [start, end): its CF bounds, or [t, t + its own interval).
     bounds_name = ds[dim].attrs.get("bounds")
     if not (isinstance(bounds_name, str) and bounds_name in ds):
         bounds_name = f"{dim}_bounds" if f"{dim}_bounds" in ds else None
     if bounds_name is not None:
-        bounds = np.asarray(ds[bounds_name].values)
-        starts = bounds[:, 0].astype(f"{raw.dtype.kind}8[ns]").astype("int64")
-        ends = bounds[:, 1].astype(f"{raw.dtype.kind}8[ns]").astype("int64")
+        starts, ends = ds[bounds_name].values.astype(ns_type).astype("int64").T
+        ds = ds.drop_vars(bounds_name)
     else:
-        cell = next(
-            (
-                ds[n].attrs[AGGREGATION_PERIOD_ATTR]
-                for n in ds.data_vars
-                if isinstance(ds[n].attrs.get(AGGREGATION_PERIOD_ATTR), str)
-            ),
-            data_interval_of(ds),
-        )
+        cell = data_interval_of(ds)
+        for name in ds.data_vars:
+            if isinstance(ds[name].attrs.get(AGGREGATION_PERIOD_ATTR), str):
+                cell = ds[name].attrs[AGGREGATION_PERIOD_ATTR]
+                break
         if not cell:
             raise UsageError(
                 f"samples on {dim} carry no interval: no {dim}_bounds, aggregation_period "
                 "or data_interval, so their overlap is unknown"
             )
-        starts = raw.astype(f"{raw.dtype.kind}8[ns]").astype("int64")
-        ends = starts + _ns(cell, "sample interval")
+        if "month" in cell or "year" in cell:
+            raise UsageError(f"samples on {dim} are {cell} long, a calendar length")
+        starts = raw.astype(ns_type).astype("int64")
+        ends = starts + round(float(parse_aggregation_period(cell).to("ns").magnitude))
     if (ends <= starts).any():
         raise UsageError(f"every sample on {dim} must end after it starts")
 
@@ -125,10 +114,7 @@ def resample_time(ds, period, time_dim, **kwargs):
     n_cover = inside.sum(axis=1)
     coverage = np.where(n_cover > 0, (inside * cov_in).sum(axis=1) / np.maximum(n_cover, 1), 0.0)
 
-    out_dim = "_grid"
-    weights = xr.DataArray(inside.astype(float), dims=(out_dim, dim))
-    drop = [v for v in ds.variables if dim in ds[v].dims and v != dim and v not in ds.data_vars]
-    ds = ds.drop_vars(drop + ([bounds_name] if bounds_name else []))
+    weights = xr.DataArray(inside.astype(float), dims=("_grid", dim))
     overlapping = bool((n_cover > 1).any()) or any(
         OVERLAPPING_SAMPLES in str(ds[n].attrs.get("cell_methods", "")) for n in ds.data_vars
     )
@@ -136,6 +122,7 @@ def resample_time(ds, period, time_dim, **kwargs):
     if overlapping:
         cell_methods = f"{cell_methods} (comment: {OVERLAPPING_SAMPLES})"
 
+    # Everything along the axis (bounds, per-sample coords) goes; data variables come back.
     out = ds.drop_dims(dim)
     for name in ds.data_vars:
         da = ds[name]
@@ -144,11 +131,9 @@ def resample_time(ds, period, time_dim, **kwargs):
         # Plain mean of every sample covering the grid cell.
         count = xr.dot(weights, da.notnull().astype(float), dim=dim)
         total = xr.dot(weights, da.fillna(0.0), dim=dim)
-        mean = (total / count).where(count > 0)
         # A cell missing samples that other cells have is NaN, not a mean of what it has.
-        others = [d for d in count.dims if d != out_dim]
-        mean = mean.where(count >= count.max(others)) if others else mean
-        mean = mean.rename({out_dim: dim}).transpose(*da.dims)
+        mean = (total / count).where(count >= count.max([d for d in da.dims if d != dim]))
+        mean = mean.rename({"_grid": dim}).transpose(*da.dims)
         if da.dtype.kind == "f":
             mean = mean.astype(da.dtype, copy=False)
         attrs = {
@@ -159,9 +144,8 @@ def resample_time(ds, period, time_dim, **kwargs):
         }
         out[name] = mean.assign_attrs(attrs)
 
-    labels = left.astype(f"{raw.dtype.kind}8[ns]")
-    out = out.assign_coords({dim: (dim, labels, ds[dim].attrs)})
-    out[dim].attrs.pop("bounds", None)
+    dim_attrs = {k: v for k, v in ds[dim].attrs.items() if k != "bounds"}
+    out = out.assign_coords({dim: (dim, left.astype(ns_type), dim_attrs)})
     out = out.assign_coords({AGGREGATION_COVERAGE_COORD: (dim, coverage)})
     out[AGGREGATION_COVERAGE_COORD].attrs.update(
         long_name="fraction of native samples with finite data in the interval",
@@ -169,11 +153,10 @@ def resample_time(ds, period, time_dim, **kwargs):
         valid_min=0.0,
         valid_max=1.0,
     )
-    empty = int((n_cover == 0).sum())
     print(
-        f"{raw.size} samples -> {left.size} {period_label} "
-        f"cells on {dim}; {int((n_cover > 1).sum())} averaged from overlapping samples, "
-        f"{empty} with no sample (coverage 0)",
+        f"{raw.size} samples -> {left.size} {period_label} cells on {dim}; "
+        f"{int((n_cover > 1).sum())} averaged from overlapping samples, "
+        f"{int((n_cover == 0).sum())} with no sample (coverage 0)",
         file=sys.stderr,
     )
     return out

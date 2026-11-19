@@ -42,15 +42,6 @@ _METHOD_TO_CF = {"mean": "mean", "max": "maximum", "min": "minimum"}
 OVERLAPPING_SAMPLES = "overlapping samples"
 
 
-def _overlap_message(dim, how):
-    return (
-        f"samples on {dim} are {how}, so a bin would count some days more than once. "
-        f"Run resample-time --period <grid> first (e.g. '1 day' for whole-day windows): "
-        "it averages the samples covering each grid cell and stamps each cell's "
-        "coverage; then aggregate its output."
-    )
-
-
 def _as_ns(val):
     """Times or durations (numpy, pandas, or cftime) as int64 nanoseconds."""
     import numpy as np
@@ -174,7 +165,7 @@ def aggregate(
     bounds_name = ds[dim].attrs.get("bounds")
     if not (isinstance(bounds_name, str) and bounds_name in ds):
         bounds_name = f"{dim}_bounds" if f"{dim}_bounds" in ds else None
-    bounds = native_interval = cell = None
+    bounds = native_interval = cell = overlap = None
     overlapping = any(
         OVERLAPPING_SAMPLES in str(ds[name].attrs.get("cell_methods", "")) for name in ds.data_vars
     )
@@ -206,11 +197,18 @@ def aggregate(
         if cell and raw.dtype.kind in "Mm" and raw.size > 1:
             cell_ns = round(float(parse_aggregation_period(cell).to("ns").magnitude))
             if np.diff(np.sort(_as_ns(raw))).min() < cell_ns:
-                raise UsageError(_overlap_message(dim, f"spaced closer than their {cell} interval"))
+                overlap = f"spaced closer than their {cell} interval"
     if bounds is not None:
         order = np.argsort(starts)
         if (starts[order][1:] < ends[order][:-1]).any():
-            raise UsageError(_overlap_message(dim, f"overlapping in {dim}_bounds"))
+            overlap = f"overlapping in {dim}_bounds"
+    if overlap:
+        raise UsageError(
+            f"samples on {dim} are {overlap}, so a bin would count some days more than once. "
+            "Run resample-time --period <grid> first (e.g. '1 day' for whole-day windows): "
+            "it averages the samples covering each grid cell and stamps each cell's "
+            "coverage; then aggregate its output."
+        )
 
     key = period or window
     flag = "--period" if period else "--window"
