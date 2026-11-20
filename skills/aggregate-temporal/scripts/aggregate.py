@@ -22,6 +22,7 @@ from weather_skills_core.units import (
     format_cell_methods,
     format_duration,
     infer_timestep,
+    interval_days,
     parse_aggregation_period,
     stamp_data_interval,
 )
@@ -160,7 +161,10 @@ def aggregate(
     try:
         ds = stamp_data_interval(ds, dim=dim)
     except UsageError:
-        pass
+        # shortcut: core can't infer cftime spacing across Feb 30; those axes fall back
+        # to point samples. Dates core can't place are refused.
+        if np.asarray(ds[dim].values).dtype.kind in "Mm":
+            raise
     bounds_name = ds[dim].attrs.get("bounds")
     if not (isinstance(bounds_name, str) and bounds_name in ds):
         bounds_name = f"{dim}_bounds" if f"{dim}_bounds" in ds else None
@@ -193,8 +197,12 @@ def aggregate(
         # Samples spaced closer than their own interval overlap.
         raw = np.asarray(ds[dim].values)
         if cell and raw.dtype.kind in "Mm" and raw.size > 1:
-            cell_ns = round(float(parse_aggregation_period(cell).to("ns").magnitude))
-            if np.diff(np.sort(_as_ns(raw))).min() < cell_ns:
+            sample_starts = _as_ns(raw)
+            sample_ends = sample_starts + np.round(interval_days(ds[dim], cell) * 86400e9).astype(
+                "int64"
+            )
+            order = np.argsort(sample_starts)
+            if (sample_starts[order][1:] < sample_ends[order][:-1]).any():
                 overlap = f"spaced closer than their {cell} interval"
     if bounds is not None:
         order = np.argsort(starts)
@@ -429,9 +437,10 @@ def aggregate(
             if dim in da.dims:
                 present *= np.isfinite(da).any([d for d in da.dims if d != dim]).values
         # Re-aggregating, a 3/7-complete week counts as 3/7 of a week, not a whole one.
-        if bounds is None and AGGREGATION_COVERAGE_COORD in ds.coords:
-            if ds[AGGREGATION_COVERAGE_COORD].dims == (dim,):
-                present *= np.nan_to_num(ds[AGGREGATION_COVERAGE_COORD].values.astype(float))
+        if AGGREGATION_COVERAGE_COORD in ds.coords:
+            if not set(ds[AGGREGATION_COVERAGE_COORD].dims) - {dim}:
+                cov = ds[AGGREGATION_COVERAGE_COORD].values.astype(float)
+                present *= np.nan_to_num(np.broadcast_to(cov, raw.shape))
         if bounds is None:
             timestep_days = 1.0
             try:
@@ -448,6 +457,12 @@ def aggregate(
                 idx = np.flatnonzero(overlap > 0)
                 if idx.size == 0 or right_ns <= left_ns:
                     continue
+                if window is None and (overlap[idx] < (ends - starts)[idx]).any():
+                    raise UsageError(
+                        f"{key!r} bins would split {dim} samples whose bounds cross a bin "
+                        "edge; aggregate to a period they divide, or run regularize-time "
+                        "--period '1 day' first to split them into days"
+                    )
                 coverage = float((overlap[idx] * present[idx]).sum()) / (right_ns - left_ns)
             else:
                 idx = np.flatnonzero((raw >= left) & (raw < right))

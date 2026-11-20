@@ -63,7 +63,7 @@ Writes 6-hour mean GFS precip rates; hourly and 3-hourly leads are weighted by t
 
 **Window geometry.** Windows are half-open `[left, right)` and labeled at the left edge, on `step` and with `--end-time` alike: week 1 of a forecast initialized 2026-10-12 is `step = 0` and covers the same days as the `--end-time 2026-10-19` observation week labeled 2026-10-12.
 
-**Coverage.** A sample counts only when some cell has data (a fixed land mask does not count as missing; an all-NaN unpublished lead does). Re-aggregated input counts at its own coverage, so a 3/7 week inside a 14-day window gives 10/14.
+**Coverage.** A sample counts only when every variable on the axis has data somewhere (a fixed land mask does not count as missing; an all-NaN unpublished lead does). Re-aggregated input counts at its own coverage, so a 3/7 week inside a 14-day window gives 10/14.
 
 **Irregular axes.** Inputs with CF `{dim}_bounds` are weighted by sample duration (`sum(rate × dt) / sum(dt)`).
 
