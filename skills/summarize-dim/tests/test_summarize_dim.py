@@ -1023,3 +1023,106 @@ def test_month_start_labels_without_bounds_group_by_month(tmp_path, summarize_di
     got = xr.open_zarr(out)["index"]
     assert float(got.sel(year=2020, month=12)) == 13.0
     assert float(got.sel(year=2019, month=11)) == 0.0
+
+
+def _daily(times, values):
+    import numpy as np
+
+    return xr.Dataset(
+        {
+            "precip": (
+                ("time", "latitude", "longitude"),
+                np.asarray(values, float)[:, None, None],
+                {
+                    "units": "mm day-1",
+                    "standard_name": "lwe_precipitation_rate",
+                    "data_interval": "1 day",
+                },
+            )
+        },
+        coords={"time": np.asarray(times, "datetime64[ns]"), "latitude": [0.0], "longitude": [0.0]},
+    )
+
+
+def test_weeks_restarting_each_year_summarize_by_dayofyear(tmp_path, summarize_dim):
+    """Weekly steps from 1 Feb of each year are off one regular grid; --min-coverage 0 still groups them."""
+    import numpy as np
+
+    label_group = load_skill("label-group", "label_group").label_group
+    weeks = [
+        np.datetime64(f"{year}-02-01", "ns") + k * np.timedelta64(7, "D")
+        for year in (2024, 2025)
+        for k in range(4)
+    ]
+    ds = _daily(weeks, np.arange(8.0))
+    ds["precip"].attrs.update(data_interval="7 day", aggregation_period="7 day")
+    labelled, out = tmp_path / "l.zarr", tmp_path / "o.zarr"
+    run_skill(
+        label_group,
+        "-i",
+        str(write_zarr(ds, tmp_path / "in.zarr")),
+        "-o",
+        str(labelled),
+        "--time",
+        "dayofyear",
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(labelled),
+            "-o",
+            str(out),
+            "--by",
+            "dayofyear",
+            "--method",
+            "mean",
+        )
+    assert exc.value.code == 2
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(labelled),
+        "-o",
+        str(out),
+        "--by",
+        "dayofyear",
+        "--method",
+        "mean",
+        "--min-coverage",
+        "0",
+    )
+    result = xr.open_zarr(out)["precip"]
+    np.testing.assert_allclose(result.transpose("dayofyear", ...).values[:, 0, 0], [2, 3, 4, 5])
+
+
+def test_centred_rolling_windows_group_by_their_label(tmp_path, summarize_dim):
+    """A 15-day centred window labelled 1 Sep belongs to 1 Sep, and its 1-day spacing is the step."""
+    import numpy as np
+
+    aggregate = load_skill("aggregate-temporal", "aggregate").aggregate
+    label_group = load_skill("label-group", "label_group").label_group
+    days = np.datetime64("2026-08-01", "ns") + np.arange(60) * np.timedelta64(1, "D")
+    rolled, labelled, out = tmp_path / "r.zarr", tmp_path / "l.zarr", tmp_path / "o.zarr"
+    src = write_zarr(_daily(days, np.arange(60.0)), tmp_path / "in.zarr")
+    run_skill(
+        aggregate, "-i", str(src), "-o", str(rolled), "--window", "15 day", "--align", "center"
+    )
+    run_skill(label_group, "-i", str(rolled), "-o", str(labelled), "--time", "dayofyear")
+    lab = xr.open_zarr(labelled)
+    sep1 = int(np.flatnonzero(lab["time"].values == np.datetime64("2026-09-01", "ns"))[0])
+    assert int(lab["dayofyear"].values[sep1]) == 244
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(labelled),
+        "-o",
+        str(out),
+        "--by",
+        "dayofyear",
+        "--method",
+        "mean",
+        "--min-coverage",
+        "0.5",
+    )
+    assert xr.open_zarr(out).sizes["dayofyear"] == 60

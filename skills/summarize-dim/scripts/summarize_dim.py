@@ -156,6 +156,11 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                 inferred = ds
             if "time_bounds" in inferred.variables:
                 cells = inferred["time_bounds"].values
+        if cells is not None:
+            # Overlapping cells are rolling windows, placed by their label, as label-group does.
+            order = np.argsort(cells[:, 0])
+            if (cells[order][1:, 0] < cells[order][:-1, 1]).any():
+                cells = None
         if cells is not None and not np.array_equal(cells[:, 0], ds["time"].values):
             # A step belongs where its cell starts (as label-group labels it), not its label.
             ds = ds.assign_coords(time=cells[:, 0])
@@ -230,7 +235,8 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
             )
         first = times[0]
         period = (
-            next(
+            data_interval_of(ds)
+            or next(
                 (
                     ds[v].attrs[AGGREGATION_PERIOD_ATTR]
                     for v in ds.data_vars
@@ -238,7 +244,6 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                 ),
                 None,
             )
-            or data_interval_of(ds)
             or bounds_period
         )
         calendar = re.fullmatch(r"\s*(\d+)\s*(month|year)s?\s*", period or "")
@@ -267,10 +272,12 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
             pd.DatetimeIndex(full) if isinstance(times, pd.DatetimeIndex) else xr.CFTimeIndex(full)
         )
         at = full.get_indexer(times)
-        if (at < 0).any():
+        irregular = bool((at < 0).any())
+        if irregular and min_coverage > 0:
             raise UsageError(
                 f"time values do not fall on a regular {period or 'time'} axis, so the steps "
-                "each --by group should hold cannot be counted"
+                "each --by group should hold cannot be counted; pass --min-coverage 0 to "
+                "summarize each group from the steps it has"
             )
         # Labels at each step's start, and at its last second to catch a step (a week
         # from 27 May) that runs into the next group.
@@ -299,48 +306,70 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                     "month_group": season.astype(str),
                 }
             )
-        rebuilt, rebuilt_end = labelled
-        change = np.zeros(full.size, dtype=bool)
-        grouped = np.ones(full.size, dtype=bool)
-        for b in time_by:
-            if not np.array_equal(rebuilt[b][at], ds[b].values):
-                raise UsageError(
-                    f"--by {b!r} does not hold the calendar {b} of each time step, as "
-                    "label-group writes it, so its full calendar period is unknown"
-                )
-            # A step of a day or less belongs to the day it is stamped on.
-            crossing = rebuilt[b][at] != rebuilt_end[b][at]
-            if longer_than_a_day and crossing.any():
-                raise UsageError(
-                    f"the {period or 'time'} step starting {times[np.argmax(crossing)]} runs "
-                    f"into the next --by {b} group, so the group would take in time outside "
-                    "it; aggregate to steps that fit inside the groups (daily, or monthly for "
-                    "months and month groups)"
-                )
-            change[1:] |= rebuilt[b][1:] != rebuilt[b][:-1]
-            if b == "month_group":
-                grouped &= rebuilt[b] != ""
-        run = np.cumsum(change)
-        touched = np.isin(run, run[at]) & grouped
-        if touched[0] or touched[-1]:
-            raise UsageError("a --by time group lasts over a year, so its full period is unknown")
         t = list(dict.fromkeys(ds[b].dims for b in by)).index(("time",))
-        groups[t] = [
-            (
-                labels,
-                isel,
-                box,
-                int(
-                    (
-                        touched
-                        & np.logical_and.reduce(
-                            [rebuilt[b] == label_values[b][i] for b, i in labels.items()]
-                        )
-                    ).sum()
-                ),
-            )
-            for labels, isel, box, _ in groups[t]
-        ]
+        if irregular:
+            # No regular axis to count against: each group expects the steps it has.
+            groups[t] = [
+                (
+                    labels,
+                    isel,
+                    box,
+                    int(
+                        np.logical_and.reduce(
+                            [
+                                ds[b].values == label_values[b][i]
+                                for b, i in labels.items()
+                                if b in time_by
+                            ]
+                        ).sum()
+                    ),
+                )
+                for labels, isel, box, _ in groups[t]
+            ]
+        else:
+            rebuilt, rebuilt_end = labelled
+            change = np.zeros(full.size, dtype=bool)
+            grouped = np.ones(full.size, dtype=bool)
+            for b in time_by:
+                if not np.array_equal(rebuilt[b][at], ds[b].values):
+                    raise UsageError(
+                        f"--by {b!r} does not hold the calendar {b} of each time step, as "
+                        "label-group writes it, so its full calendar period is unknown"
+                    )
+                # A step of a day or less belongs to the day it is stamped on.
+                crossing = rebuilt[b][at] != rebuilt_end[b][at]
+                if longer_than_a_day and crossing.any():
+                    raise UsageError(
+                        f"the {period or 'time'} step starting {times[np.argmax(crossing)]} runs "
+                        f"into the next --by {b} group, so the group would take in time outside "
+                        "it; aggregate to steps that fit inside the groups (daily, or monthly for "
+                        "months and month groups)"
+                    )
+                change[1:] |= rebuilt[b][1:] != rebuilt[b][:-1]
+                if b == "month_group":
+                    grouped &= rebuilt[b] != ""
+            run = np.cumsum(change)
+            touched = np.isin(run, run[at]) & grouped
+            if touched[0] or touched[-1]:
+                raise UsageError(
+                    "a --by time group lasts over a year, so its full period is unknown"
+                )
+            groups[t] = [
+                (
+                    labels,
+                    isel,
+                    box,
+                    int(
+                        (
+                            touched
+                            & np.logical_and.reduce(
+                                [rebuilt[b] == label_values[b][i] for b, i in labels.items()]
+                            )
+                        ).sum()
+                    ),
+                )
+                for labels, isel, box, _ in groups[t]
+            ]
         # The longest group's full calendar run, in steps: the span a sum by it covers.
         longest_group = max(expected for _, _, _, expected in groups[t])
 
