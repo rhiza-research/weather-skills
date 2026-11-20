@@ -24,7 +24,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/convert_to_totals.py -i RATES.zarr -o TOTALS.
 - `--output`, `-o` — output Zarr.
 - `--variable`, `-v` — precipitation variable to convert; repeat for several. Default: every precipitation-rate variable. Naming a non-precipitation variable exits non-zero.
 - `--min-coverage` — drop intervals whose `aggregation_coverage` (share of samples with data, 0–1) is below this. Default: `1.0`.
-- `--time-dim` — interval axis. Default: the axis named in the variable's `cell_methods` (`step: mean` → `step`); if `select` has removed that axis, each value is one interval. Without `cell_methods`: `time`, or `step` when there is no `time` axis or `time` has one value.
+- `--time-dim` — axis the intervals lie along. Default: the axis aggregate-temporal binned along (`step: mean` in `cell_methods` → `step`). If `select` kept a single value of it, each value is one interval. With no `cell_methods`: `time`, or `step` when `time` is missing or has one value.
 
 ### Output
 - Each converted variable is rate × interval length, in `mm`, with the precipitation-amount `standard_name`, `long_name` `Total precipitation`, and `cell_methods` `{dim}: sum`. Product rate attrs (`comment`, `short_name`, `step_type`) are dropped. `aggregation_period` is kept.
