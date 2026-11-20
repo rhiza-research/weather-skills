@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/step_to_time.py *)
 metadata:
-  version: "0.0.9"
+  version: "0.0.10"
   catalog-group: transforms
 ---
 
@@ -29,6 +29,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/step_to_time.py -i IN.zarr -o OUT.zarr
 - One init: `step_bounds` become `time_bounds`. The `step` and scalar `time` coords and any `valid_time` coord are dropped; the init is kept in the dataset attr `weather_skills_forecast_init` (ISO 8601).
 - Forecast steps are labeled at the start of each interval, so `step = 0` of daily precipitation becomes the init date.
 - Many inits at one lead: `time` holds `init + step` for each init, and the scalar `step` coord is kept as a label of the lead; a scalar `step_bounds` becomes `time_bounds`. No `weather_skills_forecast_init` attr is written.
+- Both cases: `step:` in `cell_methods` becomes `time:`.
 
 ### Notes
 - A cube with both a `time` axis and a `step` axis exits 2; select one init or one step first. A `time` axis without a scalar `step` coord (already on dates) also exits 2.
