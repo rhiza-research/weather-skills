@@ -37,7 +37,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window 
 
 ### Output
 - Same variables and units; with `--period` the aggregated axis holds one label per window, at the window's left edge; with `--window`, one per input sample. Without `--end-time`, `time` windows start at the first sample; `step` windows start at lead 0. Ensemble members stay separate.
-- Each variable gets `aggregation_period` (window length, e.g. `7 day`, `1 dekad`, `1 month`), `data_interval` (the period; with `--window`, `{dim}_bounds` holding each window's start and end instead), and CF `cell_methods` (e.g. `time: mean (interval: 1 day)`, where the interval is the input spacing).
+- Each variable gets `aggregation_period` (window length, e.g. `7 day`, `1 dekad`, `1 month`), `data_interval` (the period, or the input spacing for `--window`, whose output also has `{dim}_bounds` with each window's start and end), and CF `cell_methods` (e.g. `time: mean (interval: 1 day)`, where the interval is the input spacing).
 - Coordinate `aggregation_coverage` (0–1) on the axis: the share of expected input samples with data. Incomplete windows are kept and listed on stderr.
 
 ### Notes

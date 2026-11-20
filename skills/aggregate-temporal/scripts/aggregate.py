@@ -524,8 +524,8 @@ def aggregate(
                 file=sys.stderr,
             )
 
-    # Rolling windows carry bounds instead; input already at the period keeps its own.
-    data_interval = None if window is not None else (native_interval if same else agg)
+    # Rolling windows keep the input spacing; their bounds say where each window lies.
+    data_interval = native_interval if window is not None or same else agg
     cell_methods = format_cell_methods(dim, _METHOD_TO_CF[method], interval=native_interval)
     if overlapping:
         note = f"comment: {OVERLAPPING_SAMPLES}"
@@ -537,8 +537,6 @@ def aggregate(
         attrs = {**out[name].attrs, AGGREGATION_PERIOD_ATTR: agg, "cell_methods": cell_methods}
         if data_interval:
             attrs[DATA_INTERVAL_ATTR] = data_interval
-        else:
-            attrs.pop(DATA_INTERVAL_ATTR, None)
         out[name].attrs = attrs
     return out
 
