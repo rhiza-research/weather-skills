@@ -68,6 +68,8 @@ def remote(fetch_mod, monkeypatch):
             return [f"{path}/{name}" for name in state["tree"][path]]
 
         def cat_file(self, path):
+            if path in state.get("files", {}):
+                return state["files"][path]
             state["read"].append(path)
             return path.encode()
 
@@ -290,6 +292,55 @@ def test_list_shows_names_without_reading_files(fetch_mod, remote, capsys):
     assert "init 2026-10-27:" in out and UNET not in out
     run_skill(fetch_mod.fetch, "--list", "--source", "nope")
     assert "inits of nope: none" in capsys.readouterr().out
+
+
+BASE = "data/live_forecasts/downscaled_models"
+LIVE_MD = f"""# Live models
+
+| model | source | status | `cumulus-downscaled-fetch` args (add `--date`) |
+|---|---|---|---|
+| unet | aurora (imerg) | default | `--source aurora --model {UNET} --checkpoint ckpt-a --target era5` |
+| diffusion | aurora (era5) | other | `--source aurora --model {DIFF} --checkpoint ckpt-a` |
+| unet | ifs | other | `--source ifs --model {UNET}` |
+"""
+
+
+def test_models_live_default_row_fills_unpassed_args(tmp_path, fetch_mod, remote, capsys):
+    remote["tree"][BASE] = ["MODELS_LIVE.md", "aurora", "ifs"]
+    remote["files"] = {f"{BASE}/MODELS_LIVE.md": LIVE_MD.encode()}
+    out = tmp_path / "default.zarr"
+    run_skill(fetch_mod.fetch, "-o", str(out))
+    with xr.open_zarr(out, consolidated=True) as ds:
+        # The default row's model has output only at the older init.
+        assert ds["time"].values == np.datetime64("2026-10-20", "ns")
+        assert (
+            ds.attrs["weather_skills_source"] == f"cumulus-downscaled:aurora/{UNET}/ckpt-a/{ERA5}"
+        )
+    assert "Model: unet, the MODELS_LIVE.md default for aurora." in capsys.readouterr().err
+    run_skill(fetch_mod.fetch, "--list")
+    out_text = capsys.readouterr().out
+    assert (
+        out_text.startswith("MODELS_LIVE.md:\n# Live models") and "sources: aurora, ifs" in out_text
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_skill(fetch_mod.fetch, "--source", "ifs", "-o", str(tmp_path / "unused.zarr"))
+    assert exc.value.code == 2
+    assert "no default model for --source ifs (it lists: unet (other))" in capsys.readouterr().err
+
+
+def test_bilinear_baseline_has_no_checkpoint_level(tmp_path, fetch_mod, remote, capsys):
+    model = f"{ROOT}/2026-10-27/bilinear_global_precip"
+    remote["tree"][f"{ROOT}/2026-10-27"].append("bilinear_global_precip")
+    remote["tree"][model] = [ERA5, IMERG]
+    remote["tree"][f"{model}/{ERA5}"] = ["precip_24h", "regions"]
+    remote["tree"][f"{model}/{IMERG}/precip_24h/data"] = ["2026-10-27-00-0024.nc"]
+    out = tmp_path / "bilinear.zarr"
+    run_skill(fetch_mod.fetch, "--model", "bilinear", "-o", str(out))
+    with xr.open_zarr(out, consolidated=True) as ds:
+        assert ds.attrs["weather_skills_source"] == (
+            f"cumulus-downscaled:aurora/bilinear_global_precip/{IMERG}"
+        )
+    assert "Checkpoint: none" in capsys.readouterr().err
 
 
 def test_missing_date_exits_1(tmp_path, fetch_mod, remote):
