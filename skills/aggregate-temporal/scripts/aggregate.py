@@ -139,7 +139,11 @@ def aggregate(
         raise UsageError("--align requires --window")
 
     if variable is not None:
-        ds = ds[list(dict.fromkeys(variable))]
+        missing = [name for name in variable if name not in ds.data_vars]
+        if missing:
+            raise UsageError(f"variable(s) {missing} not in dataset (have {list(ds.data_vars)})")
+        # drop_vars keeps every coordinate; ds[[...]] would lose {dim}_bounds (dims nv).
+        ds = ds.drop_vars([name for name in ds.data_vars if name not in variable])
     # dequantify_dataset keeps the standard spelling (mm day-1, not millimeter / day).
     ds = dequantify_dataset(ds)
 

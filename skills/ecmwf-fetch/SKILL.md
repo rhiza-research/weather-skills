@@ -46,7 +46,7 @@ The skill reads the public dynamical.org copy (`ecmwf-ifs-ens-forecast-46-day-da
 - From ECDS, pressure-level fields and `pv` are control only: they have data at `number=0` and are NaN for members 1..100.
 - From ECDS (inits before 2026), accumulated fields other than `precip` (`cp`, `sf`, `ro`, `sro`, `sshf`, `slhf`, `ssr`, `ssrd`, `str`, `strd`, `ttr`, `ewss`, `nsss`) stay cumulative since init in native units. Requesting them with `precip` exits 2.
 - Ocean fields (`t20d`, `zos`, `ocu`, …) come only from ECDS on a 1.0° grid; atmosphere fields are 1.5°. Fetch them in a separate call.
-- On the catalog path, lead 0 is dropped only when every requested field is empty there (daily means, `precip`). Fetch daily-mean fields apart from instant ones (`u10`, `msl`, levels) to keep both on interval-start steps.
+- On the catalog path, lead 0 is dropped only when every requested field is empty there (daily means, `precip`). Fetched together with instant fields (`u10`, `msl`, levels), steps keep the catalog labels and `step_bounds` give each cell as `[previous lead, s)`. Fetch them apart to get interval-start steps.
 
 ### Example
 ```bash

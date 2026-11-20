@@ -109,7 +109,10 @@ def downscale(
 
     lat_dim, lon_dim = detect_spatial_dims(ds)
     if variable:
-        ds = ds[[variable]]
+        if variable not in ds.data_vars:
+            raise UsageError(f"variable {variable!r} not in dataset (have {list(ds.data_vars)})")
+        # drop_vars keeps every coordinate; ds[[...]] would lose time_bounds (dims nv).
+        ds = ds.drop_vars([name for name in ds.data_vars if name != variable])
     ds = ensure_normalized_longitude(ds, lon_dim)
 
     # q-q inputs are checked before the (slow) interpolation. Each cell's sample

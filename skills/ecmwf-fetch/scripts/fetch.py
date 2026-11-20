@@ -490,6 +490,14 @@ def _fetch_catalog(init: dt.date, bbox, names: list[str]):
         have = ", ".join(ds.data_vars) if list(ds.data_vars) else "none"
         raise DataError(f"{_DATASET} did not contain {', '.join(missing)} (opened: {have}).")
     ds = ds[names]
+    # Daily means fetched with instant fields keep lead 0, where each mean ends:
+    # every cell is [previous lead, s).
+    empty = [name for name in ds.data_vars if bool(ds[name].isel(step=0).isnull().all())]
+    if empty and len(empty) < len(ds.data_vars) and ds.sizes["step"] > 1:
+        leads = ds["step"].values
+        starts = np.concatenate([[leads[0] - (leads[1] - leads[0])], leads[:-1]])
+        ds = ds.assign_coords(step_bounds=(("step", "nv"), np.stack([starts, leads], axis=1)))
+        ds["step"].attrs["bounds"] = "step_bounds"
     ds.attrs.update(Conventions="CF-1.13", weather_skills_source="ecmwf-s2s")
     return _standardize_catalog(ds)
 

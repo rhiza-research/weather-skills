@@ -1120,3 +1120,84 @@ def test_analysis_bucket_precip_is_refused(tmp_path, mod, fetch, capsys):
         )
     assert exc.value.code == 2
     assert "noaa-gfs-analysis" in capsys.readouterr().err
+
+
+def test_averaged_with_instant_fields_on_even_leads_end_each_cell(tmp_path, mod, fetch):
+    """AIFS-like 6-hourly leads: precip kept at catalog labels gets cells [previous lead, s)."""
+    ds = _end_labelled_forecast_ds()
+    ds = ds.assign_coords(
+        lead_time=np.array([0, 6, 12, 18], dtype="timedelta64[h]").astype("timedelta64[ns]")
+    )
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "-v", "t2m")
+    bounds = (written["step_bounds"].values / np.timedelta64(1, "h")).tolist()
+    assert bounds == [[-6, 0], [0, 6], [6, 12], [12, 18]]
+    assert "data_interval" not in written["precipitation_surface"].attrs
+
+
+def _mrms_like_analysis_ds(names=("precipitation_surface",)):
+    times = np.datetime64("2026-01-01T00", "ns") + np.arange(26) * np.timedelta64(1, "h")
+    data = {
+        "precipitation_surface": (np.arange(26.0)[:, None, None] * np.ones((1, 2, 2)), "avg"),
+        "temperature_2m": (np.ones((26, 2, 2)), "instant"),
+    }
+    return xr.Dataset(
+        {
+            name: (
+                ("time", "latitude", "longitude"),
+                data[name][0],
+                {"units": "mm day-1", "step_type": data[name][1]},
+            )
+            for name in names
+        },
+        coords={"time": times, "latitude": [1.0, 2.0], "longitude": [10.0, 11.0]},
+    )
+
+
+def test_end_labelled_analysis_relabelled_to_interval_start(tmp_path, mod, fetch):
+    """MRMS averages the previous hour: the value labelled 01:00 is the 00-01 hour."""
+    out = tmp_path / "out.zarr"
+    state = {"ds": _mrms_like_analysis_ds(), "shape": "analysis"}
+    with patch.object(mod, "_open_dataset", return_value=state):
+        run_skill(
+            fetch,
+            "--dataset",
+            "noaa-mrms-conus-analysis-hourly",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-01",
+            "-v",
+            "precip",
+            "-o",
+            str(out),
+        )
+    written = xr.open_zarr(out, consolidated=True)
+    expected = np.datetime64("2026-01-01T00", "ns") + np.arange(24) * np.timedelta64(1, "h")
+    np.testing.assert_array_equal(written["time"].values, expected)
+    np.testing.assert_allclose(
+        written["precipitation_surface"].values[:, 0, 0], np.arange(1.0, 25.0)
+    )
+
+
+def test_end_labelled_analysis_with_instant_fields_exits_2(tmp_path, mod, fetch):
+    state = {
+        "ds": _mrms_like_analysis_ds(("precipitation_surface", "temperature_2m")),
+        "shape": "analysis",
+    }
+    with patch.object(mod, "_open_dataset", return_value=state), pytest.raises(SystemExit) as exc:
+        run_skill(
+            fetch,
+            "--dataset",
+            "noaa-gfs-analysis",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-01",
+            "-v",
+            "precip",
+            "-v",
+            "t2m",
+            "-o",
+            str(tmp_path / "out.zarr"),
+        )
+    assert exc.value.code == 2
