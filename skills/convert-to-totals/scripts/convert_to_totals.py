@@ -40,11 +40,14 @@ def _resolve_dim(ds, time_dim):
         if time_dim not in ds.dims:
             raise UsageError(f"--time-dim {time_dim!r} not in dataset (have {list(ds.dims)})")
         return time_dim
-    # The interval axis is the one cell_methods names; None once select has removed it.
+    # aggregate-temporal writes its axis first in cell_methods ("step: mean").
     for da in ds.data_vars.values():
-        binned = re.match(r"\s*(\w+):", str(da.attrs.get("cell_methods", "")))
-        if binned and AGGREGATION_PERIOD_ATTR in da.attrs:
-            return binned.group(1) if binned.group(1) in ds.dims else None
+        if AGGREGATION_PERIOD_ATTR in da.attrs:
+            binned = str(da.attrs.get("cell_methods", "")).split(":")[0].strip()
+            if binned in ds.dims:
+                return binned
+            if binned in ds.coords and ds[binned].ndim == 0:
+                return None  # select kept one interval as a scalar coord
     try:
         cf_time = ds.cf["time"].name
     except KeyError:
