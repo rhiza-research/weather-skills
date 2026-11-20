@@ -38,7 +38,7 @@ Prefer small steps over stuffing every filter into one call:
   default:** `dynamical-fetch --dataset ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`
   (`-v precipitation_surface` or `-v tp`). Use `ecmwf-fetch` only as the ECDS
   fallback (ocean / pre-2026 / unmapped fields). Use a source-specific fetcher (TAHMO, OISST,
-  ARCO-ERA5, CMIP6, Cumulus AI, NeuralGCM S2S, PBC/StillLearning, …) only when
+  ARCO-ERA5, CMIP6, NeuralGCM S2S, PBC/StillLearning, …) only when
   the catalog does not carry that product. Use `neuralgcm-fetch` for the Tomorrow
   Now 2026 NeuralGCM ensemble at `gs://neuralgcm-s2s` (GCS credentials; default
   `-v precip`). Use `pbc-fetch` for quintile precip
@@ -141,8 +141,6 @@ Required names (from each skill's `metadata.openclaw.requires.env`):
 - `meteosat-fetch` — `EUMETSAT_CONSUMER_KEY`, `EUMETSAT_CONSUMER_SECRET`
 - `windborne-fetch` — `WB_CLIENT_ID`, `WB_API_KEY`
 - `3dpaws-fetch` — `CHORDS_EMAIL`, `CHORDS_API_KEY`
-- `cumulus-fetch` — `AZURE_STORAGE_SAS_TOKEN`
-- `cumulus-downscaled-fetch` — `AZURE_STORAGE_SAS_TOKEN`
 - `neuralgcm-fetch` / `pbc-fetch` / `weathernext-fetch` — `GCLOUD_SERVICE_CREDENTIALS` (plus `GOOGLE_CLOUD_PROJECT` for the requester-pays WeatherNext 3 ensemble)
 
 `--probe-latest` still needs credentials when the probe talks to a keyed
