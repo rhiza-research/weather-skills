@@ -29,7 +29,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.12"
+_SKILL_VERSION = "0.0.13"
 
 _TIME_LABELS = ("month", "year", "dayofyear", "month_group")
 _INITIALS = "JFMAMJJASOND"
@@ -144,10 +144,9 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
     dims = list(dict.fromkeys([*group_dims, *dims]))
     bounds_period = None
     if time_by:
-        # Steps are taken to start at their time labels; CF bounds that start elsewhere
-        # (a week labelled by its last day) would put each step in the wrong group.
-        attrs, encoding = ds["time"].attrs, ds["time"].encoding
-        bounds = attrs.get("bounds") or encoding.get("bounds") or "time_bounds"
+        bounds = (
+            ds["time"].attrs.get("bounds") or ds["time"].encoding.get("bounds") or "time_bounds"
+        )
         cells = ds[bounds].values if bounds in ds.variables else None
         if cells is None and data_interval_of(ds) is None:
             # No cells stamped: core infers calendar cells for month, quarter or year starts.
@@ -158,11 +157,8 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
             if "time_bounds" in inferred.variables:
                 cells = inferred["time_bounds"].values
         if cells is not None and not np.array_equal(cells[:, 0], ds["time"].values):
-            raise UsageError(
-                f"time labels are not the starts of their {bounds!r} cells, so the --by "
-                "groups would take in the wrong time; aggregate-temporal --period monthly "
-                "first, which splits each cell by its overlap with each month"
-            )
+            # A step belongs where its cell starts (as label-group labels it), not its label.
+            ds = ds.assign_coords(time=cells[:, 0])
         if cells is not None and cells.dtype.kind == "M":
             # Cells of whole calendar months have no fixed length: read their step as months.
             months = cells.astype("datetime64[M]")

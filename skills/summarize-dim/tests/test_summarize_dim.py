@@ -609,18 +609,47 @@ def test_weekly_steps_crossing_a_season_are_refused(tmp_path, summarize_dim, cap
     assert "runs into the next --by" in capsys.readouterr().err
 
 
-def test_bounds_not_starting_at_labels_are_refused(tmp_path, summarize_dim, capsys):
-    """Weeks labelled by their last day: the label's month is not every day's month."""
+def _weeks_labelled_by_last_day(first_label):
+    """Weekly mm totals labelled by their last day, with year labels from each cell's start."""
     import numpy as np
 
-    ds = _weekly("2020-01-05")
+    ds = _weekly(first_label)
+    starts = ds["time"].values - np.timedelta64(6, "D")
     ends = ds["time"].values + np.timedelta64(1, "D")
     ds = ds.assign_coords(
-        time_bounds=(("time", "nv"), np.stack([ends - np.timedelta64(7, "D"), ends], axis=1))
-    )
+        time_bounds=(("time", "nv"), np.stack([starts, ends], axis=1)),
+        year=("time", starts.astype("datetime64[Y]").astype(int) + 1970),
+    ).drop_vars("month_group")
     ds["time"].attrs["bounds"] = "time_bounds"
     ds["precip"].attrs.update(units="mm")
+    return ds
+
+
+def test_steps_group_by_cell_start(tmp_path, summarize_dim):
+    """Weeks labelled by their last day fall in the year their cell starts in."""
+    ds = _weeks_labelled_by_last_day("2020-01-11")
     src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    # The first cell starts 2020-01-05, so the year is incomplete: allow partial coverage.
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--method",
+        "sum",
+        "--min-coverage",
+        "0",
+    )
+    assert float(xr.open_zarr(out)["precip"].sel(year=2020).squeeze()) == ds.sizes["time"]
+
+
+def test_cell_crossing_a_group_is_refused_by_its_start(tmp_path, summarize_dim, capsys):
+    """The week labelled 2020-01-05 runs from 2019-12-30, so it crosses into 2020."""
+    src = write_zarr(_weeks_labelled_by_last_day("2020-01-05"), tmp_path / "in.zarr")
     with pytest.raises(SystemExit):
         run_skill(
             summarize_dim,
@@ -633,7 +662,7 @@ def test_bounds_not_starting_at_labels_are_refused(tmp_path, summarize_dim, caps
             "--method",
             "sum",
         )
-    assert "aggregate-temporal --period monthly" in capsys.readouterr().err
+    assert "starting 2019-12-30" in capsys.readouterr().err
 
 
 def test_month_bounds_give_calendar_steps(tmp_path, summarize_dim):
