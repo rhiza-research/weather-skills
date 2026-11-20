@@ -9,6 +9,7 @@
 import numpy as np
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import ALIASES, names_for
+from weather_skills_core.units import AGGREGATION_COVERAGE_COORD as COVERAGE
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.11"
@@ -112,6 +113,16 @@ def concat(ds, dim, coords, **kwargs):
             dss = [d.expand_dims({dim: [v]}) for d, v in zip(dss, vals, strict=True)]
         else:
             dss = [d.expand_dims(dim) for d in dss]
+
+    # convert-to-totals drops aggregation_coverage once every interval is complete, so an
+    # input without it is complete: give it coverage 1 when others carry coverage.
+    if any(COVERAGE in item.coords for item in dss):
+        dss = [
+            item
+            if COVERAGE in item.coords
+            else item.assign_coords({COVERAGE: (dim, [1.0] * item.sizes[dim])})
+            for item in dss
+        ]
 
     # join="exact": every other coordinate must match. The outer join pads a
     # mismatch with NaN instead, which looks like missing data.
