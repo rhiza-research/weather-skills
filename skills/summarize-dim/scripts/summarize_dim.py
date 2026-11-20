@@ -242,23 +242,18 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
             or bounds_period
         )
         calendar = re.fullmatch(r"\s*(\d+)\s*(month|year)s?\s*", period or "")
-        if calendar or (period or "").strip() == "1 dekad":
-            # Calendar steps: labels must be month starts (dekads on days 1, 11, 21).
-            every = (
-                int(calendar.group(1)) * (12 if calendar.group(2) == "year" else 1)
-                if calendar
-                else 1
-            )
+        if calendar:
+            # Calendar steps: labels must be month starts.
+            every = int(calendar.group(1)) * (12 if calendar.group(2) == "year" else 1)
             n = (times[-1].year - first.year) * 12 + times[-1].month - first.month
             full = [
                 first.replace(
                     year=first.year + (first.month - 1 + k) // 12,
                     month=(first.month - 1 + k) % 12 + 1,
-                    day=day,
+                    day=1,
                 )
                 for k in range(-24, n + 25)
                 if k % every == 0
-                for day in ((1,) if calendar else (1, 11, 21))
             ]
             longer_than_a_day = True
         else:
@@ -513,7 +508,7 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
             # A sum spans all the steps it adds: the input period times the step count
             # (the longest group's count with --by).
             n = longest_group if time_by else int(np.prod([ds.sizes[d] for d in over_time]))
-            calendar = re.fullmatch(r"\s*(\d+)\s*(month|year|dekad)s?\s*", period)
+            calendar = re.fullmatch(r"\s*(\d+)\s*(month|year)s?\s*", period)
             if calendar:
                 attrs[AGGREGATION_PERIOD_ATTR] = f"{int(calendar.group(1)) * n} {calendar.group(2)}"
             else:
