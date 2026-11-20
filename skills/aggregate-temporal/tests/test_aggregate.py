@@ -1056,3 +1056,13 @@ def test_unstamped_uneven_dates_exit_2(tmp_path, aggregate):
     with pytest.raises(SystemExit) as exc:
         run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--period", "weekly")
     assert exc.value.code == 2
+
+
+def test_weeks_of_06_utc_days_start_at_06_utc(tmp_path, aggregate):
+    days = np.datetime64("2026-01-01T06", "ns") + np.arange(14) * np.timedelta64(1, "D")
+    src = write_zarr(_series(days, np.ones(14), data_interval="1 day"), tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--period", "weekly")
+    result = xr.open_zarr(out)
+    np.testing.assert_array_equal(result["time"].values, days[[0, 7]])
+    np.testing.assert_allclose(result[AGGREGATION_COVERAGE_COORD].values, [1.0, 1.0])

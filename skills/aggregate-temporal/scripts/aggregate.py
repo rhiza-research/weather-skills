@@ -406,8 +406,15 @@ def aggregate(
             bins.insert(0, (right - width, right, right - width))
             right -= width
     else:
-        # Forward calendar bins from the first sample.
-        for label in ds.resample({dim: freq}).groups:
+        # Forward calendar bins from the first sample. Bins start at 00 UTC, shifted by the
+        # first sample's offset from a whole input cell (06-06 UTC days give 06 UTC weeks).
+        offset = None
+        if not monthly and native_interval and raw.dtype.kind == "M":
+            cell_ns = round(float(parse_aggregation_period(native_interval).to("ns").magnitude))
+            first = raw.min()
+            shift = int((first - first.astype("M8[D]")) / np.timedelta64(1, "ns")) % cell_ns
+            offset = pd.Timedelta(shift, "ns") if shift else None
+        for label in ds.resample({dim: freq}, offset=offset).groups:
             if not hasattr(label, "calendar"):
                 label = pd.Timestamp(label)
             if monthly:
