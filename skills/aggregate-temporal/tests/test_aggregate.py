@@ -939,13 +939,13 @@ def _overlapping_weekly_means(n, fill=2.0):
     )
 
 
-def test_overlapping_samples_exit_2_pointing_to_resample_time(tmp_path, aggregate, capsys):
-    """Weekly means every 2 days would count days more than once; resample them first."""
+def test_overlapping_samples_exit_2_pointing_to_reindex_time(tmp_path, aggregate, capsys):
+    """Weekly means every 2 days would count days more than once; reindex them first."""
     src = write_zarr(_overlapping_weekly_means(40), tmp_path / "in.zarr")
     with pytest.raises(SystemExit) as exc:
         run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--period", "monthly")
     assert exc.value.code == 2
-    assert "resample-time" in capsys.readouterr().err
+    assert "reindex-time" in capsys.readouterr().err
 
 
 def test_overlapping_bounds_exit_2(tmp_path, aggregate):
@@ -960,9 +960,9 @@ def test_overlapping_bounds_exit_2(tmp_path, aggregate):
     assert exc.value.code == 2
 
 
-def test_resampled_overlaps_aggregate_with_day_coverage(tmp_path, aggregate):
+def test_reindexed_overlaps_aggregate_with_day_coverage(tmp_path, aggregate):
     """Weeks on days 1-7, 2-8, 3-9 and 23-30 cover 17 of January's 31 days."""
-    resample = load_skill("resample-time", "resample_time").resample_time
+    reindex = load_skill("reindex-time", "reindex_time").reindex_time
     starts = np.datetime64("2026-01-01", "ns") + np.array([0, 1, 2, 22]) * np.timedelta64(1, "D")
     ends = starts + np.array([7, 7, 7, 8]) * np.timedelta64(1, "D")
     ds = xr.Dataset(
@@ -973,7 +973,7 @@ def test_resampled_overlaps_aggregate_with_day_coverage(tmp_path, aggregate):
     ds["time"].attrs["bounds"] = "time_bounds"
     daily, monthly = tmp_path / "daily.zarr", tmp_path / "monthly.zarr"
     src = write_zarr(ds, tmp_path / "in.zarr")
-    run_skill(resample, "-i", str(src), "-o", str(daily), "--period", "1 day")
+    run_skill(reindex, "-i", str(src), "-o", str(daily), "--period", "1 day")
     run_skill(aggregate, "-i", str(daily), "-o", str(monthly), "--period", "monthly")
     out = xr.open_zarr(monthly)
     # Daily values 1, 1.5, 2 x5, 2.5, 3 and 4 x8, each day weighted once.
@@ -982,7 +982,7 @@ def test_resampled_overlaps_aggregate_with_day_coverage(tmp_path, aggregate):
     assert "overlapping samples" in out["precip"].attrs["cell_methods"]
 
 
-def test_weekly_to_monthly_points_to_resample_time(tmp_path, aggregate, capsys):
+def test_weekly_to_monthly_points_to_reindex_time(tmp_path, aggregate, capsys):
     """Back-to-back weeks don't fit months whole; the error names the way through."""
     weeks = _overlapping_weekly_means(1)
     times = np.datetime64("2026-01-01", "ns") + np.arange(5) * np.timedelta64(7, "D")
@@ -991,4 +991,4 @@ def test_weekly_to_monthly_points_to_resample_time(tmp_path, aggregate, capsys):
     with pytest.raises(SystemExit) as exc:
         run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--period", "monthly")
     assert exc.value.code == 2
-    assert "resample-time" in capsys.readouterr().err
+    assert "reindex-time" in capsys.readouterr().err

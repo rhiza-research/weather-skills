@@ -1,4 +1,4 @@
-"""Correctness tests for resample-time."""
+"""Correctness tests for reindex-time."""
 
 import numpy as np
 import pytest
@@ -11,8 +11,8 @@ JAN1 = np.datetime64("2026-01-01", "ns")
 
 
 @pytest.fixture(scope="module")
-def resample():
-    return load_skill("resample-time", "resample_time").resample_time
+def reindex():
+    return load_skill("reindex-time", "reindex_time").reindex_time
 
 
 def _samples(spans, values, coverage=None):
@@ -31,16 +31,16 @@ def _samples(spans, values, coverage=None):
     return ds
 
 
-def _run(resample, tmp_path, ds, *args):
+def _run(reindex, tmp_path, ds, *args):
     out = tmp_path / "out.zarr"
-    run_skill(resample, "-i", str(write_zarr(ds, tmp_path / "in.zarr")), "-o", str(out), *args)
+    run_skill(reindex, "-i", str(write_zarr(ds, tmp_path / "in.zarr")), "-o", str(out), *args)
     return xr.open_zarr(out)
 
 
-def test_overlapping_weeks_average_where_they_overlap(tmp_path, resample):
+def test_overlapping_weeks_average_where_they_overlap(tmp_path, reindex):
     """Days 1-7, 2-8, 3-9 and 23-30: each day is the plain mean of the weeks covering it."""
     ds = _samples([(1, 7), (2, 8), (3, 9), (23, 30)], [1, 2, 3, 4])
-    out = _run(resample, tmp_path, ds, "--period", "1 day")
+    out = _run(reindex, tmp_path, ds, "--period", "1 day")
     vals = out["precip"].values[:, 0]
     cov = out[AGGREGATION_COVERAGE_COORD].values
     assert out.sizes["time"] == 30
@@ -55,23 +55,23 @@ def test_overlapping_weeks_average_where_they_overlap(tmp_path, resample):
     assert "time_bounds" not in out
 
 
-def test_coverage_is_mean_of_covering_samples(tmp_path, resample):
+def test_coverage_is_mean_of_covering_samples(tmp_path, reindex):
     """A day covered by a complete week and a 3/7 week is 5/7 complete."""
     ds = _samples([(1, 7), (2, 8)], [1, 2], coverage=[1.0, 3 / 7])
-    cov = _run(resample, tmp_path, ds, "--period", "1 day")[AGGREGATION_COVERAGE_COORD].values
+    cov = _run(reindex, tmp_path, ds, "--period", "1 day")[AGGREGATION_COVERAGE_COORD].values
     np.testing.assert_allclose(cov, [1] + [5 / 7] * 6 + [3 / 7])
 
 
-def test_interval_from_data_interval_without_bounds(tmp_path, resample):
+def test_interval_from_data_interval_without_bounds(tmp_path, reindex):
     """A weekly mean labeled at each init, inits 2 days apart, overlaps by its data_interval."""
     times = JAN1 + np.arange(3) * 2 * DAY
     attrs = {"units": "mm day-1", "data_interval": "7 day"}
     ds = xr.Dataset({"precip": (("time",), [1.0, 2.0, 3.0], attrs)}, coords={"time": times})
-    out = _run(resample, tmp_path, ds, "--period", "1 day")
+    out = _run(reindex, tmp_path, ds, "--period", "1 day")
     np.testing.assert_allclose(out["precip"].values, [1, 1, 1.5, 1.5, 2, 2, 2, 2.5, 2.5, 3, 3])
 
 
-def test_sub_daily_period(tmp_path, resample):
+def test_sub_daily_period(tmp_path, reindex):
     """Two overlapping 30-minute means on a 15-minute grid."""
     t0 = np.datetime64("2026-01-01T06:00", "ns")
     attrs = {"units": "mm hr-1", "data_interval": "30 minute"}
@@ -79,95 +79,95 @@ def test_sub_daily_period(tmp_path, resample):
         {"precip": (("time",), [2.0, 4.0], attrs)},
         coords={"time": [t0, t0 + np.timedelta64(15, "m")]},
     )
-    out = _run(resample, tmp_path, ds, "--period", "15 minute")
+    out = _run(reindex, tmp_path, ds, "--period", "15 minute")
     assert out["time"].values[0] == t0
     np.testing.assert_allclose(out["precip"].values, [2, 3, 4])
     assert out["precip"].attrs["aggregation_period"] == "15 minute"
 
 
-def test_step_axis(tmp_path, resample):
-    """Overlapping lead windows on step resample from lead 0."""
+def test_step_axis(tmp_path, reindex):
+    """Overlapping lead windows on step reindex from lead 0."""
     attrs = {"units": "mm day-1", "data_interval": "2 day"}
     ds = xr.Dataset(
         {"precip": (("step",), [1.0, 3.0], attrs)},
         coords={"step": np.array([0, 1]) * DAY},
     )
-    out = _run(resample, tmp_path, ds, "--period", "1 day")
+    out = _run(reindex, tmp_path, ds, "--period", "1 day")
     np.testing.assert_allclose(out["precip"].values, [1, 2, 3])
     assert out["step"].values.tolist() == (np.arange(3) * DAY).astype("m8[ns]").tolist()
 
 
-def test_cell_missing_a_sample_others_have_is_nan(tmp_path, resample):
+def test_cell_missing_a_sample_others_have_is_nan(tmp_path, reindex):
     """A cell with one of two overlapping samples is not averaged over what it has."""
     ds = _samples([(1, 2), (2, 3)], [1, 2])
     ds = ds.reindex(lat=[0.0, 1.0], fill_value=1.0)
     ds["precip"][1, 1] = np.nan
-    vals = _run(resample, tmp_path, ds, "--period", "1 day")["precip"].values
+    vals = _run(reindex, tmp_path, ds, "--period", "1 day")["precip"].values
     np.testing.assert_allclose(vals[:, 0], [1, 1.5, 2])
     assert vals[0, 1] == 1 and np.isnan(vals[1, 1]) and np.isnan(vals[2, 1])
 
 
-def test_period_off_sample_edges_suggests_one(tmp_path, resample, capsys):
+def test_period_off_sample_edges_suggests_one(tmp_path, reindex, capsys):
     ds = _samples([(1, 7), (2, 8)], [1, 2])
     with pytest.raises(SystemExit) as exc:
-        _run(resample, tmp_path, ds, "--period", "7 day")
+        _run(reindex, tmp_path, ds, "--period", "7 day")
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "1 day" in err and "aggregate-temporal" in err
 
 
-def test_no_interval_exits_2(tmp_path, resample):
+def test_no_interval_exits_2(tmp_path, reindex):
     ds = xr.Dataset(
         {"precip": (("time",), [1.0, 2.0], {"units": "mm day-1"})},
         coords={"time": [JAN1, JAN1 + DAY]},
     )
     with pytest.raises(SystemExit) as exc:
-        _run(resample, tmp_path, ds, "--period", "1 day")
+        _run(reindex, tmp_path, ds, "--period", "1 day")
     assert exc.value.code == 2
 
 
-def test_integer_variable_is_averaged_as_float(tmp_path, resample):
+def test_integer_variable_is_averaged_as_float(tmp_path, reindex):
     ds = _samples([(1, 2), (2, 3)], [1, 2])
     ds["count"] = (("time", "lat"), np.array([[1], [2]]), {"units": "1"})
-    out = _run(resample, tmp_path, ds, "--period", "1 day")
+    out = _run(reindex, tmp_path, ds, "--period", "1 day")
     np.testing.assert_allclose(out["count"].values[:, 0], [1, 1.5, 2])
 
 
-def test_init_axis_exits_2(tmp_path, resample, capsys):
+def test_init_axis_exits_2(tmp_path, reindex, capsys):
     """Inits labelled forecast_reference_time are not the dates the samples cover."""
     ds = _samples([(1, 7), (2, 8)], [1, 2])
     ds["time"].attrs["standard_name"] = "forecast_reference_time"
     with pytest.raises(SystemExit) as exc:
-        _run(resample, tmp_path, ds, "--period", "1 day")
+        _run(reindex, tmp_path, ds, "--period", "1 day")
     assert exc.value.code == 2
     assert "step-to-time" in capsys.readouterr().err
 
 
-def test_single_sample_time_series_defaults_to_time(tmp_path, resample):
+def test_single_sample_time_series_defaults_to_time(tmp_path, reindex):
     ds = _samples([(1, 3)], [5])
-    out = _run(resample, tmp_path, ds, "--period", "1 day")
+    out = _run(reindex, tmp_path, ds, "--period", "1 day")
     np.testing.assert_allclose(out["precip"].values[:, 0], [5, 5, 5])
 
 
-def test_static_variable_passes_through(tmp_path, resample):
+def test_static_variable_passes_through(tmp_path, reindex):
     ds = _samples([(1, 2), (2, 3)], [1, 2])
     ds["mask"] = (("lat",), [1.0])
-    out = _run(resample, tmp_path, ds, "--period", "1 day")
+    out = _run(reindex, tmp_path, ds, "--period", "1 day")
     assert out["mask"].dims == ("lat",) and out["mask"].values.tolist() == [1.0]
 
 
-def test_grid_starts_at_earliest_sample(tmp_path, resample):
+def test_grid_starts_at_earliest_sample(tmp_path, reindex):
     """Station days running 06-06 UTC stay 06-06 days on a 1-day grid."""
     t0 = np.datetime64("2026-01-01T06:00", "ns")
     attrs = {"units": "mm day-1", "data_interval": "2 day"}
     ds = xr.Dataset({"precip": (("time",), [1.0, 3.0], attrs)}, coords={"time": [t0, t0 + DAY]})
-    out = _run(resample, tmp_path, ds, "--period", "1 day")
+    out = _run(reindex, tmp_path, ds, "--period", "1 day")
     np.testing.assert_array_equal(out["time"].values, t0 + np.arange(3) * DAY)
     np.testing.assert_allclose(out["precip"].values, [1, 2, 3])
 
 
-def test_dry_cells_stay_exactly_zero(tmp_path, resample):
+def test_dry_cells_stay_exactly_zero(tmp_path, reindex):
     """Averaging adds only the samples covering each cell, so zeros are not rounded away."""
     ds = _samples([(1, 3), (2, 4), (4, 6)], [0.1, 0.2, 0.0])
-    vals = _run(resample, tmp_path, ds, "--period", "1 day")["precip"].values[:, 0]
+    vals = _run(reindex, tmp_path, ds, "--period", "1 day")["precip"].values[:, 0]
     assert vals[4] == 0.0 and vals[5] == 0.0

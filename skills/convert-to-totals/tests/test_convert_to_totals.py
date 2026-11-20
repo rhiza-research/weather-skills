@@ -457,11 +457,11 @@ def _weekly_means(step_days, n):
 
 
 def test_converts_rates_built_from_overlapping_samples(tmp_path, aggregate, convert_to_totals):
-    """Weekly means every 2 days, resampled to days then 28-day bins, convert and keep the tag."""
-    resample = load_skill("resample-time", "resample_time").resample_time
+    """Weekly means every 2 days, reindexed to days then 28-day bins, convert and keep the tag."""
+    reindex = load_skill("reindex-time", "reindex_time").reindex_time
     src = write_zarr(_weekly_means(2, 14), tmp_path / "in.zarr")
     daily, agg, out = (tmp_path / f"{n}.zarr" for n in ("daily", "agg", "out"))
-    run_skill(resample, "-i", str(src), "-o", str(daily), "--period", "1 day")
+    run_skill(reindex, "-i", str(src), "-o", str(daily), "--period", "1 day")
     run_skill(aggregate, "-i", str(daily), "-o", str(agg), "--period", "28 day")
     run_skill(convert_to_totals, "-i", str(agg), "-o", str(out))
     ds = xr.open_zarr(out)

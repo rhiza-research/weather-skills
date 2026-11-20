@@ -29,7 +29,7 @@ OVERLAPPING_SAMPLES = "overlapping samples"
 
 
 @weather_skill(
-    name="resample-time",
+    name="reindex-time",
     version=_SKILL_VERSION,
 )
 @weather_skill.argument("-i", "--input", type=Dataset("any"), required=True)
@@ -39,7 +39,7 @@ OVERLAPPING_SAMPLES = "overlapping samples"
     help="Output grid spacing: a fixed duration such as '1 day', '6 hour' or '15 minute'.",
 )
 @weather_skill.argument("--time-dim")
-def resample_time(ds, period, time_dim, **kwargs):
+def reindex_time(ds, period, time_dim, **kwargs):
     """Average overlapping or irregular time samples onto a regular grid.
 
     Each --period cell is the mean of the samples that cover it, and
@@ -50,11 +50,11 @@ def resample_time(ds, period, time_dim, **kwargs):
 
     dim = time_dim or ("step" if "step" in ds.dims and ds.sizes.get("time", 1) == 1 else "time")
     if dim not in ds.dims:
-        raise UsageError(f"no {dim!r} axis to resample (dims: {list(ds.dims)})")
+        raise UsageError(f"no {dim!r} axis to reindex (dims: {list(ds.dims)})")
     if ds[dim].attrs.get("standard_name") == "forecast_reference_time":
         raise UsageError(
             f"{dim} holds forecast inits, not valid times; run step-to-time first so each "
-            "sample sits on the dates it covers, or pass --time-dim step to resample leads"
+            "sample sits on the dates it covers, or pass --time-dim step to reindex leads"
         )
     raw = np.asarray(ds[dim].values)
     # shortcut: cftime model calendars are refused; add them if a task needs one.
@@ -103,7 +103,7 @@ def resample_time(ds, period, time_dim, **kwargs):
         )
         raise UsageError(
             f"--period {period} does not divide every sample edge on {dim}; the longest "
-            f"period that does is {fits}. resample-time only splits samples: to average "
+            f"period that does is {fits}. reindex-time only splits samples: to average "
             f"up to a longer period, run it with --period '{fits}', then aggregate-temporal"
         )
     first = (starts - starts.min()) // period_ns
@@ -186,4 +186,4 @@ def resample_time(ds, period, time_dim, **kwargs):
 
 
 if __name__ == "__main__":
-    resample_time()
+    reindex_time()

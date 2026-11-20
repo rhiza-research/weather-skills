@@ -37,7 +37,7 @@ NAMED_PERIODS = {
     "monthly": ("1 month", "MS", 30),
 }
 _METHOD_TO_CF = {"mean": "mean", "max": "maximum", "min": "minimum"}
-# Added to cell_methods by resample-time; kept when the result is aggregated again.
+# Added to cell_methods by reindex-time; kept when the result is aggregated again.
 OVERLAPPING_SAMPLES = "overlapping samples"
 
 
@@ -203,7 +203,7 @@ def aggregate(
     if overlap:
         raise UsageError(
             f"samples on {dim} are {overlap}, so a bin would count some days more than once. "
-            "Run resample-time --period <grid> first (e.g. '1 day' for whole-day windows): "
+            "Run reindex-time --period <grid> first (e.g. '1 day' for whole-day windows): "
             "it averages the samples covering each grid cell and stamps each cell's "
             "coverage; then aggregate its output."
         )
@@ -270,7 +270,7 @@ def aggregate(
             raise UsageError(
                 f"{key!r} windows cannot hold whole {cell} input samples; aggregate "
                 f"from data at a spacing that divides {agg} (e.g. the daily input), or "
-                "run resample-time --period '1 day' first to split each sample into days"
+                "run reindex-time --period '1 day' first to split each sample into days"
             )
         raw = ds[dim].values
         if end_time is not None and cell_days > 1 and raw.dtype.kind == "M":
@@ -279,7 +279,7 @@ def aggregate(
                 raise UsageError(
                     f"--end-time {end_time} is not on the {cell} grid of the input "
                     f"(first sample {str(raw[0])[:10]}), so bins would split input samples; "
-                    "run resample-time --period '1 day' first to split them into days"
+                    "run reindex-time --period '1 day' first to split them into days"
                 )
 
     # Every mode below builds half-open [left, right) bins with a label each.
