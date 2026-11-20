@@ -29,7 +29,7 @@ def step_to_time(ds, **kwargs):
     import cftime
     import numpy as np
 
-    # Both relabels lay the lead windows on valid time, so methods along step now run along time.
+    # The lead intervals now lie along time.
     for da in ds.data_vars.values():
         if "cell_methods" in da.attrs:
             da.attrs["cell_methods"] = re.sub(r"\bstep:", "time:", str(da.attrs["cell_methods"]))

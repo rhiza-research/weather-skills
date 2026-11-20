@@ -27,7 +27,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.10"
 
 # Written into cell_methods by aggregate-temporal on rates built from overlapping samples.
 OVERLAPPING_SAMPLES = "overlapping samples"
@@ -40,8 +40,7 @@ def _resolve_dim(ds, time_dim):
         if time_dim not in ds.dims:
             raise UsageError(f"--time-dim {time_dim!r} not in dataset (have {list(ds.dims)})")
         return time_dim
-    # aggregate-temporal names the dim it binned along in cell_methods ("step: mean").
-    # Once select has collapsed that dim, other axes (e.g. daily inits) are not intervals.
+    # The interval axis is the one cell_methods names; None once select has removed it.
     for da in ds.data_vars.values():
         binned = re.match(r"\s*(\w+):", str(da.attrs.get("cell_methods", "")))
         if binned and AGGREGATION_PERIOD_ATTR in da.attrs:
