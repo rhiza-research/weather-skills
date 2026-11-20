@@ -28,7 +28,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i IN.zarr -o OUT.zarr (--di
 - `--quantile`, `-q` — with `quantile`: a value in 0–1 (repeatable, `-q 0.1 -q 0.9`; one only with `--by`).
 - `--variable`, `-v` — summarize only this variable (repeatable). Default: all.
 - `--lat-weighted` — with `mean` over latitude: weight rows by cos(latitude) for a true area mean. Not with `--by`.
-- `--min-coverage` — for a `--by` time label or a `sum` over `time`/`step`: groups or cells with less than this fraction (0–1) of their expected steps become NaN. Default `1.0`: no gaps. Keep it unless the task accepts estimates.
+- `--min-coverage` — for a `--by` time label or a `sum` over `time`/`step`: groups or cells with less than this fraction (0–1) of their expected steps become NaN. Default `1.0`: no gaps. Keep it unless the task accepts estimates. Steps that are not on one regular grid (weeks from 1 Feb of each year) need `0`: each group then uses the steps it has.
 
 ### Output
 - Selected variables lose the summarized dims; other variables pass through with all their dims, so a dim stays while any of them carries it. Drop unneeded variables (drop) first to remove it.
