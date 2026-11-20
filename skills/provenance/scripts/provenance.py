@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 #   "pillow",
 # ]
 # ///
@@ -52,7 +52,7 @@ _OTHER_SUFFIXES = (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.11"
 
 
 def _parent_histories(step: dict) -> list[tuple[str, list]]:

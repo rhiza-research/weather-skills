@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 #   "cftime>=1.6",
 #   "openpyxl>=3.1",
 #   "pandas>=2.2",
@@ -30,7 +30,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import dequantify_dataset, units_convertible
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.11"
+_SKILL_VERSION = "0.0.12"
 
 # CSV header (lowercased) -> canonical coordinate name.
 COLUMN_ROLES = {

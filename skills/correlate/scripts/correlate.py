@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.4.0",
 #   "scipy",
 # ]
 # ///
@@ -15,7 +15,7 @@ from weather_skills_core.cf import auto_variable
 from weather_skills_core.standard_utils import ensure_normalized_longitude
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.2"
+_SKILL_VERSION = "0.0.3"
 
 
 @weather_skill(

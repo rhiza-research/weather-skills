@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 # ]
 # ///
 """Join two or more Zarrs into one along a named dimension."""
@@ -11,7 +11,7 @@ from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import ALIASES, names_for
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.11"
 
 
 def _coerce(values):

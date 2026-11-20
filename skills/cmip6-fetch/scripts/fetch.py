@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 #   "gcsfs",
 #   "pandas",
 # ]
@@ -30,7 +30,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.12"
 
 _CATALOG_URL = "https://storage.googleapis.com/cmip6/pangeo-cmip6.csv"
 _CF_CONVENTIONS = "CF-1.13"
@@ -297,14 +297,13 @@ def fetch(
     verify_cf_decode(ds)
     ds = to_standard_units(ds)
     ds = precip_amounts_to_rates(ds)
-    ds = stamp_data_interval(ds)
-    # Irregular axes (monthly tables) get CF bounds. Inferred ones treat each
-    # mid-month label as a cell end ([Nov 16, Dec 16] for December), which
-    # blends adjacent months when aggregated; use the source's edges instead.
-    name = ds["time"].attrs.get("bounds")
-    if name and native_bounds is not None:
-        ds[name] = (ds[name].dims, native_bounds.sel(time=ds["time"]).values)
-    return ds
+    if native_bounds is not None:
+        # The source's own cell edges, so stamping keeps them instead of guessing
+        # where each mid-month label's month starts.
+        edges = native_bounds.sel(time=ds["time"]).values
+        ds = ds.assign_coords(time_bounds=(("time", "nv"), edges))
+        ds["time"].attrs["bounds"] = "time_bounds"
+    return stamp_data_interval(ds)
 
 
 if __name__ == "__main__":
