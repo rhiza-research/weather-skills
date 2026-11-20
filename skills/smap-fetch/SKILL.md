@@ -1,11 +1,11 @@
 ---
 name: smap-fetch
-description: "Fetch NASA SMAP Enhanced L3 (SPL3SMP_E) daily 9 km volumetric surface soil moisture for a region and short date range via NASA Earthdata, as a weather-skills Zarr. Needs an Earthdata login. Use when a task needs gridded soil-moisture observations, e.g. for drought or agricultural analysis, or comparison against models."
+description: "Fetch NASA SMAP Enhanced L3 (SPL3SMP_E) daily 9 km volumetric surface soil moisture (2015-03-31 to a few days ago) for a region and short date range via NASA Earthdata, as a weather-skills Zarr. Needs an Earthdata login. Use when a task needs gridded soil-moisture observations, e.g. for drought or agricultural analysis, or comparison against models."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Authenticates to NASA Earthdata via the `earthaccess` library — set EARTHDATA_USERNAME and EARTHDATA_PASSWORD in the environment, or use a `.netrc` entry for `urs.earthdata.nasa.gov`. Earthdata accounts are free with sign-up at https://urs.earthdata.nasa.gov/users/new.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.10"
+  version: "0.0.11"
   catalog-group: fetchers
   variables:
     - soil_moisture
@@ -30,6 +30,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
 Needs `EARTHDATA_USERNAME` and `EARTHDATA_PASSWORD` (or `EARTHDATA_TOKEN`) in the environment, or a `urs.earthdata.nasa.gov` entry in `~/.netrc`. Failed login exits 1 with that hint; it never prompts.
+
+**Coverage:** daily from 2015-03-31 to about 2 days ago.
 
 ### Arguments
 - `--start-time`, `--end-time` — inclusive date range.

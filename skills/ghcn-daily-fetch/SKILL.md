@@ -1,11 +1,11 @@
 ---
 name: ghcn-daily-fetch
-description: "Fetch NOAA GHCN-Daily station observations (daily precipitation and max, min, mean temperature) for a date range and lat/lon box, as a weather-skills station Zarr. No credentials needed; covers about 130,000 stations worldwide. Use when a task needs daily in-situ station data anywhere in the world, for example to compare against gridded satellite, reanalysis, or forecast data."
+description: "Fetch NOAA GHCN-Daily station observations (daily precipitation and max, min, mean temperature; 1750 to a few days ago, varying by station) for a date range and lat/lon box, as a weather-skills station Zarr. No credentials needed; covers about 130,000 stations worldwide. Use when a task needs daily in-situ station data anywhere in the world, for example to compare against gridded satellite, reanalysis, or forecast data."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads NOAA GHCN-Daily from NCEI's public HTTPS tree (www.ncei.noaa.gov/pub/data/ghcn/daily); no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.10"
+  version: "0.0.11"
   catalog-group: fetchers
   variables:
     - precip
@@ -25,6 +25,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time Y
 # Print the newest observation date and exit
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
+
+**Coverage:** daily; each station has its own span. The oldest records start in 1750; the newest observations are about 3 days old, and some stations lag that by days or more.
 
 ### Arguments
 - `--start-time`, `--end-time` — inclusive date range, `YYYY-MM-DD`.

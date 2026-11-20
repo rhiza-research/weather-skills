@@ -43,6 +43,7 @@ Pass `--dim`, `--by`, or both.
 
 ### Notes
 - Write to a new path: an `--output` equal to the input destroys the input.
+- With `-v`, the other variables keep all their dims, so a summarized dim stays while any of them carries it. To remove the dim, drop the variables you will not use (drop) before summarizing.
 - `--by` gives each grid cell equal weight in a group (not area-weighted).
 - A regional rainfall total takes two calls: `sum` by the time labels, then `mean` by the spatial label (see [Grouped examples](#grouped-examples)). One call with both labels and `sum` is refused.
 - Keep `--min-coverage 1.0` unless a task explicitly accepts estimates. Spatial labels have no coverage check. Other labels along time are refused.

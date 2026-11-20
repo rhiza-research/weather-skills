@@ -443,3 +443,93 @@ def test_convert_no_complete_interval_error_suggests_fix(tmp_path, convert_to_to
         run_skill(convert_to_totals, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
     err = capsys.readouterr().err
     assert "--probe-latest" in err and "2026-01-01" in err
+
+
+def _weekly_means(step_days, n):
+    """One 7-day mean rate every ``step_days`` days, as for a week-1 lead at each init."""
+    times = np.datetime64("2026-01-01", "ns") + np.arange(n) * np.timedelta64(step_days, "D")
+    attrs = {"units": "mm day-1", "standard_name": "lwe_precipitation_rate"}
+    attrs[DATA_INTERVAL_ATTR] = "7 day"
+    return xr.Dataset(
+        {"precip": (("time", "latitude", "longitude"), np.full((n, 1, 1), 2.0), attrs)},
+        coords={"time": times, "latitude": [1.0], "longitude": [10.0]},
+    )
+
+
+def test_refuses_rates_built_from_overlapping_samples(tmp_path, aggregate, convert_to_totals):
+    """Weekly means every 2 days aggregate to a 28-day rate, but not to a total."""
+    src = write_zarr(_weekly_means(2, 14), tmp_path / "in.zarr")
+    agg = tmp_path / "agg.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(agg), "--period", "28 day")
+    assert "overlapping samples" in xr.open_zarr(agg)["precip"].attrs["cell_methods"]
+    with pytest.raises(SystemExit) as exc:
+        run_skill(convert_to_totals, "-i", str(agg), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
+
+    # Re-aggregating keeps the mark, so a coarser period is refused too.
+    agg2 = tmp_path / "agg2.zarr"
+    run_skill(aggregate, "-i", str(agg), "-o", str(agg2), "--period", "56 day")
+    assert "overlapping samples" in xr.open_zarr(agg2)["precip"].attrs["cell_methods"]
+
+
+def test_non_overlapping_subset_converts(tmp_path, aggregate, convert_to_totals):
+    """The same weekly means, one init every 7 days, tile 28 days and convert."""
+    ds = _weekly_means(7, 4)
+    agg = tmp_path / "agg.zarr"
+    run_skill(
+        aggregate,
+        "-i",
+        str(write_zarr(ds, tmp_path / "in.zarr")),
+        "-o",
+        str(agg),
+        "--period",
+        "28 day",
+    )
+    assert "overlapping" not in xr.open_zarr(agg)["precip"].attrs["cell_methods"]
+    out = tmp_path / "out.zarr"
+    run_skill(convert_to_totals, "-i", str(agg), "-o", str(out))
+    assert xr.open_zarr(out)["precip"].values.ravel().tolist() == pytest.approx([56.0])
+
+
+@pytest.fixture(scope="module")
+def step_to_time():
+    return load_skill("step-to-time", "step_to_time").step_to_time
+
+
+def test_week1_of_daily_inits_converts_after_step_select(
+    tmp_path, aggregate, select, step_to_time, convert_to_totals
+):
+    """Weeks binned along step, then week 1 selected: daily init spacing is not an overlap."""
+    ds = xr.Dataset(
+        {
+            "precip": (
+                ("time", "step", "latitude", "longitude"),
+                np.full((3, 14, 2, 2), 2.0),
+                {"units": "mm day-1", "standard_name": "lwe_precipitation_rate"},
+            )
+        },
+        coords={
+            "time": np.array(["2026-01-01", "2026-01-02", "2026-01-03"], dtype="datetime64[ns]"),
+            "step": np.arange(14) * np.timedelta64(1, "D"),
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    wk, w1, out = tmp_path / "wk.zarr", tmp_path / "w1.zarr", tmp_path / "tot.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(wk), "--period", "weekly", "--time-dim", "step")
+    run_skill(select, "-i", str(wk), "-o", str(w1), "--dim", "step", "--index", "0")
+    run_skill(convert_to_totals, "-i", str(w1), "-o", str(out))
+
+    result = xr.open_zarr(out)["precip"]
+    assert result.sizes["time"] == 3
+    assert result.values == pytest.approx(14.0)
+    assert result.attrs["cell_methods"] == "step: sum"
+
+    # On valid dates the same weeks overlap (one day apart, 7 days long): refused.
+    valid, out2 = tmp_path / "valid.zarr", tmp_path / "tot2.zarr"
+    run_skill(step_to_time, "-i", str(w1), "-o", str(valid))
+    assert xr.open_zarr(valid)["precip"].attrs["cell_methods"].startswith("time: mean")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(convert_to_totals, "-i", str(valid), "-o", str(out2))
+    assert exc.value.code == 2
