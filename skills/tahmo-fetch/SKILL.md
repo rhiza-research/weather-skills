@@ -46,8 +46,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest --gridded --start-tim
 ```
 
 ### Date range
-- Station mode: the network's earliest records are from March 2015 (the first day in the gridded store built from them is 2015-03-24); stations were added over the years, so each station's record starts later and often has gaps. `--list-stations` gives no dates; a fetch prints each station's complete days and leaves out stations with no data. Records are 5-minute, written as daily values. `--probe-latest` gives the newest complete day (it looks back 14 days).
-- `--gridded`: 2015-03-05 to 2025-09-15, daily, not updated (see below).
+- Station mode: March 2015 to yesterday (`--probe-latest`). Station records vary and may have gaps; a fetch prints each station's complete days.
+- `--gridded`: 2015-03-05 to 2025-09-15, not updated.
 
 ### Arguments
 - `--list-stations` — print the TA stations in `--bbox` as TSV (`station_id`, `name`, `latitude`, `longitude`, `country` as ISO 3166-1 alpha-2) and exit. Requires `--bbox`.

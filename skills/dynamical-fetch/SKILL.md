@@ -70,11 +70,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --list-variables
 | `noaa-gfs-analysis`, `noaa-gfs-analysis-virtual` ★ | 0.25° | 2021-05-01 |
 | `noaa-mrms-conus-analysis-hourly` (CONUS) | 0.01° | 2014-11-01 |
 
-★ **Virtual ids** read the provider's original files in place. They carry many more fields than the stores above (more pressure levels, CAPE, cloud layers, fluxes; `--list-variables`). Their precipitation is stored as provider totals in kg m-2: a run total since init (`*_run_total_*`, all ECMWF virtual ids) or GFS/GEFS `total_precipitation_surface`, which restarts every 6 h of lead. Fetch turns each into the mean rate since the previous lead, in `mm day-1`, matching the plain id on the same row; `-v precip` picks `total_precipitation_surface` or, in ECMWF virtual ids, `total_precipitation_run_total_surface`. The virtual analysis ids refuse these totals (exit 2): fetch precipitation from `noaa-gfs-analysis` or `noaa-gefs-analysis`.
+★ **Virtual ids** read the provider's original files in place and carry many more fields (`--list-variables`). Their precipitation totals are written as `mm day-1` rates, matching the plain id on the same row; `-v precip` picks it. Virtual analysis ids have no precipitation (exit 2): use `noaa-gfs-analysis` or `noaa-gefs-analysis`.
 
-**Rejected ids** (projected 2-D grids, exit 2): every HRRR id, `eccc-hrdps-forecast` (Canada), `noaa-rrfs-*`, `noaa-refs-*`, `noaa-rtma-analysis-virtual`, `noaa-rtma-ru-analysis-virtual`, `noaa-urma-analysis-virtual` (all CONUS except HRDPS).
+**Rejected ids** (projected grids, exit 2): HRRR, `eccc-hrdps-forecast`, `noaa-rrfs-*`, `noaa-refs-*`, `noaa-rtma-*`, `noaa-urma-*`.
 
-An init or day before a dataset's first one exits 1; check these tables before telling anyone a date or dataset is unavailable.
+An init or day before a dataset's first one exits 1.
 
 ### Arguments
 - `--dataset` — catalog id from the lists above.

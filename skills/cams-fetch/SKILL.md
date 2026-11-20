@@ -44,14 +44,14 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [forecast|eac4]
 ```
 
 ### Date ranges
-Checked against the ADS catalogue on 2026-11-18; `--probe-latest` prints the current last day.
+`--probe-latest` prints the current last day.
 
 | `--dataset` | First | Last | Time step |
 |---|---|---|---|
 | `forecast` | 2015-01-01 init | today | inits 00 and 12 UTC daily; leads 3-hourly to 120 h |
-| `eac4` | 2003-01-01 | 2025-12-31; extended in batches, so it runs up to about a year behind | 3-hourly (00, 03, ..., 21 UTC) |
+| `eac4` | 2003-01-01 | about a year ago | 3-hourly (00, 03, ..., 21 UTC) |
 
-A date before the first day exits 2 without a request; a date after the last exits 1 with the ADS message.
+A date outside the range exits with an error.
 
 ### Arguments
 - `--bbox` — `N/W/S/E` decimal degrees. Required. A box crossing the antimeridian (W > E) is sent as two requests.

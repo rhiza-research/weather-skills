@@ -21,7 +21,7 @@ Reads hourly GSMaP (Global Satellite Mapping of Precipitation) images for a box 
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD --bbox N/W/S/E -o OUT.zarr
 ```
 
-**Coverage:** hourly from 2025-04-01 to about 3 days ago. Days up to 2026-05-10 have all 24 hours; from 2026-05-11 JAXA serves no 00 or 01 UTC image, so each day has at most 22. 2026-05-24 to 2026-05-26 are missing (checked November 2026).
+**Coverage:** hourly from 2025-04-01 to about 3 days ago, with a few missing days. From 2026-05-11 there is no 00 or 01 UTC image.
 
 ### Arguments
 - `--start-time`, `--end-time` — inclusive range of whole UTC days.

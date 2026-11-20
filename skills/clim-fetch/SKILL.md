@@ -33,7 +33,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --start-time YYYY-MM-DD
 | `oisst` | `sst` | 0.25° | 0 | 1990–2025 |
 | `rfe` | `precip` (NOAA CPC RFE2, Africa 40S–40N, 20W–55E) | 0.1° | 0 | 2001–2024 |
 
-Base period: the whole years each mirror averaged over, Jan 1 to Dec 31, as recorded in the mirror (read 2026-11-18). The climatology is daily (one value per day of the year) and has no date limit of its own: `--start-time` / `--end-time` can be any calendar dates, past or future.
+Base period: the whole years each mirror averaged over. `--start-time` / `--end-time` can be any calendar dates, past or future.
 
 An unmirrored pair (e.g. `era5` `tmp2m`) exits 1 and lists the available pairs.
 
@@ -51,7 +51,7 @@ An unmirrored pair (e.g. `era5` `tmp2m`) exits 1 and lists the available pairs.
 - Dims `(latitude, longitude, time)`, one row per calendar day in the window.
 - Variables `<var>_avg` (mean) and `<var>_std` (standard deviation), e.g. `precip_avg`, `precip_std`. Precip is `mm day-1`; `sst` and `tmp2m` are `degree_Celsius`; winds are `m/s`.
 - Each variable has `aggregation_period` `"<window> day"`; `data_interval` is `1 day`. Global attrs `climatology_dataset`, `climatology_variable`, `climatology_prediction_timedelta_days`, `climatology_window_days`.
-- `climatology_start_time` and `climatology_end_time` give the first and last dates the mirror averaged over (e.g. `1998-01-01` and `2024-12-31`). Every current mirror records them, and stderr prints them too; a mirror that doesn't makes stderr say so, and the base period is then unknown. For a known base period, or a dataset or variable not mirrored here, compute one with `climatology` from a multi-year daily fetch.
+- `climatology_start_time` and `climatology_end_time` give the first and last dates the mirror averaged over (e.g. `1998-01-01` and `2024-12-31`). stderr prints them too. For a known base period, or a dataset or variable not mirrored here, compute one with `climatology` from a multi-year daily fetch.
 
 ### Notes
 - Always pass `--bbox` for `chirps` and `imerg_final`; without it the whole global year is read (tens of GB).

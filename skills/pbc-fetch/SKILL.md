@@ -46,10 +46,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [ID]
 
   | `--dataset` | Inits |
   |---|---|
-  | `era5-p_pr_19` | 2025-07-10, then Thursdays 2025-08-07 to 2026-08-06; daily from 2026-08-14 |
-  | `era5-p_pr_26` | Some Thursdays 2025-08-07 to 2026-07-30 (many weeks missing); daily from 2026-08-06 |
+  | `era5-p_pr_19` | Thursdays from 2025-08-07; daily from 2026-08-14 |
+  | `era5-p_pr_26` | Some Thursdays from 2025-08-07; daily from 2026-08-06 |
 
-  The daily runs miss a few days. On 2026-11-18 the newest init of both was 2026-11-06; `--probe-latest` gives the current one.
+  The daily runs miss a few days; `--probe-latest` gives the newest init.
 - `--start-time`, `--end-time` — an init window, both days inclusive. Repeat the pair for several windows, one window per pair. Takes every published init in the windows: like `--date`, the windows select init dates, not valid weeks. Use this instead of one `--date` call per init; not with `--date`. An init whose store is missing is skipped with a `WARNING` on stderr; no init in any window exits 1. One init is about 0.6 MB globally, so a window can span years.
 - `--bbox` — `N/W/S/E` decimal degrees. Omit for the full global grid.
 - `--variable`, `-v` — the only variable is `pr` (aliases `forecast`, `precip`, `tp`, `probability`). Optional.

@@ -113,7 +113,7 @@ Writes WeatherNext 3 hourly mean and 90th-percentile precip over Kenya for 3 day
 - Period fields: `step=0` is `[init, init+6h)` for WeatherNext 2 `precip` and `[init, init+1h)` for WeatherNext 3 `precip`, `ssrd` and `total_sky_direct_solar_radiation_at_surface_1hr`. Precipitation is clipped at zero. The radiation fields stay hourly sums in `J m-2` (divide by 3600 s for a mean `W m-2` flux).
 
 ### Flags
-- Every store runs to the present with no missing days; the newest init is a few hours old. WeatherNext 2 inits run every 6 h from 2025-01-01 00 UTC, WeatherNext 3 (both products) every hour from 2026-01-01 00 UTC. For WeatherNext 2 inits from 2022 to 2024 use dynamical-fetch (`google-weathernext2-forecast-historical-virtual`). WeatherNext 3 interim cycles are `01`–`05`, `07`–`11`, `13`–`17`, `19`–`23`.
+- Every store runs to the present. For WeatherNext 2 inits from 2022 to 2024 use dynamical-fetch (`google-weathernext2-forecast-historical-virtual`). WeatherNext 3 interim cycles are `01`–`05`, `07`–`11`, `13`–`17`, `19`–`23`.
 - `--bbox` takes negative longitudes. A negative `--member` counts from the end.
 - Anonymous access fails; any authenticated Google identity can read the buckets. `GCLOUD_SERVICE_CREDENTIALS` (the service-account key JSON itself, no file needed) takes precedence over `GOOGLE_APPLICATION_CREDENTIALS` and gcloud login. The WeatherNext 3 ensemble bucket bills every listing and read to the billing project, and the skill exits 2 without one before touching GCS. gcloud's default project (`gcloud config set project`) is not read: pass `--billing-project` or export `GOOGLE_CLOUD_PROJECT`.
 

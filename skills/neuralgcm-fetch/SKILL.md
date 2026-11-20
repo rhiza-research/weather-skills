@@ -40,7 +40,7 @@ The bucket is private. Set one of, in order of precedence: `GCLOUD_SERVICE_CREDE
 
 ### Arguments
 - `--dataset` — product under each init. Default: `imerg:precip` (alias `precip`) → `precip`. `era5:surface` (alias `surface`) → `t2m`, `d2m`.
-- `--date` — init date. Inits run at 00 and 12 UTC, from 2026-06-16 12 UTC (00 UTC from 2026-06-18) to the present; the newest is under a day old. About 12% of those inits are missing. Default: the latest init that has `--dataset`. A missing init exits 1 and lists the nearest published inits; nothing is substituted. Pick one of those rather than trying other dates.
+- `--date` — init date. Inits run at 00 and 12 UTC from 2026-06-16 to the present, with some missing. Default: the latest init that has `--dataset`. A missing init exits 1 and lists the nearest published inits; nothing is substituted. Pick one of those rather than trying other dates.
 - `--start-time`, `--end-time` — an init window, both days inclusive. Repeat the pair for several windows, one window per pair. Takes the `--cycle` init (default 00 UTC) of every published day in the windows with all its leads: like `--date`, the windows select init times, not valid times. Use this instead of one `--date` call per init; not with `--date`. An init without a `--dataset` store is skipped with a `WARNING` on stderr; no init in any window exits 1.
 - `--cycle` — init hour UTC: `00` or `12`. Default: `00` with `--date` or windows, otherwise the newest cycle.
 - `--bbox` — `N/W/S/E` decimal degrees; negative longitudes work. Default: the full global grid.

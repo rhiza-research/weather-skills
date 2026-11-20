@@ -22,7 +22,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time Y
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
-**Coverage:** daily from 2001-01-01 to 1–2 days ago (each day appears the following afternoon UTC), with a few missing days (see Details).
+**Coverage:** daily from 2001-01-01 to 1–2 days ago, with a few missing days (see Details).
 
 ### Arguments
 - `--start-time`, `--end-time` — inclusive range of days, `YYYY-MM-DD`. A start before 2001-01-01 exits 2.
