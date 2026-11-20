@@ -445,8 +445,13 @@ def test_convert_no_complete_interval_error_suggests_fix(tmp_path, convert_to_to
     assert "--probe-latest" in err and "2026-01-01" in err
 
 
+@pytest.fixture(scope="module")
+def step_to_time():
+    return load_skill("step-to-time", "step_to_time").step_to_time
+
+
 def test_week1_of_daily_inits_converts_after_step_select(
-    tmp_path, aggregate, select, convert_to_totals
+    tmp_path, aggregate, select, step_to_time, convert_to_totals
 ):
     """Weeks binned along step, then week 1 selected: daily init spacing is not an overlap."""
     ds = xr.Dataset(
@@ -474,3 +479,11 @@ def test_week1_of_daily_inits_converts_after_step_select(
     assert result.sizes["time"] == 3
     assert result.values == pytest.approx(14.0)
     assert result.attrs["cell_methods"] == "step: sum"
+
+    # On valid dates the same weeks overlap (one day apart, 7 days long): refused.
+    valid, out2 = tmp_path / "valid.zarr", tmp_path / "tot2.zarr"
+    run_skill(step_to_time, "-i", str(w1), "-o", str(valid))
+    assert xr.open_zarr(valid)["precip"].attrs["cell_methods"].startswith("time: mean")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(convert_to_totals, "-i", str(valid), "-o", str(out2))
+    assert exc.value.code == 2
