@@ -294,3 +294,21 @@ def test_many_inits_missing_lead_exits(tmp_path, step_to_time):
     with pytest.raises(SystemExit) as exc:
         run_skill(step_to_time, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
     assert exc.value.code == 2
+
+
+def test_cell_methods_along_step_move_to_time(tmp_path, step_to_time):
+    """Weekly means binned along step sit on valid time afterwards, for both relabels."""
+    attrs = {"units": "mm day-1", "cell_methods": "step: mean", "aggregation_period": "7 day"}
+    single = xr.Dataset(
+        {"tp": (("step",), [1.0, 2.0], attrs)},
+        coords={
+            "time": np.datetime64("2025-07-02", "ns"),
+            "step": np.array([0, 7], dtype="timedelta64[D]").astype("timedelta64[ns]"),
+        },
+    )
+    many = _inits_at_one_lead(["2025-07-02", "2025-07-03"], 0)
+    many["tp"].attrs = dict(attrs)
+    for i, ds in enumerate([single, many]):
+        out = tmp_path / f"out{i}.zarr"
+        run_skill(step_to_time, "-i", str(write_zarr(ds, tmp_path / f"in{i}.zarr")), "-o", str(out))
+        assert xr.open_zarr(out)["tp"].attrs["cell_methods"] == "time: mean"
