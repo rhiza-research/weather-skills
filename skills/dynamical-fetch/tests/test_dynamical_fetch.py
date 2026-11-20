@@ -1054,3 +1054,69 @@ def test_members_stored_before_leads_come_out_after_step(tmp_path, mod, fetch, e
     with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "ensemble"}):
         run_skill(fetch, "--dataset", "t", *extra, "-o", str(out))
     assert xr.open_zarr(out, consolidated=True)["tp"].dims == dims
+
+
+def _accum_forecast_ds(name, hours, totals):
+    """Virtual-store precip: provider accumulations in kg m-2 at each lead."""
+    values = np.array(totals, dtype=float).reshape(1, -1, 1, 1) * np.ones((1, 1, 2, 2))
+    return xr.Dataset(
+        {name: (("init_time", "lead_time", "latitude", "longitude"), values)},
+        coords={
+            "init_time": [np.datetime64("2026-01-01", "ns")],
+            "lead_time": np.array(hours, dtype="timedelta64[h]").astype("timedelta64[ns]"),
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "hours", "totals", "rates"),
+    [
+        # ECMWF virtual: run total since init, 3 h leads; precip resolves to it.
+        ("total_precipitation_run_total_surface", [0, 3, 6, 9], [0, 1, 3, 3.5], [8, 16, 4]),
+        # GFS virtual: hourly leads, buckets restart after each 6 h lead.
+        ("total_precipitation_surface", [0, 1, 2, 6, 7, 8], [0, 1, 3, 4, 2, 2], [24, 48, 6, 48, 0]),
+    ],
+)
+def test_provider_accumulations_become_per_step_rates(
+    tmp_path, mod, fetch, name, hours, totals, rates
+):
+    ds = _accum_forecast_ds(name, hours, totals)
+    ds[name].attrs.update(units="kg m-2", step_type="accum", standard_name="precipitation_amount")
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip")
+    assert written[name].attrs["units"] == "mm day-1"
+    # Lead L's amount covers (previous lead, L]; relabelled to the interval start.
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == hours[:-1]
+    np.testing.assert_allclose(written[name].values[:, 0, 0], rates)
+
+
+def test_analysis_bucket_precip_is_refused(tmp_path, mod, fetch, capsys):
+    times = np.arange("2026-01-01T00", "2026-01-01T06", dtype="datetime64[h]").astype(
+        "datetime64[ns]"
+    )
+    ds = xr.Dataset(
+        {"total_precipitation_surface": (("time", "latitude", "longitude"), np.ones((6, 2, 2)))},
+        coords={"time": times, "latitude": [1.0, 2.0], "longitude": [10.0, 11.0]},
+    )
+    ds["total_precipitation_surface"].attrs.update(units="kg m-2", step_type="accum")
+    out = tmp_path / "out.zarr"
+    with (
+        patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "analysis"}),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_skill(
+            fetch,
+            "--dataset",
+            "a",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-01",
+            "-v",
+            "precip",
+            "-o",
+            str(out),
+        )
+    assert exc.value.code == 2
+    assert "noaa-gfs-analysis" in capsys.readouterr().err

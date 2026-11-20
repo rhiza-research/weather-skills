@@ -1,11 +1,11 @@
 ---
 name: tahmo-fetch
-description: "Fetch daily TAHMO weather-station observations (rainfall, mean, max and min temperature, humidity, pressure) from the Trans-African Hydro-Meteorological Observatory network, for chosen station ids or every station in a lat/lon box (2015 to present), as a weather-skills station Zarr. Can also list the stations in a box, or with --gridded read Sheerwater's historical daily all-Africa TAHMO rainfall grid (0.25° cell means of complete station days, 2015-2025) from private GCS. Needs TAHMO credentials (station mode) or Google Cloud credentials (--gridded). Use when a task needs in-situ station data in Africa, for example to compare against gridded satellite or forecast data."
+description: "Fetch daily TAHMO weather-station observations (rainfall, mean, max and min temperature, humidity, pressure) from the Trans-African Hydro-Meteorological Observatory network, for chosen station ids or every station in a lat/lon box (2015 to present), as a weather-skills station Zarr. Can also list the stations in a box, or with --gridded read Sheerwater's historical daily TAHMO rainfall grid (0.25° cell means, 2015-2025) from private GCS. Needs TAHMO credentials (station mode) or Google Cloud credentials (--gridded). Use when a task needs in-situ station data in Africa, for example to compare against gridded satellite or forecast data."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Installs the TAHMO Python SDK from GitHub (git+https://github.com/rhiza-research/tahmo-api). Station mode needs TAHMO_API_USERNAME and TAHMO_API_PASSWORD; --gridded needs Google Cloud credentials.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.12"
+  version: "0.0.13"
   catalog-group: fetchers
   variables:
     - precip
@@ -44,6 +44,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --gridded --start-time YYYY-MM-DD --
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--station ID | --bbox N/W/S/E]
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest --gridded --start-time YYYY-MM-DD --end-time YYYY-MM-DD
 ```
+
+### Date range
+- Station mode: March 2015 to yesterday (`--probe-latest`). Station records vary and may have gaps; a fetch prints each station's complete days.
+- `--gridded`: 2015-03-05 to 2025-09-15, not updated.
 
 ### Arguments
 - `--list-stations` — print the TA stations in `--bbox` (`station_id`, `name`, `latitude`, `longitude`, ISO `country`) and exit.

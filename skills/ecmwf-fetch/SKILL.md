@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Default source is the dynamical.org catalog (no credentials). ECDS fallback requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`) and ECMWF_DATASTORES_KEY (or a `~/.ecmwfdatastoresrc` file). The store URL (`https://ecds.ecmwf.int/api`) is hardcoded in the skill, not read from the environment; the key is the personal token from your ECDS account, free with sign-up — register an ECMWF account at https://www.ecmwf.int/user/register, then copy the token from https://ecds.ecmwf.int/how-to-api.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.11"
+  version: "0.0.12"
   catalog-group: fetchers
   variables:
     - precip
@@ -47,7 +47,7 @@ The skill reads the public dynamical.org copy (`ecmwf-ifs-ens-forecast-46-day-da
   | Inits | Source |
   |---|---|
   | 2015-01-01 to 2023-06-26, Mondays and Thursdays | ECDS |
-  | 2023-06-28 to 2025-12-31, daily (ECDS has no 2023-06-27 init) | ECDS |
+  | 2023-06-28 to 2025-12-31, daily | ECDS |
   | 2026-01-01 to today − 2 days, daily | dynamical.org (ECDS for fields it lacks) |
 - `--bbox` — required. `N/W/S/E` decimal degrees; W > E crosses the antimeridian.
 - `--variable`, `-v` — short names, several per flag, repeated, or comma-separated (`-v precip t2m`). Default: `precip`. Most used: `precip`, `t2m`, `sst`, `d2m`, `mx2t6`, `mn2t6`, `u10`, `v10`, `msl`, `cape`, `tcw`; radiation `ssrd` (downward solar), `ssr`, `strd`, `str`, `ttr`; pressure levels `gh`, `t`, `u`, `v`, `w`, `q`; `pv` (320 K). ECDS names (`2_m_temperature`) and GRIB names (`2t`, `wtmp`, `tp`) are accepted, as is `precipitation`. An unknown name exits and lists `Available (most used first):`.

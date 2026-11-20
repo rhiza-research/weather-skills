@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Authenticates to NASA Earthdata via the `earthaccess` library — set EARTHDATA_USERNAME and EARTHDATA_PASSWORD in the environment, or use a `.netrc` entry for `urs.earthdata.nasa.gov`. Earthdata accounts are free with sign-up at https://urs.earthdata.nasa.gov/users/new.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.10"
+  version: "0.0.11"
   catalog-group: fetchers
   variables:
     - precip
@@ -36,7 +36,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [late|final]
 | `--version` | First day | Last day |
 |---|---|---|
 | `late` | 1998-01-01 | 1–2 days ago |
-| `final` | 1998-01-01 | 2025-09-30 as of November 2026; extended months behind real time |
+| `final` | 1998-01-01 | months behind real time |
 
 ### Arguments
 - `--start-time`, `--end-time` — inclusive date range.

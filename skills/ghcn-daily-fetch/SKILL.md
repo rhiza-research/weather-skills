@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads NOAA GHCN-Daily from NCEI's public HTTPS tree (www.ncei.noaa.gov/pub/data/ghcn/daily), falling back to the noaa-ghcn-pds S3 mirror when NCEI returns 404; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.11"
+  version: "0.0.12"
   catalog-group: fetchers
   variables:
     - precip
@@ -26,7 +26,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time Y
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
-**Coverage:** daily; each station has its own span. The oldest records start in 1750; the newest observations are about 3 days old, and some stations lag that by days or more.
+**Coverage:** daily, from 1750 for the oldest stations to about 3 days ago; each station has its own span.
 
 ### Arguments
 - `--start-time`, `--end-time` — inclusive date range, `YYYY-MM-DD`.

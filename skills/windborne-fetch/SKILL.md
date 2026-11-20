@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads the WindBorne Forecasts and Insights APIs (api.windbornesystems.com). Requires WB_CLIENT_ID and WB_API_KEY in the environment. A free 2-week trial key (Forecasts and Insights endpoints only) is available with sign-up at https://api.windbornesystems.com/getting-started/.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.8"
+  version: "0.0.9"
   catalog-group: fetchers
   variables:
     - precip
@@ -63,9 +63,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--product P] --probe-latest
 ```
 
 ### Arguments
-- `--product` — `grid` (default): WeatherMesh-6 gridded forecast. `point`: the forecast at points. `sounding`: vertical profiles at points. `conditions`: plain-language summaries at points, latest run only. `clim`: ERA5 1991–2020 hourly normals at points. `analysis`: ECMWF IFS deterministic analysis, every 6 h from 2026-09-25 to about 6 h ago (checked 2026-11-18; `--probe-latest` prints the served span). `degree-days`: US state HDD/CDD.
+- `--product` — `grid` (default): WeatherMesh-6 gridded forecast. `point`: the forecast at points. `sounding`: vertical profiles at points. `conditions`: plain-language summaries at points, latest run only. `clim`: ERA5 1991–2020 hourly normals at points. `analysis`: ECMWF IFS deterministic analysis, every 6 h, recent weeks only (`--probe-latest` prints the served span). `degree-days`: US state HDD/CDD.
 - `--point` — `LAT,LON[,ID]`, repeatable; required for point, sounding, conditions, clim. IDs default to `P0`, `P1`, …. Forecast points outside the key's region return 403.
-- `--date`, `--run` — init date and hour UTC (`6` or `06`). Default: the latest run; `--date` alone takes its latest run. Runs start most hours. `grid` also serves archived runs, back to the 2026-05-30 17 UTC run; `point` and `sounding` only the live runs (about the last two days); `degree-days` needs `--run` for an archived run.
+- `--date`, `--run` — init date and hour UTC (`6` or `06`). Default: the latest run; `--date` alone takes its latest run. `grid` also serves archived runs, back to the 2026-05-30 17 UTC run; `point` and `sounding` only the live runs (about the last two days); `degree-days` needs `--run` for an archived run.
 - `--bbox` — `N/W/S/E`, grid and analysis. Grid default: the key's region (a box past it is trimmed); analysis default: global.
 - `--variable`, `-v` — repeatable. Short names: `precip` (also `tp`), `t2m`, `d2m`, `msl`, `u10`, `v10`, `u100`, `v100`, `ws10`, `ws100`, `tmax`, `tmin`, `sp`, `tcwv`, `cape`, `tcc`, `ssrd`, `skt`; pressure-level `t`, `z`, `q`, `u`, `v`. Grid and point also take any WindBorne name (kept under it; an unknown one lists them). Analysis serves `precip`, `t2m`, `d2m`, `msl`, winds, `tcc` and the pressure-level five. Default: `precip` (grid), `t2m` (analysis), and for point one request for `t2m`, `d2m`, `precip`, `msl`, `u10`, `v10`, `u100`, `v100`, `ws10`, `ws100`.
 - `--level` — hPa, repeatable; required for pressure-level fields and refused without one. Grid 25 levels, analysis 20, 10–1000 hPa.
@@ -105,7 +105,7 @@ The first writes the latest run's 15-day ensemble-mean precipitation rate and 2 
 - `precip`, `tmax`, `tmin`, `ssrd` and other `_3h` fields cover `[step, step + 3 h)`; instantaneous fields (`t2m`, `msl`, winds, `z`, …) are valid at `time + step`. With both, the `_3h` fields are NaN at the last lead and the instantaneous ones keep lead 0.
 - `ssrd` stays an amount per 3 h in J m-2. Under `--ensemble std` values stay in kelvin and pascals. Stamps `data_interval = 3 hour` and `windborne_ensemble` (point is always `mean`).
 - A point field whose units the skill does not know (an unusual WindBorne name) has no `units` attr.
-- The archive lists runs from 2026-05-30 17 UTC, and grid fetches work back to that day; archived runs download in full (every lead, members and pressure levels).
+- Archived runs download in full (every lead, members and pressure levels).
 - Each grid field, level and lead is a separate request: a full run of one field is 121 requests (a few seconds). `--ensemble members` is ~7 MB per lead over the key region, about 1 GB for a full run of one field.
 - Soundings return every level from 1000 hPa, including levels below the ground at high sites (Nairobi's surface is near 830 hPa). Those values are extrapolated; use the levels where `gh` is above the site elevation. Each point and lead is one request.
 - Other WindBorne names include `boundary_layer_height`, `soil_moisture_level_1` and `wind_speed`.

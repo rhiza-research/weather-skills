@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Requires EUMETSAT_CONSUMER_KEY and EUMETSAT_CONSUMER_SECRET in the environment, or an eumdac credentials file at ~/.eumdac/credentials (free with sign-up — register at https://user.eumetsat.int, then create the key at https://api.eumetsat.int/api-key/).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.7"
+  version: "0.0.8"
   catalog-group: fetchers
   variables:
     - ir
@@ -38,7 +38,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--service 0deg|iodc]
 ```
 
 ### Date ranges
-Checked in the EUMETSAT Data Store on 2026-11-18. Each runs to the present; the newest scan is about 15-20 minutes old (`--probe-latest`).
+Each runs to about 20 minutes ago (`--probe-latest`).
 
 | `--service` / `--instrument` | First scan | Repeat |
 |---|---|---|
@@ -46,7 +46,7 @@ Checked in the EUMETSAT Data Store on 2026-11-18. Each runs to the present; the 
 | `iodc` `seviri` | 2017-02-01 10:00 UTC | 15 min |
 | `0deg` `fci` | 2024-09-24 08:30 UTC | 10 min |
 
-`--instrument fci` with a date before 2024-09-24 exits 2; without `--instrument`, such dates use SEVIRI. A time with no scan in the archive exits 1.
+Without `--instrument`, dates before FCI use SEVIRI.
 
 ### Arguments
 - `--date` — UTC day of the scans, `YYYY-MM-DD`. One day per call; run once per day for times spanning midnight.

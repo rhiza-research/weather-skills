@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`). No credentials or account required — ECMWF Open Data is a public feed.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.12"
+  version: "0.0.13"
   catalog-group: fetchers
   variables:
     - precip
@@ -50,9 +50,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
 ### Arguments
-- `--date` — init date. Runs at 00, 06, 12 and 18 UTC every day, from the 2024-02-28 06 UTC run (00 UTC from 2024-02-29) to today's newest published run.
-  - Last 4 days (today included): `https://data.ecmwf.int/forecasts/`, then the AWS mirror.
-  - Older: the AWS mirror only (`https://ecmwf-forecasts.s3.eu-central-1.amazonaws.com`). It also holds 2023-01-18 to 2024-02-27, but only at 0.4°, which this skill does not read: those inits exit 1.
+- `--date` — init date. Runs at 00, 06, 12 and 18 UTC daily from 2024-02-28 to today. The last 4 days come from `https://data.ecmwf.int/forecasts/`, then the AWS mirror; older inits from the AWS mirror (`https://ecmwf-forecasts.s3.eu-central-1.amazonaws.com`) only.
 - `--run` — init hour UTC: `0`, `6`, `12`, or `18`. Default: `0`. 00/12 runs reach 360 h (3-hourly to 144 h, then 6-hourly); 06/18 runs reach 144 h, 3-hourly.
 - `--bbox` — required for a fetch. `N/W/S/E` decimal degrees. Open Data serves global files, so the full globe is downloaded for every step and clipped locally; a small bbox saves memory, not download time (`precip` for a 00 UTC run is ~80 MB; a pressure-level field is ~13×).
 - `--variable`, `-v` — one field per flag; repeat for several. Default: `precip`. Surface: `precip`, `t2m`, `d2m`, `msl`, `u10`, `v10`, `gust10`, `sp`, `tcwv`, `mucape`, `skt`, `ssrd`, `strd`, `str`, `ttr`. Pressure levels (1000–50 hPa, 13 levels): `t`, `gh`, `u`, `v`, `q`, `r`. Open Data names (`tp`, `2t`, `10u`) are accepted, as is `precipitation`. An unknown name exits and lists `Available (most used first):`.

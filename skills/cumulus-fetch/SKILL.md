@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads private Zarr stores from Azure Blob italynorthdata/data/live_forecasts/global_model/aurora_s2s/utmost-plane-16dd148fe73d4cbb9/zarr/total_precipitation_24h_acc_imerg_0p25 via adlfs. Requires AZURE_STORAGE_SAS_TOKEN (a read SAS with list and read, sp=rl).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.11"
+  version: "0.0.12"
   catalog-group: fetchers
   variables:
     - precip
@@ -35,7 +35,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET]
 
 ### Arguments
 - `--dataset` — `precip` (IMERG-trained, 0.25°), `precip_1deg` (IMERG-trained, 1°) or `precip_era5` (ERA5-trained). The matching store folder name (e.g. `total_precipitation_24h_acc_imerg_0p25`) also works; anything else exits 2. Only the live forecast runs are served; hindcast (reforecast) runs are not. Default: `precip`.
-- `--date` — init date; takes that day's latest init hour. Every dataset has one 00 UTC init a day from 2026-09-01 to the present, with no missing days; the newest is today's or yesterday's. Earlier dates exist only as the ERA5-initialised hindcast (hindcast-fetch `cumulus`, inits to 2026-08-31). Default: the latest published init. A date with no init exits 1 and lists the nearest published inits, so pick one of those rather than trying other dates.
+- `--date` — init date; takes that day's latest init hour. Daily 00 UTC inits from 2026-09-01; earlier dates are in hindcast-fetch `cumulus`. Default: the latest published init. A date with no init exits 1 and lists the nearest published inits, so pick one of those rather than trying other dates.
 - `--start-time`, `--end-time` — an init window, both days inclusive. Repeat the pair for several windows, one window per pair. Takes every 00 UTC init in the windows with all its leads: like `--date`, the windows select init times, not valid times. Use this instead of one `--date` call per init; not with `--date`. No init in any window exits 1.
 - `--bbox` — `N/W/S/E` decimal degrees; negative longitudes work. Omit for the full global grid (about 5.5 GB per init at 0.25°, 350 MB at 1°).
 - `--variable`, `-v` — each store holds one field, written as `precip`. Accepts `precip`, `tp`, `precipitation`, `total_precipitation` or a folder name; anything else exits 2. Optional.
