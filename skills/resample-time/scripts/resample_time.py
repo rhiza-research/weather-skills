@@ -90,18 +90,21 @@ def resample_time(ds, period, time_dim, **kwargs):
     if (ends <= starts).any():
         raise UsageError(f"every sample on {dim} must end after it starts")
 
-    # Grid edges sit on whole periods from 00 UTC (time) or lead 0 (step), and every
-    # sample edge must fall on one, so each grid cell is wholly inside or outside it.
-    origin = 0 if raw.dtype.kind == "m" else starts.min() - starts.min() % 86_400_000_000_000
-    offsets = np.concatenate([starts, ends]) - origin
+    # The grid starts at the earliest sample start, and every sample edge must fall on a
+    # grid edge, so each grid cell is wholly inside or outside each sample.
+    offsets = np.concatenate([starts, ends]) - starts.min()
     if (offsets % period_ns).any():
-        fits = math.gcd(*(int(v) for v in offsets))
+        fits = format_duration(
+            parse_aggregation_period(f"{math.gcd(*(int(v) for v in offsets)) // 10**9} second")
+        )
         raise UsageError(
             f"--period {period} does not divide every sample edge on {dim}; the longest "
-            f"period that does is {format_duration(parse_aggregation_period(f'{fits // 10**9} second'))}"
+            f"period that does is {fits}. resample-time only splits samples: to average "
+            f"up to a longer period, run it with --period '{fits}', then aggregate-temporal"
         )
-    left = np.arange(starts.min(), ends.max(), period_ns, dtype="int64")
-    inside = (starts[None, :] <= left[:, None]) & (left[:, None] + period_ns <= ends[None, :])
+    first = (starts - starts.min()) // period_ns
+    stop = (ends - starts.min()) // period_ns
+    left = starts.min() + np.arange(stop.max(), dtype="int64") * period_ns
 
     # A sample counts toward coverage at its own coverage, and only if some cell has data.
     cov_in = np.ones(raw.size)
@@ -111,10 +114,14 @@ def resample_time(ds, period, time_dim, **kwargs):
         da = ds[name]
         if dim in da.dims:
             cov_in = cov_in * np.isfinite(da).any([d for d in da.dims if d != dim]).values
-    n_cover = inside.sum(axis=1)
-    coverage = np.where(n_cover > 0, (inside * cov_in).sum(axis=1) / np.maximum(n_cover, 1), 0.0)
+    # Add each sample into the grid cells it covers; memory grows with the output only.
+    n_cover = np.zeros(left.size)
+    cov_sum = np.zeros(left.size)
+    for i in range(raw.size):
+        n_cover[first[i] : stop[i]] += 1
+        cov_sum[first[i] : stop[i]] += cov_in[i]
+    coverage = np.where(n_cover > 0, cov_sum / np.maximum(n_cover, 1), 0.0)
 
-    weights = xr.DataArray(inside.astype(float), dims=("_grid", dim))
     overlapping = bool((n_cover > 1).any()) or any(
         OVERLAPPING_SAMPLES in str(ds[n].attrs.get("cell_methods", "")) for n in ds.data_vars
     )
@@ -128,12 +135,23 @@ def resample_time(ds, period, time_dim, **kwargs):
         da = ds[name]
         if dim not in da.dims:
             continue
+        rest = [d for d in da.dims if d != dim]
+        values = da.transpose(dim, *rest).values.astype(float)
+        present = np.isfinite(values)
+        values[~present] = 0.0
         # Plain mean of every sample covering the grid cell.
-        count = xr.dot(weights, da.notnull().astype(float), dim=dim)
-        total = xr.dot(weights, da.fillna(0.0), dim=dim)
+        count = np.zeros((left.size, *values.shape[1:]))
+        total = np.zeros((left.size, *values.shape[1:]))
+        for i in range(raw.size):
+            count[first[i] : stop[i]] += present[i]
+            total[first[i] : stop[i]] += values[i]
         # A cell missing samples that other cells have is NaN, not a mean of what it has.
-        mean = (total / count).where(count >= count.max([d for d in da.dims if d != dim]))
-        mean = mean.rename({"_grid": dim}).transpose(*da.dims)
+        full = count.reshape(left.size, -1).max(axis=1).reshape(-1, *[1] * len(rest))
+        mean = np.where((count > 0) & (count >= full), total / np.maximum(count, 1), np.nan)
+        mean = xr.DataArray(
+            mean, dims=(dim, *rest), coords={d: da[d] for d in rest if d in da.coords}
+        )
+        mean = mean.transpose(*da.dims)
         if da.dtype.kind == "f":
             mean = mean.astype(da.dtype, copy=False)
         attrs = {

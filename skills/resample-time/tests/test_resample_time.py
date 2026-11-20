@@ -112,7 +112,8 @@ def test_period_off_sample_edges_suggests_one(tmp_path, resample, capsys):
     with pytest.raises(SystemExit) as exc:
         _run(resample, tmp_path, ds, "--period", "7 day")
     assert exc.value.code == 2
-    assert "1 day" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "1 day" in err and "aggregate-temporal" in err
 
 
 def test_no_interval_exits_2(tmp_path, resample):
@@ -153,3 +154,20 @@ def test_static_variable_passes_through(tmp_path, resample):
     ds["mask"] = (("lat",), [1.0])
     out = _run(resample, tmp_path, ds, "--period", "1 day")
     assert out["mask"].dims == ("lat",) and out["mask"].values.tolist() == [1.0]
+
+
+def test_grid_starts_at_earliest_sample(tmp_path, resample):
+    """Station days running 06-06 UTC stay 06-06 days on a 1-day grid."""
+    t0 = np.datetime64("2026-01-01T06:00", "ns")
+    attrs = {"units": "mm day-1", "data_interval": "2 day"}
+    ds = xr.Dataset({"precip": (("time",), [1.0, 3.0], attrs)}, coords={"time": [t0, t0 + DAY]})
+    out = _run(resample, tmp_path, ds, "--period", "1 day")
+    np.testing.assert_array_equal(out["time"].values, t0 + np.arange(3) * DAY)
+    np.testing.assert_allclose(out["precip"].values, [1, 2, 3])
+
+
+def test_dry_cells_stay_exactly_zero(tmp_path, resample):
+    """Averaging adds only the samples covering each cell, so zeros are not rounded away."""
+    ds = _samples([(1, 3), (2, 4), (4, 6)], [0.1, 0.2, 0.0])
+    vals = _run(resample, tmp_path, ds, "--period", "1 day")["precip"].values[:, 0]
+    assert vals[4] == 0.0 and vals[5] == 0.0
