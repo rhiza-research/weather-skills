@@ -76,7 +76,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest --gridded --start-tim
 - `precip_flag` is a bit mask of suspect station-days, kept in `precip`. Filter with `precip.where(precip_flag == 0)` for extremes or threshold counts.
   - `1` unsupported_extreme: over 150 mm (or a 5-minute record over 25 mm) that neither CHIRPS nor a nearby station supports.
   - `2` stuck_sensor: the same nonzero value repeated for hours.
-  - `4` failing_station: TA00416 (Kenya) from 2025-05-01.
+  - `4` failing_station: a station period far wetter than all its neighbours for months.
 - Needs Google Cloud credentials: `GCLOUD_SERVICE_CREDENTIALS` (key JSON), else `GOOGLE_APPLICATION_CREDENTIALS` or ADC. No access, or no data in the box and range, exits 1.
 
 ### Example
