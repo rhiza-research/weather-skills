@@ -2,7 +2,7 @@
 name: ghcn-daily-fetch
 description: "Fetch NOAA GHCN-Daily station observations (daily precipitation and max, min, mean temperature; 1750 to a few days ago, varying by station) for a date range and lat/lon box, as a weather-skills station Zarr. No credentials needed; covers about 130,000 stations worldwide. Use when a task needs daily in-situ station data anywhere in the world, for example to compare against gridded satellite, reanalysis, or forecast data."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads NOAA GHCN-Daily from NCEI's public HTTPS tree (www.ncei.noaa.gov/pub/data/ghcn/daily); no credentials required.
+compatibility: Requires Python 3.12 and uv. Reads NOAA GHCN-Daily from NCEI's public HTTPS tree (www.ncei.noaa.gov/pub/data/ghcn/daily), falling back to the noaa-ghcn-pds S3 mirror when NCEI returns 404; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.11"
@@ -16,7 +16,7 @@ metadata:
 
 # ghcn-daily-fetch
 
-Downloads GHCN-Daily station records from NCEI's public HTTPS tree and writes the stations inside a box as one station Zarr.
+Downloads GHCN-Daily station records from NCEI's public HTTPS tree and writes the stations inside a box as one station Zarr. When NCEI returns 404 (it has had outages while moving its archive), it reads the [noaa-ghcn-pds](https://noaa-ghcn-pds.s3.amazonaws.com/index.html) S3 mirror and warns on stderr: some of the mirror's per-station files stopped updating in Feb 2025, so recent days can be missing for those stations.
 
 ## Usage
 
