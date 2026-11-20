@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Uses the OpenAQ v3 REST API over HTTPS; requires a free OPENAQ_API_KEY in the environment (register at https://explore.openaq.org/register).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.8"
+  version: "0.0.9"
   catalog-group: fetchers
   variables:
     - pm25
@@ -35,6 +35,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox N/W/S/E --start-time YYYY-MM-
 # Print the latest UTC day any PM2.5 sensor reported, and exit
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
+
+### Date range
+- Each location has its own record: some go back years, many started recently or have stopped, and OpenAQ notes ingestion gaps in some periods. No network-wide first date is documented here (not verified). The skill prints no per-location dates; fetch the window and check which stations have values (no data at all exits 1).
+- Runs to the present: `--probe-latest` gives the newest day any PM2.5 sensor reported, usually still partial. Sources report every 10 minutes to 24 hours; output is daily.
 
 ### Arguments
 - `--bbox` — `N/W/S/E` decimal degrees. Required. Must not cross the antimeridian (W <= E); split such a region into two calls.

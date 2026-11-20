@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Icechunk Zarr from the dynamical.org open catalog (`ucsb-chc-chirps-analysis-final` / `ucsb-chc-chirps-analysis-preliminary`); no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.8"
+  version: "0.0.9"
   catalog-group: fetchers
   variables:
     - precip
@@ -23,8 +23,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time Y
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
+**Coverage:** daily from 1981-01-01 to 2–7 days ago. Final through the end of a recent month (2026-10-31 as of 2026-11-18); preliminary days after that.
+
 ### Arguments
-- `--start-time`, `--end-time` — inclusive date range. Coverage starts 1981-01-01; an earlier start exits 2.
+- `--start-time`, `--end-time` — inclusive date range. A start before 1981-01-01 exits 2.
 - `--bbox` — `N/W/S/E` decimal degrees; keeps cell centres inside, edges inclusive. Omit for the full 60°S–60°N land grid.
 - `--probe-latest` — print the latest published day (`YYYY-MM-DD`) on stdout and exit. Takes no value. stderr names the product, e.g. `latest=2026-10-10 (preliminary); final through 2026-08-31`.
 - `--workers` — ignored. Default: 8.
