@@ -475,8 +475,8 @@ def _to_units(da, units, role):
     except (pint.DimensionalityError, pint_xarray.errors.PintExceptionGroup):
         raise UsageError(
             f"{role} ({variable_units(da)}) cannot be converted to the forecast's units "
-            f"({units:~}); put both on one basis (a total against a rate needs "
-            "aggregate-temporal / convert-to-totals first)."
+            f"({units:~}); put both on one basis: compare rates (mm day-1 means from "
+            "aggregate-temporal on both sides), or totals from convert-to-totals on both sides."
         ) from None
 
 
