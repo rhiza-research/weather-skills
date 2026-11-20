@@ -573,16 +573,30 @@ def test_probe_latest_stops_early_with_a_late_day_start_hour(capsys, mod, fetch)
 
 
 def _gridded_store():
-    """Sparse store like tahmo_precip.zarr: lat/lon list only cells with a station."""
+    """Sparse store like tahmo_africa_precip.zarr: lat/lon list only cells with a station."""
     import numpy as np
 
     times = pd.date_range("2024-03-01", "2024-03-03", freq="D")
     precip = np.full((3, 2, 2), np.nan, dtype="float32")
     precip[:, 0, 0] = [1.0, 2.0, 3.0]  # cell (-1.0, 36.0): every day
     precip[1, 1, 1] = 5.5  # cell (0.5, 37.25): one day only
+    count = np.where(np.isnan(precip), 0, 1).astype("int16")
+    count[0, 0, 0] = 2  # two stations in the cell on the first day
+    flag = np.zeros(precip.shape, dtype="int8")
+    flag[1, 1, 1] = 3  # unsupported_extreme and stuck_sensor
+    flag_attrs = {
+        "flag_masks": np.array([1, 2, 4], dtype="int8"),
+        "flag_meanings": "unsupported_extreme stuck_sensor failing_station",
+    }
     return xr.Dataset(
         {"precip": (("time", "latitude", "longitude"), precip)},
-        coords={"time": times, "latitude": [-1.0, 0.5], "longitude": [36.0, 37.25]},
+        coords={
+            "time": times,
+            "latitude": [-1.0, 0.5],
+            "longitude": [36.0, 37.25],
+            "precip_count": (("time", "latitude", "longitude"), count),
+            "precip_flag": (("time", "latitude", "longitude"), flag, flag_attrs),
+        },
     )
 
 
@@ -619,8 +633,20 @@ def test_gridded_fills_regular_grid_without_tahmo_credentials(tmp_path, mod, fet
     assert int(p.notnull().sum()) == 4
     assert p.attrs["units"] == "mm day-1"
     assert p.attrs.get("data_interval") == "1 day"
-    assert ds.attrs["weather_skills_source"] == "sheerwater:hindcasts/tahmo_precip.zarr"
-    assert "precip: 2 cells with data, 1 complete (all 3 days" in capsys.readouterr().err
+    assert ds.attrs["weather_skills_source"] == "sheerwater:hindcasts/tahmo_africa_precip.zarr"
+    n = ds["precip_count"]
+    assert n.dims == p.dims
+    assert list(n.sel(latitude=-1.0, longitude=36.0).values) == [2, 1, 1]
+    # Rebuilt cells with no station count 0.
+    assert int(n.sum()) == 5
+    f = ds["precip_flag"]
+    assert f.dims == p.dims
+    assert int(f.sel(latitude=0.5, longitude=37.25).isel(time=1)) == 3
+    assert int((f > 0).sum()) == 1
+    assert f.attrs["flag_meanings"] == "unsupported_extreme stuck_sensor failing_station"
+    err = capsys.readouterr().err
+    assert "precip: 2 cells with data, 1 complete (all 3 days" in err
+    assert "1 cell-days flagged" in err
     quantify_dataset(ds)
 
 
