@@ -27,15 +27,26 @@ from weather_skills_core.standard_utils import apply_write_encoding, is_transien
 from weather_skills_core.units import precip_amounts_to_rates, stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.11"
+_SKILL_VERSION = "0.0.12"
 
-# NCEI's own HTTPS tree, not the noaa-ghcn-pds S3 mirror: the mirror's by_station
-# files for some first-order stations (e.g. USW00094728, NYC Central Park) stopped
-# updating in Feb 2025, which silently dropped them from recent windows.
+# NCEI's own HTTPS tree first, the noaa-ghcn-pds S3 mirror only when NCEI returns
+# 404: the mirror's by_station files for some first-order stations (e.g.
+# USW00094728, NYC Central Park) stopped updating in Feb 2025, which silently
+# dropped them from recent windows.
 _BASE_URL = "https://www.ncei.noaa.gov/pub/data/ghcn/daily"
 _STATIONS_URL = f"{_BASE_URL}/ghcnd-stations.txt"
 _STATION_CSV_URL = _BASE_URL + "/by_station/{station_id}.csv.gz"
 _YEAR_CSV_URL = _BASE_URL + "/by_year/{year}.csv.gz"
+_MIRROR_URL = "https://noaa-ghcn-pds.s3.amazonaws.com"
+_MIRROR_STATIONS_URL = f"{_MIRROR_URL}/ghcnd-stations.txt"
+_MIRROR_STATION_CSV_URL = _MIRROR_URL + "/csv.gz/by_station/{station_id}.csv.gz"
+_MIRROR_YEAR_CSV_URL = _MIRROR_URL + "/csv.gz/by_year/{year}.csv.gz"
+_MIRROR_WARNING = (
+    "Warning: NCEI's GHCN-Daily tree returned 404 (NCEI has had outages while moving "
+    "its archive); reading the noaa-ghcn-pds S3 mirror instead. Some of the mirror's "
+    "per-station files stopped updating in Feb 2025, so recent days can be missing "
+    "for those stations."
+)
 _CSV_COLUMNS = ["ID", "DATE", "ELEMENT", "VALUE", "M_FLAG", "Q_FLAG", "S_FLAG", "OBS_TIME"]
 _GHCN_MISSING_VALUE = -9999
 # PRCP measurement flags that mark a zero GHCN inferred rather than measured:
@@ -84,6 +95,9 @@ DEFAULT_VARIABLES = ["precip", "tmax", "tmin"]
 def _load_stations(bbox):
     """Fetch ghcnd-stations.txt, optionally filtered to a bbox."""
     resp = requests.get(_STATIONS_URL, timeout=HTTP_TIMEOUT)
+    if resp.status_code == 404:
+        print(_MIRROR_WARNING, file=sys.stderr)
+        resp = requests.get(_MIRROR_STATIONS_URL, timeout=HTTP_TIMEOUT)
     resp.raise_for_status()
     stations = pd.read_fwf(
         io.StringIO(resp.text),
@@ -104,20 +118,22 @@ def _load_stations(bbox):
 
 
 def _fetch_station_csv(station_id: str):
-    """GET one station's gzip CSV; retry once on transient error. None on 404."""
-    url = _STATION_CSV_URL.format(station_id=station_id)
-    for attempt in range(2):
-        try:
-            resp = requests.get(url, timeout=HTTP_TIMEOUT)
-            if resp.status_code == 404:
-                return None
-            resp.raise_for_status()
-            return resp.content
-        except requests.RequestException as exc:
-            if attempt == 0 and is_transient(exc):
-                time.sleep(2.0)
-                continue
-            raise
+    """GET one station's gzip CSV from NCEI, else the mirror; retry once on transient
+    error. None when both return 404."""
+    for template in (_STATION_CSV_URL, _MIRROR_STATION_CSV_URL):
+        url = template.format(station_id=station_id)
+        for attempt in range(2):
+            try:
+                resp = requests.get(url, timeout=HTTP_TIMEOUT)
+                if resp.status_code == 404:
+                    break
+                resp.raise_for_status()
+                return resp.content
+            except requests.RequestException as exc:
+                if attempt == 0 and is_transient(exc):
+                    time.sleep(2.0)
+                    continue
+                raise
     return None
 
 
@@ -220,25 +236,30 @@ def fetch(start_time, end_time, bbox, workers, variable, probe_latest, **kwargs)
         # The by_year file's Last-Modified is its upload date, days after the
         # newest observation in it; report the newest DATE actually present.
         year = datetime.now(UTC).date().year
-        for y in (year, year - 1):
-            try:
-                chunks = pd.read_csv(
-                    _YEAR_CSV_URL.format(year=y),
-                    compression="gzip",
-                    header=None,
-                    usecols=[1],
-                    chunksize=2_000_000,
-                )
-                latest = max(int(chunk[1].max()) for chunk in chunks)
-            except pd.errors.EmptyDataError:
-                continue
-            except HTTPError as exc:
-                if exc.code == 404:
+        for template in (_YEAR_CSV_URL, _MIRROR_YEAR_CSV_URL):
+            for y in (year, year - 1):
+                try:
+                    chunks = pd.read_csv(
+                        template.format(year=y),
+                        compression="gzip",
+                        header=None,
+                        usecols=[1],
+                        chunksize=2_000_000,
+                    )
+                    latest = max(int(chunk[1].max()) for chunk in chunks)
+                except pd.errors.EmptyDataError:
                     continue
-                raise
-            print(datetime.strptime(str(latest), "%Y%m%d").date().isoformat())
-            return
-        raise DataError("GHCN probe found no by_year csv.gz for this year or last")
+                except HTTPError as exc:
+                    if exc.code == 404:
+                        continue
+                    raise
+                if template == _MIRROR_YEAR_CSV_URL:
+                    print(_MIRROR_WARNING, file=sys.stderr)
+                print(datetime.strptime(str(latest), "%Y%m%d").date().isoformat())
+                return
+        raise DataError(
+            "GHCN probe found no by_year csv.gz for this year or last on NCEI or its S3 mirror"
+        )
 
     start_iso = start_time.isoformat()
     end_iso = end_time.isoformat()

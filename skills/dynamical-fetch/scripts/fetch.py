@@ -26,7 +26,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.17"
+_SKILL_VERSION = "0.0.18"
 
 # Forecast bookkeeping / CRS scalar coords dropped from the standard output.
 _DROP_COORDS = (
@@ -444,8 +444,8 @@ def fetch(
                 ) from None
             if limit < np.timedelta64(0, "ns"):
                 raise UsageError("--max-lead must not be negative")
-            # One catalog lead past the limit: end-labelled fields move back one
-            # step below, and the extra lead is trimmed after that.
+            # One catalog lead past the limit: instant fields need the leads up to
+            # it, and end-labelled fields are cut on their interval end below.
             n = int((ds["lead_time"].values <= limit).sum())
             ds = ds.isel(lead_time=slice(0, n + 1))
         if date is not None:
@@ -595,11 +595,14 @@ def fetch(
                         "leads are NaN (not filled).",
                         file=sys.stderr,
                     )
+    # End of each step's interval once steps are relabelled to interval start.
+    cell_end = None
     if is_forecast and ds.sizes.get("step", 0) > 1 and len(ds.data_vars) > 0:
         first = ds.isel(step=0)
         if all(bool(first[name].isnull().all()) for name in ds.data_vars):
             leads = ds["step"].values
             ds = ds.isel(step=slice(1, None)).assign_coords(step=leads[:-1])
+            cell_end = leads[1:]
             # GEFS / IFS ENS go 3- to 6-hourly. Write each cell's [start, end]
             # here: stamp_data_interval would infer bounds as if steps were ends.
             if len(set(np.diff(leads))) > 1:
@@ -652,13 +655,23 @@ def fetch(
         and leads[0] > np.timedelta64(0, "ns")
     ):
         ds = ds.assign_coords(step=np.concatenate([[np.timedelta64(0, "ns")], leads[:-1]]))
+        cell_end = leads
         for name in ds.data_vars:
             note = (
                 "dynamical-fetch relabelled steps to interval start: step s covers [s, next lead)."
             )
             ds[name].attrs["comment"] = f"{ds[name].attrs.get('comment', '')} {note}".strip()
         print("Relabelled steps to interval start (catalog has no lead 0).", file=sys.stderr)
-    if is_forecast and max_lead is not None:
+    if is_forecast and max_lead is not None and cell_end is not None:
+        # Keep whole intervals: one that ends after the limit is not "up to" it.
+        keep = np.flatnonzero(cell_end <= limit)
+        if keep.size == 0:
+            raise UsageError(
+                f"--max-lead {max_lead} ends before the first interval does "
+                f"({cell_end[0] / np.timedelta64(1, 'h'):g} h); pass at least that"
+            )
+        ds = ds.isel(step=keep)
+    elif is_forecast and max_lead is not None:
         ds = ds.sel(step=slice(None, limit))
         # Mixed with instant fields, an end-labelled field has no value at step 0.
         empty = [name for name in ds.data_vars if bool(ds[name].isnull().all())]

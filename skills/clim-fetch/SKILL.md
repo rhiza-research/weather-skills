@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads a static climatology Zarr from the public GCS bucket sheerwater-public-datalake over anonymous HTTPS; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.10"
+  version: "0.0.12"
   catalog-group: fetchers
   variables:
     - precip
@@ -72,3 +72,5 @@ Writes daily CHIRPS `precip_avg` / `precip_std` over Kenya for October–Decembe
 **Source.** Each climatology is `gs://sheerwater-public-datalake/climatologies/<dataset>_<variable>_<window>d.zarr`, indexed by init dates in the leap year 1904 so every day of the year 1–366 has a row. For `--window` > 1 the skill first tries a matching pre-averaged store and otherwise averages the daily one itself, wrapping Dec 31 onto Jan 1 so windows near the year end are full.
 
 **Weekly totals.** `--window 7` gives the average daily rate over the 7 days starting on each date, still one row per day. For a climatology of weekly totals in mm, keep one row per week (every 7th date), then multiply each rate by 7 days. Both `_avg` and `_std` scale the same way.
+
+**Forecast weeks.** For a climatology matched to a forecast's leads, fetch the init date once per lead (`--start-time` and `--end-time` both the init date, `--prediction-timedelta` 1, 2, …). Each output has one row, labelled with the init date, not the valid date. For each forecast week: concat its leads along a new `lead` dim, drop `precip_std`, then summarize-dim `--dim lead --dim time --method mean`. Concat the weeks with `--dim time --coords` set to each week's label (e.g. its first valid date). Dropping `precip_std` first matters: summarize-dim `-v precip_avg` alone leaves `precip_std` holding `lead` and `time`.

@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads the public Pangeo CMIP6 collection from Google Cloud (gs://cmip6) over anonymous access; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.10"
+  version: "0.0.12"
   catalog-group: fetchers
   variables:
     - tas
@@ -51,7 +51,7 @@ A window outside the run exits with an error that prints the run's own first and
 ### Output
 - Dims `(time, latitude, longitude)` with the one requested variable. Longitude is `[-180, 180)`.
 - Air temperature (`tas`, `tasmax`, `tasmin`) in `degree_Celsius`; precip (`pr`) in `mm day-1`. Other variables keep source units.
-- Time labels are cell centres (daily 12:00, monthly mid-month). Daily data has `data_interval="1 day"`; monthly data has `time_bounds` from the source's month edges.
+- Time labels are cell centres (daily 12:00, monthly mid-month). `time_bounds` keeps the source's own cell edges (the whole day, or the calendar month); a store without bounds gets `data_interval` from its spacing.
 - Time stays in the model's own calendar (often `noleap` or `360_day`) as cftime values.
 - Source CMIP6 global attrs are kept; `weather_skills_source="cmip6:<model>/<experiment>/<member>/<table>/<variable>/<grid>"`.
 

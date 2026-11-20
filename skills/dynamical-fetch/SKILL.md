@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.17"
+  version: "0.0.18"
   catalog-group: fetchers
   variables:
     - precipitation_surface
@@ -80,7 +80,7 @@ An init or day before a dataset's first one exits 1.
 - `--dataset` — catalog id from the lists above.
 - `--date` — forecast init date; selects the 00 UTC init.
 - `--start-time`, `--end-time` — a window; `--end-time` includes the whole end day (half-hourly IMERG for one day is 48 steps). Repeat the pair for several windows, one window per pair; not with `--date`. Analyses keep the times in the windows. Forecasts take every 00 UTC init in them with all their leads: like `--date`, the windows select init times, not valid times. Use this instead of one `--date` call per init. A range of inits ending today warns when the newest init is still publishing; its missing leads stay NaN.
-- `--max-lead` — forecasts only: keep output steps up to this one (`240h`, `10D`). Default: every step.
+- `--max-lead` — forecasts only: keep leads up to this one (`240h`, `10D`). Fields relabelled to interval start (precip and other averages fetched alone) keep only intervals that end by it, so `28D` on 6-hourly precip ends with the 27d18h step; instant fields keep steps up to it. Default: every step.
 - `--bbox` — `N/W/S/E`, longitudes −180..180; W > E crosses the antimeridian. Omit for the full grid.
 - `--variable`, `-v` — catalog variable name; repeat for several. Aliases: `precip`/`tp`/`pr` → `precipitation_surface`; `sst` → `sea_surface_temperature`; `t2m` → `temperature_2m` (or 46-day `average_temperature_2m`); `msl` → `pressure_reduced_to_mean_sea_level`; `sp` → `pressure_surface`; `u10`/`v10`/`u100`/`v100` → `wind_u_10m`/`wind_v_10m`/`wind_u_100m`/`wind_v_100m`; `t`/`gh`/`u`/`v`/`w`/`q` → every pressure level of that field. An unknown name exits and lists `Available:`. Omitting `-v` fetches every field.
 - `--probe-latest [ID]` — print the latest init or analysis date and exit. stderr notes a forecast init whose last lead is not published yet; a sub-daily analysis's latest day is partial (stderr says so).
@@ -119,9 +119,9 @@ More examples:
 # IMERG Late, 30 days
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset nasa-imerg-analysis-late \
   --start-time 2026-09-14 --end-time 2026-10-13 --bbox 5.5/33.5/-5/42.5 -v precip -o imerg_kenya.zarr
-# AIFS: a year of daily inits, leads to 14 days, in one call
+# AIFS: a year of daily inits, all 15 days of leads, in one call
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-aifs-ens-forecast \
-  --start-time 2025-07-16 --end-time 2026-07-15 --bbox 0.3/129.4/-2.4/131.65 -v precip --max-lead 14D18h -o aifs_year.zarr
+  --start-time 2025-07-16 --end-time 2026-07-15 --bbox 0.3/129.4/-2.4/131.65 -v precip --max-lead 15D -o aifs_year.zarr
 # IFS-ENS 850/925 hPa temperature, stacked on vertical
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-15-day-0-25-degree \
   --date 2026-10-12 --bbox 5.5/33.5/-5/42.5 -v t -o ifs_t_kenya.zarr

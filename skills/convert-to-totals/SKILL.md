@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/convert_to_totals.py *)
 metadata:
-  version: "0.0.9"
+  version: "0.0.11"
   catalog-group: transforms
 ---
 
@@ -24,7 +24,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/convert_to_totals.py -i RATES.zarr -o TOTALS.
 - `--output`, `-o` — output Zarr.
 - `--variable`, `-v` — precipitation variable to convert; repeat for several. Default: every precipitation-rate variable. Naming a non-precipitation variable exits non-zero.
 - `--min-coverage` — drop intervals whose `aggregation_coverage` (share of samples with data, 0–1) is below this. Default: `1.0`.
-- `--time-dim` — interval axis. Default: `time`, or `step` when there is no `time` axis or `time` has one value.
+- `--time-dim` — the axis to convert along. Usually not needed: by default it is the axis aggregate-temporal averaged along (`step` for weeks of lead time, `time` for weeks of dates). If `select` picked one week, each value is a single week and converts on its own. Input without `cell_methods` uses `time`, or `step` for a single-init forecast.
 
 ### Output
 - Each converted variable is rate × interval length, in `mm`, with the precipitation-amount `standard_name`, `long_name` `Total precipitation`, and `cell_methods` `{dim}: sum`. Product rate attrs (`comment`, `short_name`, `step_type`) are dropped. `aggregation_period` is kept.
@@ -34,8 +34,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/convert_to_totals.py -i RATES.zarr -o TOTALS.
 
 ### Notes
 - Input must be a precipitation **mean** rate with `aggregation_period` on the variable (written by aggregate-temporal). Missing `aggregation_period`, a `max`/`min` (`cell_methods` maximum/minimum), or an amount (`mm` units or `cell_methods` sum) exits non-zero.
-- Intervals must not overlap: each label's interval must end at or before the next label. Back-to-back windows pass; a rolling series is refused, so keep a non-overlapping subset of times first. A single interval, or a dataset whose time axis was already collapsed to one value, always passes.
-- A mean rate that aggregate-temporal built from overlapping samples (`cell_methods` with `comment: overlapping samples`, e.g. monthly from one weekly mean per init, inits days apart) is refused: the same days would count more than once. Select non-overlapping samples that tile the period (e.g. every 7th init), then aggregate again.
+- Intervals must not overlap: each label's interval must end at or before the next label. Back-to-back windows pass; a rolling series is refused, so keep a non-overlapping subset of times first. A single interval always passes, so week 1 picked from many inits converts one total per init.
+- Totals keep `comment: overlapping samples` in `cell_methods`.
 - Keep `--min-coverage 1.0`. A lower value multiplies an incomplete interval's mean by the full period, filling missing days with that mean; the skill warns and keeps `aggregation_coverage` to mark those estimates.
 - When no interval meets `--min-coverage`, it exits non-zero; usually the data end before the last period does, so end the input on the last available day.
 

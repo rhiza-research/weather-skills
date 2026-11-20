@@ -9,7 +9,7 @@
 from weather_skills_core import Dataset, UsageError, weather_skill
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.11"
 
 
 @weather_skill(
@@ -24,8 +24,22 @@ _SKILL_VERSION = "0.0.9"
 )
 def step_to_time(ds, **kwargs):
     """Relabel a forecast by valid date: time = init + step, for one init or many inits at one lead."""
+    import re
+
     import cftime
     import numpy as np
+
+    # Plain numbers carry no unit; adding them to a datetime counts nanoseconds.
+    if "step" in ds.coords and not np.issubdtype(ds["step"].dtype, np.timedelta64):
+        raise UsageError(
+            f"step must be a time duration (timedelta), not {ds['step'].dtype}; "
+            "a plain number has no unit to add to the init date"
+        )
+
+    # The lead intervals now lie along time.
+    for da in ds.data_vars.values():
+        if "cell_methods" in da.attrs:
+            da.attrs["cell_methods"] = re.sub(r"\bstep:", "time:", str(da.attrs["cell_methods"]))
 
     if "time" in ds.dims and "step" in ds.coords and ds["step"].ndim == 0:
         # Many inits at one lead: shift each init on the time axis by that lead.
