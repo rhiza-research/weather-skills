@@ -8,6 +8,7 @@
 """Average overlapping or irregular time samples onto a regular grid."""
 
 import math
+import re
 import sys
 
 from weather_skills_core import Dataset, UsageError, weather_skill
@@ -15,10 +16,12 @@ from weather_skills_core.units import (
     AGGREGATION_COVERAGE_COORD,
     AGGREGATION_PERIOD_ATTR,
     DATA_INTERVAL_ATTR,
-    data_interval_of,
+    cell_methods_has_sum,
+    classify_variable,
     format_cell_methods,
     format_duration,
     parse_aggregation_period,
+    variable_units,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
@@ -60,6 +63,8 @@ def regularize_time(ds, period, time_dim, **kwargs):
     # shortcut: cftime model calendars are refused; add them if a task needs one.
     if raw.dtype.kind not in "Mm":
         raise UsageError(f"{dim} must be datetime64 or timedelta64 (got {raw.dtype})")
+    if np.isnat(raw).any():
+        raise UsageError(f"{dim} has missing (NaT) labels")
     ns_type = f"{raw.dtype.kind}8[ns]"
     if "month" in period or "year" in period:
         raise UsageError(f"--period {period!r} is a calendar length; use a fixed one")
@@ -69,19 +74,46 @@ def regularize_time(ds, period, time_dim, **kwargs):
         raise UsageError(f"--period {period!r} must be positive")
     period_label = format_duration(period_q)
 
+    on_axis = [name for name in ds.data_vars if dim in ds[name].dims]
+    for name in on_axis:
+        methods = str(ds[name].attrs.get("cell_methods", ""))
+        if re.search(r":\s*(maximum|minimum)\b", methods) or cell_methods_has_sum(methods):
+            raise UsageError(
+                f"{name!r} has cell_methods {methods!r}; regularize-time averages, so it "
+                "takes means or rates, not extremes or sums"
+            )
+        kind = classify_variable(
+            name, units=variable_units(ds[name]), standard_name=ds[name].attrs.get("standard_name")
+        )
+        if kind == "precip_amount":
+            raise UsageError(f"{name!r} is a precipitation amount; pass rates (mm day-1)")
+
     # Where each sample starts and ends: its CF bounds, or its label plus its interval.
     bounds_name = ds[dim].attrs.get("bounds")
     if not (isinstance(bounds_name, str) and bounds_name in ds):
         bounds_name = f"{dim}_bounds" if f"{dim}_bounds" in ds else None
     if bounds_name is not None:
-        starts, ends = ds[bounds_name].values.astype(ns_type).astype("int64").T
+        edges = ds[bounds_name].transpose(dim, ...).values
+        if edges.dtype.kind != raw.dtype.kind or edges.shape != (raw.size, 2):
+            raise UsageError(
+                f"{bounds_name} must hold a start and end per {dim} label, as {dim} does"
+            )
+        if np.isnat(edges).any():
+            raise UsageError(f"{bounds_name} has missing (NaT) edges")
+        starts, ends = edges.astype(ns_type).astype("int64").T
         ds = ds.drop_vars(bounds_name)
     else:
-        cell = data_interval_of(ds)
-        for name in ds.data_vars:
-            if isinstance(ds[name].attrs.get(AGGREGATION_PERIOD_ATTR), str):
-                cell = ds[name].attrs[AGGREGATION_PERIOD_ATTR]
-                break
+        # Each variable's aggregation_period, else its data_interval.
+        cells = {
+            ds[name].attrs.get(AGGREGATION_PERIOD_ATTR) or ds[name].attrs.get(DATA_INTERVAL_ATTR)
+            for name in on_axis
+        } - {None}
+        if len(cells) > 1:
+            raise UsageError(
+                f"variables on {dim} cover different intervals ({sorted(cells)}); "
+                "regularize them one at a time"
+            )
+        cell = cells.pop() if cells else None
         if not cell:
             raise UsageError(
                 f"samples on {dim} carry no interval: no {dim}_bounds, aggregation_period "
@@ -98,9 +130,10 @@ def regularize_time(ds, period, time_dim, **kwargs):
     # so each cell lies wholly inside or outside each sample.
     offsets = np.concatenate([starts, ends]) - starts.min()
     if (offsets % period_ns).any():
-        fits = format_duration(
-            parse_aggregation_period(f"{math.gcd(*(int(v) for v in offsets)) // 10**9} second")
-        )
+        step_ns = math.gcd(*(int(v) for v in offsets))
+        if step_ns % 10**9:
+            raise UsageError(f"sample edges on {dim} are not whole seconds apart")
+        fits = format_duration(parse_aggregation_period(f"{step_ns // 10**9} second"))
         raise UsageError(
             f"--period {period} does not divide every sample edge on {dim}; the longest "
             f"period that does is {fits}. regularize-time only splits samples: to average "
@@ -112,8 +145,12 @@ def regularize_time(ds, period, time_dim, **kwargs):
 
     # Each sample's coverage: its own aggregation_coverage (or 1), or 0 if it holds no data.
     cov_in = np.ones(raw.size)
-    if AGGREGATION_COVERAGE_COORD in ds.coords and ds[AGGREGATION_COVERAGE_COORD].dims == (dim,):
-        cov_in = np.nan_to_num(ds[AGGREGATION_COVERAGE_COORD].values.astype(float))
+    if AGGREGATION_COVERAGE_COORD in ds.coords:
+        # shortcut: one coverage per sample; per-point coverage needs per-point output too.
+        if set(ds[AGGREGATION_COVERAGE_COORD].dims) - {dim}:
+            raise UsageError(f"{AGGREGATION_COVERAGE_COORD} must vary along {dim} only")
+        cov = ds[AGGREGATION_COVERAGE_COORD].values.astype(float)
+        cov_in = np.nan_to_num(np.broadcast_to(cov, raw.shape))
     for name in ds.data_vars:
         da = ds[name]
         if dim in da.dims:
@@ -159,11 +196,14 @@ def regularize_time(ds, period, time_dim, **kwargs):
         mean = mean.transpose(*da.dims)
         if da.dtype.kind == "f":
             mean = mean.astype(da.dtype, copy=False)
+        # Methods on other dims stay; this axis gets one mean.
+        old = str(da.attrs.get("cell_methods", ""))
+        others = re.sub(rf"\b{dim}:\s*\w+(\s*\([^)]*\))?", "", old).split()
         attrs = {
             **da.attrs,
             AGGREGATION_PERIOD_ATTR: period_label,
             DATA_INTERVAL_ATTR: period_label,
-            "cell_methods": cell_methods,
+            "cell_methods": " ".join([*others, cell_methods]),
         }
         out[name] = mean.assign_attrs(attrs)
 

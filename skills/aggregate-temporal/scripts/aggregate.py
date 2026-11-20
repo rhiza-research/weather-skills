@@ -439,7 +439,7 @@ def aggregate(
             except UsageError:
                 pass
 
-        chunks, labels, coverages = [], [], []
+        chunks, labels, coverages, edges = [], [], [], []
         for left, right, label in bins:
             if bounds is not None:
                 # Weight each sample by how much of its cell falls in the bin.
@@ -481,10 +481,15 @@ def aggregate(
             # convert-to-totals would scale that mean up to the full period.
             chunks.append(reduced.where(count >= count.max()))
             labels.append(label)
+            edges.append((left, right))
             coverages.append(min(1.0, coverage))
         if not chunks:
             raise UsageError(f"no {key} bins contained samples on {dim}")
         out = xr.concat(chunks, dim=dim).assign_coords({dim: labels})
+        if window is not None:
+            # Each window's own edges: with --align right or center a label is not its start.
+            out = out.assign_coords({f"{dim}_bounds": ((dim, "nv"), np.array(edges))})
+            out[dim].attrs["bounds"] = f"{dim}_bounds"
 
     out = out.assign_coords({AGGREGATION_COVERAGE_COORD: (dim, np.asarray(coverages, dtype=float))})
     out[AGGREGATION_COVERAGE_COORD].attrs.update(
@@ -519,8 +524,8 @@ def aggregate(
                 file=sys.stderr,
             )
 
-    # Rolling windows overlap, one per sample, so the output keeps the input spacing.
-    data_interval = native_interval if window is not None or same else agg
+    # Rolling windows carry bounds instead; input already at the period keeps its own.
+    data_interval = None if window is not None else (native_interval if same else agg)
     cell_methods = format_cell_methods(dim, _METHOD_TO_CF[method], interval=native_interval)
     if overlapping:
         note = f"comment: {OVERLAPPING_SAMPLES}"
@@ -532,6 +537,8 @@ def aggregate(
         attrs = {**out[name].attrs, AGGREGATION_PERIOD_ATTR: agg, "cell_methods": cell_methods}
         if data_interval:
             attrs[DATA_INTERVAL_ATTR] = data_interval
+        else:
+            attrs.pop(DATA_INTERVAL_ATTR, None)
         out[name].attrs = attrs
     return out
 

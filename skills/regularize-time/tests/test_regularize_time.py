@@ -171,3 +171,127 @@ def test_dry_cells_stay_exactly_zero(tmp_path, regularize):
     ds = _samples([(1, 3), (2, 4), (4, 6)], [0.1, 0.2, 0.0])
     vals = _run(regularize, tmp_path, ds, "--period", "1 day")["precip"].values[:, 0]
     assert vals[4] == 0.0 and vals[5] == 0.0
+
+
+def _two_daily(attrs):
+    return xr.Dataset(
+        {"precip": (("time",), [1.0, 2.0], {"units": "mm day-1", **attrs})},
+        coords={"time": [JAN1, JAN1 + DAY]},
+    )
+
+
+def test_interval_comes_from_variables_on_the_axis(tmp_path, regularize):
+    """A static variable's aggregation_period does not set the samples' length."""
+    ds = _two_daily({"aggregation_period": "1 day"})
+    ds["clim"] = (("lat",), [3.0], {"aggregation_period": "30 day"})
+    ds = ds.assign_coords(lat=[0.0])
+    out = _run(regularize, tmp_path, ds, "--period", "1 day")
+    np.testing.assert_allclose(out["precip"].values, [1, 2])
+
+
+def test_variables_with_different_intervals_exit_2(tmp_path, regularize):
+    ds = _two_daily({"aggregation_period": "7 day"})
+    ds["other"] = (("time",), [1.0, 2.0], {"units": "mm day-1", "aggregation_period": "1 day"})
+    with pytest.raises(SystemExit) as exc:
+        _run(regularize, tmp_path, ds, "--period", "1 day")
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "attrs",
+    [
+        {"cell_methods": "time: maximum", "data_interval": "1 day"},
+        {"cell_methods": "time: sum", "data_interval": "1 day"},
+        {
+            "units": "mm",
+            "standard_name": "lwe_thickness_of_precipitation_amount",
+            "data_interval": "1 day",
+        },
+    ],
+)
+def test_extremes_sums_and_amounts_exit_2(tmp_path, regularize, attrs):
+    with pytest.raises(SystemExit) as exc:
+        _run(regularize, tmp_path, _two_daily(attrs), "--period", "1 day")
+    assert exc.value.code == 2
+
+
+def test_methods_on_other_dims_are_kept(tmp_path, regularize):
+    ds = _two_daily(
+        {"cell_methods": "number: mean time: mean (interval: 1 day)", "data_interval": "1 day"}
+    )
+    out = _run(regularize, tmp_path, ds, "--period", "1 day")
+    assert out["precip"].attrs["cell_methods"] == "number: mean time: mean"
+
+
+@pytest.mark.parametrize("align", ["left", "center", "right"])
+def test_rolling_windows_land_on_their_own_days(tmp_path, regularize, align):
+    """aggregate-temporal --window writes each window's bounds, whatever its alignment."""
+    aggregate = load_skill("aggregate-temporal", "aggregate").aggregate
+    times = JAN1 + np.arange(10) * DAY
+    ds = xr.Dataset(
+        {
+            "precip": (
+                ("time",),
+                np.arange(10.0),
+                {"units": "mm day-1", "standard_name": "lwe_precipitation_rate"},
+            )
+        },
+        coords={"time": times},
+    )
+    rolled = tmp_path / "rolled.zarr"
+    run_skill(
+        aggregate,
+        "-i",
+        str(write_zarr(ds, tmp_path / "in.zarr")),
+        "-o",
+        str(rolled),
+        "--window",
+        "3 day",
+        "--align",
+        align,
+    )
+    out = _run(regularize, tmp_path, xr.open_zarr(rolled), "--period", "1 day")
+    # Day d is covered by the full windows containing it; each is the mean of 3 days.
+    window_starts = times + np.timedelta64({"left": 0, "center": -1, "right": -2}[align], "D")
+    for day, value in zip(out["time"].values, out["precip"].values, strict=True):
+        means = [
+            np.mean(
+                [v for t, v in zip(times, np.arange(10.0), strict=True) if s <= t < s + 3 * DAY]
+            )
+            for s in window_starts
+            if s <= day < s + 3 * DAY
+        ]
+        np.testing.assert_allclose(value, np.mean(means))
+
+
+def test_bounds_stored_nv_first(tmp_path, regularize):
+    ds = _samples([(1, 2), (2, 3)], [1, 2])
+    ds["time_bounds"] = ds["time_bounds"].transpose("nv", "time")
+    out = _run(regularize, tmp_path, ds, "--period", "1 day")
+    np.testing.assert_allclose(out["precip"].values[:, 0], [1, 1.5, 2])
+
+
+def test_sub_second_edges_and_missing_labels_exit_2(tmp_path, regularize, capsys):
+    t0 = np.datetime64("2026-01-01T00:00:00", "ns")
+    ds = xr.Dataset(
+        {"precip": (("time",), [1.0, 2.0], {"units": "mm hr-1", "data_interval": "1 second"})},
+        coords={"time": [t0, t0 + np.timedelta64(500, "ms")]},
+    )
+    with pytest.raises(SystemExit) as exc:
+        _run(regularize, tmp_path, ds, "--period", "1 second")
+    assert exc.value.code == 2 and "whole seconds" in capsys.readouterr().err
+
+
+def test_per_point_coverage_exits_2(tmp_path, regularize):
+    ds = _samples([(1, 2), (2, 3)], [1, 2])
+    ds = ds.assign_coords({AGGREGATION_COVERAGE_COORD: (("time", "lat"), [[1.0], [0.5]])})
+    with pytest.raises(SystemExit) as exc:
+        _run(regularize, tmp_path, ds, "--period", "1 day")
+    assert exc.value.code == 2
+
+
+def test_scalar_coverage_applies_to_every_sample(tmp_path, regularize):
+    """select leaves one coverage for all samples (week 1 of every init)."""
+    ds = _samples([(1, 2), (2, 3)], [1, 2]).assign_coords({AGGREGATION_COVERAGE_COORD: 0.5})
+    out = _run(regularize, tmp_path, ds, "--period", "1 day")
+    np.testing.assert_allclose(out[AGGREGATION_COVERAGE_COORD].values, [0.5, 0.5, 0.5])

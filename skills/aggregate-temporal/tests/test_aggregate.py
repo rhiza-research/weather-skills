@@ -881,7 +881,14 @@ def test_window_rolls_a_duration_and_keeps_partial_windows(
     np.testing.assert_allclose(rolled["precip"].values[:, 0, 0], values)
     np.testing.assert_allclose(rolled[AGGREGATION_COVERAGE_COORD].values, coverage)
     assert rolled["precip"].attrs["aggregation_period"] == "3 day"
-    assert rolled["precip"].attrs["data_interval"] == "1 day"
+    assert "data_interval" not in rolled["precip"].attrs
+    # Each window's own edges: the label starts it (left), sits mid-window, or ends it.
+    shift = {"left": 0, "center": -1, "right": -2}[align]
+    starts = ds["time"].values + np.timedelta64(shift, "D")
+    np.testing.assert_array_equal(rolled["time_bounds"].values[:, 0], starts)
+    np.testing.assert_array_equal(
+        rolled["time_bounds"].values[:, 1], starts + np.timedelta64(3, "D")
+    )
 
 
 def _two_januaries():
