@@ -1,6 +1,6 @@
 ---
 name: cmip6-fetch
-description: "Fetch one CMIP6 climate-model run (a model, experiment, and variable such as tas or pr) for a date range and region from the public Pangeo CMIP6 catalog on Google Cloud, as a weather-skills Zarr. No credentials needed. Use when a task needs climate-projection grids, either historical runs (1850-2014) or future scenarios (ssp*, 2015-2100, a few to 2300)."
+description: "Fetch one CMIP6 climate-model run (a model, experiment, and variable such as tas or pr) for a date range and region from the public Pangeo CMIP6 catalog on Google Cloud, as a weather-skills Zarr. No credentials needed. Use when a task needs climate-projection grids, either historical runs (1850-2014) or future scenarios (ssp*, to 2100)."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads the public Pangeo CMIP6 collection from Google Cloud (gs://cmip6) over anonymous access; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -22,19 +22,6 @@ Finds one dataset in the [Pangeo CMIP6](https://pangeo-data.github.io/pangeo-cmi
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --model ID --experiment ID -v VAR [--member ID] [--table ID] [--grid LABEL] \
   --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--bbox N/W/S/E] -o OUT.zarr
 ```
-
-### Date ranges
-Ranges are set by the experiment, checked on `tas` `Amon` `r1i1p1f1` across the catalog's models (2026-11-18). The time step is the table's (`Amon` monthly, `day` daily).
-
-| `--experiment` | Usual range | Exceptions seen |
-|---|---|---|
-| `historical` | 1850-01-01 to 2014-12-31 | one model starts 1851 |
-| `ssp119`, `ssp126`, `ssp245`, `ssp370`, `ssp434`, `ssp460`, `ssp585` | 2015-01-01 to 2100-12-31 | some runs end 2099; a few stop early (2024, 2055); a few `ssp126` / `ssp585` runs go to 2299-2300 (CanESM5, ACCESS-CM2, ACCESS-ESM1-5, CESM2-WACCM) |
-| `ssp534-over` | 2040-01-01 to 2100-12-31 | some start 2015; some go to 2300 |
-| `amip` | 1979-01-01 to 2014-12-31 | some start 1950, some end 2016-2018 |
-| `piControl`, `1pctCO2`, `abrupt-4xCO2` | model years, not real dates (e.g. 0001-0150 or 1850-1999) | differs by model |
-
-When the store has time bounds (most do), a window not fully inside the run exits 2 and prints the run's own first and last dates; otherwise a window with no data at all exits 1.
 
 ### Arguments
 - `--model` — CMIP6 `source_id`, e.g. `GFDL-CM4`.
