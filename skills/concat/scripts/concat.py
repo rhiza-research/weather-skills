@@ -11,7 +11,7 @@ from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import ALIASES, names_for
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.11"
 
 
 def _coerce(values):
@@ -56,7 +56,8 @@ def concat(ds, dim, coords, **kwargs):
         )
     if all(has_dim) and coords:
         raise UsageError(
-            f"--coords labels a new dim; {dim!r} already exists on the inputs, so its own labels are kept"
+            f"--coords labels a new dim; {dim!r} already exists on the inputs, so its own labels are kept. "
+            f"To give your own labels, first reduce {dim!r} away (summarize-dim --dim {dim})"
         )
 
     # xr.concat pads a variable missing from some inputs with NaN, which looks
