@@ -37,8 +37,7 @@ NAMED_PERIODS = {
     "monthly": ("1 month", "MS", 30),
 }
 _METHOD_TO_CF = {"mean": "mean", "max": "maximum", "min": "minimum"}
-# cell_methods comment on rates built from overlapping samples (resample-time writes it);
-# kept on re-aggregation so the lineage stays visible.
+# Added to cell_methods by resample-time; kept when the result is aggregated again.
 OVERLAPPING_SAMPLES = "overlapping samples"
 
 
@@ -191,8 +190,7 @@ def aggregate(
                 break
         else:
             cell = data_interval_of(ds)
-        # Samples spaced closer than their cell overlap (one weekly mean per forecast
-        # init, inits days apart).
+        # Samples spaced closer than their own interval overlap.
         raw = np.asarray(ds[dim].values)
         if cell and raw.dtype.kind in "Mm" and raw.size > 1:
             cell_ns = round(float(parse_aggregation_period(cell).to("ns").magnitude))

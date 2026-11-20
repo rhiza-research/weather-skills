@@ -29,7 +29,7 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.11"
 
-# cell_methods comment on rates built from overlapping samples; kept on the totals.
+# Added to cell_methods by resample-time; kept on the totals.
 OVERLAPPING_SAMPLES = "overlapping samples"
 
 

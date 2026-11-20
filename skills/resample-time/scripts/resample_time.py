@@ -5,7 +5,7 @@
 #   "pandas",
 # ]
 # ///
-"""Put overlapping or irregular time samples onto a regular grid, averaging where they overlap."""
+"""Average overlapping or irregular time samples onto a regular grid."""
 
 import math
 import sys
@@ -24,7 +24,7 @@ from weather_skills_core.units import (
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.1"
 
-# cell_methods comment on values built from overlapping samples; later skills keep it.
+# Added to cell_methods when a cell averages more than one sample; later skills keep it.
 OVERLAPPING_SAMPLES = "overlapping samples"
 
 
@@ -40,7 +40,11 @@ OVERLAPPING_SAMPLES = "overlapping samples"
 )
 @weather_skill.argument("--time-dim")
 def resample_time(ds, period, time_dim, **kwargs):
-    """Put overlapping or irregular time samples onto a regular grid, averaging where they overlap."""
+    """Average overlapping or irregular time samples onto a regular grid.
+
+    Each --period cell is the mean of the samples that cover it, and
+    aggregation_coverage says how complete those samples were.
+    """
     import numpy as np
     import xarray as xr
 
@@ -65,7 +69,7 @@ def resample_time(ds, period, time_dim, **kwargs):
         raise UsageError(f"--period {period!r} must be positive")
     period_label = format_duration(period_q)
 
-    # Each sample covers [start, end): its CF bounds, or [t, t + its own interval).
+    # Where each sample starts and ends: its CF bounds, or its label plus its interval.
     bounds_name = ds[dim].attrs.get("bounds")
     if not (isinstance(bounds_name, str) and bounds_name in ds):
         bounds_name = f"{dim}_bounds" if f"{dim}_bounds" in ds else None
@@ -90,8 +94,8 @@ def resample_time(ds, period, time_dim, **kwargs):
     if (ends <= starts).any():
         raise UsageError(f"every sample on {dim} must end after it starts")
 
-    # The grid starts at the earliest sample start, and every sample edge must fall on a
-    # grid edge, so each grid cell is wholly inside or outside each sample.
+    # The grid starts at the earliest sample. Every sample edge must land on a cell edge,
+    # so each cell lies wholly inside or outside each sample.
     offsets = np.concatenate([starts, ends]) - starts.min()
     if (offsets % period_ns).any():
         fits = format_duration(
@@ -106,7 +110,7 @@ def resample_time(ds, period, time_dim, **kwargs):
     stop = (ends - starts.min()) // period_ns
     left = starts.min() + np.arange(stop.max(), dtype="int64") * period_ns
 
-    # A sample counts toward coverage at its own coverage, and only if some cell has data.
+    # Each sample's coverage: its own aggregation_coverage (or 1), or 0 if it holds no data.
     cov_in = np.ones(raw.size)
     if AGGREGATION_COVERAGE_COORD in ds.coords and ds[AGGREGATION_COVERAGE_COORD].dims == (dim,):
         cov_in = np.nan_to_num(ds[AGGREGATION_COVERAGE_COORD].values.astype(float))
@@ -114,7 +118,7 @@ def resample_time(ds, period, time_dim, **kwargs):
         da = ds[name]
         if dim in da.dims:
             cov_in = cov_in * np.isfinite(da).any([d for d in da.dims if d != dim]).values
-    # Add each sample into the grid cells it covers; memory grows with the output only.
+    # Add each sample into the cells it covers; a cell's coverage is the mean of those.
     n_cover = np.zeros(left.size)
     cov_sum = np.zeros(left.size)
     for i in range(raw.size):
@@ -129,7 +133,7 @@ def resample_time(ds, period, time_dim, **kwargs):
     if overlapping:
         cell_methods = f"{cell_methods} (comment: {OVERLAPPING_SAMPLES})"
 
-    # Everything along the axis (bounds, per-sample coords) goes; data variables come back.
+    # Drop everything on the old axis; each variable is rebuilt on the grid below.
     out = ds.drop_dims(dim)
     for name in ds.data_vars:
         da = ds[name]
@@ -139,13 +143,14 @@ def resample_time(ds, period, time_dim, **kwargs):
         values = da.transpose(dim, *rest).values.astype(float)
         present = np.isfinite(values)
         values[~present] = 0.0
-        # Plain mean of every sample covering the grid cell.
+        # Mean of the samples covering each cell, skipping missing values.
         count = np.zeros((left.size, *values.shape[1:]))
         total = np.zeros((left.size, *values.shape[1:]))
         for i in range(raw.size):
             count[first[i] : stop[i]] += present[i]
             total[first[i] : stop[i]] += values[i]
-        # A cell missing samples that other cells have is NaN, not a mean of what it has.
+        # A point missing a sample that other points in the cell have is NaN, not a
+        # mean of fewer samples.
         full = count.reshape(left.size, -1).max(axis=1).reshape(-1, *[1] * len(rest))
         mean = np.where((count > 0) & (count >= full), total / np.maximum(count, 1), np.nan)
         mean = xr.DataArray(
