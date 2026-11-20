@@ -531,3 +531,20 @@ def test_week1_of_daily_inits_converts_after_step_select(
     with pytest.raises(SystemExit) as exc:
         run_skill(convert_to_totals, "-i", str(valid), "-o", str(out2))
     assert exc.value.code == 2
+
+
+def test_window_axis_skips_other_dims_methods(tmp_path, convert_to_totals):
+    """A member's 'number: mean' before 'time: mean' does not make number the axis."""
+    times = np.datetime64("2026-01-01", "ns") + np.arange(2) * np.timedelta64(7, "D")
+    attrs = {
+        "units": "mm day-1",
+        "standard_name": "lwe_precipitation_rate",
+        "aggregation_period": "7 day",
+        "cell_methods": "number: mean time: mean (comment: overlapping samples)",
+    }
+    ds = xr.Dataset({"precip": (("time",), [1.0, 2.0], attrs)}, coords={"time": times, "number": 0})
+    out = tmp_path / "out.zarr"
+    run_skill(convert_to_totals, "-i", str(write_zarr(ds, tmp_path / "in.zarr")), "-o", str(out))
+    result = xr.open_zarr(out)["precip"]
+    np.testing.assert_allclose(result.values, [7.0, 14.0])
+    assert result.attrs["cell_methods"].startswith("time: sum")

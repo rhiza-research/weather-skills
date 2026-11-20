@@ -40,13 +40,16 @@ def _resolve_dim(ds, time_dim):
         if time_dim not in ds.dims:
             raise UsageError(f"--time-dim {time_dim!r} not in dataset (have {list(ds.dims)})")
         return time_dim
-    # cell_methods starts with the axis the windows lie along, e.g. "step: mean".
+    # The window axis is the last time or lead named in cell_methods, e.g. "step: mean";
+    # other dims' methods ("number: mean") and (interval: ...) notes are skipped.
     for da in ds.data_vars.values():
         if AGGREGATION_PERIOD_ATTR not in da.attrs:
             continue
-        window_axis = str(da.attrs.get("cell_methods", "")).split(":")[0].strip()
-        if window_axis in ds.variables:
-            return window_axis
+        methods = re.sub(r"\([^)]*\)", "", str(da.attrs.get("cell_methods", "")))
+        named = re.findall(r"(\w+):", methods)
+        axes = [n for n in named if n in ds.variables and ds[n].dtype.kind in "MmO"]
+        if axes:
+            return axes[-1]
     try:
         cf_time = ds.cf["time"].name
     except KeyError:
