@@ -45,12 +45,8 @@ def _resolve_dim(ds, time_dim):
         if AGGREGATION_PERIOD_ATTR not in da.attrs:
             continue
         window_axis = str(da.attrs.get("cell_methods", "")).split(":")[0].strip()
-        if window_axis in ds.dims:
-            # Several windows along this axis: check them for overlap.
+        if window_axis in ds.variables:
             return window_axis
-        if window_axis in ds.coords and ds[window_axis].ndim == 0:
-            # select kept one window (e.g. week 1), so each value is a single window.
-            return None
     try:
         cf_time = ds.cf["time"].name
     except KeyError:
@@ -130,8 +126,8 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
         "<the fetcher's --probe-latest day>). A forecast init may not reach "
         "that lead yet."
     )
-    if dim is None:
-        # Scalar after select; along e.g. a model dim after concat of selections.
+    if dim not in ds.dims:
+        # One window per value: the window axis was selected down to a scalar, or is unknown.
         cov = ds.coords.get(AGGREGATION_COVERAGE_COORD)
         if cov is not None and (np.asarray(cov.values) < min_coverage - 1e-12).any():
             raise UsageError(
@@ -182,7 +178,7 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
                 f"variable {name!r} is an extreme, not a mean rate "
                 f"(cell_methods {cell_methods!r}); only a mean rate x period is a total"
             )
-        if dim is not None:
+        if dim in ds.dims:
             assert_nonoverlapping_intervals(ds, dim, period)
         total = rate_to_total(da, period, dim=dim if dim in da.dims else None)
         plain = total.pint.dequantify()
