@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py *)
 metadata:
-  version: "0.0.9"
+  version: "0.0.12"
   catalog-group: transforms
 ---
 
@@ -37,7 +37,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window 
 
 ### Output
 - Same variables and units; with `--period` the aggregated axis holds one label per window, at the window's left edge; with `--window`, one per input sample. Without `--end-time`, `time` windows start at the first sample; `step` windows start at lead 0. Ensemble members stay separate.
-- Each variable gets `aggregation_period` (window length, e.g. `7 day`, `1 dekad`, `1 month`), `data_interval` (output spacing: the period, or the input spacing for `--window`), and CF `cell_methods` (e.g. `time: mean (interval: 1 day)`, where the interval is the input spacing).
+- Each variable gets `aggregation_period` (window length, e.g. `7 day`, `1 dekad`, `1 month`), `data_interval` (the period; with `--window`, `{dim}_bounds` holding each window's start and end instead), and CF `cell_methods` (e.g. `time: mean (interval: 1 day)`, where the interval is the input spacing).
 - Coordinate `aggregation_coverage` (0–1) on the axis: the share of expected input samples with data. Incomplete windows are kept and listed on stderr.
 
 ### Notes
@@ -58,7 +58,7 @@ Writes 6-hour mean GFS precip rates; hourly and 3-hourly leads are weighted by t
 
 ## Details
 
-- Input that is already aggregated must divide evenly into the period (weekly → `14 day`, not `monthly`), else exit 2. A period shorter than the input's samples (`6 hour` on daily data, or shorter than the widest `step_bounds` cell) also exits 2. Input already at the period is only stamped, not changed.
+- Input that is already aggregated must divide evenly into the period (weekly → `14 day`, not `monthly`), else exit 2; run regularize-time `--period '1 day'` first to split it into days (weekly → daily → `monthly`). A period shorter than the input's samples (`6 hour` on daily data, or shorter than the widest `step_bounds` cell) also exits 2. Input already at the period is only stamped, not changed.
 - Concatenated segments with gaps (e.g. one week per year) straddle `--period` windows; aggregate each segment before concatenating. `--window` handles them in one call when the segments are further apart than the window: a window spans only its own length, so it never reaches across such a gap.
 
 **Window geometry.** Windows are half-open `[left, right)` and labeled at the left edge, on `step` and with `--end-time` alike: week 1 of a forecast initialized 2026-10-12 is `step = 0` and covers the same days as the `--end-time 2026-10-19` observation week labeled 2026-10-12.
@@ -66,5 +66,7 @@ Writes 6-hour mean GFS precip rates; hourly and 3-hourly leads are weighted by t
 **Coverage.** A sample counts only when some cell has data (a fixed land mask does not count as missing; an all-NaN unpublished lead does). Re-aggregated input counts at its own coverage, so a 3/7 week inside a 14-day window gives 10/14.
 
 **Irregular axes.** Inputs with CF `{dim}_bounds` are weighted by sample duration (`sum(rate × dt) / sum(dt)`).
+
+**Overlapping samples.** Samples spaced closer than their interval (one weekly mean per forecast init, inits days apart), or with overlapping `{dim}_bounds`, exit 2. Run regularize-time first, then aggregate its output; `comment: overlapping samples` in `cell_methods` is kept.
 
 **Calendar dekads.** Fetch the dekad and pass its length with `--end-time` the day after it: 21–31 Oct is `--period '11 day' --end-time 2026-11-01`.

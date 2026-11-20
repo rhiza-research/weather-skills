@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public files from ftp.cpc.ncep.noaa.gov over HTTPS; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.6"
+  version: "0.0.9"
   catalog-group: fetchers
   variables: "precip"
 ---
@@ -21,8 +21,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time Y
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
+**Coverage:** daily from 2001-01-01 to 1–2 days ago, with a few missing days (see Details).
+
 ### Arguments
-- `--start-time`, `--end-time` — inclusive range of days, `YYYY-MM-DD`, from 2001-01-01.
+- `--start-time`, `--end-time` — inclusive range of days, `YYYY-MM-DD`. A start before 2001-01-01 exits 2.
 - `--bbox` — `N/W/S/E` inside 40N/20W/40S/55E. Omit for the whole Africa grid (801 × 751 cells). A box outside the grid exits 1.
 - `--probe-latest` — print the latest published day (`YYYY-MM-DD`) and exit; reads only the directory listing.
 - `--output`, `-o` — output Zarr.

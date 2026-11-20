@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.3.6",
 #   "pandas",
 # ]
 # ///
@@ -27,7 +27,10 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.7"
+_SKILL_VERSION = "0.0.11"
+
+# Added to cell_methods by regularize-time; kept on the totals.
+OVERLAPPING_SAMPLES = "overlapping samples"
 
 
 def _resolve_dim(ds, time_dim):
@@ -37,6 +40,13 @@ def _resolve_dim(ds, time_dim):
         if time_dim not in ds.dims:
             raise UsageError(f"--time-dim {time_dim!r} not in dataset (have {list(ds.dims)})")
         return time_dim
+    # cell_methods starts with the axis the windows lie along, e.g. "step: mean".
+    for da in ds.data_vars.values():
+        if AGGREGATION_PERIOD_ATTR not in da.attrs:
+            continue
+        window_axis = str(da.attrs.get("cell_methods", "")).split(":")[0].strip()
+        if window_axis in ds.variables:
+            return window_axis
     try:
         cf_time = ds.cf["time"].name
     except KeyError:
@@ -116,8 +126,8 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
         "<the fetcher's --probe-latest day>). A forecast init may not reach "
         "that lead yet."
     )
-    if dim is None:
-        # Scalar after select; along e.g. a model dim after concat of selections.
+    if dim not in ds.dims:
+        # One window per value: the window axis was selected down to a scalar, or is unknown.
         cov = ds.coords.get(AGGREGATION_COVERAGE_COORD)
         if cov is not None and (np.asarray(cov.values) < min_coverage - 1e-12).any():
             raise UsageError(
@@ -161,7 +171,7 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
                 f"variable {name!r} is an extreme, not a mean rate "
                 f"(cell_methods {cell_methods!r}); only a mean rate x period is a total"
             )
-        if dim is not None:
+        if dim in ds.dims:
             assert_nonoverlapping_intervals(ds, dim, period)
         total = rate_to_total(da, period, dim=dim if dim in da.dims else None)
         plain = total.pint.dequantify()
@@ -177,6 +187,8 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
         if looks_like_rate_display_name(attrs.get("GRIB_name")):
             attrs["GRIB_name"] = PRECIP_AMOUNT_LONG_NAME
         attrs["cell_methods"] = format_cell_methods(_sum_cell_methods_dim(da, dim), "sum")
+        if OVERLAPPING_SAMPLES in cell_methods:
+            attrs["cell_methods"] += f" (comment: {OVERLAPPING_SAMPLES})"
         # Keep aggregation_period so plotters can crop the nested precip palette.
         out[name] = plain
         out[name].attrs = attrs

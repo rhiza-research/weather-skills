@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Uses the OpenAQ v3 REST API over HTTPS; requires a free OPENAQ_API_KEY in the environment (register at https://explore.openaq.org/register).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.7"
+  version: "0.0.10"
   catalog-group: fetchers
   variables: "pm25 pm10 no2 o3 so2 co"
   required-env: "OPENAQ_API_KEY"
@@ -22,6 +22,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox N/W/S/E --start-time YYYY-MM-
 # Print the latest UTC day any PM2.5 sensor reported, and exit
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
+
+### Date range
+- Each location has its own record and gaps; a window with no data exits 1.
+- Runs to the present (`--probe-latest`, usually a partial day).
 
 ### Arguments
 - `--bbox` — `N/W/S/E` decimal degrees. Required. Must not cross the antimeridian (W <= E); split such a region into two calls.

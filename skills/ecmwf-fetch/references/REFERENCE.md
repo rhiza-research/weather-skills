@@ -6,7 +6,8 @@ Dataset id: `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` (read from the
 production catalog, or the staging catalog when production does not list it). 101 members, 1.5°,
 daily 00 UTC inits from 2026-01-01, 47 daily leads (0–1104 h). Surface
 fields at the store root; pressure fields in `group="pressure_level"`.
-Catalog precip is already a rate (`kg m-2 s-1`). 24-hour surface
+Catalog precip is already a rate (`kg m-2 s-1`); catalog radiation and
+heat fluxes are 24 h means in `W m-2`, not ECDS's J m-2 since init. 24-hour surface
 statistics are all-NaN at lead 0; this skill drops that lead and shifts
 remaining steps so `step=0` is the first 24 h. Pressure fields carry all
 101 members on 10 levels (1000–10 hPa); `q` is NaN above 200 hPa.
@@ -23,7 +24,7 @@ accepts `-v sst` / `wtmp` and writes the S2S short name `sst`. Catalog
 | `d2m` | `average_dew_point_temperature_2m` |
 | `u10` / `v10` | `wind_u_10m` / `wind_v_10m` |
 | `msl` | `pressure_reduced_to_mean_sea_level` |
-| `cape` | `average_convective_available_potential_energy_atmosphere` |
+| `cape` | `average_convective_available_potential_energy_surface` |
 | `tcw` | `total_column_water_atmosphere` |
 | `skt` / `tcc` / `sp` | `skin_temperature_surface` / `total_cloud_cover_atmosphere` / `pressure_surface` |
 | `sd` / `rsn` / `asn` | `snow_water_equivalent_surface` / `snow_density_surface` / `snow_albedo_surface` |
@@ -33,11 +34,14 @@ accepts `-v sst` / `wtmp` and writes the S2S short name `sst`. Catalog
 | `cp` / `sf` | `precipitation_convective_surface` / `snowfall_water_equivalent_rate_surface` |
 | `ewss` / `nsss` | `eastward_turbulent_surface_stress` / `northward_turbulent_surface_stress` |
 | `ro` / `sro` | `runoff_water_equivalent_surface` / `runoff_surface` |
+| `ssrd` / `ssr` | `downward_short_wave_radiation_flux_surface` / `net_short_wave_radiation_flux_surface` |
+| `strd` / `str` | `downward_long_wave_radiation_flux_surface` / `net_long_wave_radiation_flux_surface` |
+| `ttr` | `net_long_wave_radiation_flux_top_of_atmosphere` |
+| `sshf` / `slhf` | `downward_sensible_heat_flux_surface` / `downward_latent_heat_flux_surface` |
 | `gh` / `t` / `u` / `v` / `w` / `q` | `pressure_level` group: `geopotential_height`, `temperature`, `wind_u`, `wind_v`, `vertical_velocity`, `specific_humidity` |
 
 Not mapped (ECDS fallback): `mx2t6`, `mn2t6` (catalog 24 h max/min is a
-different statistic), accumulated fluxes (`sshf`, `slhf`, `ssr`, `ssrd`,
-`str`, `strd`, `ttr`), static fields (`lsm`, `orog`, `slt`), `pv`, and
+different statistic), static fields (`lsm`, `orog`, `slt`), `pv`, and
 ocean parameters. Mixed catalog + unmapped fields in one call also use
 ECDS. Pre-2026 inits use ECDS.
 

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.3.6",
 #   "fsspec",
 #   "aiohttp",
 #   "dask",
@@ -34,7 +34,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.7"
+_SKILL_VERSION = "0.0.12"
 
 # Public GCS mirror. Object keys, one convention for every window (daily is
 # just window=1): climatologies/<dataset>_<variable>_<window>d.zarr
@@ -42,7 +42,7 @@ _BUCKET = "sheerwater-public-datalake"
 _GCS_MEDIA = f"https://storage.googleapis.com/{_BUCKET}"
 
 # Valid --dataset ids — exactly the bucket's product prefix, no aliasing.
-_DATASETS = ("imerg_final", "era5", "chirps", "ecmwf_ifs", "oisst", "gefs")
+_DATASETS = ("imerg_final", "era5", "chirps", "ecmwf_ifs", "oisst", "gefs", "rfe")
 
 # Some mirrors carry no units metadata at all (neither per-variable nor
 # dataset-level), or a units string that isn't actually a parseable unit

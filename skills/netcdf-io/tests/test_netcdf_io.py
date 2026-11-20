@@ -40,6 +40,8 @@ def test_grid_round_trip_keeps_values_attrs_and_history(tmp_path, netcdf_io):
     np.testing.assert_allclose(res["precip"].values, ds["precip"].values, equal_nan=True)
     assert units_equal(res["precip"].attrs["units"], "mm day-1")
     assert load_history(back)[-1]["skill"] == "netcdf-io"
+    # The imported file is an input with no history, so a figure made from it is not stamped.
+    assert load_history(back)[-1]["input"]["basename"] == "out.nc"
     assert res.attrs["weather_skills_source"] == "netcdf:out.nc"
 
 

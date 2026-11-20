@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.3.6",
 #   "cftime>=1.6",
 # ]
 # ///
@@ -10,7 +10,7 @@
 from weather_skills_core import Dataset, UsageError, weather_skill
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.6"
+_SKILL_VERSION = "0.0.7"
 
 
 @weather_skill(name="drop", version=_SKILL_VERSION)

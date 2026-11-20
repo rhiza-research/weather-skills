@@ -1,11 +1,11 @@
 ---
 name: 3dpaws-fetch
-description: "Fetch daily 3D-PAWS (3D-Printed Automatic Weather Station) observations (rainfall, mean, max and min temperature, humidity, pressure, wind speed and gust) from a CHORDS portal, by default the FEWS NET network of Kenya Met Department and KALRO stations, for chosen station ids or every station in a lat/lon box, as a weather-skills station Zarr. Can also list the stations. Needs a CHORDS email and API key. Use when a task needs 3D-PAWS station data, for example to compare against gridded satellite or forecast data."
+description: "Fetch daily 3D-PAWS (3D-Printed Automatic Weather Station) observations (rainfall, mean, max and min temperature, humidity, pressure, wind speed and gust) from a CHORDS portal, by default the FEWS NET network of Kenya Met Department and KALRO stations, for chosen station ids or every station in a lat/lon box, as a weather-skills station Zarr; the portal keeps only about the last 2 years. Can also list the stations. Needs a CHORDS email and API key. Use when a task needs 3D-PAWS station data, for example to compare against gridded satellite or forecast data."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Requires CHORDS_EMAIL and CHORDS_API_KEY in the environment for downloads (not for --list-stations).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.5"
+  version: "0.0.8"
   catalog-group: fetchers
   variables: "precip temperature tmax tmin humidity pressure wind_speed wind_gust"
   required-env: "CHORDS_EMAIL CHORDS_API_KEY"
@@ -25,6 +25,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py (--station ID [--station ID ...] | -
 # Print the latest ended day, and exit
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--station ID | --bbox N/W/S/E]
 ```
+
+### Date range
+- About the last 2 years, up to yesterday (`--probe-latest`).
+- Station records vary and may have gaps; a fetch prints how many days each station has.
 
 ### Arguments
 - `--list-stations` — print stations as TSV (`station_id`, `name`, `site`, `latitude`, `longitude`) and exit; `--bbox` filters. No credentials needed.

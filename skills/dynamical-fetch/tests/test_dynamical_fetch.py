@@ -475,6 +475,36 @@ def test_accum_totals_without_lead0_relabelled_to_start_as_rates(tmp_path, mod, 
     assert float(precip.min()) == 0.0
 
 
+def test_avg_rates_without_lead0_relabelled_to_start(tmp_path, mod, fetch):
+    """WeatherNext 3: a statistic dim, no lead 0, 1 h mean precip rates (step_type avg)."""
+    dims = ("init_time", "lead_time", "statistic", "latitude", "longitude")
+    ds = xr.Dataset(
+        {
+            "precipitation_surface": (
+                dims,
+                np.full((1, 3, 2, 2, 2), 1e-4),
+                {"units": "kg m-2 s-1", "step_type": "avg"},
+            )
+        },
+        coords={
+            "init_time": [np.datetime64("2026-01-01")],
+            "lead_time": np.array([1, 2, 3], dtype="timedelta64[h]").astype("timedelta64[ns]"),
+            "statistic": ["mean", "p90"],
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "forecast"}):
+        run_skill(fetch, "--dataset", "t", "--date", "2026-01-01", "-v", "precip", "-o", str(out))
+    written = xr.open_zarr(out, consolidated=True)
+    precip = written["precipitation_surface"]
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0, 1, 2]
+    assert precip.dims == ("step", "statistic", "latitude", "longitude")
+    assert precip.attrs["units"] == "mm day-1"
+    assert float(precip.max()) == pytest.approx(8.64)  # 1e-4 mm s-1 is 8.64 mm day-1
+
+
 def test_accum_totals_in_an_init_window_divide_by_the_lead_spacing(tmp_path, mod, fetch):
     """Daily inits of 6 h totals: rates use the 6 h cell, not the 1-day gap between inits."""
     one = _weathernext2_like_ds().rename({"y": "latitude", "x": "longitude"})
@@ -505,13 +535,13 @@ def test_accum_totals_in_an_init_window_divide_by_the_lead_spacing(tmp_path, mod
     "when", [["--date", "2026-01-01"], ["--start-time", "2026-01-01", "--end-time", "2026-01-02"]]
 )
 def test_accum_totals_cut_to_one_step_keep_the_6h_cell(tmp_path, mod, fetch, when):
-    """--max-lead below the second lead leaves one step: the cell is still 6 h, not inferred."""
+    """--max-lead at the first lead leaves one step: the cell is still 6 h, not inferred."""
     one = _weathernext2_like_ds().rename({"y": "latitude", "x": "longitude"})
     ds = xr.concat([one, one.assign_coords(init_time=[np.datetime64("2026-01-02")])], "init_time")
     out = tmp_path / "out.zarr"
     with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "ensemble"}):
         run_skill(
-            fetch, "--dataset", "t", *when, "-v", "precip", "--max-lead", "0h", "-o", str(out)
+            fetch, "--dataset", "t", *when, "-v", "precip", "--max-lead", "6h", "-o", str(out)
         )
     precip = xr.open_zarr(out, consolidated=True)["total_precipitation_surface"]
     assert precip.sizes["step"] == 1
@@ -736,22 +766,28 @@ def test_max_lead_zero_keeps_only_initial_state(tmp_path, mod, fetch):
     )
 
 
-def test_max_lead_counts_output_steps_of_end_labelled_field(tmp_path, mod, fetch):
+def test_max_lead_keeps_end_labelled_intervals_that_end_by_it(tmp_path, mod, fetch):
+    """3h leads then 6h: --max-lead 6h keeps [0, 3) and [3, 6), not [6, 12)."""
     ds = _end_labelled_forecast_ds()
-    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "--max-lead", "3h")
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "--max-lead", "6h")
     assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0, 3]
     np.testing.assert_array_equal(
         written["precipitation_surface"].values, ds["precipitation_surface"].values[0, 1:3]
     )
 
 
-def test_max_lead_zero_on_end_labelled_field_keeps_first_interval(tmp_path, mod, fetch):
+def test_max_lead_ending_inside_an_interval_drops_it(tmp_path, mod, fetch):
     ds = _end_labelled_forecast_ds()
-    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "--max-lead", "0h")
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "--max-lead", "5h")
     assert (written["step"].values / np.timedelta64(1, "h")).tolist() == [0]
-    np.testing.assert_array_equal(
-        written["precipitation_surface"].values, ds["precipitation_surface"].values[0, 1:2]
-    )
+
+
+def test_max_lead_before_first_interval_end_exits_2(tmp_path, mod, fetch, capsys):
+    ds = _end_labelled_forecast_ds()
+    with pytest.raises(SystemExit) as exc:
+        _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip", "--max-lead", "0h")
+    assert exc.value.code == 2
+    assert "first interval" in capsys.readouterr().err
 
 
 def test_max_lead_zero_with_mixed_fields_drops_interval_fields(tmp_path, mod, fetch, capsys):
@@ -1018,3 +1054,69 @@ def test_members_stored_before_leads_come_out_after_step(tmp_path, mod, fetch, e
     with patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "ensemble"}):
         run_skill(fetch, "--dataset", "t", *extra, "-o", str(out))
     assert xr.open_zarr(out, consolidated=True)["tp"].dims == dims
+
+
+def _accum_forecast_ds(name, hours, totals):
+    """Virtual-store precip: provider accumulations in kg m-2 at each lead."""
+    values = np.array(totals, dtype=float).reshape(1, -1, 1, 1) * np.ones((1, 1, 2, 2))
+    return xr.Dataset(
+        {name: (("init_time", "lead_time", "latitude", "longitude"), values)},
+        coords={
+            "init_time": [np.datetime64("2026-01-01", "ns")],
+            "lead_time": np.array(hours, dtype="timedelta64[h]").astype("timedelta64[ns]"),
+            "latitude": [1.0, 2.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "hours", "totals", "rates"),
+    [
+        # ECMWF virtual: run total since init, 3 h leads; precip resolves to it.
+        ("total_precipitation_run_total_surface", [0, 3, 6, 9], [0, 1, 3, 3.5], [8, 16, 4]),
+        # GFS virtual: hourly leads, buckets restart after each 6 h lead.
+        ("total_precipitation_surface", [0, 1, 2, 6, 7, 8], [0, 1, 3, 4, 2, 2], [24, 48, 6, 48, 0]),
+    ],
+)
+def test_provider_accumulations_become_per_step_rates(
+    tmp_path, mod, fetch, name, hours, totals, rates
+):
+    ds = _accum_forecast_ds(name, hours, totals)
+    ds[name].attrs.update(units="kg m-2", step_type="accum", standard_name="precipitation_amount")
+    written = _fetch_forecast(tmp_path, mod, fetch, ds, "-v", "precip")
+    assert written[name].attrs["units"] == "mm day-1"
+    # Lead L's amount covers (previous lead, L]; relabelled to the interval start.
+    assert (written["step"].values / np.timedelta64(1, "h")).tolist() == hours[:-1]
+    np.testing.assert_allclose(written[name].values[:, 0, 0], rates)
+
+
+def test_analysis_bucket_precip_is_refused(tmp_path, mod, fetch, capsys):
+    times = np.arange("2026-01-01T00", "2026-01-01T06", dtype="datetime64[h]").astype(
+        "datetime64[ns]"
+    )
+    ds = xr.Dataset(
+        {"total_precipitation_surface": (("time", "latitude", "longitude"), np.ones((6, 2, 2)))},
+        coords={"time": times, "latitude": [1.0, 2.0], "longitude": [10.0, 11.0]},
+    )
+    ds["total_precipitation_surface"].attrs.update(units="kg m-2", step_type="accum")
+    out = tmp_path / "out.zarr"
+    with (
+        patch.object(mod, "_open_dataset", return_value={"ds": ds, "shape": "analysis"}),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_skill(
+            fetch,
+            "--dataset",
+            "a",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-01",
+            "-v",
+            "precip",
+            "-o",
+            str(out),
+        )
+    assert exc.value.code == 2
+    assert "noaa-gfs-analysis" in capsys.readouterr().err

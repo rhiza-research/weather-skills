@@ -1,11 +1,11 @@
 ---
 name: ecmwf-hres-fetch
-description: "Fetch the deterministic ECMWF HRES (IFS high-resolution, single-member) forecast for one init date and run hour over a lat/lon box from the free ECMWF Open Data feed, as a weather-skills Zarr at 0.25°, out to 15 days. Slow: every lead is a global download. For ECMWF forecasts use dynamical-fetch first (IFS-ENS 0.25° and its control member, AIFS single and ensemble, and the 46-day IFS-ENS for extended range). Use this only when a task names HRES, or needs a field dynamical-fetch lacks: humidity or winds on pressure levels, levels other than 500/850/925 hPa, CAPE, column water vapour, skin temperature, or net and top-of-atmosphere radiation."
+description: "Fetch the deterministic ECMWF HRES (IFS high-resolution, single-member) forecast for one init date and run hour over a lat/lon box from the free ECMWF Open Data feed, as a weather-skills Zarr at 0.25°, out to 15 days; inits from 2024-02-28 to today. Slow: every lead is a global download. For ECMWF forecasts use dynamical-fetch first (IFS-ENS 0.25° and its control member, AIFS single and ensemble, and the 46-day IFS-ENS for extended range). Use this only when a task names HRES, or needs a field dynamical-fetch lacks: humidity or winds on pressure levels, levels other than 500/850/925 hPa, CAPE, column water vapour, skin temperature, or net and top-of-atmosphere radiation."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Requires the eccodes system library for cfgrib (`brew install eccodes` or `apt install libeccodes0`). No credentials or account required — ECMWF Open Data is a public feed.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.9"
+  version: "0.0.13"
   catalog-group: fetchers
   variables: "precip t2m d2m msl u10 v10 gust10 sp tcwv mucape skt ssrd strd str ttr t gh u v q r"
 ---
@@ -29,7 +29,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
 ### Arguments
-- `--date` — init date. Inits from the last 4 days try `data.ecmwf.int` and then the AWS mirror; older inits (from 2023) come from the AWS mirror only.
+- `--date` — init date. Runs at 00, 06, 12 and 18 UTC daily from 2024-02-28 to today. The last 4 days come from `https://data.ecmwf.int/forecasts/`, then the AWS mirror; older inits from the AWS mirror (`https://ecmwf-forecasts.s3.eu-central-1.amazonaws.com`) only.
 - `--run` — init hour UTC: `0`, `6`, `12`, or `18`. Default: `0`. 00/12 runs reach 360 h (3-hourly to 144 h, then 6-hourly); 06/18 runs reach 144 h, 3-hourly.
 - `--bbox` — required for a fetch. `N/W/S/E` decimal degrees. Open Data serves global files, so the full globe is downloaded for every step and clipped locally; a small bbox saves memory, not download time (`precip` for a 00 UTC run is ~80 MB; a pressure-level field is ~13×).
 - `--variable`, `-v` — one field per flag; repeat for several. Default: `precip`. Surface: `precip`, `t2m`, `d2m`, `msl`, `u10`, `v10`, `gust10`, `sp`, `tcwv`, `mucape`, `skt`, `ssrd`, `strd`, `str`, `ttr`. Pressure levels (1000–50 hPa, 13 levels): `t`, `gh`, `u`, `v`, `q`, `r`. Open Data names (`tp`, `2t`, `10u`) are accepted, as is `precipitation`. An unknown name exits and lists `Available (most used first):`.
@@ -41,7 +41,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - Dims `(step, latitude, longitude)`, plus `vertical` (hPa) for pressure-level fields. Scalar `time` is the init.
 - `precip` (total precipitation) is a rate in `mm day-1` over `[step, next step)`, labelled at the interval start (`step=0` is 0–3 h). The last lead has no interval, so it is dropped — for every field when `precip` is in the request.
 - `t2m`, `d2m`, `skt`, `t` are `degree_Celsius`; `gh` is metres; other units as published.
-- 06/18 runs stamp `data_interval = 3 hour`; 00/12 runs, whose spacing changes at 144 h, get `step_bounds`. Stamped `weather_skills_source=ecmwf-hres`.
+- 06/18 runs stamp `data_interval = 3 hour`; 00/12 runs, whose spacing changes at 144 h, get `step_bounds`: each step covers `[step, next lead)`, for instant fields too, so a daily bin over `step` holds the samples labelled in that day. Stamped `weather_skills_source=ecmwf-hres`.
 
 ### Notes
 - Under load either source answers `503 Slow Down`. Each source gets one attempt, with no waiting; if every source is rate-limiting the skill exits saying so. Fetch one init at a time and try again in a few minutes.

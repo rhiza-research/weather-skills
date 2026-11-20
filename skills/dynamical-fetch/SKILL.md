@@ -1,11 +1,11 @@
 ---
 name: dynamical-fetch
-description: "Fetch a forecast or analysis from the dynamical.org catalog (GFS, GEFS, ECMWF IFS-ENS and AIFS, Google WeatherNext 2, ICON-EU, MRMS, IMERG, CHIRPS) for an init date or date range over a region, as a weather-skills Zarr. No credentials needed. Use it first for any of these products."
+description: "Fetch a forecast or analysis from the dynamical.org catalog (GFS, GEFS, ECMWF IFS-ENS and AIFS, Google WeatherNext 2 and 3, ICON-EU, MRMS, IMERG, CHIRPS) for an init date or date range over a region, as a weather-skills Zarr. No credentials needed. Use it first for any of these products."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.11"
+  version: "0.0.18"
   catalog-group: fetchers
   variables: "precipitation_surface temperature_2m temperature_850hpa geopotential_height_500hpa"
 ---
@@ -31,19 +31,56 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest ID
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --list-variables
 ```
 
-**Forecast ids** (use `--date`, or `--start-time`/`--end-time` for many inits): `noaa-gefs-forecast-35-day` (31 members), `ecmwf-ifs-ens-forecast-15-day-0-25-degree` (51), `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree` (101), `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` (101), `ecmwf-aifs-ens-forecast` (51), `google-weathernext2-forecast-operational-virtual` (64, inits from 2025), `google-weathernext2-forecast-historical-virtual` (64, inits 2022–2024), `noaa-gfs-forecast`, `ecmwf-aifs-single-forecast`, `dwd-icon-eu-forecast-5-day` (Europe).
-**Analysis ids** (use `--start-time`/`--end-time`): `noaa-gfs-analysis`, `noaa-gefs-analysis`, `noaa-mrms-conus-analysis-hourly` (CONUS), `nasa-imerg-analysis-early`, `nasa-imerg-analysis-late`, `ucsb-chc-chirps-analysis-final`, `ucsb-chc-chirps-analysis-preliminary` (land, 60°S–60°N).
-HRRR ids are rejected (projected grid).
+**Forecast ids** (use `--date`, or `--start-time`/`--end-time` for many inits). Every one has a 00 UTC init each day from its first init to today, unless noted.
+
+| Id | Grid | Members | Leads | First init |
+|---|---|---|---|---|
+| `ecmwf-ifs-ens-forecast-15-day-0-25-degree` | 0.25° | 51 | 15 days | 2020-10-15 |
+| `ecmwf-ifs-ens-forecast-15-day-0-25-degree-virtual` ★ | 0.25° | 51 | 15 days | 2024-04-01 |
+| `ecmwf-ifs-ens-forecast-6-day-0-25-degree-virtual` ★ | 0.25° | 51 | 6 days | 2024-04-01 |
+| `ecmwf-ifs-ens-forecast-15-day-0-1-degree-virtual` ★ | 0.1° | 51 | 15 days | 2026-10-21 |
+| `ecmwf-ifs-ens-forecast-6-day-0-1-degree-virtual` ★ | 0.1° | 51 | 6 days | 2026-10-21 |
+| `ecmwf-ifs-ens-forecast-46-day-daily-1-5-degree`, `ecmwf-ifs-ens-forecast-46-day-6-hourly-1-5-degree` | 1.5° | 101 | 46 days | 2026-01-01 (earlier inits: ecmwf-fetch) |
+| `ecmwf-aifs-ens-forecast`, `ecmwf-aifs-ens-forecast-virtual` ★ | 0.25° | 51 | 15 days | 2025-07-02 |
+| `ecmwf-aifs-single-forecast`, `ecmwf-aifs-single-forecast-virtual` ★ | 0.25° | 1 | 15 days | 2024-04-01 |
+| `noaa-gefs-forecast-35-day` | 0.25° to 10 days, then 0.5° | 31 | 35 days | 2020-10-01 |
+| `noaa-gefs-forecast-35-day-0-5-degree-virtual` ★ | 0.5° | 31 | 35 days | 2020-10-01 |
+| `noaa-gefs-forecast-16-day-0-5-degree-virtual` ★ | 0.5° | 31 | 16 days | 2020-10-01 |
+| `noaa-gefs-forecast-10-day-0-25-degree-virtual` ★ | 0.25° | 31 | 10 days | 2020-10-01 |
+| `noaa-gfs-forecast`, `noaa-gfs-forecast-virtual` ★ | 0.25° | 1 | 16 days | 2021-05-01 |
+| `google-weathernext2-forecast-historical-virtual` | 0.25° | 64 | 15 days | 2022-01-01, last 2024-12-31 |
+| `google-weathernext2-forecast-operational-virtual` | 0.25° | 64 | 15 days | 2025-01-01 |
+| `google-weathernext3-forecast-15-day-0-1-degree-virtual`, `google-weathernext3-forecast-48-hour-0-1-degree-virtual` | 0.1° | mean and percentiles | 15 days / 48 h | 2026-01-01 |
+| `google-weathernext3-forecast-15-day-0-05-degree-virtual`, `google-weathernext3-forecast-48-hour-0-05-degree-virtual` | 0.05°, `t2m` and `d2m` only | mean and percentiles | 15 days / 48 h | 2026-01-01 |
+| `dwd-icon-eu-forecast-5-day` (Europe) | 0.0625° | 1 | 5 days | 2026-02-10 |
+
+**Analysis ids** (use `--start-time`/`--end-time`), each from its first day to a few hours or days ago:
+
+| Id | Grid | First day |
+|---|---|---|
+| `ucsb-chc-chirps-analysis-final` (land, 60°S–60°N) | 0.05° | 1981-01-01, ends about 3 weeks ago |
+| `ucsb-chc-chirps-analysis-preliminary` (land, 60°S–60°N) | 0.05° | 2025-01-01 |
+| `nasa-imerg-analysis-early`, `nasa-imerg-analysis-late` | 0.1° | 1998-01-01 |
+| `noaa-gefs-analysis` | 0.25° | 2000-01-01 |
+| `noaa-gefs-analysis-0-25-degree-virtual` ★ | 0.25° | 2020-10-01 |
+| `noaa-gfs-analysis`, `noaa-gfs-analysis-virtual` ★ | 0.25° | 2021-05-01 |
+| `noaa-mrms-conus-analysis-hourly` (CONUS) | 0.01° | 2014-11-01 |
+
+★ **Virtual ids** read the provider's original files in place and carry many more fields (`--list-variables`). Their precipitation totals are written as `mm day-1` rates, matching the plain id on the same row; `-v precip` picks it. Virtual analysis ids have no precipitation (exit 2): use `noaa-gfs-analysis` or `noaa-gefs-analysis`.
+
+**Rejected ids** (projected grids, exit 2): HRRR, `eccc-hrdps-forecast`, `noaa-rrfs-*`, `noaa-refs-*`, `noaa-rtma-*`, `noaa-urma-*`.
+
+An init or day before a dataset's first one exits 1.
 
 ### Arguments
 - `--dataset` — catalog id from the lists above.
 - `--date` — forecast init date; selects the 00 UTC init.
 - `--start-time`, `--end-time` — a window; `--end-time` includes the whole end day (half-hourly IMERG for one day is 48 steps). Repeat the pair for several windows, one window per pair; not with `--date`. Analyses keep the times in the windows. Forecasts take every 00 UTC init in them with all their leads: like `--date`, the windows select init times, not valid times. Use this instead of one `--date` call per init. A range of inits ending today warns when the newest init is still publishing; its missing leads stay NaN.
-- `--max-lead` — forecasts only: keep output steps up to this one (`240h`, `10D`). Default: every step.
+- `--max-lead` — forecasts only: keep leads up to this one (`240h`, `10D`). Fields relabelled to interval start (precip and other averages fetched alone) keep only intervals that end by it, so `28D` on 6-hourly precip ends with the 27d18h step; instant fields keep steps up to it. Default: every step.
 - `--bbox` — `N/W/S/E`, longitudes −180..180; W > E crosses the antimeridian. Omit for the full grid.
 - `--variable`, `-v` — catalog variable name; repeat for several. Aliases: `precip`/`tp`/`pr` → `precipitation_surface`; `sst` → `sea_surface_temperature`; `t2m` → `temperature_2m` (or 46-day `average_temperature_2m`); `msl` → `pressure_reduced_to_mean_sea_level`; `sp` → `pressure_surface`; `u10`/`v10`/`u100`/`v100` → `wind_u_10m`/`wind_v_10m`/`wind_u_100m`/`wind_v_100m`; `t`/`gh`/`u`/`v`/`w`/`q` → every pressure level of that field. An unknown name exits and lists `Available:`. Omitting `-v` fetches every field.
 - `--probe-latest [ID]` — print the latest init or analysis date and exit. stderr notes a forecast init whose last lead is not published yet; a sub-daily analysis's latest day is partial (stderr says so).
-- `--list-variables` — with `--dataset`, print each variable (name, units, long name) and, where the store has one, the `pressure_level` group's fields and levels, then exit. Use it to find a field's name before fetching; does not download fields.
+- `--list-variables` — with `--dataset`, print each variable (name, units, long name) and, where the store has one, the `pressure_level` group's fields and levels, then exit. Use it to find a field's name before fetching, and before telling anyone a product lacks a field; does not download fields.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
@@ -66,6 +103,8 @@ Example, AIFS ENS or single `precip`: in the catalog, the value at lead L is the
 
 **WeatherNext 2.** Surface fields only: `precip` (6 h totals, written as `mm day-1` rates with negatives zeroed), `t2m`, `sst`, `msl`, `u10`/`v10`/`u100`/`v100`. Leads are 6 h to 15 days with no lead 0; precip alone is relabelled to interval start like the lead-0 case above. Each member, lead and field is one whole-globe chunk (~2–3.5 MB), so a `--bbox` does not shrink the download: all 64 members to 15 days is ~9–13 GB per field; pass `-v` and `--max-lead`. Only 00 UTC inits are served here.
 
+**WeatherNext 3.** Ensemble statistics, not members: every field has a `statistic` dim (`mean`, `p10`, `p25`, `p50`, `p75`, `p90`); use `select` to keep one. Hourly leads from 1 h to 15 days (the `15-day` ids) or 48 h (the `48-hour` ids), no lead 0. The 0.1° ids carry `precip`, `t2m`, `d2m`, `msl`, `sst`, 10 m and 100 m winds and wind speeds, cloud cover, downward and direct short-wave radiation, and IMERG-trained and experimental precip (`precipitation_imerg_surface`, `precipitation_experimental_surface`); the 0.05° ids only `t2m` and `d2m`. `precip` is a 1 h mean rate, written as `mm day-1`; fetched alone it is relabelled to interval start, so `step = 0` is the first hour. Each init, statistic, lead and field is one whole-globe chunk, so a `--bbox` does not shrink the download and all six statistics are read: pass `-v` and a short `--max-lead`. Only 00 UTC inits are served here; for members, other cycles or pressure levels use weathernext-fetch.
+
 **Pressure levels.** Medium-range IFS/AIFS publish selected `*_Nhpa` fields (925/850/500 hPa); the 46-day product has a 10-level stack in `group=pressure_level`, opened automatically. GFS and ICON-EU publish none. `-v precip` does not pull IMERG's `precipitation_quality_index_surface`; ask for it by name.
 
 **IMERG.** Fetch IMERG Late and Early here, never with imerg-fetch: no login, only the box is read, and the record runs from 1998 to a few hours ago. imerg-fetch is only for IMERG Final, which dynamical.org does not serve.
@@ -76,9 +115,9 @@ More examples:
 # IMERG Late, 30 days
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset nasa-imerg-analysis-late \
   --start-time 2026-09-14 --end-time 2026-10-13 --bbox 5.5/33.5/-5/42.5 -v precip -o imerg_kenya.zarr
-# AIFS: a year of daily inits, leads to 14 days, in one call
+# AIFS: a year of daily inits, all 15 days of leads, in one call
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-aifs-ens-forecast \
-  --start-time 2025-07-16 --end-time 2026-07-15 --bbox 0.3/129.4/-2.4/131.65 -v precip --max-lead 14D18h -o aifs_year.zarr
+  --start-time 2025-07-16 --end-time 2026-07-15 --bbox 0.3/129.4/-2.4/131.65 -v precip --max-lead 15D -o aifs_year.zarr
 # IFS-ENS 850/925 hPa temperature, stacked on vertical
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-15-day-0-25-degree \
   --date 2026-10-12 --bbox 5.5/33.5/-5/42.5 -v t -o ifs_t_kenya.zarr

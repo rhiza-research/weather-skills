@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.4.0",
 #   "pandas",
 # ]
 # ///
@@ -25,10 +25,11 @@ from weather_skills_core.units import (
     format_duration,
     infer_timestep,
     parse_aggregation_period,
+    stamp_data_interval,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.13"
 
 _TIME_LABELS = ("month", "year", "dayofyear", "month_group")
 _INITIALS = "JFMAMJJASOND"
@@ -141,6 +142,33 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
     # The dims a label spans collapse into one entry per label.
     group_dims = list(dict.fromkeys(d for b in by for d in ds[b].dims))
     dims = list(dict.fromkeys([*group_dims, *dims]))
+    bounds_period = None
+    if time_by:
+        bounds = (
+            ds["time"].attrs.get("bounds") or ds["time"].encoding.get("bounds") or "time_bounds"
+        )
+        cells = ds[bounds].values if bounds in ds.variables else None
+        if cells is None and data_interval_of(ds) is None:
+            # No cells stamped: core infers calendar cells for month, quarter or year starts.
+            try:
+                inferred = stamp_data_interval(ds, dim="time")
+            except UsageError:
+                inferred = ds
+            if "time_bounds" in inferred.variables:
+                cells = inferred["time_bounds"].values
+        if cells is not None and not np.array_equal(cells[:, 0], ds["time"].values):
+            # A step belongs where its cell starts (as label-group labels it), not its label.
+            ds = ds.assign_coords(time=cells[:, 0])
+        if cells is not None and cells.dtype.kind == "M":
+            # Cells of whole calendar months have no fixed length: read their step as months.
+            months = cells.astype("datetime64[M]")
+            spans = (months[:, 1] - months[:, 0]).astype(int)
+            on_month_starts = (months.astype(cells.dtype) == cells).all()
+            if on_month_starts and spans.min() == spans.max() > 0:
+                bounds_period = f"{spans[0]} month"
+        # The cells are read; grouped output has new ones, and a bounds data var would be reduced.
+        if bounds in ds.variables:
+            ds = ds.drop_vars(bounds)
     # Other label coords on the grouped dims (admin_1_name, ...) cannot survive the collapse.
     ds = ds.drop_vars(
         [c for c in ds.coords if c not in (*by, *ds.dims) and set(ds[c].dims) & set(group_dims)]
@@ -201,14 +229,18 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                 "toward a --by group; drop the repeated steps first"
             )
         first = times[0]
-        period = next(
-            (
-                ds[v].attrs[AGGREGATION_PERIOD_ATTR]
-                for v in ds.data_vars
-                if isinstance(ds[v].attrs.get(AGGREGATION_PERIOD_ATTR), str)
-            ),
-            None,
-        ) or data_interval_of(ds)
+        period = (
+            next(
+                (
+                    ds[v].attrs[AGGREGATION_PERIOD_ATTR]
+                    for v in ds.data_vars
+                    if isinstance(ds[v].attrs.get(AGGREGATION_PERIOD_ATTR), str)
+                ),
+                None,
+            )
+            or data_interval_of(ds)
+            or bounds_period
+        )
         calendar = re.fullmatch(r"\s*(\d+)\s*(month|year)s?\s*", period or "")
         if calendar or (period or "").strip() == "1 dekad":
             # Calendar steps: labels must be month starts (dekads on days 1, 11, 21).
@@ -469,6 +501,8 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
         step = f"{': '.join(rdims)}: {cf_method.get(method, method)}"
         if method == "quantile":
             step += f" {', '.join(f'{q:g}' for q in quantile)}"
+        if method == "mean" and lat_weighted and lat_dim in rdims:
+            step += " (latitude-weighted)"
         if by:
             step += f" (grouped by {', '.join(by)})"
         attrs["cell_methods"] = (

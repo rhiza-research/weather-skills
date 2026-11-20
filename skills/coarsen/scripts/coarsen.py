@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.3.6",
 #   "xarray-regrid",
 # ]
 # ///
@@ -16,7 +16,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude, grid
 from weather_skills_core.units import dequantify_dataset
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.8"
+_SKILL_VERSION = "0.0.9"
 
 
 def _target_axis(coord_vals, resolution, offset):
@@ -69,6 +69,7 @@ def _clip_reference_axis(input_vals, ref_vals):
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument(
     "--reference-grid",
+    type=Dataset("spatial"),
     help=(
         "Zarr whose lat/lon become the target (exact coordinate values). "
         "Prefer this when matching another dataset for difference/verify."
@@ -144,7 +145,7 @@ def coarsen(
     in_lat, in_lon = grid_spacing(ds[lat_dim].values), grid_spacing(ds[lon_dim].values)
 
     if has_ref:
-        ref = xr.open_zarr(reference_grid, consolidated=False)
+        ref = reference_grid
         ref_lat_dim, ref_lon_dim = detect_spatial_dims(ref)
         ref = ensure_normalized_longitude(ref, ref_lon_dim)
         ref_lat_sp = grid_spacing(ref[ref_lat_dim].values)

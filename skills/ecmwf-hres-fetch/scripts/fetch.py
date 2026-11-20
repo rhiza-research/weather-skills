@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.3.6",
 #   # >=0.3.34 for the IFS Cycle 50r1 (2026-05-12) date-aware oper/scda
 #   # stream fix in Client.patch_stream — older pins misroute 06/18Z runs.
 #   "ecmwf-opendata==0.3.34",
@@ -23,18 +23,20 @@ import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
+import numpy as np
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
 from weather_skills_core.standard_utils import bbox_subset
 from weather_skills_core.units import (
     convert_dataarray,
+    data_interval_of,
     precip_amounts_to_rates,
     stamp_data_interval,
     to_standard_units,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.13"
 
 # HRES steps
 _FULL_RUN_STEPS = list(range(0, 144 + 1, 3)) + list(range(150, 360 + 1, 6))
@@ -297,6 +299,17 @@ def _standardize(ds):
         if name in ds.data_vars:
             ds[name] = _to_celsius(ds[name])
     ds = precip_amounts_to_rates(ds)
+    # Without tp nothing is deaccumulated and instant fields keep their labels.
+    # On uneven leads (3- then 6-hourly) give each sample the cell [s, next
+    # lead) like the tp rates, so a day bin holds the samples labelled in that
+    # day; stamp_data_interval would infer cells ending at each step.
+    if "step" in ds.dims and "bounds" not in ds["step"].attrs and data_interval_of(ds) is None:
+        leads = ds["step"].values
+        gaps = np.diff(leads)
+        if len(set(gaps)) > 1:
+            ends = np.append(leads[1:], leads[-1] + gaps[-1])
+            ds = ds.assign_coords(step_bounds=(("step", "nv"), np.stack([leads, ends], axis=1)))
+            ds["step"].attrs["bounds"] = "step_bounds"
     return stamp_data_interval(ds)
 
 
