@@ -312,3 +312,16 @@ def test_cell_methods_along_step_move_to_time(tmp_path, step_to_time):
         out = tmp_path / f"out{i}.zarr"
         run_skill(step_to_time, "-i", str(write_zarr(ds, tmp_path / f"in{i}.zarr")), "-o", str(out))
         assert xr.open_zarr(out)["tp"].attrs["cell_methods"] == "time: mean"
+
+
+@pytest.mark.parametrize("many_inits", [False, True])
+def test_refuses_step_without_time_unit(tmp_path, step_to_time, many_inits):
+    """Integer steps would be added as nanoseconds, so every valid date equals the init."""
+    if many_inits:
+        ds = _inits_at_one_lead(["2025-07-02", "2025-07-03"], 13).assign_coords(step=7)
+    else:
+        ds = make_forecast().assign_coords(step=np.arange(make_forecast().sizes["step"]) * 7)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(step_to_time, "-i", str(src), "-o", str(tmp_path / "out.zarr"))
+    assert exc.value.code == 2
