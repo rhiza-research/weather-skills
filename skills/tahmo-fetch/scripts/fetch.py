@@ -159,8 +159,8 @@ def _fetch_gridded(start_time, end_time, bbox):
     if bbox is not None:
         ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
     ds = ds.load()
-    # Rebuilt cells had no station: their count and flags are 0, not missing.
-    flag_attrs = ds["precip_flag"].attrs
+    # reindex made the new cells NaN and the ints float; a cell with no station has
+    # 0 stations and no flags, and the flags must be ints again for bit tests.
     ds["precip_count"] = ds["precip_count"].fillna(0).astype("int16")
     ds["precip_flag"] = ds["precip_flag"].fillna(0).astype("int8")
     # Never fill: a day is a cell's mean of the stations that reported it.
@@ -190,7 +190,6 @@ def _fetch_gridded(start_time, end_time, bbox):
         "units": "1",
         "long_name": "number of TAHMO stations averaged into the cell-day",
     }
-    ds["precip_flag"].attrs = flag_attrs
     ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north", axis="Y")
     ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east", axis="X")
     ds["time"].attrs.update(
