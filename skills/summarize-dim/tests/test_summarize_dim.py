@@ -965,3 +965,32 @@ def test_month_bounds_as_data_var_are_not_reduced(tmp_path, summarize_dim):
     got = xr.open_zarr(out)
     assert list(got.data_vars) == ["index"]
     assert float(got["index"].sel(year=2020, month=12)) == 13.0
+
+
+def test_month_start_labels_without_bounds_group_by_month(tmp_path, summarize_dim):
+    """Month-start labels with no bounds or data_interval get calendar-month cells."""
+    import numpy as np
+
+    times = xr.date_range("2019-11-01", "2021-02-01", freq="MS")
+    ds = xr.Dataset(
+        {"index": ("time", np.arange(times.size, dtype=float), {"units": "degree_Celsius"})},
+        coords={"time": times, "year": ("time", times.year), "month": ("time", times.month)},
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month",
+        "--method",
+        "mean",
+    )
+    got = xr.open_zarr(out)["index"]
+    assert float(got.sel(year=2020, month=12)) == 13.0
+    assert float(got.sel(year=2019, month=11)) == 0.0

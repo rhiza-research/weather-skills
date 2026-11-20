@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 #   "pandas",
 # ]
 # ///
@@ -25,6 +25,7 @@ from weather_skills_core.units import (
     format_duration,
     infer_timestep,
     parse_aggregation_period,
+    stamp_data_interval,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
@@ -147,19 +148,26 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
         # (a week labelled by its last day) would put each step in the wrong group.
         attrs, encoding = ds["time"].attrs, ds["time"].encoding
         bounds = attrs.get("bounds") or encoding.get("bounds") or "time_bounds"
-        if bounds in ds.variables and not np.array_equal(
-            ds[bounds].values[:, 0], ds["time"].values
-        ):
+        cells = ds[bounds].values if bounds in ds.variables else None
+        if cells is None and data_interval_of(ds) is None:
+            # No cells stamped: core infers calendar cells for month, quarter or year starts.
+            try:
+                inferred = stamp_data_interval(ds, dim="time")
+            except UsageError:
+                inferred = ds
+            if "time_bounds" in inferred.variables:
+                cells = inferred["time_bounds"].values
+        if cells is not None and not np.array_equal(cells[:, 0], ds["time"].values):
             raise UsageError(
                 f"time labels are not the starts of their {bounds!r} cells, so the --by "
                 "groups would take in the wrong time; aggregate-temporal --period monthly "
                 "first, which splits each cell by its overlap with each month"
             )
-        if bounds in ds.variables and ds[bounds].dtype.kind == "M":
+        if cells is not None and cells.dtype.kind == "M":
             # Cells of whole calendar months have no fixed length: read their step as months.
-            months = ds[bounds].values.astype("datetime64[M]")
+            months = cells.astype("datetime64[M]")
             spans = (months[:, 1] - months[:, 0]).astype(int)
-            on_month_starts = (months.astype(ds[bounds].dtype) == ds[bounds].values).all()
+            on_month_starts = (months.astype(cells.dtype) == cells).all()
             if on_month_starts and spans.min() == spans.max() > 0:
                 bounds_period = f"{spans[0]} month"
         # The cells are read; grouped output has new ones, and a bounds data var would be reduced.
