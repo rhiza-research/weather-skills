@@ -67,6 +67,6 @@ Writes 6-hour mean GFS precip rates; hourly and 3-hourly leads are weighted by t
 
 **Irregular axes.** Inputs with CF `{dim}_bounds` are weighted by sample duration (`sum(rate × dt) / sum(dt)`).
 
-**Overlapping samples.** Samples spaced closer than their interval (one weekly mean per forecast init, inits days apart), or overlapping `{dim}_bounds`, exit 2: a bin would count some days more than once. Run resample-time first, which averages the samples covering each grid cell and stamps per-cell coverage, then aggregate its output. Its `cell_methods` comment `overlapping samples` is kept through aggregation.
+**Overlapping samples.** Samples spaced closer than their interval (one weekly mean per forecast init, inits days apart), or with overlapping `{dim}_bounds`, exit 2. Run resample-time first, then aggregate its output; `comment: overlapping samples` in `cell_methods` is kept.
 
 **Calendar dekads.** Fetch the dekad and pass its length with `--end-time` the day after it: 21–31 Oct is `--period '11 day' --end-time 2026-11-01`.

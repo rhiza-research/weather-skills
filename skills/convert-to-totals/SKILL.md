@@ -35,7 +35,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/convert_to_totals.py -i RATES.zarr -o TOTALS.
 ### Notes
 - Input must be a precipitation **mean** rate with `aggregation_period` on the variable (written by aggregate-temporal). Missing `aggregation_period`, a `max`/`min` (`cell_methods` maximum/minimum), or an amount (`mm` units or `cell_methods` sum) exits non-zero.
 - Intervals must not overlap: each label's interval must end at or before the next label. Back-to-back windows pass; a rolling series is refused, so keep a non-overlapping subset of times first. A single interval always passes, so week 1 picked from many inits converts one total per init.
-- A rate built from overlapping samples (`cell_methods` with `comment: overlapping samples`, written by resample-time) converts like any other mean rate as long as its own intervals don't overlap; the totals keep the comment.
+- Totals keep `comment: overlapping samples` in `cell_methods`.
 - Keep `--min-coverage 1.0`. A lower value multiplies an incomplete interval's mean by the full period, filling missing days with that mean; the skill warns and keeps `aggregation_coverage` to mark those estimates.
 - When no interval meets `--min-coverage`, it exits non-zero; usually the data end before the last period does, so end the input on the last available day.
 
