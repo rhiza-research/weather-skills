@@ -40,10 +40,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--station ID | --bbo
 ```
 
 ### Date range
-- The FEWS NET portal serves only about the last 2 years. On 2026-11-18 every station's earliest reading was 2024-11-18 00:00 UTC, exactly two years back, so the start likely moves forward each day (inferred, not confirmed by the portal).
-- Readings arrive within minutes; yesterday is the newest whole day (`--probe-latest`).
-- Raw readings every 1 to 15 minutes depending on the station, written as daily values.
-- Each station's own record is shorter: stations were added through 2025 and 2026 and many have long gaps or have stopped. `--list-stations` gives no dates. A fetch prints per station how many days have data, and `no readings in range` for a station with none; a range where no station has data exits 1.
+- About the last 2 years, up to yesterday (`--probe-latest`).
+- Station records vary and may have gaps; a fetch prints how many days each station has.
 
 ### Arguments
 - `--list-stations` — print stations as TSV (`station_id`, `name`, `site`, `latitude`, `longitude`) and exit; `--bbox` filters. No credentials needed.
