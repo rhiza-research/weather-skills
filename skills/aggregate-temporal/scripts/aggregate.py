@@ -27,7 +27,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.11"
+_SKILL_VERSION = "0.0.12"
 
 # Named --period / --window → (aggregation_period stamped, resample freq, length in days).
 NAMED_PERIODS = {
@@ -37,7 +37,7 @@ NAMED_PERIODS = {
     "monthly": ("1 month", "MS", 30),
 }
 _METHOD_TO_CF = {"mean": "mean", "max": "maximum", "min": "minimum"}
-# cell_methods comment on rates built from overlapping samples; convert-to-totals reads it.
+# Added to cell_methods by regularize-time; kept when the result is aggregated again.
 OVERLAPPING_SAMPLES = "overlapping samples"
 
 
@@ -164,8 +164,7 @@ def aggregate(
     bounds_name = ds[dim].attrs.get("bounds")
     if not (isinstance(bounds_name, str) and bounds_name in ds):
         bounds_name = f"{dim}_bounds" if f"{dim}_bounds" in ds else None
-    bounds = native_interval = cell = None
-    # Rates built from overlapping samples stay rates: convert-to-totals refuses them.
+    bounds = native_interval = cell = overlap = None
     overlapping = any(
         OVERLAPPING_SAMPLES in str(ds[name].attrs.get("cell_methods", "")) for name in ds.data_vars
     )
@@ -191,17 +190,23 @@ def aggregate(
                 break
         else:
             cell = data_interval_of(ds)
-        # Samples spaced closer than their cell overlap (one weekly mean per forecast
-        # init, inits days apart): they cannot tile bins whole, so weight each
-        # [t, t + cell) by its overlap with the bin, as for CF bounds.
+        # Samples spaced closer than their own interval overlap.
         raw = np.asarray(ds[dim].values)
         if cell and raw.dtype.kind in "Mm" and raw.size > 1:
             cell_ns = round(float(parse_aggregation_period(cell).to("ns").magnitude))
             if np.diff(np.sort(_as_ns(raw))).min() < cell_ns:
-                bounds = np.stack([raw, raw + np.timedelta64(cell_ns, "ns")], axis=1)
-                starts, ends = _as_ns(bounds[:, 0]), _as_ns(bounds[:, 1])
-                cell = None
-                overlapping = True
+                overlap = f"spaced closer than their {cell} interval"
+    if bounds is not None:
+        order = np.argsort(starts)
+        if (starts[order][1:] < ends[order][:-1]).any():
+            overlap = f"overlapping in {dim}_bounds"
+    if overlap:
+        raise UsageError(
+            f"samples on {dim} are {overlap}, so a bin would count some days more than once. "
+            "Run regularize-time --period <grid> first (e.g. '1 day' for whole-day windows): "
+            "it averages the samples covering each grid cell and stamps each cell's "
+            "coverage; then aggregate its output."
+        )
 
     key = period or window
     flag = "--period" if period else "--window"
@@ -264,7 +269,8 @@ def aggregate(
         if not fits:
             raise UsageError(
                 f"{key!r} windows cannot hold whole {cell} input samples; aggregate "
-                f"from data at a spacing that divides {agg} (e.g. the daily input)"
+                f"from data at a spacing that divides {agg} (e.g. the daily input), or "
+                "run regularize-time --period '1 day' first to split each sample into days"
             )
         raw = ds[dim].values
         if end_time is not None and cell_days > 1 and raw.dtype.kind == "M":
@@ -272,7 +278,8 @@ def aggregate(
             if abs(offset / cell_days - round(offset / cell_days)) > 1e-6:
                 raise UsageError(
                     f"--end-time {end_time} is not on the {cell} grid of the input "
-                    f"(first sample {str(raw[0])[:10]}), so bins would split input samples"
+                    f"(first sample {str(raw[0])[:10]}), so bins would split input samples; "
+                    "run regularize-time --period '1 day' first to split them into days"
                 )
 
     # Every mode below builds half-open [left, right) bins with a label each.
@@ -432,7 +439,7 @@ def aggregate(
             except UsageError:
                 pass
 
-        chunks, labels, coverages = [], [], []
+        chunks, labels, coverages, edges = [], [], [], []
         for left, right, label in bins:
             if bounds is not None:
                 # Weight each sample by how much of its cell falls in the bin.
@@ -441,15 +448,7 @@ def aggregate(
                 idx = np.flatnonzero(overlap > 0)
                 if idx.size == 0 or right_ns <= left_ns:
                     continue
-                # Covered time counts once, however many overlapping samples cover it.
-                covered, reach = 0, left_ns
-                held = idx[present[idx] > 0]
-                for lo, hi in sorted(zip(starts[held].tolist(), ends[held].tolist(), strict=True)):
-                    lo, hi = max(lo, reach), min(hi, right_ns)
-                    if hi > lo:
-                        covered += hi - lo
-                        reach = hi
-                coverage = covered / (right_ns - left_ns)
+                coverage = float((overlap[idx] * present[idx]).sum()) / (right_ns - left_ns)
             else:
                 idx = np.flatnonzero((raw >= left) & (raw < right))
                 if idx.size == 0:
@@ -482,10 +481,15 @@ def aggregate(
             # convert-to-totals would scale that mean up to the full period.
             chunks.append(reduced.where(count >= count.max()))
             labels.append(label)
+            edges.append((left, right))
             coverages.append(min(1.0, coverage))
         if not chunks:
             raise UsageError(f"no {key} bins contained samples on {dim}")
         out = xr.concat(chunks, dim=dim).assign_coords({dim: labels})
+        if window is not None:
+            # Each window's own edges: with --align right or center a label is not its start.
+            out = out.assign_coords({f"{dim}_bounds": ((dim, "nv"), np.array(edges))})
+            out[dim].attrs["bounds"] = f"{dim}_bounds"
 
     out = out.assign_coords({AGGREGATION_COVERAGE_COORD: (dim, np.asarray(coverages, dtype=float))})
     out[AGGREGATION_COVERAGE_COORD].attrs.update(
@@ -520,8 +524,8 @@ def aggregate(
                 file=sys.stderr,
             )
 
-    # Rolling windows overlap, one per sample, so the output keeps the input spacing.
-    data_interval = native_interval if window is not None or same else agg
+    # Rolling windows carry bounds instead; input already at the period keeps its own.
+    data_interval = None if window is not None else (native_interval if same else agg)
     cell_methods = format_cell_methods(dim, _METHOD_TO_CF[method], interval=native_interval)
     if overlapping:
         note = f"comment: {OVERLAPPING_SAMPLES}"
@@ -533,6 +537,8 @@ def aggregate(
         attrs = {**out[name].attrs, AGGREGATION_PERIOD_ATTR: agg, "cell_methods": cell_methods}
         if data_interval:
             attrs[DATA_INTERVAL_ATTR] = data_interval
+        else:
+            attrs.pop(DATA_INTERVAL_ATTR, None)
         out[name].attrs = attrs
     return out
 

@@ -456,20 +456,18 @@ def _weekly_means(step_days, n):
     )
 
 
-def test_refuses_rates_built_from_overlapping_samples(tmp_path, aggregate, convert_to_totals):
-    """Weekly means every 2 days aggregate to a 28-day rate, but not to a total."""
+def test_converts_rates_built_from_overlapping_samples(tmp_path, aggregate, convert_to_totals):
+    """Weekly means every 2 days, regularized to days then 28-day bins, convert and keep the tag."""
+    regularize = load_skill("regularize-time", "regularize_time").regularize_time
     src = write_zarr(_weekly_means(2, 14), tmp_path / "in.zarr")
-    agg = tmp_path / "agg.zarr"
-    run_skill(aggregate, "-i", str(src), "-o", str(agg), "--period", "28 day")
-    assert "overlapping samples" in xr.open_zarr(agg)["precip"].attrs["cell_methods"]
-    with pytest.raises(SystemExit) as exc:
-        run_skill(convert_to_totals, "-i", str(agg), "-o", str(tmp_path / "out.zarr"))
-    assert exc.value.code == 2
-
-    # Re-aggregating keeps the mark, so a coarser period is refused too.
-    agg2 = tmp_path / "agg2.zarr"
-    run_skill(aggregate, "-i", str(agg), "-o", str(agg2), "--period", "56 day")
-    assert "overlapping samples" in xr.open_zarr(agg2)["precip"].attrs["cell_methods"]
+    daily, agg, out = (tmp_path / f"{n}.zarr" for n in ("daily", "agg", "out"))
+    run_skill(regularize, "-i", str(src), "-o", str(daily), "--period", "1 day")
+    run_skill(aggregate, "-i", str(daily), "-o", str(agg), "--period", "28 day")
+    run_skill(convert_to_totals, "-i", str(agg), "-o", str(out))
+    ds = xr.open_zarr(out)
+    # Inits on days 0-26 cover days 0-32: one complete 28-day bin at 2 mm/day.
+    assert ds["precip"].values.ravel().tolist() == pytest.approx([56.0])
+    assert ds["precip"].attrs["cell_methods"] == "time: sum (comment: overlapping samples)"
 
 
 def test_non_overlapping_subset_converts(tmp_path, aggregate, convert_to_totals):

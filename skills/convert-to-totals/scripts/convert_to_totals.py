@@ -27,9 +27,9 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.11"
 
-# Written into cell_methods by aggregate-temporal on rates built from overlapping samples.
+# Added to cell_methods by regularize-time; kept on the totals.
 OVERLAPPING_SAMPLES = "overlapping samples"
 
 
@@ -166,13 +166,6 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
                 "run aggregate-temporal first"
             )
         cell_methods = str(da.attrs.get("cell_methods", ""))
-        if OVERLAPPING_SAMPLES in cell_methods:
-            raise UsageError(
-                f"variable {name!r} is a mean rate built from overlapping samples "
-                f"(cell_methods {cell_methods!r}); a total would count the same days "
-                "more than once. Select non-overlapping samples that tile the period "
-                "(e.g. every 7th init of a weekly mean), then aggregate-temporal again."
-            )
         if re.search(r":\s*(maximum|minimum)\b", cell_methods):
             raise UsageError(
                 f"variable {name!r} is an extreme, not a mean rate "
@@ -194,6 +187,8 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
         if looks_like_rate_display_name(attrs.get("GRIB_name")):
             attrs["GRIB_name"] = PRECIP_AMOUNT_LONG_NAME
         attrs["cell_methods"] = format_cell_methods(_sum_cell_methods_dim(da, dim), "sum")
+        if OVERLAPPING_SAMPLES in cell_methods:
+            attrs["cell_methods"] += f" (comment: {OVERLAPPING_SAMPLES})"
         # Keep aggregation_period so plotters can crop the nested precip palette.
         out[name] = plain
         out[name].attrs = attrs
