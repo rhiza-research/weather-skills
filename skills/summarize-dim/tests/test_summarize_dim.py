@@ -609,6 +609,101 @@ def test_weekly_steps_crossing_a_season_are_refused(tmp_path, summarize_dim, cap
     assert "runs into the next --by" in capsys.readouterr().err
 
 
+def _weeks_labelled_by_last_day(first_label):
+    """Weekly mm totals labelled by their last day, with year labels from each cell's start."""
+    import numpy as np
+
+    ds = _weekly(first_label)
+    starts = ds["time"].values - np.timedelta64(6, "D")
+    ends = ds["time"].values + np.timedelta64(1, "D")
+    ds = ds.assign_coords(
+        time_bounds=(("time", "nv"), np.stack([starts, ends], axis=1)),
+        year=("time", starts.astype("datetime64[Y]").astype(int) + 1970),
+    ).drop_vars("month_group")
+    ds["time"].attrs["bounds"] = "time_bounds"
+    ds["precip"].attrs.update(units="mm")
+    return ds
+
+
+def test_steps_group_by_cell_start(tmp_path, summarize_dim):
+    """Weeks labelled by their last day fall in the year their cell starts in."""
+    ds = _weeks_labelled_by_last_day("2020-01-11")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    # The first cell starts 2020-01-05, so the year is incomplete: allow partial coverage.
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--method",
+        "sum",
+        "--min-coverage",
+        "0",
+    )
+    assert float(xr.open_zarr(out)["precip"].sel(year=2020).squeeze()) == ds.sizes["time"]
+
+
+def test_cell_crossing_a_group_is_refused_by_its_start(tmp_path, summarize_dim, capsys):
+    """The week labelled 2020-01-05 runs from 2019-12-30, so it crosses into 2020."""
+    src = write_zarr(_weeks_labelled_by_last_day("2020-01-05"), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "year",
+            "--method",
+            "sum",
+        )
+    assert "starting 2019-12-30" in capsys.readouterr().err
+
+
+def test_month_bounds_give_calendar_steps(tmp_path, summarize_dim):
+    """Monthly values with month-long time_bounds and no data_interval group by month."""
+    import numpy as np
+
+    ds = make_point_obs(n_time=1, n_points=1)
+    times = xr.date_range("2019-11-01", "2021-02-01", freq="MS")
+    ends = xr.date_range("2019-12-01", "2021-03-01", freq="MS")
+    ds = xr.Dataset(
+        {"index": (("point_id", "time"), np.arange(times.size, dtype=float)[None])},
+        coords={
+            "point_id": ds["point_id"].values,
+            "time": times,
+            "time_bounds": (("time", "nv"), np.stack([times.values, ends.values], axis=1)),
+            "year": ("time", times.year),
+            "month": ("time", times.month),
+        },
+    )
+    ds["time"].attrs["bounds"] = "time_bounds"
+    ds["index"].attrs.update(units="degree_Celsius")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month",
+        "--method",
+        "mean",
+    )
+    got = xr.open_zarr(out)["index"].sel(point_id=ds["point_id"].values[0])
+    assert float(got.sel(year=2020, month=12)) == 13.0
+    assert float(got.sel(year=2019, month=11)) == 0.0
+
+
 def test_daily_steps_stamped_at_noon_are_kept(tmp_path, summarize_dim):
     """A daily step belongs to the day it is stamped on, whatever the hour."""
     import pandas as pd
@@ -864,3 +959,67 @@ def test_sum_by_season_stamps_the_season_span(tmp_path, summarize_dim):
         "sum",
     )
     assert xr.open_zarr(out)["precip"].attrs["aggregation_period"] == "92 day"
+
+
+def test_month_bounds_as_data_var_are_not_reduced(tmp_path, summarize_dim):
+    """time_bounds saved as a data variable is read for the step, not summarized."""
+    import numpy as np
+
+    times = xr.date_range("2019-11-01", "2021-02-01", freq="MS")
+    ends = xr.date_range("2019-12-01", "2021-03-01", freq="MS")
+    ds = xr.Dataset(
+        {
+            "index": (("time",), np.arange(times.size, dtype=float), {"units": "degree_Celsius"}),
+            "time_bounds": (("time", "nv"), np.stack([times.values, ends.values], axis=1)),
+        },
+        coords={"time": times, "year": ("time", times.year), "month": ("time", times.month)},
+    )
+    ds["time"].attrs["bounds"] = "time_bounds"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    assert "time_bounds" in xr.open_zarr(src).data_vars
+    out = tmp_path / "o.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month",
+        "--method",
+        "mean",
+    )
+    got = xr.open_zarr(out)
+    assert list(got.data_vars) == ["index"]
+    assert float(got["index"].sel(year=2020, month=12)) == 13.0
+
+
+def test_month_start_labels_without_bounds_group_by_month(tmp_path, summarize_dim):
+    """Month-start labels with no bounds or data_interval get calendar-month cells."""
+    import numpy as np
+
+    times = xr.date_range("2019-11-01", "2021-02-01", freq="MS")
+    ds = xr.Dataset(
+        {"index": ("time", np.arange(times.size, dtype=float), {"units": "degree_Celsius"})},
+        coords={"time": times, "year": ("time", times.year), "month": ("time", times.month)},
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month",
+        "--method",
+        "mean",
+    )
+    got = xr.open_zarr(out)["index"]
+    assert float(got.sel(year=2020, month=12)) == 13.0
+    assert float(got.sel(year=2019, month=11)) == 0.0

@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/label_group.py *)
 metadata:
-  version: "0.0.6"
+  version: "0.0.7"
   catalog-group: transforms
 ---
 
@@ -36,6 +36,7 @@ Pass at least one of `--level`, `--geojson`, `--time`; `--level` and `--geojson`
 - `--geojson`: coord named after `--property`.
 - `--time month|year|dayofyear`: integer coord of that name along `time`.
 - `--time GROUPS`: coord `month_group` along `time`.
+- Time labels come from the start of each step's CF `time_bounds` cell when it has one (a week labelled by its last day goes by its first), else from `time`.
 - Anything outside every unit or group gets `""`.
 - A month group crossing December takes the year it begins: Dec 2023 to Feb 2024 is `DJF`, `year` 2023.
 
