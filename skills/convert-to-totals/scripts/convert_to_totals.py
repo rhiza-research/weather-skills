@@ -40,14 +40,17 @@ def _resolve_dim(ds, time_dim):
         if time_dim not in ds.dims:
             raise UsageError(f"--time-dim {time_dim!r} not in dataset (have {list(ds.dims)})")
         return time_dim
-    # aggregate-temporal writes its axis first in cell_methods ("step: mean").
+    # cell_methods starts with the axis the windows lie along, e.g. "step: mean".
     for da in ds.data_vars.values():
-        if AGGREGATION_PERIOD_ATTR in da.attrs:
-            binned = str(da.attrs.get("cell_methods", "")).split(":")[0].strip()
-            if binned in ds.dims:
-                return binned
-            if binned in ds.coords and ds[binned].ndim == 0:
-                return None  # select kept one interval as a scalar coord
+        if AGGREGATION_PERIOD_ATTR not in da.attrs:
+            continue
+        window_axis = str(da.attrs.get("cell_methods", "")).split(":")[0].strip()
+        if window_axis in ds.dims:
+            # Several windows along this axis: check them for overlap.
+            return window_axis
+        if window_axis in ds.coords and ds[window_axis].ndim == 0:
+            # select kept one window (e.g. week 1), so each value is a single window.
+            return None
     try:
         cf_time = ds.cf["time"].name
     except KeyError:
