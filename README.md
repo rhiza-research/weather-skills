@@ -85,6 +85,8 @@ credentialed or source-specific fetcher only when it does not.
 | `verify` | Forecast verification for every lead: pairs forecast and obs (optional `--filter` masks), pools the samples into one score or keeps dims (`--keep`) or `--by` labels, optionally `--lat-weighted`, and writes RMSE, correlation, ACC, POD/FAR/ETS, Heidke, BSS, RPSS, spread, reliability and ROC, with the sample count behind each value. |
 | `correlate` | Pearson or Spearman correlation of two datasets along a dim (default `time`), cell by cell, with p-value and pair count — forecast–obs anomaly correlation, or a climate index against a grid |
 | `indicator` | Daily or weekly boolean indicator from one `--rule` (aliases `icpac-onset` / `chc-onset`, or clauses like `precip sum 8d >= 25`); optional `--probability`, `--detect first` / `any`, `--cumulative` |
+| `mme-fit` | Fit multi-model blend weights from several hindcast `--forecast`s and an `--obs` (grid or stations): `--model weighted|linear|logistic`, one fit overall or `--fit-along` lead / cell / station; scikit-learn semantics (`--alpha` L2) |
+| `mme-blend` | Blend several forecasts with fitted `--weights` or fixed `--coef NAME=W` into one `blend` value or logistic event `probability` |
 
 ### Agent capabilities
 Capabilities the agent uses alongside pipelines; none of them produces a
