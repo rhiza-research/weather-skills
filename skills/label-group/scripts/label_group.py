@@ -19,7 +19,7 @@ from weather_skills_core.region import LEVELS, level_features
 from weather_skills_core.standard_dataset import detect_spatial_dims, names_for
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.7"
+_SKILL_VERSION = "0.0.8"
 
 _TIME_PARTS = ("month", "year", "dayofyear")
 _INITIALS = "JFMAMJJASOND"
@@ -215,7 +215,13 @@ def label_group(ds, level, geojson, property, time, **kwargs):
         bounds = (
             ds["time"].attrs.get("bounds") or ds["time"].encoding.get("bounds") or "time_bounds"
         )
-        start = ds[bounds][:, 0] if bounds in ds.variables else ds["time"]
+        start = ds["time"]
+        if bounds in ds.variables:
+            cells = ds[bounds].values
+            order = np.argsort(cells[:, 0])
+            # Overlapping cells are rolling windows: each goes by its label (its anchor).
+            if not (cells[order][1:, 0] < cells[order][:-1, 1]).any():
+                start = ds[bounds][:, 0]
         month = start.dt.month.values
         group_label = np.full(month.shape, "", dtype=object)
         # Months of a group that crosses December before its first month.

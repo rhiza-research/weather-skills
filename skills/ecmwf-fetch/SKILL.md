@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Requires Python 3.12 and uv. Default source is the dynamical.org catalog (no credentials). The ECDS fallback needs the eccodes system library (`brew install eccodes` or `apt install libeccodes0`) and ECMWF_DATASTORES_KEY (or a `~/.ecmwfdatastoresrc` file): the personal ECDS token, free with an ECMWF account (https://www.ecmwf.int/user/register), copied from https://ecds.ecmwf.int/how-to-api. The ECDS store URL (`https://ecds.ecmwf.int/api`) is hardcoded, not read from the environment."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.12"
+  version: "0.0.13"
   catalog-group: fetchers
   variables: "precip t2m sst d2m mx2t6 mn2t6 u10 v10 msl cape tcw ssrd t gh"
 ---
@@ -46,7 +46,7 @@ The skill reads the public dynamical.org copy (`ecmwf-ifs-ens-forecast-46-day-da
 - From ECDS, pressure-level fields and `pv` are control only: they have data at `number=0` and are NaN for members 1..100.
 - From ECDS (inits before 2026), accumulated fields other than `precip` (`cp`, `sf`, `ro`, `sro`, `sshf`, `slhf`, `ssr`, `ssrd`, `str`, `strd`, `ttr`, `ewss`, `nsss`) stay cumulative since init in native units. Requesting them with `precip` exits 2.
 - Ocean fields (`t20d`, `zos`, `ocu`, …) come only from ECDS on a 1.0° grid; atmosphere fields are 1.5°. Fetch them in a separate call.
-- On the catalog path, lead 0 is dropped only when every requested field is empty there (daily means, `precip`). Fetch daily-mean fields apart from instant ones (`u10`, `msl`, levels) to keep both on interval-start steps.
+- On the catalog path, lead 0 is dropped only when every requested field is empty there (daily means, `precip`). Fetched together with instant fields (`u10`, `msl`, levels), steps keep the catalog labels and `step_bounds` give each cell as `[previous lead, s)`. Fetch them apart to get interval-start steps.
 
 ### Example
 ```bash

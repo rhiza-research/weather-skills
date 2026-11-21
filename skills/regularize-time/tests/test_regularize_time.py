@@ -295,3 +295,10 @@ def test_scalar_coverage_applies_to_every_sample(tmp_path, regularize):
     ds = _samples([(1, 2), (2, 3)], [1, 2]).assign_coords({AGGREGATION_COVERAGE_COORD: 0.5})
     out = _run(regularize, tmp_path, ds, "--period", "1 day")
     np.testing.assert_allclose(out[AGGREGATION_COVERAGE_COORD].values, [0.5, 0.5, 0.5])
+
+
+@pytest.mark.parametrize("period", ["1 month", "2 months", "1 yr"])
+def test_calendar_periods_exit_2(tmp_path, regularize, capsys, period):
+    with pytest.raises(SystemExit) as exc:
+        _run(regularize, tmp_path, _samples([(1, 2), (2, 3)], [1, 2]), "--period", period)
+    assert exc.value.code == 2 and "calendar length" in capsys.readouterr().err

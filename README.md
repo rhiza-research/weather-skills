@@ -57,7 +57,7 @@ credentialed or source-specific fetcher only when it does not.
 | Skill | What it does |
 |---|---|
 | `clip-region` | Clip a gridded or station Zarr to a `--bbox N/W/S/E`, a named `--region`, or a `--geojson` polygon (use `resolve-region` for a country's bbox) |
-| `aggregate-temporal` | Resample rates along `time`/`step` (mean/min/max) into fixed (`--period`) or rolling (`--window` duration) windows; duration-weights CF bounds; stamps `data_interval` = the period (rolling windows get `{dim}_bounds` instead), plus `aggregation_period` + `aggregation_coverage` + `cell_methods` |
+| `aggregate-temporal` | Resample rates along `time`/`step` (mean/min/max) into fixed (`--period`) or rolling (`--window` duration) windows; duration-weights CF bounds; stamps `data_interval` = the period (the input spacing for `--window`, plus each window's `{dim}_bounds`), plus `aggregation_period` + `aggregation_coverage` + `cell_methods` |
 | `convert-to-totals` | Terminal: rate × stamped `aggregation_period` → amount (100% coverage default; refuses overlapping Δt < period — `select` first) |
 | `deaccumulate` | Convert a leftover cumulative-since-init forecast variable into per-step diffs along the `step` axis (fetchers already write rates) |
 | `regularize-time` | Put overlapping or irregular `time`/`step` samples (e.g. one weekly mean per init) on a regular `--period` grid (`1 day`, `15 minute`): each cell is the mean of the samples covering it, with `aggregation_coverage` per cell; run before aggregate-temporal when samples overlap |

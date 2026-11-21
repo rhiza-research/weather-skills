@@ -26,7 +26,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.18"
+_SKILL_VERSION = "0.0.19"
 
 # Forecast bookkeeping / CRS scalar coords dropped from the standard output.
 _DROP_COORDS = (
@@ -220,6 +220,10 @@ def _merge_pressure_if_needed(ds, dataset, requested):
 
 
 _STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
+
+# Analyses whose averaged fields end at their time label ("over the previous hour",
+# "since the previous forecast step"). IMERG and CHIRPS start theirs at the label.
+_END_LABELLED_ANALYSES = ("noaa-gfs-analysis", "noaa-gefs-analysis", "noaa-mrms-")
 
 
 def _open_dataset(state, dataset) -> dict:
@@ -481,19 +485,30 @@ def fetch(
         # half-hourly), not just its 00:00 instant. Windows may overlap.
         times = ds["time"].values
         spacing = times[1] - times[0] if len(times) > 1 else np.timedelta64(1, "D")
+        averaged = [
+            name for name in ds.data_vars if ds[name].attrs.get("step_type") in ("accum", "avg")
+        ]
+        end_labelled = dataset.startswith(_END_LABELLED_ANALYSES) and bool(averaged)
+        if end_labelled and len(averaged) < len(ds.data_vars):
+            raise UsageError(
+                f"{dataset} labels averaged fields ({', '.join(averaged)}) at the end of "
+                "their interval and instant fields at their time; fetch them separately"
+            )
+        # Select by where each cell starts, so a day window holds that day's intervals.
+        starts = times - spacing if end_labelled else times
         keep = np.zeros(times.size, dtype=bool)
         for (start, end), (lo, hi) in zip(windows, spans, strict=True):
-            inside = (times >= lo) & (times < hi)
+            inside = (starts >= lo) & (starts < hi)
             keep |= inside
             # The catalog only lists published times, so a window running past
             # the latest (or before the first) time comes back shorter. Say so;
             # never pad.
             if not inside.any():
                 print(f"WARNING: {dataset} has no data in {start}..{end}.", file=sys.stderr)
-            elif times[inside][0] > lo or times[inside][-1] + spacing < hi:
+            elif starts[inside][0] > lo or starts[inside][-1] + spacing < hi:
                 print(
-                    f"WARNING: {dataset} covers only {str(times[inside][0])[:16]}.."
-                    f"{str(times[inside][-1])[:16]} of the requested {start}..{end}; "
+                    f"WARNING: {dataset} covers only {str(starts[inside][0])[:16]}.."
+                    f"{str(starts[inside][-1])[:16]} of the requested {start}..{end}; "
                     "writing that partial window (not padded).",
                     file=sys.stderr,
                 )
@@ -501,6 +516,15 @@ def fetch(
             raise DataError(f"{dataset} has no data in {window_text}.")
         ds = ds.isel(time=np.nonzero(keep)[0])
         ds = ds.drop_vars([c for c in _DROP_COORDS if c in ds.coords])
+        if end_labelled:
+            ds = ds.assign_coords(time=("time", ds["time"].values - spacing, ds["time"].attrs))
+            for name in ds.data_vars:
+                note = "dynamical-fetch relabelled time to interval start: time t covers [t, t + step)."
+                ds[name].attrs["comment"] = f"{ds[name].attrs.get('comment', '')} {note}".strip()
+            print(
+                "Relabelled times to interval start (averages end at the catalog label).",
+                file=sys.stderr,
+            )
 
     # Spatial subset after the time/variable selection: an antimeridian bbox
     # concatenates two longitude wings, which reads every selected value.
@@ -601,7 +625,9 @@ def fetch(
         first = ds.isel(step=0)
         if all(bool(first[name].isnull().all()) for name in ds.data_vars):
             leads = ds["step"].values
-            ds = ds.isel(step=slice(1, None)).assign_coords(step=leads[:-1])
+            ds = ds.isel(step=slice(1, None)).assign_coords(
+                step=("step", leads[:-1], ds["step"].attrs)
+            )
             cell_end = leads[1:]
             # GEFS / IFS ENS go 3- to 6-hourly. Write each cell's [start, end]
             # here: stamp_data_interval would infer bounds as if steps were ends.
@@ -630,6 +656,13 @@ def fetch(
                 pairs = np.stack([leads, ends], axis=1)
                 ds = ds.assign_coords(step_bounds=(("step", "nv"), pairs))
                 ds["step"].attrs["bounds"] = "step_bounds"
+        else:
+            # Averaged fields with instant ones keep the catalog labels, where each
+            # average ends: every cell is [previous lead, s).
+            leads = ds["step"].values
+            starts = np.concatenate([[leads[0] - (leads[1] - leads[0])], leads[:-1]])
+            ds = ds.assign_coords(step_bounds=(("step", "nv"), np.stack([starts, leads], axis=1)))
+            ds["step"].attrs["bounds"] = "step_bounds"
     # WeatherNext 2 and 3 have no lead 0: the first lead ends the first period
     # (a 6 h total, step_type accum, or a 1 h mean rate, step_type avg). When
     # every field is such a period, relabel to interval start.
@@ -654,7 +687,9 @@ def fetch(
         and len(period) == len(ds.data_vars)
         and leads[0] > np.timedelta64(0, "ns")
     ):
-        ds = ds.assign_coords(step=np.concatenate([[np.timedelta64(0, "ns")], leads[:-1]]))
+        ds = ds.assign_coords(
+            step=("step", np.concatenate([[np.timedelta64(0, "ns")], leads[:-1]]), ds["step"].attrs)
+        )
         cell_end = leads
         for name in ds.data_vars:
             note = (
@@ -702,7 +737,7 @@ def fetch(
             continue
     # Stamp the lead spacing first: with an init window, `time` is the init axis
     # and its 1-day gaps are not the cell length the rate conversion needs.
-    if accum_interval:
+    if accum_interval and "step_bounds" not in out.coords:
         out = stamp_data_interval(out, period=accum_interval)
     else:
         out = stamp_data_interval(out, dim="step" if is_forecast else None)

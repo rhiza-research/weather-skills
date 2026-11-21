@@ -16,7 +16,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude, grid
 from weather_skills_core.units import dequantify_dataset
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.10"
 
 
 def _target_axis(coord_vals, resolution, offset):
@@ -136,7 +136,10 @@ def coarsen(
 
     lat_dim, lon_dim = detect_spatial_dims(ds)
     if variable:
-        ds = ds[[variable]]
+        if variable not in ds.data_vars:
+            raise UsageError(f"variable {variable!r} not in dataset (have {list(ds.data_vars)})")
+        # drop_vars keeps every coordinate; ds[[...]] would lose time_bounds (dims nv).
+        ds = ds.drop_vars([name for name in ds.data_vars if name != variable])
     # xarray-regrid can't interpolate pint quantities wrapping dask arrays, and
     # fails on coords chunked unlike the data (aggregation_coverage on time);
     # coords are small, so load them.

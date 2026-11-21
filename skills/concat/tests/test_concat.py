@@ -253,3 +253,27 @@ def test_concat_single_time_inputs_keep_dates(tmp_path, concat):
     ds = xr.open_zarr(out, consolidated=True)
     assert [str(t)[:10] for t in ds["time"].values] == ["2026-09-14", "2026-09-21"]
     assert "step" not in ds.coords
+
+
+def test_input_without_coverage_joins_as_complete(tmp_path, concat):
+    """convert-to-totals drops coverage when complete; that input joins at coverage 1."""
+    week = np.timedelta64(7, "D")
+    t0 = np.datetime64("2026-01-01", "ns")
+    a = xr.Dataset({"precip": (("time",), [7.0], {"units": "mm"})}, coords={"time": [t0]})
+    b = xr.Dataset(
+        {"precip": (("time",), [3.0], {"units": "mm"})},
+        coords={"time": [t0 + week], "aggregation_coverage": ("time", [3 / 7])},
+    )
+    out = tmp_path / "out.zarr"
+    run_skill(
+        concat,
+        "-i",
+        str(write_zarr(a, tmp_path / "a.zarr")),
+        "-i",
+        str(write_zarr(b, tmp_path / "b.zarr")),
+        "-o",
+        str(out),
+        "--dim",
+        "time",
+    )
+    np.testing.assert_allclose(xr.open_zarr(out)["aggregation_coverage"].values, [1.0, 3 / 7])

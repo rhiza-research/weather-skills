@@ -25,7 +25,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.1"
+_SKILL_VERSION = "0.0.2"
 
 # Added to cell_methods when a cell averages more than one sample; later skills keep it.
 OVERLAPPING_SAMPLES = "overlapping samples"
@@ -66,9 +66,9 @@ def regularize_time(ds, period, time_dim, **kwargs):
     if np.isnat(raw).any():
         raise UsageError(f"{dim} has missing (NaT) labels")
     ns_type = f"{raw.dtype.kind}8[ns]"
-    if "month" in period or "year" in period:
-        raise UsageError(f"--period {period!r} is a calendar length; use a fixed one")
     period_q = parse_aggregation_period(period)
+    if str(period_q.units) in ("month", "year"):
+        raise UsageError(f"--period {period!r} is a calendar length; use a fixed one")
     period_ns = round(float(period_q.to("ns").magnitude))
     if period_ns <= 0:
         raise UsageError(f"--period {period!r} must be positive")
