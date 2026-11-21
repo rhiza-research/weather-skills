@@ -55,7 +55,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset DATASET [--overpass ...] -
 ### Output
 - `soil_moisture` on `(time, latitude, longitude)` in `m3 m-3` (`volume_fraction_of_condensed_water_in_soil`), or for `ascat`, `soil_moisture_saturation` in `percent` (100 = the wettest that cell gets; not volumetric, so compare it with the others by anomalies or ranks). `data_interval="1 day"`.
 - `soil_moisture_source`, when more than one retrieval or overpass is combined: the 1-based place in `flag_meanings` (`smap_am smos_am smap_pm smos_pm`, as requested) of the retrieval each value came from, `0` none. Values are not adjusted.
-- The grid is each product's own: 0.25° for `ascat` and `combined`; EASE-Grid 2.0 cell centres for the others (longitude even, latitude spacing varies). Run coarsen to put it on another grid.
+- The grid is each product's own: 0.25° for `ascat` and `combined`; EASE-Grid 2.0 cell centres for the others (longitude even, latitude spacing varies). Run coarsen to put it on a coarser grid. The `smos` 25 km grid is finer than 0.25° in latitude (~0.20°) and coarser in longitude (~0.26°), so to reach 0.25° run downscale to 0.125° first, then coarsen.
 - `weather_skills_source`: `cds:satellite-soil-moisture:active|combined`, `nsidc:SPL3SMP_E`, `catds:smos-l3sm`, or `nsidc:NSIDC-0800`.
 
 ### Notes
