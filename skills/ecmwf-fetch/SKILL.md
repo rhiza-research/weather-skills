@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Requires Python 3.12 and uv. Default source is the dynamical.org catalog (no credentials). The ECDS fallback needs the eccodes system library (`brew install eccodes` or `apt install libeccodes0`) and ECMWF_DATASTORES_KEY (or a `~/.ecmwfdatastoresrc` file): the personal ECDS token, free with an ECMWF account (https://www.ecmwf.int/user/register), copied from https://ecds.ecmwf.int/how-to-api. The ECDS store URL (`https://ecds.ecmwf.int/api`) is hardcoded, not read from the environment."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.13"
+  version: "0.0.14"
   catalog-group: fetchers
   variables: "precip t2m sst d2m mx2t6 mn2t6 u10 v10 msl cape tcw ssrd t gh"
 ---

@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Requires Python 3.12 and uv. ECMWF and GEFS need no credentials. Cumulus needs AZURE_STORAGE_SAS_TOKEN, the same Azure read SAS as cumulus-fetch."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.2"
+  version: "0.0.3"
   catalog-group: fetchers
   variables: "precip tmp2m sst"
 ---

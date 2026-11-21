@@ -25,7 +25,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.2"
+_SKILL_VERSION = "0.0.3"
 
 # Added to cell_methods when a cell averages more than one sample; later skills keep it.
 OVERLAPPING_SAMPLES = "overlapping samples"

@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Requires Python 3.12 and uv. Reads the WeatherNext 2 and 3 Zarr archives via gcsfs with any Google Cloud identity (free account at https://accounts.google.com/signup; no allowlist): GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for runtimes that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a key file path), or `gcloud auth application-default login`. WeatherNext 3 ensemble reads are requester pays: pass --billing-project or set GOOGLE_CLOUD_PROJECT."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.14"
+  version: "0.0.15"
   catalog-group: fetchers
   variables: "precip 2m_temperature 2m_dewpoint_temperature 10m_u_component_of_wind 10m_v_component_of_wind 100m_u_component_of_wind 100m_v_component_of_wind mean_sea_level_pressure sea_surface_temperature total_cloud_cover surface_solar_radiation_downwards_1hr specific_humidity temperature u_component_of_wind v_component_of_wind vertical_velocity geopotential"
   required-env: "GCLOUD_SERVICE_CREDENTIALS"
