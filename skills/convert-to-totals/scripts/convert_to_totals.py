@@ -34,33 +34,33 @@ OVERLAPPING_SAMPLES = "overlapping samples"
 
 
 def _resolve_dim(ds, time_dim):
-    import cf_xarray  # noqa: F401
+    import pandas as pd
+    import xarray as xr
 
     if time_dim:
         if time_dim not in ds.dims:
             raise UsageError(f"--time-dim {time_dim!r} not in dataset (have {list(ds.dims)})")
         return time_dim
-    # The window axis is the last time or lead named in cell_methods, e.g. "step: mean";
-    # other dims' methods ("number: mean") and (interval: ...) notes are skipped.
+    # The window axis is the time or lead axis cell_methods says was averaged ("step: mean");
+    # other dims' methods ("number: mean") and (interval: ...) notes are skipped. It may be
+    # a scalar coord after select kept one window.
+    axes = []
     for da in ds.data_vars.values():
-        if AGGREGATION_PERIOD_ATTR not in da.attrs:
-            continue
-        methods = re.sub(r"\([^)]*\)", "", str(da.attrs.get("cell_methods", "")))
-        named = re.findall(r"(\w+):", methods)
-        axes = [n for n in named if n in ds.variables and ds[n].dtype.kind in "MmO"]
-        if axes:
-            return axes[-1]
-    try:
-        cf_time = ds.cf["time"].name
-    except KeyError:
-        cf_time = "time" if "time" in ds.dims else None
-    if cf_time is not None and cf_time in ds.dims:
-        if ds.sizes[cf_time] == 1 and "step" in ds.dims:
-            return "step"
-        return cf_time
-    if "step" in ds.dims:
-        return "step"
-    return None
+        if AGGREGATION_PERIOD_ATTR in da.attrs:
+            methods = re.sub(r"\([^)]*\)", "", str(da.attrs.get("cell_methods", "")))
+            named = re.findall(r"(\w+):", methods)
+            axes += [n for n in named if n in ds.variables and ds[n].dtype.kind in "MmO"]
+    if not axes:
+        time_index = (pd.DatetimeIndex, pd.TimedeltaIndex, xr.CFTimeIndex)
+        axes = [d for d, index in ds.indexes.items() if isinstance(index, time_index)]
+        axes = [d for d in axes if ds.sizes[d] > 1] or axes
+    axes = list(dict.fromkeys(axes))
+    if len(axes) > 1:
+        raise UsageError(
+            f"more than one axis could hold the windows ({', '.join(axes)}); "
+            "pass --time-dim to choose one"
+        )
+    return axes[0] if axes else None
 
 
 def _sum_cell_methods_dim(da, dim: str | None) -> str:

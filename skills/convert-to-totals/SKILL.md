@@ -24,7 +24,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/convert_to_totals.py -i RATES.zarr -o TOTALS.
 - `--output`, `-o` — output Zarr.
 - `--variable`, `-v` — precipitation variable to convert; repeat for several. Default: every precipitation-rate variable. Naming a non-precipitation variable exits non-zero.
 - `--min-coverage` — drop intervals whose `aggregation_coverage` (share of samples with data, 0–1) is below this. Default: `1.0`.
-- `--time-dim` — the axis to convert along. Usually not needed: by default it is the axis aggregate-temporal averaged along (`step` for weeks of lead time, `time` for weeks of dates). If `select` picked one week, each value is a single week and converts on its own. Input without `cell_methods` uses `time`, or `step` for a single-init forecast.
+- `--time-dim` — the axis to convert along. Usually not needed: by default it is the time or lead axis `cell_methods` says was averaged (`step` for weeks of lead time, `time` for weeks of dates). If `select` picked one week, each value is a single week and converts on its own. Without such a `cell_methods` entry, it is the only time or lead axis with more than one value. When more than one axis could hold the windows, the skill exits non-zero and `--time-dim` must name one.
 
 ### Output
 - Each converted variable is rate × interval length, in `mm`, with the precipitation-amount `standard_name`, `long_name` `Total precipitation`, and `cell_methods` `{dim}: sum`. Product rate attrs (`comment`, `short_name`, `step_type`) are dropped. `aggregation_period` is kept.
