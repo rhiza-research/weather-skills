@@ -1,24 +1,14 @@
 ---
 name: pbc-fetch
-description: "Fetch a StillLearning PBC (probabilistic bias correction) AI Weather Quest precipitation forecast for week 3 or week 4, for one init or a range of inits, from the private Sheerwater datalake, as a weather-skills Zarr. Values are the probability of each rainfall quintile on a 1.5° global grid, not amounts. Needs Google Cloud service-account credentials. Use when a task needs PBC subseasonal precipitation probabilities."
+description: "Fetch a StillLearning PBC (probabilistic bias correction) AI Weather Quest precipitation forecast for week 3 or week 4, for one init or a range of inits (from mid-2025), from the private Sheerwater datalake, as a weather-skills Zarr. Values are the probability of each rainfall quintile on a 1.5° global grid, not amounts. Needs Google Cloud service-account credentials. Use when a task needs PBC subseasonal precipitation probabilities."
 license: MIT
 compatibility: "Requires Python 3.12 and uv. Reads private GCS gs://sheerwater-datalake/pbc-data via gcsfs. Requires Google Cloud credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.11"
+  version: "0.0.13"
   catalog-group: fetchers
-  variables:
-    - pr
-  openclaw:
-    requires:
-      env:
-        - GCLOUD_SERVICE_CREDENTIALS
-    primaryEnv: GCLOUD_SERVICE_CREDENTIALS
-    envVars:
-      - name: GCLOUD_SERVICE_CREDENTIALS
-        description: Full contents of a GCP service-account key JSON with read access to gs://sheerwater-datalake/pbc-data. Use this when the runtime can only inject secret values, not files.
-      - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON file that can read gs://sheerwater-datalake/pbc-data. Used only if GCLOUD_SERVICE_CREDENTIALS is unset.
+  variables: "pr"
+  required-env: "GCLOUD_SERVICE_CREDENTIALS"
 ---
 
 # pbc-fetch
@@ -43,6 +33,13 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [ID]
 ### Arguments
 - `--dataset` — product id or alias from the table. Default: `era5-p_pr_19`.
 - `--date` — forecast init date. A date with no published store exits 1. Default: the latest published init.
+
+  | `--dataset` | Inits |
+  |---|---|
+  | `era5-p_pr_19` | Thursdays from 2025-08-07; daily from 2026-08-14 |
+  | `era5-p_pr_26` | Some Thursdays from 2025-08-07; daily from 2026-08-06 |
+
+  The daily runs miss a few days; `--probe-latest` gives the newest init.
 - `--start-time`, `--end-time` — an init window, both days inclusive. Repeat the pair for several windows, one window per pair. Takes every published init in the windows: like `--date`, the windows select init dates, not valid weeks. Use this instead of one `--date` call per init; not with `--date`. An init whose store is missing is skipped with a `WARNING` on stderr; no init in any window exits 1. One init is about 0.6 MB globally, so a window can span years.
 - `--bbox` — `N/W/S/E` decimal degrees. Omit for the full global grid.
 - `--variable`, `-v` — the only variable is `pr` (aliases `forecast`, `precip`, `tp`, `probability`). Optional.

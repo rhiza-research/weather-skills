@@ -26,7 +26,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.12"
 
 _ARCO_STORE = "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"
 _STORAGE_OPTIONS = {"token": "anon"}
@@ -142,9 +142,8 @@ def _stamp_coord_attrs(ds) -> None:
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Print the last day with data (YYYY-MM-DD) on stdout and exit. "
+        "Does not download fields. IDENT is ignored."
     ),
 )
 @weather_skill.argument(

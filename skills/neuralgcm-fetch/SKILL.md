@@ -1,26 +1,14 @@
 ---
 name: neuralgcm-fetch
-description: "Fetch a NeuralGCM subseasonal ensemble forecast (up to 50 members, 6-hourly leads to 60 days, ~2.8° global) for one init or a range of inits over an optional lat/lon box, as a weather-skills Zarr: IMERG-trained precipitation, or 2 m temperature and dewpoint. Reads the private Tomorrow Now 2026 realtime archive in gs://neuralgcm-s2s with Google Cloud service-account credentials. Use when a task needs the NeuralGCM forecast."
+description: "Fetch a NeuralGCM subseasonal ensemble forecast (up to 50 members, 6-hourly leads to 60 days, ~2.8° global) for one init or a range of inits (00/12 UTC from June 2026) over an optional lat/lon box, as a weather-skills Zarr: IMERG-trained precipitation, or 2 m temperature and dewpoint. Reads the private Tomorrow Now 2026 realtime archive in gs://neuralgcm-s2s with Google Cloud service-account credentials. Use when a task needs the NeuralGCM forecast."
 license: MIT
 compatibility: "Requires Python 3.12 and uv. Reads private consolidated Zarr from gs://neuralgcm-s2s/staging/realtime/tomorrow_now_2026/v1 via gcsfs. Requires Google Cloud credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login`."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.12"
+  version: "0.0.14"
   catalog-group: fetchers
-  variables:
-    - precip
-    - t2m
-    - d2m
-  openclaw:
-    requires:
-      env:
-        - GCLOUD_SERVICE_CREDENTIALS
-    primaryEnv: GCLOUD_SERVICE_CREDENTIALS
-    envVars:
-      - name: GCLOUD_SERVICE_CREDENTIALS
-        description: Full contents of a GCP service-account key JSON with read access to gs://neuralgcm-s2s. Use this when the runtime can only inject secret values, not files.
-      - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON file with read access to gs://neuralgcm-s2s. Used only if GCLOUD_SERVICE_CREDENTIALS is unset.
+  variables: "precip t2m d2m"
+  required-env: "GCLOUD_SERVICE_CREDENTIALS"
 ---
 
 # neuralgcm-fetch
@@ -40,7 +28,7 @@ The bucket is private. Set one of, in order of precedence: `GCLOUD_SERVICE_CREDE
 
 ### Arguments
 - `--dataset` — product under each init. Default: `imerg:precip` (alias `precip`) → `precip`. `era5:surface` (alias `surface`) → `t2m`, `d2m`.
-- `--date` — init date. Default: the latest init that has `--dataset`. A missing init exits 1 and lists the nearest published inits; nothing is substituted. Pick one of those rather than trying other dates.
+- `--date` — init date. Inits run at 00 and 12 UTC from 2026-06-16 to the present, with some missing. Default: the latest init that has `--dataset`. A missing init exits 1 and lists the nearest published inits; nothing is substituted. Pick one of those rather than trying other dates.
 - `--start-time`, `--end-time` — an init window, both days inclusive. Repeat the pair for several windows, one window per pair. Takes the `--cycle` init (default 00 UTC) of every published day in the windows with all its leads: like `--date`, the windows select init times, not valid times. Use this instead of one `--date` call per init; not with `--date`. An init without a `--dataset` store is skipped with a `WARNING` on stderr; no init in any window exits 1.
 - `--cycle` — init hour UTC: `00` or `12`. Default: `00` with `--date` or windows, otherwise the newest cycle.
 - `--bbox` — `N/W/S/E` decimal degrees; negative longitudes work. Default: the full global grid.
@@ -65,6 +53,6 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-10-12 --bbox 5.5/33.5/-5
 ```
 Writes the 00 UTC ensemble's 6-hourly precip rates over Kenya for 60 days.
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time 2026-03-01 --end-time 2026-05-31 --bbox 5.5/33.5/-5/42.5 -v precip -o neuralgcm_kenya_mam.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time 2026-09-01 --end-time 2026-10-31 --bbox 5.5/33.5/-5/42.5 -v precip -o neuralgcm_kenya_sep_oct.zarr
 ```
-Writes every published 00 UTC init from March to May over Kenya, one `time` per init.
+Writes every published 00 UTC init from September to October over Kenya, one `time` per init.

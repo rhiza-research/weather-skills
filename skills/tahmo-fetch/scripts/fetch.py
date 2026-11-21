@@ -3,6 +3,7 @@
 # dependencies = [
 #   "weather-skills-core>=0.4.0",
 #   "pandas",
+#   "gcsfs",
 #   "tahmo",
 # ]
 #
@@ -17,19 +18,25 @@
 #     tahmo-fetch --list-stations --bbox N/W/S/E
 #
 # Then fetch chosen station IDs (and/or every TA station in a bbox).
+#
+# With ``--gridded``, reads Sheerwater's historical all-Africa 0.25° TAHMO precip grid
+# from private GCS instead (Google credentials, no TAHMO login). With ``--gold-stations``,
+# reads the per-station daily precip those cells are built from, from the same bucket.
 
 import csv
+import json
+import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import udunits_error
-from weather_skills_core.standard_utils import is_transient, require_env
+from weather_skills_core.standard_utils import bbox_subset, is_transient, require_env
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.11"
+_SKILL_VERSION = "0.0.15"
 
 DEFAULT_WORKERS = 8
 _TAHMO_PREFIX = "TA"
@@ -56,7 +63,7 @@ EXTREMES = {
     "tmin": ("time: minimum", "daily minimum air temperature"),
 }
 # TAHMO records every variable at a 5-minute interval, stamped at the interval
-# end. A daily value is kept only when all 288 stamps of that UTC day passed the
+# end. A daily value is kept only when all 288 stamps of that day passed the
 # quality filter; any gap makes the day NaN. This applies to the means as well
 # as the precip sum: a gap removes part of the diurnal cycle (e.g. the warm
 # afternoon), so a partial-day mean is a biased estimate, not an observation.
@@ -77,6 +84,207 @@ _TAHMO_UNITS = {
     "degrees Celsius": "degree_Celsius",
     "degree Celsius": "degree_Celsius",
 }
+
+
+# Historical daily precip for all of Africa: complete QC'd TAHMO station days
+# averaged within each 0.25° cell, with precip_count stations per cell-day and
+# precip_flag, a bit mask of the quality flags of those stations.
+# Dims (time, lat, lon); lat/lon list only the rows and columns that have a
+# station, so the skill puts them back on the regular 0.25° grid.
+_GRIDDED_STORE = "sheerwater-datalake/hindcasts/tahmo_africa_precip.zarr"
+_GRID_STEP = 0.25
+# The station-days the gridded store averages: dims (time, station_id), with
+# precip_flag per station-day and station latitude, longitude, elevation, country, name.
+_GOLD_STORE = "sheerwater-datalake/hindcasts/tahmo_africa_stations.zarr"
+_GRIDDED_AUTH_MSG = (
+    "cannot read gs://sheerwater-datalake/hindcasts (private GCS). Set "
+    "GCLOUD_SERVICE_CREDENTIALS to the full service-account key JSON "
+    "(no file needed), GOOGLE_APPLICATION_CREDENTIALS to a service-account "
+    "JSON file path, or run `gcloud auth application-default login`."
+)
+
+
+def _gcs():
+    """Authenticated GCS filesystem: GCLOUD_SERVICE_CREDENTIALS, then
+    GOOGLE_APPLICATION_CREDENTIALS / Application Default Credentials.
+    """
+    import gcsfs
+
+    creds_json = os.environ.get("GCLOUD_SERVICE_CREDENTIALS")
+    if creds_json:
+        try:
+            info = json.loads(creds_json)
+        except json.JSONDecodeError as exc:
+            raise DataError(f"GCLOUD_SERVICE_CREDENTIALS is not valid JSON ({exc}).") from None
+        try:
+            return gcsfs.GCSFileSystem(token=info)
+        except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
+            raise DataError(f"{_GRIDDED_AUTH_MSG} ({exc})") from None
+    try:
+        return gcsfs.GCSFileSystem()
+    except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
+        raise DataError(f"{_GRIDDED_AUTH_MSG} ({exc})") from None
+
+
+def _open_gridded():
+    """Open the gridded store lazily (no dask), lat/lon renamed to the standard names."""
+    import xarray as xr
+
+    try:
+        ds = xr.open_zarr(_gcs().get_mapper(_GRIDDED_STORE), chunks=None)
+    except Exception as exc:  # noqa: BLE001
+        raise DataError(f"{_GRIDDED_AUTH_MSG} Opening it failed: {exc}") from None
+    ds = ds[["precip", "precip_count", "precip_flag"]].set_coords(["precip_count", "precip_flag"])
+    return ds.rename({"lat": "latitude", "lon": "longitude"})
+
+
+def _open_gold():
+    """Open the gold station store lazily (no dask), precip_flag as a coordinate."""
+    import xarray as xr
+
+    try:
+        ds = xr.open_zarr(_gcs().get_mapper(_GOLD_STORE), chunks=None)
+    except Exception as exc:  # noqa: BLE001
+        raise DataError(f"{_GRIDDED_AUTH_MSG} Opening it failed: {exc}") from None
+    return ds[["precip", "precip_flag"]].set_coords("precip_flag")
+
+
+def _fetch_gold(start_time, end_time, bbox, station_ids):
+    """Historical gold TAHMO station precip for ``start_time``..``end_time``."""
+    import numpy as np
+    import pandas as pd
+
+    ds = _open_gold()
+
+    if station_ids:
+        wanted = [s.strip().upper() for s in station_ids]
+        missing = sorted(set(wanted) - set(ds["station_id"].values))
+        if missing:
+            raise UsageError("no gold TAHMO record for station id(s): " + ", ".join(missing))
+        ds = ds.sel(station_id=wanted)
+    elif bbox is not None:
+        north, west, south, east = bbox
+        lat, lon = ds["latitude"].values, ds["longitude"].values
+        lon_in = (lon >= west) & (lon <= east) if west <= east else (lon >= west) | (lon <= east)
+        keep = (lat >= south) & (lat <= north) & lon_in
+        if not keep.any():
+            raise DataError(
+                f"no gold TAHMO station in --bbox {north:g}/{west:g}/{south:g}/{east:g}."
+            )
+        ds = ds.isel(station_id=np.nonzero(keep)[0])
+
+    times = pd.DatetimeIndex(ds["time"].values)
+    keep = (times >= pd.Timestamp(start_time)) & (times <= pd.Timestamp(end_time))
+    if not keep.any():
+        raise DataError(
+            f"no gold TAHMO day in {start_time}..{end_time} (store runs "
+            f"{times.min().date()} to {times.max().date()})."
+        )
+    ds = ds.isel(time=np.nonzero(keep)[0]).load()
+    # Never fill: a station-day is NaN unless all 288 records passed QC.
+    reported = ds["precip"].notnull()
+    if not bool(reported.any()):
+        raise DataError(
+            "no gold TAHMO station has a complete day in this selection and date range."
+        )
+    ds = ds.isel(station_id=np.nonzero(reported.any("time").values)[0])
+    n_days = ds.sizes["time"]
+    complete = int(ds["precip"].notnull().all("time").sum())
+    print(
+        f"precip: {complete} of {ds.sizes['station_id']} stations complete "
+        f"(all {n_days} days {start_time} → {end_time}); "
+        f"{int((ds['precip_flag'] > 0).sum())} station-days flagged (see precip_flag)",
+        file=sys.stderr,
+    )
+
+    ds["precip"].attrs = {
+        "standard_name": "lwe_precipitation_rate",
+        "units": "mm day-1",
+        "long_name": "daily precipitation, TAHMO station complete days",
+        "coordinates": "latitude longitude",
+    }
+    ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north", axis="Y")
+    ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east", axis="X")
+    ds["time"].attrs.update(
+        standard_name="time", axis="T", comment="day D covers D 00:00 to D+1 00:00 UTC"
+    )
+    ds["station_id"].attrs.update(cf_role="timeseries_id", long_name="TAHMO station identifier")
+    ds["country"].attrs.update(long_name="ISO 3166-1 alpha-2 country code")
+    ds["name"].attrs.update(long_name="station name")
+    ds.attrs = {
+        "featureType": "timeSeries",
+        "Conventions": "CF-1.13",
+        "weather_skills_source": f"sheerwater:{_GOLD_STORE.split('/', 1)[1]}",
+    }
+    return stamp_data_interval(ds, period="1 day")
+
+
+def _fetch_gridded(start_time, end_time, bbox):
+    """Historical gridded TAHMO precip for ``start_time``..``end_time`` on a regular 0.25° grid."""
+    import numpy as np
+    import pandas as pd
+
+    ds = _open_gridded()
+    times = pd.DatetimeIndex(ds["time"].values)
+    keep = (times >= pd.Timestamp(start_time)) & (times <= pd.Timestamp(end_time))
+    if not keep.any():
+        raise DataError(
+            f"no gridded TAHMO day in {start_time}..{end_time} (store runs "
+            f"{times.min().date()} to {times.max().date()})."
+        )
+    ds = ds.isel(time=np.nonzero(keep)[0])
+
+    # The store keeps only the rows and columns with a station; rebuild the regular
+    # 0.25° grid over its extent. Cells with no station stay NaN (nothing filled).
+    lat, lon = ds["latitude"].values, ds["longitude"].values
+    ds = ds.reindex(
+        latitude=np.arange(lat.min(), lat.max() + _GRID_STEP / 2, _GRID_STEP),
+        longitude=np.arange(lon.min(), lon.max() + _GRID_STEP / 2, _GRID_STEP),
+    )
+    if bbox is not None:
+        ds = bbox_subset(ds, bbox, lat_dim="latitude", lon_dim="longitude")
+    ds = ds.load()
+    # reindex made the new cells NaN and the ints float; a cell with no station has
+    # 0 stations and no flags, and the flags must be ints again for bit tests.
+    ds["precip_count"] = ds["precip_count"].fillna(0).astype("int16")
+    ds["precip_flag"] = ds["precip_flag"].fillna(0).astype("int8")
+    # Never fill: a day is a cell's mean of the stations that reported it.
+    reported = ds["precip"].notnull()
+    if not bool(reported.any()):
+        raise DataError(
+            "no gridded TAHMO cell has data in this --bbox and date range (cells with data "
+            f"span lat {lat.min():g}..{lat.max():g}, lon {lon.min():g}..{lon.max():g})."
+        )
+    n_days = ds.sizes["time"]
+    cells = reported.any("time")
+    complete = reported.all("time")
+    print(
+        f"precip: {int(cells.sum())} cells with data, {int(complete.sum())} complete "
+        f"(all {n_days} days {start_time} → {end_time}); "
+        f"{int((ds['precip_flag'] > 0).sum())} cell-days flagged (see precip_flag)",
+        file=sys.stderr,
+    )
+
+    ds["precip"].attrs = {
+        "standard_name": "lwe_precipitation_rate",
+        "units": "mm day-1",
+        "long_name": "daily precipitation, mean of the TAHMO stations with a complete day in each 0.25° cell",
+        "cell_methods": "area: mean",
+    }
+    ds["precip_count"].attrs = {
+        "units": "1",
+        "long_name": "number of TAHMO stations averaged into the cell-day",
+    }
+    ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north", axis="Y")
+    ds["longitude"].attrs.update(standard_name="longitude", units="degrees_east", axis="X")
+    ds["time"].attrs.update(
+        standard_name="time", axis="T", comment="day D is the UTC calendar date D"
+    )
+    ds.attrs = {
+        "Conventions": "CF-1.13",
+        "weather_skills_source": f"sheerwater:{_GRIDDED_STORE.split('/', 1)[1]}",
+    }
+    return stamp_data_interval(ds.transpose("time", "latitude", "longitude"), period="1 day")
 
 
 def _pint_units(raw) -> str | None:
@@ -294,6 +502,25 @@ def _ensure_setup(state):
     ),
 )
 @weather_skill.argument(
+    "--gridded",
+    action="store_true",
+    default=False,
+    help=(
+        "Read Sheerwater's historical daily TAHMO precip grid (0.25° cell means of "
+        "QC'd stations, private GCS, Google credentials) instead of the TAHMO API."
+    ),
+)
+@weather_skill.argument(
+    "--gold-stations",
+    action="store_true",
+    default=False,
+    help=(
+        "Read Sheerwater's historical daily TAHMO station precip (QC'd complete days "
+        "with quality flags, 2015-2025, private GCS, Google credentials) instead of "
+        "the TAHMO API. Selects by --station and/or --bbox, or every station."
+    ),
+)
+@weather_skill.argument(
     "--list-stations",
     action="store_true",
     default=False,
@@ -310,9 +537,9 @@ def _ensure_setup(state):
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Print the newest complete day in the last 14 days (YYYY-MM-DD) on stdout "
+        "and exit; with --gridded, the store's last day with data. Does not download "
+        "fields. IDENT is ignored."
     ),
 )
 def fetch(
@@ -322,6 +549,8 @@ def fetch(
     bbox,
     station,
     day_start_hour,
+    gridded,
+    gold_stations,
     list_stations,
     probe_latest,
     **kwargs,
@@ -332,6 +561,36 @@ def fetch(
 
     if not 0 <= day_start_hour <= 23:
         raise UsageError(f"--day-start-hour must be 0-23, got {day_start_hour}.")
+
+    if gold_stations:
+        if gridded or list_stations or probe_latest is not None:
+            raise UsageError(
+                "--gold-stations takes only --station, --bbox and the times; not "
+                "--gridded, --list-stations or --probe-latest."
+            )
+        if day_start_hour != 0:
+            raise UsageError(
+                "--gold-stations days are UTC calendar dates; --day-start-hour must be 0."
+            )
+        return _fetch_gold(start_time, end_time, bbox, station)
+
+    if gridded:
+        if station or list_stations:
+            raise UsageError(
+                "--gridded reads whole cells: use --bbox, not --station or --list-stations."
+            )
+        if day_start_hour != 0:
+            raise UsageError("--gridded days are UTC calendar dates; --day-start-hour must be 0.")
+        if probe_latest is not None:
+            import numpy as np
+
+            ds = _open_gridded()
+            has_data = ds["precip"].notnull().any(["latitude", "longitude"]).values
+            if not has_data.any():
+                raise DataError("gridded TAHMO store has no data")
+            print(str(ds["time"].values[np.nonzero(has_data)[0][-1]])[:10])
+            return
+        return _fetch_gridded(start_time, end_time, bbox)
 
     if list_stations and bbox is None:
         raise UsageError("--list-stations requires --bbox N/W/S/E.")

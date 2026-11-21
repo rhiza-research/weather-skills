@@ -5,23 +5,10 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Uses the OpenAQ v3 REST API over HTTPS; requires a free OPENAQ_API_KEY in the environment (register at https://explore.openaq.org/register).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.9"
+  version: "0.0.11"
   catalog-group: fetchers
-  variables:
-    - pm25
-    - pm10
-    - no2
-    - o3
-    - so2
-    - co
-  openclaw:
-    requires:
-      env:
-        - OPENAQ_API_KEY
-    primaryEnv: OPENAQ_API_KEY
-    envVars:
-      - name: OPENAQ_API_KEY
-        description: Free personal token from https://explore.openaq.org/register
+  variables: "pm25 pm10 no2 o3 so2 co"
+  required-env: "OPENAQ_API_KEY"
 ---
 
 # openaq-fetch
@@ -36,6 +23,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox N/W/S/E --start-time YYYY-MM-
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
+### Date range
+- Each location has its own record and gaps; a window with no data exits 1.
+- Runs to the present (`--probe-latest`, usually a partial day).
+
 ### Arguments
 - `--bbox` — `N/W/S/E` decimal degrees. Required. Must not cross the antimeridian (W <= E); split such a region into two calls.
 - `--start-time`, `--end-time` — inclusive range of station-local days, `YYYY-MM-DD`.
@@ -49,11 +40,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - Dims `(time, station_id)` with coords `latitude`, `longitude`, `name` on `station_id`; `station_id` is the OpenAQ location id. A CF-1.13 timeSeries station dataset.
 - Each value is the mean of the hourly values over the station's local calendar day, so days are not aligned across time zones. `time` is that local date. Several sensors for one pollutant at a location are averaged.
 - Units are as OpenAQ reports them (µg/m³ for particulates, ppm or ppb for gases), not converted. Each pollutant uses the first unit seen; sensors in another unit, or with no unit, are dropped.
-- Negative daily means and days below `--min-coverage` are NaN; stderr counts each. Days no station kept are absent from `time`.
+- Negative daily means and days below `--min-coverage` are NaN; stderr counts each. Days no station kept are absent from `time`. `data_interval` `1 day`.
 - A requested pollutant with no data is left out with a warning.
 
 ### Notes
-- Set `OPENAQ_API_KEY` in the environment on the first call, including `--probe-latest`. A missing key exits 2; a rejected key exits 1. The key is never printed.
+- Set `OPENAQ_API_KEY` in the environment for every call, including `--probe-latest`. A missing key exits 2; a rejected key exits 1. The key is never printed.
 - A sensor that fails twice is dropped; stderr reports the count. No sensors or no data exits 1.
 - Every sensor is a separate rate-limited request (about 32 per minute), so a large box or long window is slow.
 

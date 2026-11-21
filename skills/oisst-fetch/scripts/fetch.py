@@ -24,7 +24,7 @@ from weather_skills_core.standard_utils import (
 from weather_skills_core.units import convert_dataarray, stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.11"
 
 _OPENDAP_URL = (
     "https://psl.noaa.gov/thredds/dodsC/Datasets/noaa.oisst.v2.highres/sst.day.mean.{year}.nc"
@@ -289,7 +289,7 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
         piece = None
         for attempt in range(len(_READ_RETRY_SLEEPS_S) + 1):
             try:
-                # No dask chunking: chunked OPeNDAP reads were observed to write zeros.
+                # No dask chunking: chunked OPeNDAP reads return zeros.
                 dy = _open_year(year)
                 with dy:
                     src = dy[["sst"]].rename({"lat": "latitude", "lon": "longitude"})

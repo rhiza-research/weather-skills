@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/concat.py *)
 metadata:
-  version: "0.0.11"
+  version: "0.0.13"
   catalog-group: transforms
 ---
 
@@ -26,7 +26,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/concat.py -i A.zarr -i B.zarr [-i ...] --dim 
 - `--output`, `-o` — output Zarr.
 
 ### Output
-One dataset with `--dim` extended. Along lat, lon, x, y, vertical level, time, init time, lead time, or day of year the result is sorted ascending when the inputs came out of order; any other dim (models, members, stations) keeps the input order and the `--coords` order. Each variable is in the first input's units; later inputs in compatible units are converted (`mm hr-1` → `mm day-1`). Attrs come from the first input.
+One dataset with `--dim` extended. Along time, init time, lead time or day of year the result runs ascending, whatever the input order. Along lat, lon, x, y or vertical level it is sorted ascending only when the inputs come out of order, so levels running one way (1000 to 200 hPa) keep that direction; any other dim (models, members, stations) keeps the input order and the `--coords` order. Each variable is in the first input's units; later inputs in compatible units are converted (`mm hr-1` → `mm day-1`). Attrs come from the first input. When some inputs carry `aggregation_coverage`, inputs without it get coverage 1.
 
 ### Notes
 - Every other coordinate must match exactly: same grid, same times, same stations. Put inputs on one grid and window first.

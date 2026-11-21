@@ -27,7 +27,7 @@ from weather_skills_core.standard_utils import (
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.11"
+_SKILL_VERSION = "0.0.12"
 
 _SHORT_NAME = "SPL3SMP_E"
 _FILL = -9999.0
@@ -239,7 +239,7 @@ def _stamp_cf(ds) -> None:
     ds["soil_moisture"].attrs.update(
         standard_name=_SM_STANDARD_NAME,
         units=_SM_UNITS,
-        long_name="volumetric soil moisture (cm3 cm-3)",
+        long_name="volumetric soil moisture",
         grid_mapping=_GRID_MAPPING_NAME,
     )
     ds[_GRID_MAPPING_NAME] = xr.DataArray(0, attrs={})
@@ -282,9 +282,8 @@ def _stamp_cf(ds) -> None:
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Print the latest granule day in the last 21 days (YYYY-MM-DD) on stdout and "
+        "exit. Needs a login. Does not download fields. IDENT is ignored."
     ),
 )
 def fetch(start_time, end_time, bbox, overpass, quality, probe_latest, **kwargs):

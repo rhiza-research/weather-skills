@@ -21,7 +21,7 @@ from weather_skills_core.standard_utils import ensure_normalized_longitude
 from weather_skills_core.units import stamp_data_interval, to_standard_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.12"
 
 SHORTNAMES = {
     "late": "GPM_3IMERGDL",
@@ -66,9 +66,8 @@ def _login() -> None:
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Print the latest published day (YYYY-MM-DD) on stdout and exit. "
+        "Does not download fields. Optional IDENT: late or final (default --version)."
     ),
 )
 def fetch(start_time, end_time, version, bbox, probe_latest, **kwargs):
@@ -127,8 +126,8 @@ def fetch(start_time, end_time, version, bbox, probe_latest, **kwargs):
 
     pieces = []
     with tempfile.TemporaryDirectory(prefix="imerg-fetch-") as td:
-        # One granule at a time: download, cut to --bbox, delete. Holding every
-        # global file (~32 MB a day) at once filled the disk on multi-season windows.
+        # One granule at a time: download, cut to --bbox, delete, so disk use stays
+        # at one global file (~32 MB) however long the window.
         for granule in results:
             for path in earthaccess.download([granule], local_path=td):
                 with xr.open_dataset(path, engine="h5netcdf") as day:

@@ -13,10 +13,10 @@ import sys
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import detect_spatial_dims
 from weather_skills_core.standard_utils import ensure_normalized_longitude, grid_spacing
-from weather_skills_core.units import units_equal
+from weather_skills_core.units import dequantify_dataset, units_equal
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.10"
 
 
 def _spacing(ds, dim):
@@ -69,13 +69,15 @@ def _qmap(values, model, ref):
 )
 @weather_skill.argument("-f", "--factor", type=int)
 @weather_skill.argument("--target-resolution", type=float)
-@weather_skill.argument("--reference-grid")
+@weather_skill.argument("--reference-grid", type=Dataset("spatial"))
 @weather_skill.argument(
     "--qq-reference",
+    type=Dataset("spatial"),
     help="q-q: observed climatology sample on the output grid (the target distribution).",
 )
 @weather_skill.argument(
     "--qq-model",
+    type=Dataset("spatial"),
     help=(
         "q-q: the model's own climatology sample (hindcasts / reforecasts) on the "
         "input grid. Without it the input is its own model sample."
@@ -100,24 +102,26 @@ def downscale(
     n = sum(x is not None for x in (factor, target_resolution, reference_grid))
     if n != 1:
         raise UsageError("exactly one of --factor, --target-resolution, --reference-grid")
-    if algorithm == "q-q" and not qq_reference:
+    if algorithm == "q-q" and qq_reference is None:
         raise UsageError("--algorithm q-q requires --qq-reference")
-    if (qq_reference or qq_model) and algorithm != "q-q":
+    if (qq_reference is not None or qq_model is not None) and algorithm != "q-q":
         raise UsageError("--qq-reference / --qq-model only valid with --algorithm q-q")
 
     lat_dim, lon_dim = detect_spatial_dims(ds)
     if variable:
-        ds = ds[[variable]]
+        if variable not in ds.data_vars:
+            raise UsageError(f"variable {variable!r} not in dataset (have {list(ds.data_vars)})")
+        # drop_vars keeps every coordinate; ds[[...]] would lose time_bounds (dims nv).
+        ds = ds.drop_vars([name for name in ds.data_vars if name != variable])
     ds = ensure_normalized_longitude(ds, lon_dim)
 
     # q-q inputs are checked before the (slow) interpolation. Each cell's sample
     # is every value along the non-spatial dims (years, days, members), pooled.
     samples = {}
     if algorithm == "q-q":
-        for flag, path in (("--qq-reference", qq_reference), ("--qq-model", qq_model)):
-            if path is None:
+        for flag, other in (("--qq-reference", qq_reference), ("--qq-model", qq_model)):
+            if other is None:
                 continue
-            other = xr.open_zarr(path, consolidated=False)
             missing = [v for v in ds.data_vars if v not in other.data_vars]
             if missing:
                 raise UsageError(
@@ -127,7 +131,7 @@ def downscale(
                 )
             for v in ds.data_vars:
                 want = ds[v].attrs.get("units") or format(ds[v].pint.units or "", "~cf")
-                have = other[v].attrs.get("units")
+                have = other[v].attrs.get("units") or format(other[v].pint.units or "", "~cf")
                 if not units_equal(have, want):
                     raise UsageError(
                         f"{flag} {v!r} is in {have!r} but the input is in {want!r}; "
@@ -139,7 +143,8 @@ def downscale(
                         "climatology sample dim besides lat/lon (e.g. time over many "
                         "years, or number)"
                     )
-            samples[flag] = other
+            # Plain numbers, as the input's units were checked equal above.
+            samples[flag] = dequantify_dataset(other)
         if qq_model is None:
             for v in ds.data_vars:
                 if not set(ds[v].dims) - {lat_dim, lon_dim}:
@@ -162,7 +167,7 @@ def downscale(
         )
 
     if reference_grid is not None:
-        ref = xr.open_zarr(reference_grid, consolidated=False)
+        ref = reference_grid
         ref_lat_dim, ref_lon_dim = detect_spatial_dims(ref)
         ref = ensure_normalized_longitude(ref, ref_lon_dim)
         ref_lat, ref_lon = _spacing(ref, ref_lat_dim), _spacing(ref, ref_lon_dim)

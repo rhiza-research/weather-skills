@@ -23,25 +23,27 @@ import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
+import numpy as np
 from weather_skills_core import DataError, UsageError, weather_skill
 from weather_skills_core.cf import stamp_cf_attrs
 from weather_skills_core.standard_utils import bbox_subset
 from weather_skills_core.units import (
     convert_dataarray,
+    data_interval_of,
     precip_amounts_to_rates,
     stamp_data_interval,
     to_standard_units,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.11"
+_SKILL_VERSION = "0.0.14"
 
 # HRES steps
 _FULL_RUN_STEPS = list(range(0, 144 + 1, 3)) + list(range(150, 360 + 1, 6))
 _SHORT_CUTOFF_STEPS = list(range(0, 144 + 1, 3))
 
 # data.ecmwf.int keeps only the inits of the last 4 days (today included);
-# older inits are only on the AWS mirror (from 2023).
+# older inits are only on the AWS mirror (from 2024-02-28).
 _ECMWF_DAYS_KEPT = 4
 
 # Every Open Data level from 1000 to 50 hPa. 10 hPa exists only since IFS
@@ -297,6 +299,17 @@ def _standardize(ds):
         if name in ds.data_vars:
             ds[name] = _to_celsius(ds[name])
     ds = precip_amounts_to_rates(ds)
+    # Without tp nothing is deaccumulated and instant fields keep their labels.
+    # On uneven leads (3- then 6-hourly) give each sample the cell [s, next
+    # lead) like the tp rates, so a day bin holds the samples labelled in that
+    # day; stamp_data_interval would infer cells ending at each step.
+    if "step" in ds.dims and "bounds" not in ds["step"].attrs and data_interval_of(ds) is None:
+        leads = ds["step"].values
+        gaps = np.diff(leads)
+        if len(set(gaps)) > 1:
+            ends = np.append(leads[1:], leads[-1] + gaps[-1])
+            ds = ds.assign_coords(step_bounds=(("step", "nv"), np.stack([leads, ends], axis=1)))
+            ds["step"].attrs["bounds"] = "step_bounds"
     return stamp_data_interval(ds)
 
 
@@ -397,7 +410,7 @@ def fetch(bbox, date, run, variable, probe_latest, max_lead, **kwargs):
             grib = tmp / f"hres_{i}.grib2"
             print(f"Retrieving {', '.join(group_vars)} ({level_type})...", file=sys.stderr)
             # Recent inits try ECMWF first (fastest), then AWS; older inits go
-            # straight to AWS since ECMWF no longer has them. Each source gets
+            # straight to AWS since data.ecmwf.int keeps only the last 4 days. Each source gets
             # one attempt: under load both answer "503 Slow Down", and waiting
             # it out leaves the user waiting for nothing.
             oldest_on_ecmwf = dt.datetime.now(dt.UTC).date() - dt.timedelta(

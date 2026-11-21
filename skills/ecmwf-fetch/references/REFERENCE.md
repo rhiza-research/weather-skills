@@ -8,8 +8,10 @@ daily 00 UTC inits from 2026-01-01, 47 daily leads (0–1104 h). Surface
 fields at the store root; pressure fields in `group="pressure_level"`.
 Catalog precip is already a rate (`kg m-2 s-1`); catalog radiation and
 heat fluxes are 24 h means in `W m-2`, not ECDS's J m-2 since init. 24-hour surface
-statistics are all-NaN at lead 0; this skill drops that lead and shifts
-remaining steps so `step=0` is the first 24 h. Pressure fields carry all
+statistics are all-NaN at lead 0. When every requested field is empty there,
+this skill drops that lead and shifts the remaining steps so `step=0` is the
+first 24 h; otherwise steps keep the catalog labels and `step_bounds` give
+each cell as `[previous lead, s)`. Pressure fields carry all
 101 members on 10 levels (1000–10 hPa); `q` is NaN above 200 hPa.
 
 The catalog stores SST as `sea_surface_temperature` (not `sst`). This skill

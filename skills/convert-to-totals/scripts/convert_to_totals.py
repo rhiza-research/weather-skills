@@ -27,27 +27,40 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.13"
+
+# Added to cell_methods by regularize-time; kept on the totals.
+OVERLAPPING_SAMPLES = "overlapping samples"
 
 
 def _resolve_dim(ds, time_dim):
-    import cf_xarray  # noqa: F401
+    import pandas as pd
+    import xarray as xr
 
     if time_dim:
         if time_dim not in ds.dims:
             raise UsageError(f"--time-dim {time_dim!r} not in dataset (have {list(ds.dims)})")
         return time_dim
-    try:
-        cf_time = ds.cf["time"].name
-    except KeyError:
-        cf_time = "time" if "time" in ds.dims else None
-    if cf_time is not None and cf_time in ds.dims:
-        if ds.sizes[cf_time] == 1 and "step" in ds.dims:
-            return "step"
-        return cf_time
-    if "step" in ds.dims:
-        return "step"
-    return None
+    # The window axis is the time or lead axis cell_methods says was averaged ("step: mean");
+    # other dims' methods ("number: mean") and (interval: ...) notes are skipped. It may be
+    # a scalar coord after select kept one window.
+    axes = []
+    for da in ds.data_vars.values():
+        if AGGREGATION_PERIOD_ATTR in da.attrs:
+            methods = re.sub(r"\([^)]*\)", "", str(da.attrs.get("cell_methods", "")))
+            named = re.findall(r"(\w+):", methods)
+            axes += [n for n in named if n in ds.variables and ds[n].dtype.kind in "MmO"]
+    if not axes:
+        time_index = (pd.DatetimeIndex, pd.TimedeltaIndex, xr.CFTimeIndex)
+        axes = [d for d, index in ds.indexes.items() if isinstance(index, time_index)]
+        axes = [d for d in axes if ds.sizes[d] > 1] or axes
+    axes = list(dict.fromkeys(axes))
+    if len(axes) > 1:
+        raise UsageError(
+            f"more than one axis could hold the windows ({', '.join(axes)}); "
+            "pass --time-dim to choose one"
+        )
+    return axes[0] if axes else None
 
 
 def _sum_cell_methods_dim(da, dim: str | None) -> str:
@@ -116,8 +129,8 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
         "<the fetcher's --probe-latest day>). A forecast init may not reach "
         "that lead yet."
     )
-    if dim is None:
-        # Scalar after select; along e.g. a model dim after concat of selections.
+    if dim not in ds.dims:
+        # One window per value: the window axis was selected down to a scalar, or is unknown.
         cov = ds.coords.get(AGGREGATION_COVERAGE_COORD)
         if cov is not None and (np.asarray(cov.values) < min_coverage - 1e-12).any():
             raise UsageError(
@@ -161,7 +174,7 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
                 f"variable {name!r} is an extreme, not a mean rate "
                 f"(cell_methods {cell_methods!r}); only a mean rate x period is a total"
             )
-        if dim is not None:
+        if dim in ds.dims:
             assert_nonoverlapping_intervals(ds, dim, period)
         total = rate_to_total(da, period, dim=dim if dim in da.dims else None)
         plain = total.pint.dequantify()
@@ -170,13 +183,15 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
         attrs["standard_name"] = STANDARD["precip_amount"]["standard_name"]
         attrs["long_name"] = PRECIP_AMOUNT_LONG_NAME
         # Product rate descriptions ("Average precipitation rate…", "prate",
-        # step_type "avg") no longer describe a period total.
+        # step_type "avg") do not describe a period total.
         attrs.pop("comment", None)
         attrs.pop("short_name", None)
         attrs.pop("step_type", None)
         if looks_like_rate_display_name(attrs.get("GRIB_name")):
             attrs["GRIB_name"] = PRECIP_AMOUNT_LONG_NAME
         attrs["cell_methods"] = format_cell_methods(_sum_cell_methods_dim(da, dim), "sum")
+        if OVERLAPPING_SAMPLES in cell_methods:
+            attrs["cell_methods"] += f" (comment: {OVERLAPPING_SAMPLES})"
         # Keep aggregation_period so plotters can crop the nested precip palette.
         out[name] = plain
         out[name].attrs = attrs

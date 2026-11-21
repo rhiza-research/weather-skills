@@ -5,10 +5,9 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads the public PARDIG Zarr v3 stores and live frames on Google Cloud Storage (gs://pardig_1) anonymously via gcsfs; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.3"
+  version: "0.0.4"
   catalog-group: fetchers
-  variables:
-    - precip
+  variables: "precip"
 ---
 
 # pardig-fetch
@@ -17,8 +16,8 @@ Fetches PARDIG (Precipitation AI Reanalysis, Densely Inferred GPM), an experimen
 
 | `--product` | Store | Period | Inputs |
 |---|---|---|---|
-| `nrt` (default) | `gs://pardig_1/NRT/zarr_rechunked_as_timeseries/2016_to_2025/predictions.zarr`, then from 2026 the live frames `gs://pardig_1/NRT/zarr/2026_to_present/<YYYYMMDDTHHMMSS>/predictions.zarr` | 2016-01-01T07:45 – a few hours ago | ECMWF HRES + geostationary satellites |
-| `lr` | `gs://pardig_1/LR/zarr_rechunked_as_timeseries/1999_to_2023/predictions.zarr` | 1999 – 2023 | ERA5 + GridSat-B1 + microwave sounders |
+| `nrt` (default) | `gs://pardig_1/NRT/zarr_rechunked_as_timeseries/2016_to_2025/predictions.zarr`, then from 2026 the live frames `gs://pardig_1/NRT/zarr/2026_to_present/<YYYYMMDDTHHMMSS>/predictions.zarr` | 2016-01-01T07:45 to about 2–8 hours ago | ECMWF HRES + geostationary satellites |
+| `lr` | `gs://pardig_1/LR/zarr_rechunked_as_timeseries/1999_to_2023/predictions.zarr` | 1999-01-01T00:00 to 2023-12-31T23:45 (ended) | ERA5 + GridSat-B1 + microwave sounders |
 
 ## Usage
 

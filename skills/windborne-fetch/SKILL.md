@@ -1,48 +1,14 @@
 ---
 name: windborne-fetch
-description: "Fetch WindBorne data as a weather-skills Zarr: the WeatherMesh-6 AI forecast (128-member ensemble, 3-hourly to 15 days, 0.25°) as a grid (live or archived runs back to mid-2026), at lat/lon points with spread and percentiles, or as vertical soundings; plain-language site summaries; ERA5 1991–2020 hourly normals at points; the recent ECMWF IFS analysis; or US population-weighted heating and cooling degree days. Pick one with --product. Needs WindBorne API credentials. Use when a task needs WindBorne forecasts, soundings, normals or degree days."
+description: "Fetch WindBorne data as a weather-skills Zarr: the WeatherMesh-6 AI forecast (128-member ensemble, 3-hourly to 15 days, 0.25°) as a grid (live or archived runs back to 2026-05-30), at lat/lon points with spread and percentiles, or as vertical soundings; plain-language site summaries; ERA5 1991–2020 hourly normals at points; the recent ECMWF IFS analysis; or US population-weighted heating and cooling degree days. Pick one with --product. Needs WindBorne API credentials. Use when a task needs WindBorne forecasts, soundings, normals or degree days."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads the WindBorne Forecasts and Insights APIs (api.windbornesystems.com). Requires WB_CLIENT_ID and WB_API_KEY in the environment. A free 2-week trial key (Forecasts and Insights endpoints only) is available with sign-up at https://api.windbornesystems.com/getting-started/.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.8"
+  version: "0.0.10"
   catalog-group: fetchers
-  variables:
-    - precip
-    - t2m
-    - d2m
-    - msl
-    - u10
-    - v10
-    - u100
-    - v100
-    - ws10
-    - ws100
-    - tmax
-    - tmin
-    - sp
-    - tcwv
-    - cape
-    - tcc
-    - ssrd
-    - skt
-    - t
-    - z
-    - q
-    - u
-    - v
-    - td
-    - gh
-    - text
-    - conditions
-    - hdd
-    - cdd
-  openclaw:
-    requires:
-      env:
-        - WB_CLIENT_ID
-        - WB_API_KEY
-    primaryEnv: WB_API_KEY
+  variables: "precip t2m d2m msl u10 v10 u100 v100 ws10 ws100 tmax tmin sp tcwv cape tcc ssrd skt t z q u v td gh text conditions hdd cdd"
+  required-env: "WB_CLIENT_ID WB_API_KEY"
 ---
 
 # windborne-fetch
@@ -63,9 +29,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--product P] --probe-latest
 ```
 
 ### Arguments
-- `--product` — `grid` (default): WeatherMesh-6 gridded forecast. `point`: the forecast at points. `sounding`: vertical profiles at points. `conditions`: plain-language summaries at points, latest run only. `clim`: ERA5 1991–2020 hourly normals at points. `analysis`: ECMWF IFS deterministic analysis, the last ~25 days. `degree-days`: US state HDD/CDD.
+- `--product` — `grid` (default): WeatherMesh-6 gridded forecast. `point`: the forecast at points. `sounding`: vertical profiles at points. `conditions`: plain-language summaries at points, latest run only. `clim`: ERA5 1991–2020 hourly normals at points. `analysis`: ECMWF IFS deterministic analysis, every 6 h, recent weeks only (`--probe-latest` prints the served span). `degree-days`: US state HDD/CDD.
 - `--point` — `LAT,LON[,ID]`, repeatable; required for point, sounding, conditions, clim. IDs default to `P0`, `P1`, …. Forecast points outside the key's region return 403.
-- `--date`, `--run` — init date and hour UTC (`6` or `06`). Default: the latest run; `--date` alone takes its latest run. `grid` also serves archived runs (back to about 1 Jul 2026); `point` and `sounding` only the live runs (about two days); `degree-days` needs `--run` for an archived run.
+- `--date`, `--run` — init date and hour UTC (`6` or `06`). Default: the latest run; `--date` alone takes its latest run. `grid` also serves archived runs, back to the 2026-05-30 17 UTC run; `point` and `sounding` only the live runs (about the last two days); `degree-days` needs `--run` for an archived run.
 - `--bbox` — `N/W/S/E`, grid and analysis. Grid default: the key's region (a box past it is trimmed); analysis default: global.
 - `--variable`, `-v` — repeatable. Short names: `precip` (also `tp`), `t2m`, `d2m`, `msl`, `u10`, `v10`, `u100`, `v100`, `ws10`, `ws100`, `tmax`, `tmin`, `sp`, `tcwv`, `cape`, `tcc`, `ssrd`, `skt`; pressure-level `t`, `z`, `q`, `u`, `v`. Grid and point also take any WindBorne name (kept under it; an unknown one lists them). Analysis serves `precip`, `t2m`, `d2m`, `msl`, winds, `tcc` and the pressure-level five. Default: `precip` (grid), `t2m` (analysis), and for point one request for `t2m`, `d2m`, `precip`, `msl`, `u10`, `v10`, `u100`, `v100`, `ws10`, `ws100`.
 - `--level` — hPa, repeatable; required for pressure-level fields and refused without one. Grid 25 levels, analysis 20, 10–1000 hPa.
@@ -84,10 +50,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--product P] --probe-latest
 - conditions: `(station_id, time)` text `text` and `conditions` (labels, most notable first, `; `-joined), `end_time`, `timezone`; also printed to stderr.
 - clim: `(station_id, time)` hourly from 00Z `--start-time` to 23Z `--end-time`; no `msl`. analysis: `(time, latitude, longitude)` (+ `vertical`). degree-days: `(region, time)` with `hdd`, `cdd` in `degree_Fahrenheit day` per state, DC and Puerto Rico.
 - `precip` is a rate in `mm day-1` over `[time, time + interval)`; instantaneous fields are valid at their time. Temperatures in `degree_Celsius` (spreads in `K`), pressures in `hPa`, `z` in `m2 s-2`.
-- Stamps `weather_skills_source` (`windborne-wm6`, `windborne-climatology` or `windborne-ecmwf-analysis`) and `data_interval`. More in [Details](#details).
+- Stamps `weather_skills_source` (`windborne-wm6`, `windborne-climatology` or `windborne-ecmwf-analysis`) and `data_interval` (analysis: see Details). More in [Details](#details).
 
 ### Notes
-- Set `WB_CLIENT_ID` and `WB_API_KEY` in the environment for every call, including `--probe-latest`; without them it exits 2. Never write their values into files or commands.
+- Set `WB_CLIENT_ID` and `WB_API_KEY` in the environment for every call, including `--probe-latest` (clim `--probe-latest` needs none); without them it exits 2. Never write their values into files or commands.
 - For a point or sounding from an archived run, fetch the grid (with `--level` for profiles) and sample it with point-value.
 - Prefer dynamical-fetch for the ECMWF analysis when it carries what you need: it is credential-free with a longer history.
 
@@ -105,7 +71,7 @@ The first writes the latest run's 15-day ensemble-mean precipitation rate and 2 
 - `precip`, `tmax`, `tmin`, `ssrd` and other `_3h` fields cover `[step, step + 3 h)`; instantaneous fields (`t2m`, `msl`, winds, `z`, …) are valid at `time + step`. With both, the `_3h` fields are NaN at the last lead and the instantaneous ones keep lead 0.
 - `ssrd` stays an amount per 3 h in J m-2. Under `--ensemble std` values stay in kelvin and pascals. Stamps `data_interval = 3 hour` and `windborne_ensemble` (point is always `mean`).
 - A point field whose units the skill does not know (an unusual WindBorne name) has no `units` attr.
-- The grid archive is checked back to 1 Jul 2026 and lists runs from 24 Jun; archived runs download in full (every lead, members and pressure levels).
+- Archived runs download in full (every lead, members and pressure levels).
 - Each grid field, level and lead is a separate request: a full run of one field is 121 requests (a few seconds). `--ensemble members` is ~7 MB per lead over the key region, about 1 GB for a full run of one field.
 - Soundings return every level from 1000 hPa, including levels below the ground at high sites (Nairobi's surface is near 830 hPa). Those values are extrapolated; use the levels where `gh` is above the site elevation. Each point and lead is one request.
 - Other WindBorne names include `boundary_layer_height`, `soil_moisture_level_1` and `wind_speed`.
@@ -117,7 +83,7 @@ The first writes the latest run's 15-day ensemble-mean precipitation rate and 2 
 - Normals, not observed values; not limited to the forecast region. Three months at once works. `precip` is a rate over `[time, time + 1 h)`. Stamps `data_interval = 1 hour`, `climatology_normal` and `climatology_rolling_days`.
 
 ### analysis
-- Each analysis is downloaded global (~4 MB per field) and cut locally. A range outside the ~25 served days exits 1.
+- Each analysis is downloaded global (~4 MB per field) and cut locally. A range with no served analysis exits 1 and prints the served span.
 - `precip` covers the hour before each analysis, labelled at its start (05Z for the 06Z analysis), stamped `data_interval = 1 hour`. The other five hours of each 6 h step are not served, so it does not add up to 6-hourly or daily totals.
 - Other fields sit on the analysis times and stamp `data_interval = 6 hour` when there is more than one. With `precip` and other fields together, `time` holds both sets of times and each field is NaN at the other's.
 

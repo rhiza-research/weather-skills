@@ -1,22 +1,18 @@
 ---
 name: ghcn-daily-fetch
-description: "Fetch NOAA GHCN-Daily station observations (daily precipitation and max, min, mean temperature) for a date range and lat/lon box, as a weather-skills station Zarr. No credentials needed; covers about 130,000 stations worldwide. Use when a task needs daily in-situ station data anywhere in the world, for example to compare against gridded satellite, reanalysis, or forecast data."
+description: "Fetch NOAA GHCN-Daily station observations (daily precipitation and max, min, mean temperature; 1750 to a few days ago, varying by station) for a date range and lat/lon box, as a weather-skills station Zarr. No credentials needed; covers about 130,000 stations worldwide. Use when a task needs daily in-situ station data anywhere in the world, for example to compare against gridded satellite, reanalysis, or forecast data."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Reads NOAA GHCN-Daily from NCEI's public HTTPS tree (www.ncei.noaa.gov/pub/data/ghcn/daily); no credentials required.
+compatibility: Requires Python 3.12 and uv. Reads NOAA GHCN-Daily from NCEI's public HTTPS tree (www.ncei.noaa.gov/pub/data/ghcn/daily), falling back to the noaa-ghcn-pds S3 mirror when NCEI returns 404; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.11"
+  version: "0.0.13"
   catalog-group: fetchers
-  variables:
-    - precip
-    - tmax
-    - tmin
-    - tavg
+  variables: "precip tmax tmin tavg"
 ---
 
 # ghcn-daily-fetch
 
-Downloads GHCN-Daily station records from NCEI's public HTTPS tree and writes the stations inside a box as one station Zarr.
+Downloads GHCN-Daily station records from NCEI's public HTTPS tree and writes the stations inside a box as one station Zarr. When NCEI returns 404, it reads the [noaa-ghcn-pds](https://noaa-ghcn-pds.s3.amazonaws.com/index.html) S3 mirror and warns on stderr: some of the mirror's per-station files stopped updating in Feb 2025, so recent days can be missing for those stations.
 
 ## Usage
 
@@ -25,6 +21,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time Y
 # Print the newest observation date and exit
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
+
+**Coverage:** daily, from 1750 for the oldest stations to about 3 days ago; each station has its own span.
 
 ### Arguments
 - `--start-time`, `--end-time` — inclusive date range, `YYYY-MM-DD`.
@@ -37,7 +35,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ### Output
 - Dims `(time, station_id)` with coords `latitude`, `longitude`, `name` on `station_id`. A CF-1.13 timeSeries station dataset (`featureType="timeSeries"`).
 - `precip` in `mm day-1`; `tmax`, `tmin`, `tavg` in `degree_Celsius`. Stamped `data_interval = "1 day"`.
-- Only quality-passed values are kept. Precip zeros that GHCN inferred rather than measured (measurement flag `P` or `I`) are dropped; trace precip is 0.
+- Only quality-passed values are kept. Precip zeros that GHCN inferred rather than measured are dropped; trace precip is 0.
 - `time` is each station's local observation day, not a UTC day. The axis runs daily from `--start-time` to the last day any station reported; days nobody reported are NaN. Nothing is padded past the data.
 - Stations with no kept value are left out. A requested variable no station reported is left out with a warning.
 
