@@ -740,7 +740,7 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
         "S2S fields to retrieve. Pass several names in one flag (`-v precip t2m`), "
         "repeat `-v`, or comma-separate (`-v precip,t2m`). Most used first: precip "
         "(also tp), t2m, sst. Pressure-level: gh, t, u, v, w, q. Default precip. "
-        "Other names are cfgrib short names (sst, t, not ARCO 2m_temperature)."
+        "Other names are cfgrib short names (sst, t) or ECDS names (2_m_temperature)."
     ),
 )
 @weather_skill.argument(
@@ -750,9 +750,8 @@ def _is_s2s_embargo_error(exc: BaseException) -> bool:
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Print the latest init date (YYYY-MM-DD) on dynamical.org on stdout and exit. "
+        "Does not download fields. IDENT is ignored."
     ),
 )
 def fetch(bbox, date, variable, probe_latest, **kwargs):
@@ -913,7 +912,7 @@ def fetch(bbox, date, variable, probe_latest, **kwargs):
                 ens = xr.concat([pf, cf], dim="number").sortby("number")
             else:
                 # Control-only fields keep a length-1 number axis so the merge
-                # below leaves members 1..50 NaN instead of dropping `number`.
+                # below leaves members 1..100 NaN instead of dropping `number`.
                 ens = cf.expand_dims("number")
             if key[0] == "daily":
                 # cfgrib labels a 24 h mean at its window end; relabel to the

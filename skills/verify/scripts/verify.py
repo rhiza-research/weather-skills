@@ -631,7 +631,7 @@ def verify(
             )
     elif {"rps", "rps_clim"} & set(statistics) and (fc_edges is None or not members):
         raise UsageError(
-            "rps and rpss need either a forecast of quintile probabilities (pbc-correct) or an "
+            "rps and rpss need either a forecast of quintile probabilities (pbc-fetch) or an "
             "ensemble (number dim) with --fc-edges and --obs-edges from summarize-dim "
             "--method quantile."
         )
@@ -714,7 +714,7 @@ def verify(
         if "quantile" not in eds[name].dims or "number" in eds[name].dims:
             raise UsageError(
                 f"{role} {name!r} has dims {list(eds[name].dims)}; it needs a quantile dim and no "
-                "number dim (summarize-dim --dim time --dim number --method quantile --q 0.333 0.667)."
+                "number dim (summarize-dim --dim time --dim number --method quantile -q 0.333 -q 0.667)."
             )
         e = eds[name].sortby("quantile")
         side.append((key, e.drop_vars("quantile").rename(quantile="category_edge"), role))

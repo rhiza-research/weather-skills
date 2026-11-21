@@ -28,7 +28,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - `--start-time`, `--end-time` — inclusive date range. A start before 1981-01-01 exits 2.
 - `--bbox` — `N/W/S/E` decimal degrees; keeps cell centres inside, edges inclusive. Omit for the full 60°S–60°N land grid.
 - `--probe-latest` — print the latest published day (`YYYY-MM-DD`) on stdout and exit. Takes no value. stderr names the product, e.g. `latest=2026-10-10 (preliminary); final through 2026-08-31`.
-- `--workers` — ignored. Default: 8.
+- `--workers` — accepted and ignored.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output

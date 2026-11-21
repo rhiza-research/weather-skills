@@ -296,8 +296,7 @@ def _open_dataset(state, dataset) -> dict:
     probe=True,
     help=(
         "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Does not download fields. Optional IDENT: a dataset id (default --dataset)."
     ),
 )
 @weather_skill.argument(
@@ -311,7 +310,10 @@ def _open_dataset(state, dataset) -> dict:
 )
 @weather_skill.argument(
     "--max-lead",
-    help=("Forecasts only: keep output steps up to this one (240h, 10D). Default: every step."),
+    help=(
+        "Forecasts only: keep output steps up to this one (240h, 10D). Fields relabelled "
+        "to interval start keep only the intervals that end by it. Default: every step."
+    ),
 )
 def fetch(
     bbox,
@@ -664,9 +666,8 @@ def fetch(
             ds = ds.assign_coords(step_bounds=(("step", "nv"), np.stack([starts, leads], axis=1)))
             ds["step"].attrs["bounds"] = "step_bounds"
     # WeatherNext 2 and 3 have no lead 0: the first lead ends the first period
-    # (a 6 h total, step_type accum, or a 1 h mean rate, step_type avg). When
-    # every field is such a period, relabel to interval start.
-    # Small negative totals are model artifacts; the catalog says to zero them.
+    # (a mean rate, step_type avg, or a total, step_type accum). When every
+    # field is such a period, relabel to interval start.
     accum = [name for name in ds.data_vars if ds[name].attrs.get("step_type") == "accum"]
     for name in accum:
         ds[name] = ds[name].clip(min=0, keep_attrs=True)
@@ -741,7 +742,7 @@ def fetch(
         out = stamp_data_interval(out, period=accum_interval)
     else:
         out = stamp_data_interval(out, dim="step" if is_forecast else None)
-    # Period totals (WeatherNext 2 6 h precip in mm) become mm day-1 rates.
+    # Any remaining period totals in mm become mm day-1 rates.
     return precip_amounts_to_rates(out, deaccumulate=False)
 
 

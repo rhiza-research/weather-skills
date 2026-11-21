@@ -144,6 +144,7 @@ Required names (from each skill's `metadata.required-env`; its
 - `3dpaws-fetch` — `CHORDS_EMAIL`, `CHORDS_API_KEY`
 - `cumulus-fetch` — `AZURE_STORAGE_SAS_TOKEN`
 - `cumulus-downscaled-fetch` — `AZURE_STORAGE_SAS_TOKEN`
+- `hindcast-fetch` — `AZURE_STORAGE_SAS_TOKEN` (Cumulus hindcasts only)
 - `neuralgcm-fetch` / `pbc-fetch` / `weathernext-fetch` — `GCLOUD_SERVICE_CREDENTIALS` (plus `GOOGLE_CLOUD_PROJECT` for the requester-pays WeatherNext 3 ensemble)
 
 `--probe-latest` still needs credentials when the probe talks to a keyed

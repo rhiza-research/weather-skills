@@ -28,7 +28,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i IN.zarr -o OUT.zarr (--di
 - `--quantile`, `-q` — with `quantile`: a value in 0–1 (repeatable, `-q 0.1 -q 0.9`; one only with `--by`).
 - `--variable`, `-v` — summarize only this variable (repeatable). Default: all.
 - `--lat-weighted` — with `mean` over latitude: weight rows by cos(latitude) for a true area mean. Not with `--by`.
-- `--min-coverage` — for a `--by` time label or a `sum` over `time`/`step`: groups or cells with less than this fraction (0–1) of their expected steps become NaN. Default `1.0`: no gaps. Keep it unless the task accepts estimates. Steps that are not on one regular grid (weeks from 1 Feb of each year) need `0`: each group then uses the steps it has.
+- `--min-coverage` — for a `--by` time label, or a `sum` over `time`/`step` without `--by`: groups or cells with less than this fraction (0–1) of their expected steps become NaN. Default `1.0`: no gaps. Keep it unless the task accepts estimates. Steps that are not on one regular grid (weeks from 1 Feb of each year) need `0`: each group then uses the steps it has.
 
 ### Output
 - Selected variables lose the summarized dims; other variables pass through with all their dims, so a dim stays while any of them carries it. Drop unneeded variables (drop) first to remove it.
@@ -45,8 +45,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i ecmwf_s2s_kenya.zarr -o e
 Writes the ECMWF ensemble spread (std across the 101 members), in the input units.
 
 ## Details
-- **Time groups.** Each step goes in the group where its cell starts: the start of its `time_bounds` cell if it has one (a week labelled by its last day counts from its first day), else its time label. `--by` time labels must be label-group's `year`, `month`, `dayofyear` or `month_group`. A repeated step is refused, as is a step longer than a day that crosses into the next group (a week from 27 May under `MAM`); aggregate to daily or monthly steps first. Month-long cells count as monthly steps.
-- **Coverage** is the fraction of expected steps that have data, at each cell or station. A `--by` group expects every step of its calendar period (92 for MAM of daily data), so a season cut off by the start or end of the record is incomplete; a `sum` expects every step it adds. A step with `aggregation_coverage` counts as that fraction. Values below `--min-coverage` become NaN before any further reduction; gaps are never filled.
+- **Time groups.** Each step goes in the group where its cell starts: the start of its `time_bounds` cell if it has one (a week labelled by its last day counts from its first day), else its time label. Overlapping cells (rolling windows) go by their time label, as in label-group. `--by` time labels must be label-group's `year`, `month`, `dayofyear` or `month_group`. A repeated step is refused, as is a step longer than a day that crosses into the next group (a week from 27 May under `MAM`); aggregate to daily or monthly steps first. Month-long cells count as monthly steps.
+- **Coverage** is the fraction of expected steps that have data, at each cell or station. A `--by` group expects every step of its calendar period (92 for MAM of daily data), so a season cut off by the start or end of the record is incomplete; a `sum` without `--by` expects every step it adds. A step with `aggregation_coverage` counts as that fraction. Values below `--min-coverage` become NaN before any further reduction; gaps are never filled.
 - **Attributes.** The statistic is added to `cell_methods` (`number: standard_deviation`, `latitude: longitude: mean (grouped by admin_1)`). `std` and `sum` set `long_name` and drop `GRIB_name`, `short_name` and `comment`. A `sum` over `time` or `step` stamps the summed span as `aggregation_period`: ten `1 day` steps give `10 day`, daily by MAM `92 day`, the longest group's when lengths differ, every year's run when no `year` label (three MAMs: `276 day`); calendar steps keep their unit (`3 month`).
 
 ### Grouped examples
@@ -54,16 +54,16 @@ On labels from `label-group --level admin_1 --time year --time month --time MAM,
 
 ```bash
 # County-mean daily rainfall: (time, lat, lon) -> (time, admin_1)
-uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i chirps_labeled.zarr -o chirps_county_daily.zarr --by admin_1 --method mean
+uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i chirps_labelled.zarr -o chirps_county_daily.zarr --by admin_1 --method mean
 
 # Mean rate for each calendar month: (time, lat, lon) -> (month, lat, lon)
-uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i chirps_labeled.zarr -o chirps_monthly_clim.zarr --by month --method mean
+uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i chirps_labelled.zarr -o chirps_monthly_clim.zarr --by month --method mean
 ```
 
 Seasonal totals need totals: aggregate to months (aggregate-temporal --period monthly), convert-to-totals, label, then sum.
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i chirps_monthly_mm_labeled.zarr -o chirps_season_totals.zarr --by year --by month_group --method sum
+uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i chirps_monthly_mm_labelled.zarr -o chirps_season_totals.zarr --by year --by month_group --method sum
 uv run ${CLAUDE_SKILL_DIR}/scripts/summarize_dim.py -i chirps_season_totals.zarr -o chirps_county_season_totals.zarr --by admin_1 --method mean
 ```
 The first gives each cell's MAM and OND total in mm per year (NaN for a season the record does not fully cover); the second averages them over each county.

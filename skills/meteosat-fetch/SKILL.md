@@ -1,6 +1,6 @@
 ---
 name: meteosat-fetch
-description: "Fetch Meteosat geostationary satellite imagery (FCI or SEVIRI) over a lat/lon box at chosen times on one day from the EUMETSAT Data Store, as a weather-skills Zarr of visible reflectance (%) and infrared brightness temperature (K) on a regular lat/lon grid. Covers Africa, Europe and the Indian Ocean every 10-15 minutes: SEVIRI from 2004 (Indian Ocean from 2017), FCI from 2024-09-24, to about 20 minutes ago. Needs EUMETSAT credentials. Use for snapshots of cloud tops, convection, fog or dust: each scan is a 200-300 MB download, so calls are capped at 12 scans by default and long time series are out of scope."
+description: "Fetch Meteosat geostationary satellite imagery (FCI or SEVIRI) over a lat/lon box at chosen times on one day from the EUMETSAT Data Store, as a weather-skills Zarr of visible reflectance (%) and infrared brightness temperature (K) on a regular lat/lon grid. Covers Africa, Europe and the Indian Ocean every 10-15 minutes: SEVIRI from 2004 (Indian Ocean from 2017), FCI from 2024-09-24, to about 20 minutes ago. Needs EUMETSAT credentials. Use for snapshots of cloud tops, convection, fog or dust: each scan is a 180-300 MB download, so calls are capped at 12 scans by default and long time series are out of scope."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Requires EUMETSAT_CONSUMER_KEY and EUMETSAT_CONSUMER_SECRET in the environment, or an eumdac credentials file at ~/.eumdac/credentials (free with sign-up — register at https://user.eumetsat.int, then create the key at https://api.eumetsat.int/api-key/).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -32,8 +32,6 @@ Each runs to about 20 minutes ago (`--probe-latest`).
 | `0deg` `seviri` | 2004-01-19 10:30 UTC | 15 min |
 | `iodc` `seviri` | 2017-02-01 10:00 UTC | 15 min |
 | `0deg` `fci` | 2024-09-24 08:30 UTC | 10 min |
-
-Without `--instrument`, dates before FCI use SEVIRI.
 
 ### Arguments
 - `--date` — UTC day of the scans, `YYYY-MM-DD`. One day per call; run once per day for times spanning midnight.

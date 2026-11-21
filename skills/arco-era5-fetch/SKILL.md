@@ -1,6 +1,6 @@
 ---
 name: arco-era5-fetch
-description: "Fetch ERA5 hourly reanalysis (temperature, wind, precipitation, pressure-level fields, and more; 1940 to about a week ago) for a date range and region from Google's public ARCO-ERA5 Zarr store, as a weather-skills Zarr. No credentials needed. Use when a task needs gridded reanalysis as ground truth for comparison, verification, or analysis."
+description: "Fetch ERA5 hourly reanalysis (temperature, wind, precipitation, pressure-level fields, and more; 1940 to about 6 days ago) for a date range and region from Google's public ARCO-ERA5 Zarr store, as a weather-skills Zarr. No credentials needed. Use when a task needs gridded reanalysis as ground truth for comparison, verification, or analysis."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads the public ARCO-ERA5 analysis-ready Zarr from Google Cloud (gs://gcp-public-data-arco-era5) over anonymous access; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -36,7 +36,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --list-variables
 
 ### Output
 - Dims `(time, latitude, longitude)`, hourly, plus `level` (hPa) for pressure-level fields. Longitude is `[-180, 180)`.
-- `2m_temperature` and `temperature` in `degree_Celsius`. Precip amounts (`total_precipitation`, `convective_precipitation`, `large_scale_precipitation`) become `mm day-1` rates, labelled at the start of their hour, so a day's 00–23 UTC rows cover that day. Other fields keep ERA5 units and labels.
+- `2m_temperature` and `temperature` in `degree_Celsius`; `mean_sea_level_pressure` and `surface_pressure` in `hPa`. Precip amounts (`total_precipitation`, `convective_precipitation`, `large_scale_precipitation`) become `mm day-1` rates, labelled at the start of their hour, so a day's 00–23 UTC rows cover that day. Other fields keep ERA5 units and labels.
 - Every variable has `data_interval="1 hour"`; the dataset has `weather_skills_source="arco-era5"`.
 
 ### Notes

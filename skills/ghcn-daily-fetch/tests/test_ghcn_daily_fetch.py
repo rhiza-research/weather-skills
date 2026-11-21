@@ -181,9 +181,32 @@ def test_station_csv_falls_back_to_mirror_when_ncei_404s(mod):
         urls.append(url)
         return Resp(404) if "ncei" in url else Resp(200, b"mirror")
 
-    with patch.object(mod.requests, "get", side_effect=get):
+    with (
+        patch.object(mod.requests, "get", side_effect=get),
+        patch.object(mod, "_mirror_warned", mod.threading.Event()),
+    ):
         assert mod._fetch_station_csv("USW00094728") == b"mirror"
     assert urls == [
         "https://www.ncei.noaa.gov/pub/data/ghcn/daily/by_station/USW00094728.csv.gz",
         "https://noaa-ghcn-pds.s3.amazonaws.com/csv.gz/by_station/USW00094728.csv.gz",
     ]
+
+
+def test_station_csv_mirror_fallback_warns_once(mod, capsys):
+    class Resp:
+        def __init__(self, status, content=b""):
+            self.status_code, self.content = status, content
+
+        def raise_for_status(self):
+            pass
+
+    def get(url, **_kwargs):
+        return Resp(404) if "ncei" in url else Resp(200, b"mirror")
+
+    with (
+        patch.object(mod.requests, "get", side_effect=get),
+        patch.object(mod, "_mirror_warned", mod.threading.Event()),
+    ):
+        mod._fetch_station_csv("USW00094728")
+        mod._fetch_station_csv("USW00012345")
+    assert capsys.readouterr().err.count(mod._MIRROR_WARNING) == 1

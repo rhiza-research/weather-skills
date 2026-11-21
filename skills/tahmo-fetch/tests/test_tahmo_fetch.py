@@ -633,6 +633,7 @@ def test_gridded_fills_regular_grid_without_tahmo_credentials(tmp_path, mod, fet
     assert int(p.notnull().sum()) == 4
     assert p.attrs["units"] == "mm day-1"
     assert p.attrs.get("data_interval") == "1 day"
+    assert p.attrs["cell_methods"] == "area: mean"
     assert ds.attrs["weather_skills_source"] == "sheerwater:hindcasts/tahmo_africa_precip.zarr"
     n = ds["precip_count"]
     assert n.dims == p.dims

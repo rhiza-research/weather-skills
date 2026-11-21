@@ -53,6 +53,6 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --date 2026-10-12 --bbox 5.5/33.5/-5
 ```
 Writes the 00 UTC ensemble's 6-hourly precip rates over Kenya for 60 days.
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time 2026-03-01 --end-time 2026-05-31 --bbox 5.5/33.5/-5/42.5 -v precip -o neuralgcm_kenya_mam.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time 2026-09-01 --end-time 2026-10-31 --bbox 5.5/33.5/-5/42.5 -v precip -o neuralgcm_kenya_sep_oct.zarr
 ```
-Writes every published 00 UTC init from March to May over Kenya, one `time` per init.
+Writes every published 00 UTC init from September to October over Kenya, one `time` per init.

@@ -25,7 +25,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/deaccumulate.py -i IN.zarr -o OUT.zarr [-v VA
 - `--variable`, `-v` — variable to deaccumulate. Required when the input has more than one data variable.
 
 ### Output
-- `step` is one shorter: each value covers `[step[i], step[i+1])` and is labeled at its left edge; the last input step is dropped. `valid_time`, if present, is recomputed as `time + step`.
+- `step` is one shorter: each value covers `[step[i], step[i+1])` and is labelled at its left edge; the last input step is dropped. `valid_time`, if present, is recomputed as `time + step`.
 - Precipitation amounts (`mm`, `m`, `kg m-2`) become `mm day-1` (`lwe_precipitation_rate`), each increment divided by its own interval length. Other variables (e.g. `ssrd` in `J m-2`) become per-interval increments in their input units.
 - Increments below zero become 0. NaN stays NaN.
 - Evenly spaced steps get `data_interval` (e.g. `1 day`); uneven steps get CF `step_bounds` (start and end of each interval).

@@ -17,10 +17,8 @@ from weather_skills_core.units import stamp_data_interval, to_standard_units
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
 _SKILL_VERSION = "0.0.9"
 
-# JAXA's own Earth API (data.earth.jaxa.jp / pip install jaxa-earth), not
-# Earth Engine: registration-free, no credentials, genuinely bbox-subsetted
-# server-side (COG + STAC -- confirmed by the returned array being
-# region-sized, not global, and by the tiepoint-based tiling code itself).
+# JAXA's Earth API (data.earth.jaxa.jp, the jaxa-earth package): no
+# credentials, and the bbox is subset on the server (COG + STAC).
 _COLLECTION = "JAXA.EORC_GSMaP_standard.Gauge.v6_hourly"
 _BAND = "PRECIP"
 _PPU = 10  # pixels per degree = 0.1 deg, GSMaP's native resolution
@@ -48,11 +46,10 @@ def _fetch_day(day_str: str, bbox):
     # STAC ids ("YYYY-MM/DD-hh/") label each returned image's UTC hour.
     hours = [pd.Timestamp(f"{i[:4]}-{i[5:7]}-{i[8:10]}T{i[11:13]}:00") for i in coll.stac_date.id]
     coll = coll.filter_resolution(ppu=_PPU).filter_bounds(bbox=[w, s, e, n]).select(band=_BAND)
-    # jaxa-earth NaNs every pixel, in every image, outside the FIRST image's
-    # stored [min, max] -- that image's own value range (e.g. max 54 mm/hr),
-    # not a validity range -- so heavier rain in any later hour or the other
-    # hemisphere tile became NaN. Drop that range; _to_dataarray masks the
-    # negative error codes itself.
+    # jaxa-earth NaNs every pixel outside the first image's stored [min, max],
+    # which is that image's own value range, not a validity range: heavier rain
+    # in any other image would become NaN. Drop the max; _to_dataarray masks
+    # the negative error codes itself.
     coll.stac_bounds.json[0][0]["assets"][_BAND]["je:rasters"]["dn"].pop("max", None)
     return coll.get_images().raster, hours
 
@@ -89,9 +86,8 @@ def _to_dataarray(raster, hours):
     "--bbox",
     required=True,
     help=(
-        "N/W/S/E bounding box (required -- genuinely subsets server-side; "
-        "there is no whole-globe fetch here). Use resolve-region to turn a "
-        "country or named region into this value."
+        "N/W/S/E bounding box (required; subset on the server). Use resolve-region "
+        "to turn a country or named region into this value."
     ),
 )
 def fetch(start_time, end_time, bbox, **kwargs):

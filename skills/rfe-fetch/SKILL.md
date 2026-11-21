@@ -12,7 +12,7 @@ metadata:
 
 # rfe-fetch
 
-Downloads RFE2 daily rainfall for Africa from CPC's FEWS NET archive, one GeoTIFF per day, as one `precip` variable.
+Downloads RFE2 daily rainfall for Africa from CPC's FEWS NET archive, as one `precip` variable.
 
 ## Usage
 
@@ -27,10 +27,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - `--start-time`, `--end-time` — inclusive range of days, `YYYY-MM-DD`. A start before 2001-01-01 exits 2.
 - `--bbox` — `N/W/S/E` inside 40N/20W/40S/55E. Omit for the whole Africa grid (801 × 751 cells). A box outside the grid exits 1.
 - `--probe-latest` — print the latest published day (`YYYY-MM-DD`) and exit; reads only the directory listing.
-- `--output`, `-o` — output Zarr.
+- `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-`precip` on `(time, latitude, longitude)` in `mm day-1`, 0.1° cells centred on whole tenths, latitude ascending. Each `time` is a day at 00:00 whose value is the rainfall from 06Z that day to 06Z the next, so days line up with CHIRPS on `time` (with a six-hour offset in the actual window). Ocean cells have satellite-only values.
+`precip` on `(time, latitude, longitude)` in `mm day-1`, 0.1° cells centred on whole tenths, latitude ascending. Each time is a day at 00:00 holding the rainfall from 06 UTC that day to 06 UTC the next. Ocean cells have satellite-only values.
 
 ### Notes
 - CPC publishes each day the following afternoon UTC. For a recent window, end on `--probe-latest`, not today.
@@ -45,8 +45,8 @@ Writes July–September 2026 daily RFE2 rainfall over Kenya, ready to aggregate 
 
 ## Details
 
-RFE2 merges GTS rain gauges with infrared (GPI) and microwave (SSM/I, AMSU) satellite estimates. The grid is read from each file's geotransform; if it ever differs between days, the skill exits 1 rather than mixing grids. CPC's missing marker (-999) becomes NaN. Known archive gaps include 2007-11-13, 2023-07-25, 2023-12-28 and 2024-08-06. CPC notes that a few pixels on some days in 2005 exceed 300 mm/day; they pass through unchanged.
+RFE2 merges GTS rain gauges with infrared (GPI) and microwave (SSM/I, AMSU) satellite estimates. Days on different grids exit 1. Missing cells are NaN. Known archive gaps include 2007-11-13, 2023-07-25, 2023-12-28 and 2024-08-06. CPC notes that a few pixels on some days in 2005 exceed 300 mm/day.
 
-After aggregate-temporal, a window with a missing day has `aggregation_coverage` below 1, so convert-to-totals (default `--min-coverage 1.0`) drops it.
+After aggregate-temporal, a window with a missing day has `aggregation_coverage` below 1, so convert-to-totals drops it by default.
 
 Each day is a ~0.7 MB download, fetched 8 at a time and clipped to `--bbox` as it arrives; three months over Kenya take about 15 s.

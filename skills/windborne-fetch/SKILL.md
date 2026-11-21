@@ -50,10 +50,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py [--product P] --probe-latest
 - conditions: `(station_id, time)` text `text` and `conditions` (labels, most notable first, `; `-joined), `end_time`, `timezone`; also printed to stderr.
 - clim: `(station_id, time)` hourly from 00Z `--start-time` to 23Z `--end-time`; no `msl`. analysis: `(time, latitude, longitude)` (+ `vertical`). degree-days: `(region, time)` with `hdd`, `cdd` in `degree_Fahrenheit day` per state, DC and Puerto Rico.
 - `precip` is a rate in `mm day-1` over `[time, time + interval)`; instantaneous fields are valid at their time. Temperatures in `degree_Celsius` (spreads in `K`), pressures in `hPa`, `z` in `m2 s-2`.
-- Stamps `weather_skills_source` (`windborne-wm6`, `windborne-climatology` or `windborne-ecmwf-analysis`) and `data_interval`. More in [Details](#details).
+- Stamps `weather_skills_source` (`windborne-wm6`, `windborne-climatology` or `windborne-ecmwf-analysis`) and `data_interval` (analysis: see Details). More in [Details](#details).
 
 ### Notes
-- Set `WB_CLIENT_ID` and `WB_API_KEY` in the environment for every call, including `--probe-latest`; without them it exits 2. Never write their values into files or commands.
+- Set `WB_CLIENT_ID` and `WB_API_KEY` in the environment for every call, including `--probe-latest` (clim `--probe-latest` needs none); without them it exits 2. Never write their values into files or commands.
 - For a point or sounding from an archived run, fetch the grid (with `--level` for profiles) and sample it with point-value.
 - Prefer dynamical-fetch for the ECMWF analysis when it carries what you need: it is credential-free with a longer history.
 

@@ -52,9 +52,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox 5.5/33.5/-5/42.5 -o cumulus_k
 ```
 Writes the latest init's 30-member daily precipitation rates over Kenya for 46 days.
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time 2026-03-01 --end-time 2026-05-31 --bbox 5.5/33.5/-5/42.5 -o cumulus_kenya_mam.zarr
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time 2026-09-01 --end-time 2026-11-15 --bbox 5.5/33.5/-5/42.5 -o cumulus_kenya_sep_nov.zarr
 ```
-Writes every 00 UTC init from March to May over Kenya, one `time` per init.
+Writes every 00 UTC init from 2026-09-01 to 2026-11-15 over Kenya, one `time` per init.
 
 ## Details
 

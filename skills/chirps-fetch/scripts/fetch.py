@@ -107,7 +107,7 @@ def _latest_day(dataset_id: str) -> date | None:
     "--workers",
     type=int,
     default=DEFAULT_WORKERS,
-    help="Ignored; retained for CLI compatibility with the previous TIF fetcher.",
+    help="Ignored.",
 )
 @weather_skill.argument(
     "--probe-latest",

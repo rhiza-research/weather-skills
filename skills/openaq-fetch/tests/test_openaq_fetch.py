@@ -170,6 +170,40 @@ def _run(fetch, out, *extra, start="2024-06-01", end="2024-06-02"):
     )
 
 
+def test_gappy_days_stamped_one_day_interval(tmp_path, mod, fetch):
+    out = tmp_path / "out.zarr"
+    sensors = [
+        {
+            "sensor_id": 1,
+            "parameter": "pm25",
+            "units": "µg/m³",
+            "station_id": "loc1",
+            "name": "Test",
+            "latitude": 1.0,
+            "longitude": 10.0,
+        }
+    ]
+
+    def fake_sensor_daily(_session, desc, _start_iso, _end_iso):
+        return [("2026-01-01", 12.5, 24, 24), ("2026-01-03", 13.0, 24, 24)]
+
+    with (
+        patch.dict(os.environ, {"OPENAQ_API_KEY": "test-key"}),
+        patch.object(mod, "_find_sensors", return_value=sensors),
+        patch.object(mod, "_sensor_daily", side_effect=fake_sensor_daily),
+        patch.object(mod.requests, "Session", return_value=MagicMock()),
+    ):
+        run_skill(
+            fetch,
+            *("--start-time", "2026-01-01", "--end-time", "2026-01-03"),
+            *("--bbox", "2/9/0/11", "-v", "pm25", "-o", str(out)),
+        )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds.sizes["time"] == 2
+    assert ds["pm25"].attrs.get("data_interval") == "1 day"
+
+
 def test_daily_values_labelled_by_station_local_date(tmp_path, mod, fetch, fast):
     # East of Greenwich the local-midnight start of 2024-06-01 is 2024-05-31 in UTC;
     # labelling by the utc stamp shifted every value one day early.

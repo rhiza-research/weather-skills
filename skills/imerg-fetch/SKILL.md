@@ -1,6 +1,6 @@
 ---
 name: imerg-fetch
-description: "Fetch NASA IMERG daily precipitation (global 0.1° grid) for a date range from NASA GES DISC via Earthdata login, as a weather-skills Zarr. Serves the daily Late (GPM_3IMERGDL, 1998 to 1–2 days ago) and Final (GPM_3IMERGDF, gauge-adjusted research quality, 1998 to 2025-09) files. Use only for IMERG Final. For IMERG Late or Early, recent rainfall, or any day after Final ends, use dynamical-fetch instead: it needs no login, reads only the box, and covers 1998 to now."
+description: "Fetch NASA IMERG daily precipitation (global 0.1° grid) for a date range from NASA GES DISC via Earthdata login, as a weather-skills Zarr. Serves the daily Late (GPM_3IMERGDL, 1998 to 1–2 days ago) and Final (GPM_3IMERGDF, gauge-adjusted research quality, months behind real time) files. Use only for IMERG Final. For IMERG Late or Early, recent rainfall, or any day after Final ends, use dynamical-fetch instead: it needs no login, reads only the box, and covers 1998 to now."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Authenticates to NASA Earthdata via the `earthaccess` library — set EARTHDATA_USERNAME and EARTHDATA_PASSWORD in the environment, or use a `.netrc` entry for `urs.earthdata.nasa.gov`. Earthdata accounts are free with sign-up at https://urs.earthdata.nasa.gov/users/new.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
@@ -46,7 +46,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [late|final]
 ### Notes
 - Credentials come from `EARTHDATA_USERNAME` / `EARTHDATA_PASSWORD`, then `~/.netrc`; failure exits 1.
 - Final lags months; run `--probe-latest final` and use `final` only up to that day. Days after it come from dynamical-fetch `nasa-imerg-analysis-late`, so a window crossing that day is two fetches. A `final` window with no published day exits 1.
-- `--version late` is kept for when dynamical-fetch fails; try dynamical-fetch first.
+- Use `--version late` only when dynamical-fetch fails.
 - An `--end-time` past the latest day writes the days available and warns on stderr. A missing day inside the range exits 1. Missing days are never filled.
 - Each day still downloads the whole global file (about 32 MB), one at a time, deleted once it is cut to `--bbox`; long windows take time but not disk. Without `--bbox` the output holds about 26 MB per day in memory, so pass `--bbox` for anything longer than a few weeks.
 

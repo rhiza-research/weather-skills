@@ -183,7 +183,7 @@ def convert_to_totals(ds, variable, min_coverage, time_dim, **kwargs):
         attrs["standard_name"] = STANDARD["precip_amount"]["standard_name"]
         attrs["long_name"] = PRECIP_AMOUNT_LONG_NAME
         # Product rate descriptions ("Average precipitation rate…", "prate",
-        # step_type "avg") no longer describe a period total.
+        # step_type "avg") do not describe a period total.
         attrs.pop("comment", None)
         attrs.pop("short_name", None)
         attrs.pop("step_type", None)

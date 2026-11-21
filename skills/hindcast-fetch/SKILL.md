@@ -24,7 +24,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET]   # latest 
 
 | `--dataset` | Inits | Members | Leads (days) | Grid |
 | --- | --- | --- | --- | --- |
-| `ecmwf` (default choice) | every second day, 2006-01-03 to 2025-06-01, one model cycle (IFS CY49R1) | mean of 10, or 10 with `--members` | 0–45 | 1.5° |
+| `ecmwf` (recommended) | every second day, 2006-01-03 to 2025-06-01, one model cycle (IFS CY49R1) | mean of 10, or 10 with `--members` | 0–45 | 1.5° |
 | `ecmwf_wb2` | most days, 1996-01-04 to 2021-12-29, mixed model cycles | mean of 10, or 10 with `--members` | 0–45 | 1.5° |
 | `gefs` | Wednesdays 1998-12-30 to 2019-08-28 | 11 | 0–34 | 1° |
 | `cumulus` | every second day of each year, 1996-01-01 to 2026-08-31 (`AZURE_STORAGE_SAS_TOKEN`) | 30 | 0–45 | 1° |
@@ -43,7 +43,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [DATASET]   # latest 
 
 ### Notes
 - Use `ecmwf` unless you need inits before 2006: `ecmwf_wb2` changes model cycle from date to date, so a trend across its inits can be a model change.
-- `precip` is clipped at 0. `sst` is NaN over land.
+- `sst` is NaN over land.
 - `cumulus` is read straight from Cumulus's own Azure archive of its ERA5-initialised Aurora hindcast: IMERG-trained `precip` and 2 m temperature at 1°, and the same `precip` at 0.25° (`cumulus_0p25`). Its 30 members are interchangeable draws; none is a control.
 - If one variable's store lacks an init, that variable is NaN there (stderr lists them); nothing is filled.
 - Inits fall on different days per dataset; line datasets up by valid date (`step-to-time`), not by init.

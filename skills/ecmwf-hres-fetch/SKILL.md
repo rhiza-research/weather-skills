@@ -33,7 +33,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - `--run` — init hour UTC: `0`, `6`, `12`, or `18`. Default: `0`. 00/12 runs reach 360 h (3-hourly to 144 h, then 6-hourly); 06/18 runs reach 144 h, 3-hourly.
 - `--bbox` — required for a fetch. `N/W/S/E` decimal degrees. Open Data serves global files, so the full globe is downloaded for every step and clipped locally; a small bbox saves memory, not download time (`precip` for a 00 UTC run is ~80 MB; a pressure-level field is ~13×).
 - `--variable`, `-v` — one field per flag; repeat for several. Default: `precip`. Surface: `precip`, `t2m`, `d2m`, `msl`, `u10`, `v10`, `gust10`, `sp`, `tcwv`, `mucape`, `skt`, `ssrd`, `strd`, `str`, `ttr`. Pressure levels (1000–50 hPa, 13 levels): `t`, `gh`, `u`, `v`, `q`, `r`. Open Data names (`tp`, `2t`, `10u`) are accepted, as is `precipitation`. An unknown name exits and lists `Available (most used first):`.
-- `--max-lead` — keep steps up to this lead: `24`, `24h` or `1D` (bare numbers are hours); `0` is the analysis time only. Default: every published step. Each step is a global download, so a short lead is much faster (all steps of `q` and `u` on pressure levels is ~1.4 GB). With `precip`, one more step is fetched so the rate for every step up to the limit is kept.
+- `--max-lead` — keep steps up to this lead: `24`, `24h` or `1D` (bare numbers are hours); `0` is the analysis time only. Default: every published step. Each step is a global download, so a short lead is much faster (all steps of `q` and `u` on pressure levels is ~1.4 GB). With `precip`, the step at the limit is kept, so the last interval ends one step past it.
 - `--probe-latest [IDENT]` — print the latest init date on stdout and exit; stderr names its run hour. `IDENT` is ignored.
 - `--output`, `-o` — output Zarr, overwritten.
 
@@ -41,7 +41,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - Dims `(step, latitude, longitude)`, plus `vertical` (hPa) for pressure-level fields. Scalar `time` is the init.
 - `precip` (total precipitation) is a rate in `mm day-1` over `[step, next step)`, labelled at the interval start (`step=0` is 0–3 h). The last lead has no interval, so it is dropped — for every field when `precip` is in the request.
 - `t2m`, `d2m`, `skt`, `t` are `degree_Celsius`; `gh` is metres; other units as published.
-- 06/18 runs stamp `data_interval = 3 hour`; 00/12 runs, whose spacing changes at 144 h, get `step_bounds`: each step covers `[step, next lead)`, for instant fields too, so a daily bin over `step` holds the samples labelled in that day. Stamped `weather_skills_source=ecmwf-hres`.
+- 06/18 runs, and 00/12 runs cut to 144 h or less, stamp `data_interval = 3 hour`. Longer 00/12 runs, whose spacing changes at 144 h, get `step_bounds`: each step covers `[step, next lead)` for every field, so a daily bin over `step` holds the samples labelled in that day. `gust10` (maximum since the previous step) and the cumulative radiation fields keep their native meaning, which does not match those bounds. Stamped `weather_skills_source=ecmwf-hres`.
 
 ### Notes
 - Under load either source answers `503 Slow Down`. Each source gets one attempt, with no waiting; if every source is rate-limiting the skill exits saying so. Fetch one init at a time and try again in a few minutes.

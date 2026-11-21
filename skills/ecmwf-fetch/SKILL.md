@@ -37,14 +37,14 @@ The skill reads the public dynamical.org copy (`ecmwf-ifs-ens-forecast-46-day-da
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- Dims `(number, step, latitude, longitude)`, plus `vertical` (hPa, or K for `pv`) for level fields. `number=0` is the control, `1..100` the perturbed members. `step` is daily and labels the start of each 24 h window, so `step=0` is `[init, init+1d)`.
+- Dims `(number, step, latitude, longitude)`, plus `vertical` (hPa, or K for `pv`) for level fields. `number=0` is the control, `1..100` the perturbed members. `step` is daily and labels the start of each 24 h window, so `step=0` is `[init, init+1d)`, except on catalog fetches that mix daily means with instant fields (see Notes).
 - `precip` (total precipitation) is a rate in `mm day-1`; temperatures are `degree_Celsius`; from the catalog, radiation and heat fluxes are daily means in `W m-2`; other units as published. Stamped `weather_skills_source=ecmwf-s2s`.
 
 ### Notes
 - ECDS refuses inits newer than today − 2 days (real-time embargo); the skill exits 1 before contacting it.
 - Set `ECMWF_DATASTORES_KEY` before the first call that needs ECDS; the catalog path does not read it.
 - From ECDS, pressure-level fields and `pv` are control only: they have data at `number=0` and are NaN for members 1..100.
-- From ECDS (inits before 2026), accumulated fields other than `precip` (`cp`, `sf`, `ro`, `sro`, `sshf`, `slhf`, `ssr`, `ssrd`, `str`, `strd`, `ttr`, `ewss`, `nsss`) stay cumulative since init in native units. Requesting them with `precip` exits 2.
+- From ECDS (inits before 2026, or any request with a field the catalog lacks), accumulated fields other than `precip` (`cp`, `sf`, `ro`, `sro`, `sshf`, `slhf`, `ssr`, `ssrd`, `str`, `strd`, `ttr`, `ewss`, `nsss`) stay cumulative since init in native units. Requesting them with `precip` exits 2.
 - Ocean fields (`t20d`, `zos`, `ocu`, …) come only from ECDS on a 1.0° grid; atmosphere fields are 1.5°. Fetch them in a separate call.
 - On the catalog path, lead 0 is dropped only when every requested field is empty there (daily means, `precip`). Fetched together with instant fields (`u10`, `msl`, levels), steps keep the catalog labels and `step_bounds` give each cell as `[previous lead, s)`. Fetch them apart to get interval-start steps.
 

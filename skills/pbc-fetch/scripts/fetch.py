@@ -271,7 +271,7 @@ def _as_forecast(ds, *, init, dataset: str):
 def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, **kwargs):
     """Fetch a PBC AI Weather Quest precipitation forecast as a weather-skills Zarr."""
     # Opens a Zarr under ``gs://sheerwater-datalake/pbc-data/<dataset>/<YYYYMMDD>/``
-    # with GCS Application Default Credentials. Optionally subsets by ``--bbox``
+    # with GCLOUD_SERVICE_CREDENTIALS, else Application Default Credentials. Optionally subsets by ``--bbox``
     # and ``--variable``, maps quintile probabilities onto a classic forecast
     # (scalar init ``time`` + ``step``), and returns a Dataset for the decorator
     # to write.

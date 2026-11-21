@@ -43,7 +43,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--station ID | --bbo
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
-- Dims `(time, station_id)`; coords `latitude`, `longitude`, `name`, `site`. `time` is every requested day, labelled by its start date.
+- Dims `(time, station_id)`; coords `latitude`, `longitude`, `name`, `site`. `time` is every requested day, labelled by its start date; `data_interval` `1 day`.
 - Whichever the stations report: `precip` (`mm day-1`), `temperature` / `tmax` / `tmin` (`degree_Celsius`), `humidity` (fraction), `pressure` (station pressure, `hPa`), `wind_speed` (mean, `m s-1`), `wind_gust` (max, `m s-1`).
 - Each has a `<var>_coverage` (0-1): the share of the day with readings, listed in the variable's `ancillary_variables`.
 
@@ -60,6 +60,6 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --station 1 --station 4 --start-time
 ## Details
 
 - **Coverage.** The reporting interval is the station's most common spacing over the fetch. A gap of up to 3 intervals between valid readings counts as covered (1-minute stations skip about one reading every 15 minutes, and a rain reading holds the rain since the last one). A longer gap is uncovered from one interval after the last reading to the next, split across the days it spans. Days at a longer spacing than the station's interval come out with low coverage.
-- **Quality control.** Out-of-range readings (including `-999.9`) are dropped, as is an exact `0` for temperature, humidity or pressure (no sensor fitted) and readings flagged as test data.
+- **Quality control.** Out-of-range readings are dropped, as is an exact `0` for temperature, humidity or pressure (no sensor fitted) and readings flagged as test data.
 - **Rain gauges.** Each day, a gauge with any reading over 5 mm per minute of reporting interval is broken and left out (stderr names it); so is one that sent nothing. With both gauges usable, rain counts only at readings where both reported, and `precip` is the larger of the two totals where they agree within 2 mm or 50 % (a failing gauge reads low), otherwise NaN with `precip_coverage` 0. With one usable gauge, gauge 1 or gauge 2, `precip` is that gauge alone.
 - A few test instruments sit in Boulder; a bbox excludes them.

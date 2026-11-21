@@ -39,9 +39,9 @@ An unmirrored pair (e.g. `era5` `tmp2m`) exits 1 and lists the available pairs.
 - `--dataset` — source id from the table.
 - `--start-time`, `--end-time` — inclusive calendar window; one output row per day.
 - `--variable`, `-v` — variable from the table. Default: `precip`.
-- `--prediction-timedelta` — forecast lead in whole days; the climatology of the value valid that many days after each init date. Default: 0. An unavailable lead exits and lists the available ones.
+- `--prediction-timedelta` — forecast lead in whole days; the climatology of the value valid that many days after each init date. Default: 0. An unavailable lead exits 2 and lists the available ones.
 - `--window` — average over this many days (1 = daily). Default: 1.
-- `--align` — where each `--window` average is labelled: `left` (the window starts on the date), `right`, or `center`. Default: `left`. No effect with `--window 1`.
+- `--align` — where each `--window` average is labelled: `left` (the window starts on the date), `right`, or `center`. Default: `left`. No effect with `--window 1` or when a pre-averaged store exists.
 - `--bbox` — `N/W/S/E` decimal degrees. Omit for the full grid.
 - `--output`, `-o` — output Zarr, overwritten.
 
@@ -49,7 +49,7 @@ An unmirrored pair (e.g. `era5` `tmp2m`) exits 1 and lists the available pairs.
 - Dims `(latitude, longitude, time)`, one row per calendar day in the window.
 - Variables `<var>_avg` (mean) and `<var>_std` (standard deviation), e.g. `precip_avg`, `precip_std`. Precip is `mm day-1`; `sst` and `tmp2m` are `degree_Celsius`; winds are `m/s`.
 - Each variable has `aggregation_period` `"<window> day"`; `data_interval` is `1 day`. Global attrs `climatology_dataset`, `climatology_variable`, `climatology_prediction_timedelta_days`, `climatology_window_days`.
-- `climatology_start_time` and `climatology_end_time` give the first and last dates the mirror averaged over (e.g. `1998-01-01` and `2024-12-31`). stderr prints them too. For a known base period, or a dataset or variable not mirrored here, compute one with `climatology` from a multi-year daily fetch.
+- `climatology_start_time` and `climatology_end_time` give the first and last dates the mirror averaged over (e.g. `1998-01-01` and `2024-12-31`), when the mirror records them; stderr prints them or says they are not recorded. For a known base period, or a dataset or variable not mirrored here, compute one with `climatology` from a multi-year daily fetch.
 
 ### Notes
 - Always pass `--bbox` for `chirps` and `imerg_final`; without it the whole global year is read (tens of GB).
@@ -67,7 +67,7 @@ Writes daily CHIRPS `precip_avg` / `precip_std` over Kenya for October–Decembe
 
 ## Details
 
-**Source.** Each climatology is `gs://sheerwater-public-datalake/climatologies/<dataset>_<variable>_<window>d.zarr`, indexed by init dates in the leap year 1904 so every day of the year 1–366 has a row. For `--window` > 1 the skill first tries a matching pre-averaged store and otherwise averages the daily one itself, wrapping Dec 31 onto Jan 1 so windows near the year end are full.
+**Source.** Each climatology is `gs://sheerwater-public-datalake/climatologies/<dataset>_<variable>_<window>d.zarr`. For `--window` > 1 the skill first tries a matching pre-averaged store and otherwise averages the daily one itself, wrapping Dec 31 onto Jan 1 so windows near the year end are full.
 
 **Weekly totals.** `--window 7` gives the average daily rate over the 7 days starting on each date, still one row per day. For a climatology of weekly totals in mm, keep one row per week (every 7th date), then multiply each rate by 7 days. Both `_avg` and `_std` scale the same way.
 

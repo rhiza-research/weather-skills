@@ -66,7 +66,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --list-variables
 | `noaa-gfs-analysis`, `noaa-gfs-analysis-virtual` ★ | 0.25° | 2021-05-01 |
 | `noaa-mrms-conus-analysis-hourly` (CONUS) | 0.01° | 2014-11-01 |
 
-★ **Virtual ids** read the provider's original files in place and carry many more fields (`--list-variables`). Their precipitation totals are written as `mm day-1` rates, matching the plain id on the same row; `-v precip` picks it. Virtual analysis ids have no precipitation (exit 2): use `noaa-gfs-analysis` or `noaa-gefs-analysis`.
+★ **Virtual ids** read the provider's original files in place and carry many more fields (`--list-variables`). Their precipitation totals are written as `mm day-1` rates, matching the plain id on the same row; `-v precip` picks it. Virtual analysis ids store precipitation as totals over 1-6 h buckets and refuse it (exit 2): use `noaa-gfs-analysis` or `noaa-gefs-analysis`.
 
 **Rejected ids** (projected grids, exit 2): HRRR, `eccc-hrdps-forecast`, `noaa-rrfs-*`, `noaa-refs-*`, `noaa-rtma-*`, `noaa-urma-*`.
 
@@ -117,9 +117,9 @@ More examples:
 # IMERG Late, 30 days
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset nasa-imerg-analysis-late \
   --start-time 2026-09-14 --end-time 2026-10-13 --bbox 5.5/33.5/-5/42.5 -v precip -o imerg_kenya.zarr
-# AIFS: a year of daily inits, all 15 days of leads, in one call
+# AIFS: a year of daily inits, leads to 10 days, in one call
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-aifs-ens-forecast \
-  --start-time 2025-07-16 --end-time 2026-07-15 --bbox 0.3/129.4/-2.4/131.65 -v precip --max-lead 15D -o aifs_year.zarr
+  --start-time 2025-07-16 --end-time 2026-07-15 --bbox 0.3/129.4/-2.4/131.65 -v precip --max-lead 10D -o aifs_year.zarr
 # IFS-ENS 850/925 hPa temperature, stacked on vertical
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ecmwf-ifs-ens-forecast-15-day-0-25-degree \
   --date 2026-10-12 --bbox 5.5/33.5/-5/42.5 -v t -o ifs_t_kenya.zarr

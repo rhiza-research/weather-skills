@@ -62,7 +62,7 @@ EXTREMES = {
     "tmin": ("time: minimum", "daily minimum air temperature"),
 }
 # TAHMO records every variable at a 5-minute interval, stamped at the interval
-# end. A daily value is kept only when all 288 stamps of that UTC day passed the
+# end. A daily value is kept only when all 288 stamps of that day passed the
 # quality filter; any gap makes the day NaN. This applies to the means as well
 # as the precip sum: a gap removes part of the diurnal cycle (e.g. the warm
 # afternoon), so a partial-day mean is a biased estimate, not an observation.
@@ -184,7 +184,7 @@ def _fetch_gridded(start_time, end_time, bbox):
         "standard_name": "lwe_precipitation_rate",
         "units": "mm day-1",
         "long_name": "daily precipitation, mean of the TAHMO stations with a complete day in each 0.25° cell",
-        "cell_methods": "time: sum area: mean",
+        "cell_methods": "area: mean",
     }
     ds["precip_count"].attrs = {
         "units": "1",
@@ -442,9 +442,9 @@ def _ensure_setup(state):
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Print the newest complete day in the last 14 days (YYYY-MM-DD) on stdout "
+        "and exit; with --gridded, the store's last day with data. Does not download "
+        "fields. IDENT is ignored."
     ),
 )
 def fetch(

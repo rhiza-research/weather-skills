@@ -294,7 +294,7 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
     A step whose args name every file it read (core records each input's path)
     is replayed from its args alone: each named file becomes the file the replay
     makes for it, and a file with no history is read from its recorded path.
-    Older histories, whose args leave inputs out, have their input flags added.
+    A step whose args do not name its inputs gets its input flags added.
     """
     lines = []
     prev = None
@@ -393,7 +393,7 @@ def _with_checkout_helper(lines: list) -> list:
         return lines
     helper = [
         "# Clone each repo once per ref into ./_checkouts and print the skill's script.",
-        "# Skills sit at skills/<pack>/<skill>.",
+        "# Skills sit at skills/<pack>/<skill> or skills/<skill>.",
         "_script() {",
         '  local dir="_checkouts/${1##*/}@$2"',
         '  if [ ! -d "$dir" ]; then',
@@ -404,7 +404,7 @@ def _with_checkout_helper(lines: list) -> list:
         "      return 1",
         "    fi",
         "  fi",
-        '  for f in "$dir"/skills/*/"$3"/scripts/*.py; do',
+        '  for f in "$dir"/skills/*/"$3"/scripts/*.py "$dir"/skills/"$3"/scripts/*.py; do',
         '    if [ -e "$f" ]; then echo "$f"; return; fi',
         "  done",
         '  echo "_script: no script for $3 in $dir" >&2',

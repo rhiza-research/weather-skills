@@ -40,11 +40,11 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 - Dims `(time, station_id)` with coords `latitude`, `longitude`, `name` on `station_id`; `station_id` is the OpenAQ location id. A CF-1.13 timeSeries station dataset.
 - Each value is the mean of the hourly values over the station's local calendar day, so days are not aligned across time zones. `time` is that local date. Several sensors for one pollutant at a location are averaged.
 - Units are as OpenAQ reports them (µg/m³ for particulates, ppm or ppb for gases), not converted. Each pollutant uses the first unit seen; sensors in another unit, or with no unit, are dropped.
-- Negative daily means and days below `--min-coverage` are NaN; stderr counts each. Days no station kept are absent from `time`.
+- Negative daily means and days below `--min-coverage` are NaN; stderr counts each. Days no station kept are absent from `time`. `data_interval` `1 day`.
 - A requested pollutant with no data is left out with a warning.
 
 ### Notes
-- Set `OPENAQ_API_KEY` in the environment on the first call, including `--probe-latest`. A missing key exits 2; a rejected key exits 1. The key is never printed.
+- Set `OPENAQ_API_KEY` in the environment for every call, including `--probe-latest`. A missing key exits 2; a rejected key exits 1. The key is never printed.
 - A sensor that fails twice is dropped; stderr reports the count. No sensors or no data exits 1.
 - Every sensor is a separate rate-limited request (about 32 per minute), so a large box or long window is slow.
 

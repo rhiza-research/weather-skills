@@ -31,7 +31,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [forecast|eac4]
 | `forecast` | 2015-01-01 init | today | inits 00 and 12 UTC daily; leads 3-hourly to 120 h |
 | `eac4` | 2003-01-01 | about a year ago | 3-hourly (00, 03, ..., 21 UTC) |
 
-A date outside the range exits with an error.
+A date before the first day exits 2. A date after the last day exits 1 with the ADS message; check `--probe-latest`.
 
 ### Arguments
 - `--bbox` — `N/W/S/E` decimal degrees. Required. A box crossing the antimeridian (W > E) is sent as two requests.

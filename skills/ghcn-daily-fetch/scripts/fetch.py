@@ -10,6 +10,7 @@
 
 import io
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
@@ -31,8 +32,7 @@ _SKILL_VERSION = "0.0.12"
 
 # NCEI's own HTTPS tree first, the noaa-ghcn-pds S3 mirror only when NCEI returns
 # 404: the mirror's by_station files for some first-order stations (e.g.
-# USW00094728, NYC Central Park) stopped updating in Feb 2025, which silently
-# dropped them from recent windows.
+# USW00094728, NYC Central Park) stopped updating in Feb 2025.
 _BASE_URL = "https://www.ncei.noaa.gov/pub/data/ghcn/daily"
 _STATIONS_URL = f"{_BASE_URL}/ghcnd-stations.txt"
 _STATION_CSV_URL = _BASE_URL + "/by_station/{station_id}.csv.gz"
@@ -42,8 +42,8 @@ _MIRROR_STATIONS_URL = f"{_MIRROR_URL}/ghcnd-stations.txt"
 _MIRROR_STATION_CSV_URL = _MIRROR_URL + "/csv.gz/by_station/{station_id}.csv.gz"
 _MIRROR_YEAR_CSV_URL = _MIRROR_URL + "/csv.gz/by_year/{year}.csv.gz"
 _MIRROR_WARNING = (
-    "Warning: NCEI's GHCN-Daily tree returned 404 (NCEI has had outages while moving "
-    "its archive); reading the noaa-ghcn-pds S3 mirror instead. Some of the mirror's "
+    "Warning: NCEI's GHCN-Daily tree returned 404; reading the noaa-ghcn-pds S3 mirror "
+    "instead. Some of the mirror's "
     "per-station files stopped updating in Feb 2025, so recent days can be missing "
     "for those stations."
 )
@@ -61,7 +61,7 @@ _TIME_CALENDAR = "proleptic_gregorian"
 
 # canonical -> (GHCN element, scale, units, standard_name, cell_method, long_name).
 # Scale converts tenths-of-mm / tenths-of-degC to mm day-1 and degree_Celsius.
-# Precip is stamped as a daily rate (no cell_methods sum — that marks convert-to-totals).
+# Precip is a daily rate and has no cell_methods.
 VAR_MAP = {
     "precip": ("PRCP", 0.1, "mm day-1", "lwe_precipitation_rate", None, "daily precipitation rate"),
     "tmax": (
@@ -90,13 +90,21 @@ VAR_MAP = {
     ),
 }
 DEFAULT_VARIABLES = ["precip", "tmax", "tmin"]
+_mirror_warned = threading.Event()
+
+
+def _warn_mirror():
+    """Print the mirror warning once per run."""
+    if not _mirror_warned.is_set():
+        _mirror_warned.set()
+        print(_MIRROR_WARNING, file=sys.stderr)
 
 
 def _load_stations(bbox):
     """Fetch ghcnd-stations.txt, optionally filtered to a bbox."""
     resp = requests.get(_STATIONS_URL, timeout=HTTP_TIMEOUT)
     if resp.status_code == 404:
-        print(_MIRROR_WARNING, file=sys.stderr)
+        _warn_mirror()
         resp = requests.get(_MIRROR_STATIONS_URL, timeout=HTTP_TIMEOUT)
     resp.raise_for_status()
     stations = pd.read_fwf(
@@ -126,6 +134,8 @@ def _fetch_station_csv(station_id: str):
             try:
                 resp = requests.get(url, timeout=HTTP_TIMEOUT)
                 if resp.status_code == 404:
+                    if template == _STATION_CSV_URL:
+                        _warn_mirror()
                     break
                 resp.raise_for_status()
                 return resp.content
@@ -254,7 +264,7 @@ def fetch(start_time, end_time, bbox, workers, variable, probe_latest, **kwargs)
                         continue
                     raise
                 if template == _MIRROR_YEAR_CSV_URL:
-                    print(_MIRROR_WARNING, file=sys.stderr)
+                    _warn_mirror()
                 print(datetime.strptime(str(latest), "%Y%m%d").date().isoformat())
                 return
         raise DataError(

@@ -118,7 +118,7 @@ def _station_daily(portal, station_id, start, end, day_start_hour, min_coverage,
 
     Days ``start`` .. ``end`` inclusive, each starting at ``day_start_hour`` UTC.
     Returns ``(daily DataFrame, reporting interval in minutes)``, or ``(None, None)``
-    when the station sent nothing. Days missing any expected reading are NaN.
+    when the station sent nothing. A day is NaN when its coverage is below ``min_coverage``.
     """
     import pandas as pd
 
@@ -164,7 +164,7 @@ def _station_daily(portal, station_id, start, end, day_start_hour, min_coverage,
             values = values.where(values != 0)
         # A sensor that sent only missing codes is treated as not fitted.
         if values.notna().any():
-            # Relative humidity is stored as a fraction, as tahmo-fetch does.
+            # Relative humidity is stored as a fraction.
             clean[short] = values / 100 if short == "sh1" else values
     # Shift by the day-start hour so each day bins as one calendar day labelled
     # by the date it starts on.
@@ -174,7 +174,7 @@ def _station_daily(portal, station_id, start, end, day_start_hour, min_coverage,
     # readings over the whole fetch (ties go to the shorter). 1-minute stations drift 60-61 s apart on
     # their own timer; 15-minute stations report just after each quarter hour.
     # Days at any other spacing (dropped readings, or a changed interval) are
-    # judged at this one and so come out NaN.
+    # judged at this one, so their coverage comes out low.
     spacing = (clean.index.to_series().diff().dt.total_seconds() / 60).round()
     spacing = spacing[spacing >= 1]
     interval_min = int(spacing.mode().iloc[0]) if len(spacing) else 1
@@ -514,7 +514,7 @@ def fetch(
             coordinates="latitude longitude",
             ancillary_variables=f"{var}_coverage",
         )
-        # Precip has no cell_methods, as other station fetchers write it.
+        # Precip is a daily rate and has no cell_methods.
         if cell_methods:
             ds[var].attrs["cell_methods"] = cell_methods
         # A station absent from the fetch has no readings: coverage 0.

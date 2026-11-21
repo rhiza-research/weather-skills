@@ -300,9 +300,8 @@ def _var_attrs(ds, units_by_param: dict, min_coverage: float) -> dict:
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Print the newest day with a PM2.5 report in the last week (YYYY-MM-DD) on "
+        "stdout and exit. Does not download fields. IDENT is ignored."
     ),
 )
 def fetch(start_time, end_time, bbox, workers, variable, min_coverage, probe_latest, **kwargs):
@@ -544,7 +543,7 @@ def fetch(start_time, end_time, bbox, workers, variable, min_coverage, probe_lat
         time_calendar=_TIME_CALENDAR,
         fills={v: np.float64(np.nan) for v in ds.data_vars},
     )
-    return stamp_data_interval(ds)
+    return stamp_data_interval(ds, period="1 day")
 
 
 if __name__ == "__main__":

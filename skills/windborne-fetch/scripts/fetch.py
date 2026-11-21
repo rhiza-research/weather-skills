@@ -47,8 +47,8 @@ _PRODUCT_FLAGS = {
     "degree-days": {"date", "run"},
 }
 
-# Short `-v` tokens for the most-used WeatherMesh-6 fields (mirroring the
-# cfgrib names other fetchers use), mapped onto WindBorne names. Any other
+# Short `-v` tokens for the most-used WeatherMesh-6 fields, mapped onto
+# WindBorne names. Any other
 # WindBorne name is accepted as-is. The bool marks pressure-level fields.
 VARIABLES: dict[str, tuple[str, bool]] = {
     "precip": ("total_precipitation_3h", False),
@@ -270,7 +270,10 @@ def _pick_init(session, available, date, run, *, archive):
 )
 @weather_skill.argument(
     "--date",
-    help="Init date. Default: the latest run. grid also serves archived runs back to mid-2026.",
+    help=(
+        "Init date. Default: the latest run. grid also serves archived runs back to the "
+        "2026-05-30 17 UTC run."
+    ),
 )
 @weather_skill.argument(
     "--run",
@@ -615,7 +618,7 @@ def _grid(session, init, bbox, variable, level, ensemble, max_lead):
         )
     if interval:
         # `_3h` fields (precip, tmax, tmin, ssrd, ...) at lead h cover (h-3, h]:
-        # label them at the interval start, like the other forecast fetchers.
+        # label them at the interval start.
         # Lead 0 covers the 3 h before forecast zero, so it is dropped. Every
         # other field is instantaneous at forecast zero + step and keeps its
         # lead; the merged axis is NaN where a field has no value (not filled).
@@ -1110,10 +1113,10 @@ def _analysis(session, bbox, start_time, end_time, variable, level, probe_latest
     ds = xr.Dataset(variables).sortby("latitude")
     if "precip" in ds.data_vars:
         # total_precipitation_1h covers (T-1h, T] before each analysis time T: a
-        # mm day-1 rate over that one hour, labelled at its start T-1h like the
-        # other fetchers. The other five hours of each 6 h step are not served,
-        # so it is not a 6-hourly mean. The other fields keep their analysis
-        # times; the merged axis is NaN where a field has no value (not filled).
+        # mm day-1 rate over that one hour, labelled at its start T-1h. The other
+        # five hours of each 6 h step are not served, so it is not a 6-hourly
+        # mean. The other fields keep their analysis times; the merged axis is
+        # NaN where a field has no value (not filled).
         units = str(ds["precip"].attrs.get("units") or "mm")
         precip, _ = convert_dataarray(ds["precip"], "mm") if units != "mm" else (ds["precip"], None)
         precip = precip * 24.0

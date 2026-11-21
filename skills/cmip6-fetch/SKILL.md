@@ -32,8 +32,6 @@ Usual ranges by experiment; a few runs differ by model. The time step is the tab
 | `amip` | 1979 to 2014 |
 | `piControl`, `1pctCO2`, `abrupt-4xCO2` | model years, not real dates |
 
-A window outside the run exits with an error that prints the run's own first and last dates.
-
 ### Arguments
 - `--model` — CMIP6 `source_id`, e.g. `GFDL-CM4`.
 - `--experiment` — CMIP6 `experiment_id`, e.g. `historical`, `ssp245`.
@@ -49,12 +47,12 @@ A window outside the run exits with an error that prints the run's own first and
 ### Output
 - Dims `(time, latitude, longitude)` with the one requested variable. Longitude is `[-180, 180)`.
 - Air temperature (`tas`, `tasmax`, `tasmin`) in `degree_Celsius`; precip (`pr`) in `mm day-1`. Other variables keep source units.
-- Time labels are cell centres (daily 12:00, monthly mid-month). `time_bounds` keeps the source's own cell edges (the whole day, or the calendar month); a store without bounds gets `data_interval` from its spacing.
+- Time labels are cell centres (daily 12:00, monthly mid-month). `time_bounds` keeps the source's own cell edges (the whole day, or the calendar month); without bounds, evenly spaced labels get `data_interval` from their spacing and uneven ones (such as mid-month) exit 2.
 - Time stays in the model's own calendar (often `noleap` or `360_day`) as cftime values.
 - Source CMIP6 global attrs are kept; `weather_skills_source="cmip6:<model>/<experiment>/<member>/<table>/<variable>/<grid>"`.
 
 ### Notes
-- The window must lie inside the run: `historical` ends 2014-12-31 and `ssp*` starts 2015-01-01. A window not fully inside the run exits 2; fetch each experiment separately and concatenate along `time`.
+- The window must lie inside the run: `historical` ends 2014-12-31 and `ssp*` starts 2015-01-01. When the store has time bounds, a window not fully inside the run exits 2 and prints the run's first and last dates; without bounds the overlap is returned, and a window wholly outside the run exits 1. Fetch each experiment separately and concatenate along `time`.
 - Facets matching no dataset exit 2, listing the valid experiments, variables, tables, and members for that model.
 - Only regular 1-D lat/lon grids are supported; ocean or curvilinear grids exit 2.
 - Chunks span the full globe and hundreds of time steps, and the selection is held in memory. Global daily multi-decade pulls are many GB, so pass `--bbox` for daily tables.

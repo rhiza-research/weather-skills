@@ -126,8 +126,8 @@ def concat(ds, dim, coords, **kwargs):
 
     # join="exact": every other coordinate must match. The outer join pads a
     # mismatch with NaN instead, which looks like missing data.
-    # coords="different": a single-value label that differs between inputs
-    # (ECMWF step 7 days, GEFS step 14 days) becomes a label along dim.
+    # coords="different": a single-value label that differs between inputs becomes a
+    # label along dim.
     try:
         out = xr.concat(dss, dim=dim, join="exact", coords="different")
     except pint.DimensionalityError as exc:

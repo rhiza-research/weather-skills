@@ -121,7 +121,8 @@ def climatology(
         ):
             raise UsageError(
                 f"{name!r} holds {period} values; a daily climatology needs daily values. "
-                "Roll it up or down to 1 day with aggregate-temporal first."
+                "Roll it up to 1 day with aggregate-temporal, or split it into days with "
+                "regularize-time --period '1 day', first."
             )
 
     slots = _slot_1904(times)

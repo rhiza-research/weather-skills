@@ -43,7 +43,7 @@ _FULL_RUN_STEPS = list(range(0, 144 + 1, 3)) + list(range(150, 360 + 1, 6))
 _SHORT_CUTOFF_STEPS = list(range(0, 144 + 1, 3))
 
 # data.ecmwf.int keeps only the inits of the last 4 days (today included);
-# older inits are only on the AWS mirror (from 2023).
+# older inits are only on the AWS mirror (from 2024-02-28).
 _ECMWF_DAYS_KEPT = 4
 
 # Every Open Data level from 1000 to 50 hPa. 10 hPa exists only since IFS
@@ -410,7 +410,7 @@ def fetch(bbox, date, run, variable, probe_latest, max_lead, **kwargs):
             grib = tmp / f"hres_{i}.grib2"
             print(f"Retrieving {', '.join(group_vars)} ({level_type})...", file=sys.stderr)
             # Recent inits try ECMWF first (fastest), then AWS; older inits go
-            # straight to AWS since ECMWF no longer has them. Each source gets
+            # straight to AWS since data.ecmwf.int keeps only the last 4 days. Each source gets
             # one attempt: under load both answer "503 Slow Down", and waiting
             # it out leaves the user waiting for nothing.
             oldest_on_ecmwf = dt.datetime.now(dt.UTC).date() - dt.timedelta(

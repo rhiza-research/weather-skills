@@ -26,12 +26,12 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py (--station ID [--station ID ...] | -
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --gridded --start-time YYYY-MM-DD --end-time YYYY-MM-DD [--bbox N/W/S/E] -o OUT.zarr
 # Print the latest day with a complete record, and exit
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [--station ID | --bbox N/W/S/E]
-uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest --gridded --start-time YYYY-MM-DD --end-time YYYY-MM-DD
+uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest --gridded
 ```
 
 ### Date range
 - Station mode: March 2015 to yesterday (`--probe-latest`). Station records vary and may have gaps; a fetch prints each station's complete days.
-- `--gridded`: 2015-03-05 to 2025-09-15, not updated.
+- `--gridded`: 2015-03-05 to 2025-09-13, not updated.
 
 ### Arguments
 - `--list-stations` — print the TA stations in `--bbox` (`station_id`, `name`, `latitude`, `longitude`, ISO `country`) and exit.
@@ -47,7 +47,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest --gridded --start-tim
 ### Output (station mode)
 - Dims `(time, station_id)`, coords `latitude`, `longitude`, `name`, `country`; `featureType="timeSeries"`.
 - `precip` (`mm day-1`, sum), `temperature`, `tmax`, `tmin` (`degree_Celsius`), `humidity` (`1`), `pressure` (`kPa`): whichever the stations report.
-- Records start March 2015; each station starts later and has gaps. Only records with TAHMO quality flag <= 2 are used.
+- `time` is every requested day, labelled by its start date; `data_interval` `1 day`.
+- Each station starts after March 2015 and has gaps. Only records with TAHMO quality flag <= 2 are used.
 - Stamps mark the end of each 5-minute interval, so day D holds D H:05 to D+1 H:00.
 - A day is NaN unless all 288 records passed QC, for each variable separately (`tmax`/`tmin` follow `temperature`).
 

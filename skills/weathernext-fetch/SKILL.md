@@ -18,7 +18,7 @@ Fetches one WeatherNext forecast init, or every init in one or more date windows
 | `--version` / `--product` | Store | Inits | Members | Leads | Grid | Cost |
 |---|---|---|---|---|---|---|
 | `2` (default) | `gs://weathernext/weathernext_2_0_0/zarr/2025_to_present/` | 00/06/12/18 UTC daily from 2025-01-01 | 64 | 60 × 6 h | 0.25° | free |
-| `3` | `gs://weathernext3_spatial/weathernext_3_0_0/zarr/2026_to_present/` | every hour from 2026-01-01 00 UTC | 64 | 360 × 1 h | 0.1° surface, 0.05° station-head, 0.25° upper air | requester pays |
+| `3` | `gs://weathernext3_spatial/weathernext_3_0_0/zarr/2026_to_present/` | every hour from 2026-01-01 00 UTC | 64 | 360 × 1 h (48 × 1 h for interim inits) | 0.1° surface, 0.05° station-head, 0.25° upper air | requester pays |
 | `3 --product statistics` | `gs://weathernext3_statistics_spatial/weathernext_3_0_0_statistics/zarr/2026_to_present/` | as `3` | mean, p10/p25/p50/p75/p90 | 360 × 1 h | 0.1° / 0.05° surface | free |
 
 ## Usage
@@ -42,14 +42,14 @@ Needs Google Cloud credentials: `GCLOUD_SERVICE_CREDENTIALS` (key JSON), `GOOGLE
 - `--variable`, `-v` — repeatable. Common: `precip`/`tp`, `t2m`, `d2m`, `u10`, `v10`, `msl`, `sst`, `ssrd`; pressure levels `t`, `u`, `v`, `w`, `q`, `z` (more under Details). With `--product statistics`, `<name>_<stat>` (`precip_p90`) picks one statistic. Default: WeatherNext 2 every field; WeatherNext 3 every 0.1° surface field. Unknown names exit 2 listing `Available:`.
 - `--member` — 0-based member index, repeatable. Default: all 64. Not with `--product statistics`.
 - `--statistic` — with `--product statistics`: `mean`, `p10`, `p25`, `p50`, `p75`, `p90`, repeatable. Default: all six.
-- `--max-lead` — keep only leads up to this one after init: hours (`72`) or a timedelta (`72h`, `3D`). Default: every lead.
+- `--max-lead` — keep only leads up to this one after init: hours (`72`) or a timedelta (`72h`, `3D`). Precipitation and radiation keep the periods that end by it (`72h` on WeatherNext 2 `precip` ends with the 66 h step); instant fields keep the steps up to it. Default: every lead.
 - `--billing-project` — GCP project billed for WeatherNext 3 ensemble reads. Default: `$GOOGLE_CLOUD_PROJECT`, then `$CLOUDSDK_CORE_PROJECT`.
 - `--probe-latest [IDENT]` — print the latest init date (or `none`) and exit; honours `--version`, `--product`, `--cycle`. `IDENT` is ignored.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
 - Dims `(number, step, [level,] lat, lon)`, scalar `time` = init, `valid_time` on `step`. With windows, `(time, step, number, [level,] lat, lon)`, one `time` per init, and `valid_time` on `(time, step)`; an init still publishing keeps its missing leads NaN (not filled), with a `WARNING` naming it. Statistics have no `number` and name variables `<name>_<stat>`.
-- `precip` (and `imerg_precip`, `experimental_precip`) is a rate in `mm day-1` and `ssrd` a 1 h total in `J m-2`, labelled at period start. Other fields are instants at `init + step`. Fetched together, the step axis starts at 0: the period fields are NaN at the last lead and the instants at 0 h. Never `deaccumulate` it.
+- `precip` (and `imerg_precip`, `experimental_precip`) is a rate in `mm day-1` and `ssrd` a 1 h total in `J m-2`, labelled at period start. Other fields are instants at `init + step`. Fetched together, the step axis starts at 0: the period fields are NaN at the last lead and the instants at 0 h. Do not run deaccumulate on these fields.
 - Air temperatures are `degree_Celsius`; other fields keep ERA5-style units.
 
 ### Notes

@@ -50,6 +50,6 @@ Pass at least one of `--level`, `--geojson`, `--time`; `--level` and `--geojson`
 
 ### Example
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/label_group.py -i chirps_kenya_daily.zarr -o chirps_kenya_labeled.zarr --level admin_1 --time year --time MAM,OND
+uv run ${CLAUDE_SKILL_DIR}/scripts/label_group.py -i chirps_kenya_daily.zarr -o chirps_kenya_labelled.zarr --level admin_1 --time year --time MAM,OND
 ```
 Labels each CHIRPS cell with its Kenyan county and each day with its year and `MAM` or `OND` season.

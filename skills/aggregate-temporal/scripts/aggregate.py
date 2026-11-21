@@ -101,12 +101,12 @@ def _as_ns(val):
     "--end-time",
     help=(
         "With --period: exclusive right edge of the final bin (bins walk "
-        "backward; labeled at the left edge, same as forecast step buckets)."
+        "backward; labelled at the left edge, same as forecast step buckets)."
     ),
 )
 @weather_skill.argument(
     "--start-time",
-    help="With --period and --end-time: optional earliest coverage floor.",
+    help="With --period and --end-time: create no windows before this date.",
 )
 def aggregate(
     ds,
@@ -245,7 +245,8 @@ def aggregate(
             length_days = int(round(length_days))
             freq = f"{length_days}D"
         else:
-            # Sub-daily: bins of this many seconds, aligned to 00 UTC of the first day.
+            # Sub-daily: bins of this many seconds from 00 UTC of the first day, shifted below by
+            # the input cells' offset.
             freq = f"{int(round(seconds))}s"
     monthly = key == "monthly"
     if window is not None and monthly:
@@ -301,7 +302,7 @@ def aggregate(
     if same:
         pass
     elif window is not None:
-        # One window per sample, labeled at that sample. --align puts the sample at
+        # One window per sample, labelled at that sample. --align puts the sample at
         # the window's start (left), middle (center), or end (right).
         try:
             stride = int(stride)
@@ -357,7 +358,7 @@ def aggregate(
         for left in np.arange(0, max_step + step, step, dtype=raw.dtype):
             bins.append((left, left + step, left))
     elif end_time is not None:
-        # Backward fixed-width bins whose last right edge is --end-time, labeled at
+        # Backward fixed-width bins whose last right edge is --end-time, labelled at
         # the left edge like forecast step buckets.
         if monthly:
             raise UsageError(
@@ -497,7 +498,7 @@ def aggregate(
                     overlap[idx].astype(float), dims=[dim], coords={dim: sub[dim].values}
                 )
                 # Weight only finite samples. Dividing by sum(weights) treats NaN as 0, which
-                # turns unpublished GEFS long leads (all-NaN weeks 4–5) into fake dry zeros.
+                # turns all-NaN samples into zeros.
                 count = (sub.notnull() * weights).sum(dim=dim)
                 reduced = (sub * weights).sum(dim=dim, skipna=True, keep_attrs=True) / count
             else:
@@ -526,7 +527,7 @@ def aggregate(
     )
 
     # Incomplete bins are kept with their coverage; convert-to-totals drops them
-    # at its default --min-coverage 1.0. Say so now, not three steps later.
+    # at its default --min-coverage 1.0.
     cov = np.asarray(out[AGGREGATION_COVERAGE_COORD].values, dtype=float)
     low = cov < 1.0 - 1e-12
     if low.any():

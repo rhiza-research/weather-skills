@@ -142,9 +142,8 @@ def _stamp_coord_attrs(ds) -> None:
     metavar="IDENT",
     probe=True,
     help=(
-        "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Print the last day with data (YYYY-MM-DD) on stdout and exit. "
+        "Does not download fields. IDENT is ignored."
     ),
 )
 @weather_skill.argument(
