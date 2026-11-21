@@ -113,6 +113,23 @@ def test_concat_sorts_out_of_order_inputs(tmp_path, concat):
     assert (np.diff(times) > np.timedelta64(0)).all()
 
 
+def test_concat_sorts_time_given_newest_first(tmp_path, concat):
+    # Two inputs in reverse date order form a descending, not a mixed, axis.
+    d1 = write_zarr(make_gridded(n_time=1, start="2026-01-02"), tmp_path / "d1.zarr")
+    d2 = write_zarr(make_gridded(n_time=1, start="2026-01-01"), tmp_path / "d2.zarr")
+    out = _run(concat, tmp_path, d1, d2, extra=("--dim", "time"))
+    times = xr.open_zarr(out)["time"].values
+    assert (np.diff(times) > np.timedelta64(0)).all()
+
+
+def test_concat_keeps_descending_levels(tmp_path, concat):
+    # Pressure levels from the surface up run one way: they are not out of order.
+    d1 = write_zarr(make_gridded().expand_dims(level=[1000.0, 850.0]), tmp_path / "d1.zarr")
+    d2 = write_zarr(make_gridded().expand_dims(level=[500.0, 200.0]), tmp_path / "d2.zarr")
+    out = _run(concat, tmp_path, d1, d2, extra=("--dim", "level"))
+    assert list(xr.open_zarr(out)["level"].values) == [1000.0, 850.0, 500.0, 200.0]
+
+
 def test_concat_keeps_coords_order_on_new_dim(tmp_path, concat):
     d1 = write_zarr(make_gridded(start="2026-01-01"), tmp_path / "d1.zarr")
     d2 = write_zarr(make_gridded(start="2026-01-01"), tmp_path / "d2.zarr")

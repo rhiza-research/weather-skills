@@ -129,7 +129,7 @@ def concat(ds, dim, coords, **kwargs):
     # coords="different": a single-value label that differs between inputs becomes a
     # label along dim.
     try:
-        out = xr.concat(dss, dim=dim, join="exact", coords="different")
+        out = xr.concat(dss, dim=dim, join="exact", coords="different", compat="equals")
     except pint.DimensionalityError as exc:
         raise UsageError(f"inputs carry incompatible units: {exc}") from None
     except xr.AlignmentError as exc:
@@ -146,19 +146,14 @@ def concat(ds, dim, coords, **kwargs):
                 f"inputs overlap along {dim!r}: {[str(v) for v in dups[:5]]} appear more than once; "
                 "keep only the new entries of one input with select (repeat --index)"
             )
-        # Coordinate axes come out in order; other dims keep the input order.
-        ordered = ALIASES.get(dim, dim) in {
-            "lat",
-            "lon",
-            "x",
-            "y",
-            "vertical",
-            "time",
-            "init_time",
-            "prediction_timedelta",
-            "day_of_year",
-        }
-        if ordered and not (index.is_monotonic_increasing or index.is_monotonic_decreasing):
+        # Time axes run forward. Grid and level axes may run either way (latitude from north
+        # to south) but not out of order. Other dims keep the input order.
+        axis = ALIASES.get(dim, dim)
+        temporal = axis in {"time", "init_time", "prediction_timedelta", "day_of_year"}
+        spatial = axis in {"lat", "lon", "x", "y", "vertical"}
+        if (temporal and not index.is_monotonic_increasing) or (
+            spatial and not (index.is_monotonic_increasing or index.is_monotonic_decreasing)
+        ):
             out = out.sortby(dim)
         # Boxes stitched along lat/lon with a gap between them leave an
         # irregular axis that clipping, regridding, and plotting assume away.
