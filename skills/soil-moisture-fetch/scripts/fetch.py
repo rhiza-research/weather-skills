@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 #   "earthaccess",
 #   "ecmwf-datastores-client==0.4.2",
 #   "h5py",
@@ -31,7 +31,6 @@ import tempfile
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
 from itertools import product
 from pathlib import Path
 
@@ -88,9 +87,11 @@ _DATASETS = {
 }
 
 
-def _note(msg, days=()):
-    """A stderr note; with ``days``, lists the first ten."""
-    if days:
+def _note(msg, days=None):
+    """A stderr note; with ``days``, lists the first ten, and an empty list prints nothing."""
+    if days is not None:
+        if not days:
+            return
         msg = f"{msg} for {len(days)} day(s): " + ", ".join(d.isoformat() for d in days[:10])
         msg += " ..." if len(days) > 10 else ""
     print(f"{_NAME}: {msg}", file=sys.stderr)
@@ -318,25 +319,6 @@ def _ease9_box(bbox):
     return lat[rows], lon[cols], rows, cols
 
 
-@contextmanager
-def _earthdata():
-    """Turn an Earthdata 401/403 into the login hint."""
-    try:
-        yield
-    except SkillError:
-        raise
-    except Exception as exc:
-        statuses = (
-            getattr(getattr(exc, "response", None), "status_code", None),
-            getattr(exc, "status_code", None),
-            getattr(exc, "status", None),
-        )
-        msg = str(exc).lower()
-        if {401, 403} & set(statuses) or "401 unauthorized" in msg or "403 forbidden" in msg:
-            raise DataError(_AUTH_FAIL_MSG) from None
-        raise
-
-
 def _login():
     """Authenticate via environment then netrc; never falls through to interactive."""
     import earthaccess
@@ -344,8 +326,7 @@ def _login():
 
     for strategy in ("environment", "netrc"):
         try:
-            with _earthdata():
-                auth = earthaccess.login(strategy=strategy)
+            auth = earthaccess.login(strategy=strategy)
         except LoginStrategyUnavailable:
             continue
         except LoginAttemptFailure:
@@ -356,23 +337,23 @@ def _login():
 
 
 def _nasa_granules(dataset, start, end):
-    """{day: granule} for ``dataset``'s NASA collection over ``start..end``."""
+    """{day: newest granule} for ``dataset``'s NASA collection over ``start..end``."""
     import earthaccess
 
     short_name, version = _NASA[dataset]
     kwargs = {"short_name": short_name, "temporal": (start.isoformat(), end.isoformat())}
     if version:
         kwargs["version"] = version
-    granules = {}
-    with _earthdata():
-        found = earthaccess.search_data(**kwargs)
-    for g in found:
+    granules, names = {}, {}
+    for g in earthaccess.search_data(**kwargs):
         name = next((u.rsplit("/", 1)[-1] for u in g.data_links()), "")
         m = _GRANULE_DATE_RE.search(name)
         if m:
             day = dt.datetime.strptime(m.group(1), "%Y%m%d").date()  # noqa: DTZ007
-            if start <= day <= end:
-                granules.setdefault(day, g)
+            # During a reprocessing two files can share a day; the newest name
+            # (higher CRID or version, e.g. R19240_001 over R18290_001) wins.
+            if start <= day <= end and name > names.get(day, ""):
+                granules[day], names[day] = g, name
     return granules
 
 
@@ -429,8 +410,7 @@ def _read_nasa(granule, dataset, layers, rows, cols, recommended_only, day_iso):
 
     for attempt in range(1, _READ_TRIES + 1):
         try:
-            with _earthdata():
-                (handle,) = earthaccess.open([granule])
+            (handle,) = earthaccess.open([granule])
             with h5py.File(handle, "r") as h:
                 return [layer(h, s, p) for s, p in layers]
         except SkillError:
@@ -439,7 +419,7 @@ def _read_nasa(granule, dataset, layers, rows, cols, recommended_only, day_iso):
             if attempt == _READ_TRIES:
                 raise DataError(
                     f"reading the {dataset} granule for {day_iso} failed {_READ_TRIES} times ({exc})."
-                ) from None
+                ) from exc
             time.sleep(5 * attempt)
 
 
@@ -468,6 +448,8 @@ _CATDS_BASE = "https://data.catds.fr/cpdc/Land_products/GRIDDED/L3SM"
 _CATDS_LAST_RE07 = dt.date(2021, 5, 24)
 # SMOS crosses the equator ascending at 06:00 and descending at 18:00 local time.
 _CATDS_PRODUCT = {"AM": "MIR_CLF31A", "PM": "MIR_CLF31D"}
+# CATDS files declare no valid range and hold values from 0 to 1; keep SPL3SMP_E's.
+_CATDS_VALID = (0.02, 0.5)
 _CATDS_ACK = (
     'These data were obtained from the "Centre Aval de Traitement des Données SMOS" (CATDS), '
     'operated for the "Centre National d\'Etudes Spatiales" (CNES, France) by IFREMER '
@@ -514,7 +496,8 @@ def _catds_day(session, day, overpass, bbox, workdir):
             da = bbox_subset(da.to_dataset(), bbox, lat_dim="latitude", lon_dim="longitude")[
                 "Soil_Moisture"
             ]
-        da = da.astype("float32").load()
+        lo, hi = _CATDS_VALID
+        da = da.where((da >= lo) & (da <= hi)).astype("float32").load()
     path.unlink()
     return da
 
@@ -676,41 +659,54 @@ def fetch(
         raise UsageError(f"--uncertainty applies to ascat and combined, not {dataset}.")
     overpasses = ("AM", "PM") if overpass == "both" else (overpass or "AM",)
 
-    if probe_latest is not None:
-        today = dt.datetime.now(dt.UTC).date()
-        if cds:
-            latest = max(_cds_days(dataset))
-        elif dataset in _NASA:
-            _login()
-            latest = max(
-                _nasa_granules(dataset, today - dt.timedelta(days=180), today), default=None
+    # Every Earthdata call (login, search, open) sits in here, so a 401/403 from
+    # any of them gets the login hint.
+    try:
+        if probe_latest is not None:
+            today = dt.datetime.now(dt.UTC).date()
+            if cds:
+                latest = max(_cds_days(dataset))
+            elif dataset in _NASA:
+                _login()
+                latest = max(
+                    _nasa_granules(dataset, today - dt.timedelta(days=180), today), default=None
+                )
+            else:
+                latest = _catds_latest(overpasses)
+            print(latest.isoformat() if latest else "none")
+            return None
+
+        if start_time is None or end_time is None:
+            raise UsageError("pass --start-time and --end-time (YYYY-MM-DD).")
+        if end_time < start_time:
+            raise UsageError("--end-time is before --start-time.")
+        info = _DATASETS[dataset]
+        if start_time < info["first"]:
+            raise UsageError(f"--dataset {dataset} starts {info['first'].isoformat()}.")
+        days = [start_time + dt.timedelta(days=i) for i in range((end_time - start_time).days + 1)]
+        _note(f"{dataset} {start_time}..{end_time}: {len(days)} day(s)")
+        if cds and len(days) > _WARN_DAYS:
+            _note(
+                f"warning: {len(days)} days is about {len(days)} MB of global files; expect a long download."
             )
+
+        if cds:
+            ds = _fetch_cds(dataset, days, bbox, uncertainty)
+            # Every requested day is in the output; days the CDS lacks are NaN.
+            ds = ds.reindex(time=np.array(days, dtype="datetime64[ns]"))
         else:
-            latest = _catds_latest(overpasses)
-        print(latest.isoformat() if latest else "none")
-        return None
-
-    if start_time is None or end_time is None:
-        raise UsageError("pass --start-time and --end-time (YYYY-MM-DD).")
-    if end_time < start_time:
-        raise UsageError("--end-time is before --start-time.")
-    info = _DATASETS[dataset]
-    if start_time < info["first"]:
-        raise UsageError(f"--dataset {dataset} starts {info['first'].isoformat()}.")
-    days = [start_time + dt.timedelta(days=i) for i in range((end_time - start_time).days + 1)]
-    _note(f"{dataset} {start_time}..{end_time}: {len(days)} day(s)")
-    if cds and len(days) > _WARN_DAYS:
-        _note(
-            f"warning: {len(days)} days is about {len(days)} MB of global files; expect a long download."
-        )
-
-    if cds:
-        ds = _fetch_cds(dataset, days, bbox, uncertainty)
-        # Every requested day is in the output; days the CDS lacks are NaN.
-        ds = ds.reindex(time=np.array(days, dtype="datetime64[ns]"))
-    else:
-        ds = _fetch_radiometer(dataset, days, bbox, overpasses, quality != "all")
-        ds = ensure_normalized_longitude(ds.sortby("latitude"), lon_dim="longitude")
+            ds = _fetch_radiometer(dataset, days, bbox, overpasses, quality != "all")
+            ds = ensure_normalized_longitude(ds.sortby("latitude"), lon_dim="longitude")
+    except Exception as exc:
+        cause = exc.__cause__ or exc
+        status = getattr(getattr(cause, "response", None), "status_code", None)
+        status = status or getattr(cause, "status_code", None)
+        text = str(cause).lower()
+        if dataset in _NASA and (
+            status in (401, 403) or "401 unauthorized" in text or "403 forbidden" in text
+        ):
+            raise DataError(_AUTH_FAIL_MSG) from None
+        raise
 
     var = _CDS_VARS[dataset][2] if cds else "soil_moisture"
     empty = [

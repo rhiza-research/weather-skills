@@ -450,3 +450,73 @@ def test_cds_fetch_cuts_the_box_and_keeps_every_day(mod, fetch, tmp_path, datase
     assert np.all(np.diff(ds["latitude"]) > 0)
     assert ds.attrs["weather_skills_source"] == tag
     assert ds[var].attrs.get("data_interval") == "1 day"
+
+
+# --- review fixes --------------------------------------------------------------------
+
+
+def test_note_with_no_days_prints_nothing(mod, capsys):
+    mod._note("no file (left empty)", [])
+    mod._note("no file (left empty)", [date(2026, 1, 1)])
+    err = capsys.readouterr().err
+    assert err.count("no file") == 1 and "2026-01-01" in err
+
+
+def test_catds_values_outside_the_valid_range_are_nan(mod, tmp_path):
+    import io
+    import tarfile
+
+    nc = tmp_path / "SM.nc"
+    xr.Dataset(
+        {"Soil_Moisture": (("lat", "lon"), np.array([[0.0, 0.3], [0.93, 0.5]], "float32"))},
+        coords={"lat": [1.0, 0.0], "lon": [30.0, 30.3]},
+    ).to_netcdf(nc)
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        tar.add(nc, arcname="SM.nc")
+    listing = MagicMock(status_code=200, text='<a href="SM_X.tgz">')
+    archive = MagicMock(status_code=200, content=buf.getvalue())
+    session = MagicMock(get=MagicMock(side_effect=[listing, archive]))
+    work = tmp_path / "work"
+    work.mkdir()
+    da = mod._catds_day(session, date(2025, 5, 3), "AM", None, work)
+    # 0.0 and 0.93 are outside 0.02-0.5; latitude comes out ascending.
+    np.testing.assert_allclose(da.values, [[np.nan, 0.5], [np.nan, 0.3]], rtol=1e-6)
+
+
+@pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+def test_nasa_granules_keeps_the_newest_file_per_day(mod, order):
+    names = ["SMAP_L3_SM_P_E_20250503_R18290_001.h5", "SMAP_L3_SM_P_E_20250503_R19240_001.h5"]
+    found = []
+    for i in order:
+        g = MagicMock()
+        g.data_links.return_value = [f"https://example/{names[i]}"]
+        found.append(g)
+    with patch("earthaccess.search_data", return_value=found):
+        granules = mod._nasa_granules("smap", date(2025, 5, 3), date(2025, 5, 3))
+    (g,) = granules.values()
+    assert g.data_links()[0].endswith("R19240_001.h5")
+
+
+@pytest.mark.parametrize("where", ["search", "read"])
+def test_earthdata_401_gives_the_login_hint(mod, fetch, tmp_path, capsys, where):
+    denied = OSError("401 Unauthorized")
+    denied.response = MagicMock(status_code=401)
+    search = (
+        MagicMock(side_effect=denied)
+        if where == "search"
+        else MagicMock(return_value=_granules("20260101"))
+    )
+    with (
+        patch.object(mod, "_ease9_box", return_value=(_LAT, _LON, slice(None), slice(None))),
+        patch.object(mod, "_login"),
+        patch("earthaccess.search_data", search),
+        patch("earthaccess.open", MagicMock(side_effect=denied)),
+        patch.object(mod.time, "sleep"),
+        patch.dict(sys.modules, {"h5py": MagicMock()}),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_skill(fetch, "--dataset", "smap", "--start-time", "2026-01-01", "--end-time", "2026-01-01",
+                  "-o", str(tmp_path / "out.zarr"))  # fmt: skip
+    assert exc.value.code == 1
+    assert "Earthdata authentication failed" in capsys.readouterr().err
