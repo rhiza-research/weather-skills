@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads the WindBorne Forecasts and Insights APIs (api.windbornesystems.com). Requires WB_CLIENT_ID and WB_API_KEY in the environment. A free 2-week trial key (Forecasts and Insights endpoints only) is available with sign-up at https://api.windbornesystems.com/getting-started/.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.9"
+  version: "0.0.10"
   catalog-group: fetchers
   variables: "precip t2m d2m msl u10 v10 u100 v100 ws10 ws100 tmax tmin sp tcwv cape tcc ssrd skt t z q u v td gh text conditions hdd cdd"
   required-env: "WB_CLIENT_ID WB_API_KEY"

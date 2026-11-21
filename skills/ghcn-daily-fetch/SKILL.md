@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads NOAA GHCN-Daily from NCEI's public HTTPS tree (www.ncei.noaa.gov/pub/data/ghcn/daily), falling back to the noaa-ghcn-pds S3 mirror when NCEI returns 404; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.12"
+  version: "0.0.13"
   catalog-group: fetchers
   variables: "precip tmax tmin tavg"
 ---

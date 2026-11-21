@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Installs the TAHMO Python SDK from GitHub (git+https://github.com/rhiza-research/tahmo-api). Station mode needs TAHMO_API_USERNAME and TAHMO_API_PASSWORD; --gold-stations and --gridded need read access to gs://sheerwater-datalake/hindcasts via GCLOUD_SERVICE_CREDENTIALS (service-account JSON contents) or GOOGLE_APPLICATION_CREDENTIALS (path to that JSON).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.14"
+  version: "0.0.15"
   catalog-group: fetchers
   variables: "precip temperature tmax tmin humidity pressure"
   required-env: "TAHMO_API_USERNAME TAHMO_API_PASSWORD"

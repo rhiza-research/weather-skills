@@ -12,7 +12,7 @@ from weather_skills_core.standard_dataset import ALIASES, names_for
 from weather_skills_core.units import AGGREGATION_COVERAGE_COORD as COVERAGE
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.12"
+_SKILL_VERSION = "0.0.13"
 
 
 def _coerce(values):

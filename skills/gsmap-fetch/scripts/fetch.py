@@ -15,7 +15,7 @@ from weather_skills_core.cf import stamp_cf_attrs
 from weather_skills_core.units import stamp_data_interval, to_standard_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.10"
 
 # JAXA's Earth API (data.earth.jaxa.jp, the jaxa-earth package): no
 # credentials, and the bbox is subset on the server (COG + STAC).

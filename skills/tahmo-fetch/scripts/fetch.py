@@ -36,7 +36,7 @@ from weather_skills_core.standard_utils import bbox_subset, is_transient, requir
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.14"
+_SKILL_VERSION = "0.0.15"
 
 DEFAULT_WORKERS = 8
 _TAHMO_PREFIX = "TA"
