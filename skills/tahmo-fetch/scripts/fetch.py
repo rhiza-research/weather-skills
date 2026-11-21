@@ -201,7 +201,6 @@ def _fetch_gold(start_time, end_time, bbox, station_ids):
         "standard_name": "lwe_precipitation_rate",
         "units": "mm day-1",
         "long_name": "daily precipitation, TAHMO station complete days",
-        "cell_methods": "time: sum",
         "coordinates": "latitude longitude",
     }
     ds["latitude"].attrs.update(standard_name="latitude", units="degrees_north", axis="Y")

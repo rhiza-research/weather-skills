@@ -831,6 +831,8 @@ def test_gold_stations_by_id_and_date_range(tmp_path, mod, fetch):
     assert list(ds["station_id"].values) == ["TA00003"]
     assert ds.sizes["time"] == 2
     assert float(ds["precip"].isel(time=0, station_id=0)) == 0.0
+    # A daily rate: no "time: sum", which marks an amount.
+    assert "sum" not in ds["precip"].attrs.get("cell_methods", "")
 
 
 def test_gold_stations_drops_stations_with_no_day_in_range(tmp_path, mod, fetch):
