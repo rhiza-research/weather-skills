@@ -21,7 +21,7 @@ from weather_skills_core.standard_utils import (
 from weather_skills_core.units import stamp_data_interval, to_standard_units
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.10"
 
 _FINAL_ID = "ucsb-chc-chirps-analysis-final"
 _PRELIM_ID = "ucsb-chc-chirps-analysis-preliminary"
@@ -107,7 +107,7 @@ def _latest_day(dataset_id: str) -> date | None:
     "--workers",
     type=int,
     default=DEFAULT_WORKERS,
-    help="Ignored; retained for CLI compatibility with the previous TIF fetcher.",
+    help="Ignored.",
 )
 @weather_skill.argument(
     "--probe-latest",

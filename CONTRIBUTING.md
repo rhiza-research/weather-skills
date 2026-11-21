@@ -16,6 +16,13 @@ version-bump workflow rewrites both the SKILL.md
 `metadata.version` and the `_SKILL_VERSION` literal in lockstep, so
 contributors never edit either by hand.
 
+The spec defines `metadata` as string keys to string values, so list-like
+fields are space-separated strings: `variables: "tp t2m"` names the source
+variables a fetcher can pull, and `required-env: "WB_CLIENT_ID WB_API_KEY"`
+names the env vars a skill cannot run without. Leave optional or alternative
+credentials out of `required-env`, and describe every env var (what it is,
+where to get it, when it is needed) in the `compatibility` line.
+
 ## PR workflow
 
 1. Branch off `dev`, which holds the most recent work.

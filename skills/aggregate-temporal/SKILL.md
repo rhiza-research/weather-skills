@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py *)
 metadata:
-  version: "0.0.11"
+  version: "0.0.13"
   catalog-group: transforms
 ---
 
@@ -25,10 +25,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window 
 ### Arguments
 - `--input`, `-i` — input Zarr with a `time` or `step` axis.
 - `--output`, `-o` — output Zarr.
-- `--period` — `daily`, `weekly` (7 days), `dekadal` (a fixed 10 days back to back, not calendar dekads), `monthly` (calendar months, `time` only, in the input's own calendar), or a duration such as `21 day`, `3 week`, or sub-daily `6 hour` (bins start at 00 UTC on `time` and at lead 0 on `step`). Pass exactly one of `--period` and `--window`.
-- `--window` — rolling window length: `daily`, `weekly`, `dekadal`, or a duration such as `7 day` or `12 hour`. One window per input sample, labeled at that sample.
-- `--align` — with `--window`: where the labeled sample sits in its window: `left` (the window starts there), `right` (it ends there), or `center`. Default: `left`.
-- `--stride` — with `--window`: keep every Nth window (integer), or keep windows labeled on dates by `day`, `week`, `month`, `year`, or weekday names (`Monday`, `Monday/Thursday`).
+- `--period` — `daily`, `weekly` (7 days), `dekadal` (a fixed 10 days back to back, not calendar dekads), `monthly` (calendar months, `time` only, in the input's own calendar), or a duration such as `21 day`, `3 week`, or sub-daily `6 hour` (bins start at lead 0 on `step`, and at 00 UTC on `time` shifted by the input cells' own offset, so daily cells from 06 UTC give bins from 06 UTC). Pass exactly one of `--period` and `--window`.
+- `--window` — rolling window length: `daily`, `weekly`, `dekadal`, or a duration such as `7 day` or `12 hour`. One window per input sample, labelled at that sample.
+- `--align` — with `--window`: where the labelled sample sits in its window: `left` (the window starts there), `right` (it ends there), or `center`. Default: `left`.
+- `--stride` — with `--window`: keep every Nth window (integer), or keep windows labelled on dates by `day`, `week`, `month`, `year`, or weekday names (`Monday`, `Monday/Thursday`).
 - `--method` — `mean`, `max`, or `min`. Default: `mean`.
 - `--variable`, `-v` — aggregate only this variable; repeat for several. Default: all.
 - `--time-dim` — axis to aggregate. Default: `time`, or `step` when there is no `time` axis or `time` has one value.
@@ -37,7 +37,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window 
 
 ### Output
 - Same variables and units; with `--period` the aggregated axis holds one label per window, at the window's left edge; with `--window`, one per input sample. Without `--end-time`, `time` windows start at the first sample; `step` windows start at lead 0. Ensemble members stay separate.
-- Each variable gets `aggregation_period` (window length, e.g. `7 day`, `1 dekad`, `1 month`), `data_interval` (output spacing: the period, or the input spacing for `--window`), and CF `cell_methods` (e.g. `time: mean (interval: 1 day)`, where the interval is the input spacing).
+- Each variable gets `aggregation_period` (window length, e.g. `7 day`, `1 dekad`, `1 month`), `data_interval` (the period, or the input spacing for `--window`, whose output also has `{dim}_bounds` with each window's start and end; `--window` on input with `{dim}_bounds` writes no `data_interval`), and CF `cell_methods` (e.g. `time: mean (interval: 1 day)`, where the interval is the input spacing).
 - Coordinate `aggregation_coverage` (0–1) on the axis: the share of expected input samples with data. Incomplete windows are kept and listed on stderr.
 
 ### Notes
@@ -49,7 +49,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window 
 uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i chirps_kenya.zarr -o chirps_kenya_weekly.zarr \
   --period weekly --end-time 2026-10-15
 ```
-Writes weekly mean CHIRPS rates (`mm day-1`) whose last week is 2026-10-08 to 2026-10-14, labeled 2026-10-08.
+Writes weekly mean CHIRPS rates (`mm day-1`) whose last week is 2026-10-08 to 2026-10-14, labelled 2026-10-08.
 
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i gfs_precip.zarr -o gfs_precip_6h.zarr --period "6 hour" --time-dim step
@@ -58,13 +58,15 @@ Writes 6-hour mean GFS precip rates; hourly and 3-hourly leads are weighted by t
 
 ## Details
 
-- Input that is already aggregated must divide evenly into the period (weekly → `14 day`, not `monthly`), else exit 2. A period shorter than the input's samples (`6 hour` on daily data, or shorter than the widest `step_bounds` cell) also exits 2. Input already at the period is only stamped, not changed.
+- Input that is already aggregated must divide evenly into the period (weekly → `14 day`, not `monthly`), else exit 2; run regularize-time `--period '1 day'` first to split it into days (weekly → daily → `monthly`). A period shorter than the input's samples (`6 hour` on daily data, or shorter than the widest `step_bounds` cell) also exits 2. Input already at the period, with no `{dim}_bounds`, is only stamped, not changed.
 - Concatenated segments with gaps (e.g. one week per year) straddle `--period` windows; aggregate each segment before concatenating. `--window` handles them in one call when the segments are further apart than the window: a window spans only its own length, so it never reaches across such a gap.
 
-**Window geometry.** Windows are half-open `[left, right)` and labeled at the left edge, on `step` and with `--end-time` alike: week 1 of a forecast initialized 2026-10-12 is `step = 0` and covers the same days as the `--end-time 2026-10-19` observation week labeled 2026-10-12.
+**Window geometry.** Windows are half-open `[left, right)` and labelled at the left edge, on `step` and with `--end-time` alike: week 1 of a forecast initialized 2026-10-12 is `step = 0` and covers the same days as the `--end-time 2026-10-19` observation week labelled 2026-10-12.
 
-**Coverage.** A sample counts only when some cell has data (a fixed land mask does not count as missing; an all-NaN unpublished lead does). Re-aggregated input counts at its own coverage, so a 3/7 week inside a 14-day window gives 10/14.
+**Coverage.** A sample counts only when every variable on the axis has data somewhere (a fixed land mask does not count as missing; an all-NaN unpublished lead does). Re-aggregated input counts at its own coverage, so a 3/7 week inside a 14-day window gives 10/14.
 
 **Irregular axes.** Inputs with CF `{dim}_bounds` are weighted by sample duration (`sum(rate × dt) / sum(dt)`).
+
+**Overlapping samples.** Samples spaced closer than their interval (one weekly mean per forecast init, inits days apart), or with overlapping `{dim}_bounds`, exit 2. Run regularize-time first, then aggregate its output; `comment: overlapping samples` in `cell_methods` is kept.
 
 **Calendar dekads.** Fetch the dekad and pass its length with `--end-time` the day after it: 21–31 Oct is `--period '11 day' --end-time 2026-11-01`.

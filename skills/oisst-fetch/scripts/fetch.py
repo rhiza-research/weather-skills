@@ -289,7 +289,7 @@ def fetch(start_time, end_time, bbox, probe_latest, **kwargs):
         piece = None
         for attempt in range(len(_READ_RETRY_SLEEPS_S) + 1):
             try:
-                # No dask chunking: chunked OPeNDAP reads were observed to write zeros.
+                # No dask chunking: chunked OPeNDAP reads return zeros.
                 dy = _open_year(year)
                 with dy:
                     src = dy[["sst"]].rename({"lat": "latitude", "lon": "longitude"})

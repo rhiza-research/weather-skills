@@ -69,6 +69,7 @@ def _clip_reference_axis(input_vals, ref_vals):
 @weather_skill.argument("--variable", "-v")
 @weather_skill.argument(
     "--reference-grid",
+    type=Dataset("spatial"),
     help=(
         "Zarr whose lat/lon become the target (exact coordinate values). "
         "Prefer this when matching another dataset for difference/verify."
@@ -135,7 +136,10 @@ def coarsen(
 
     lat_dim, lon_dim = detect_spatial_dims(ds)
     if variable:
-        ds = ds[[variable]]
+        if variable not in ds.data_vars:
+            raise UsageError(f"variable {variable!r} not in dataset (have {list(ds.data_vars)})")
+        # drop_vars keeps every coordinate; ds[[...]] would lose time_bounds (dims nv).
+        ds = ds.drop_vars([name for name in ds.data_vars if name != variable])
     # xarray-regrid can't interpolate pint quantities wrapping dask arrays, and
     # fails on coords chunked unlike the data (aggregation_coverage on time);
     # coords are small, so load them.
@@ -144,7 +148,7 @@ def coarsen(
     in_lat, in_lon = grid_spacing(ds[lat_dim].values), grid_spacing(ds[lon_dim].values)
 
     if has_ref:
-        ref = xr.open_zarr(reference_grid, consolidated=False)
+        ref = reference_grid
         ref_lat_dim, ref_lon_dim = detect_spatial_dims(ref)
         ref = ensure_normalized_longitude(ref, ref_lon_dim)
         ref_lat_sp = grid_spacing(ref[ref_lat_dim].values)

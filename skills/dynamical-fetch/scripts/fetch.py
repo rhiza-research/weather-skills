@@ -19,13 +19,14 @@ from weather_skills_core.standard_utils import (
     np_to_date,
 )
 from weather_skills_core.units import (
+    classify_variable,
     precip_amounts_to_rates,
     stamp_data_interval,
     to_standard_units,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.16"
+_SKILL_VERSION = "0.0.19"
 
 # Forecast bookkeeping / CRS scalar coords dropped from the standard output.
 _DROP_COORDS = (
@@ -129,6 +130,13 @@ def _resolve_variables(requested, data_vars, dataset: str):
         # WeatherNext 2 stores 6-hour precip totals as total_precipitation_surface.
         if aliased and f"total_{aliased}" in name_set:
             aliased = f"total_{aliased}"
+        # ECMWF virtual stores have only the run total since init.
+        if (
+            aliased == "precipitation_surface"
+            and aliased not in name_set
+            and "total_precipitation_run_total_surface" in name_set
+        ):
+            aliased = "total_precipitation_run_total_surface"
         if aliased in name_set:
             _take(aliased)
             continue
@@ -213,6 +221,10 @@ def _merge_pressure_if_needed(ds, dataset, requested):
 
 _STAGING_CATALOG = "https://stac-staging.dynamical.org/catalog.json"
 
+# Analyses whose averaged fields end at their time label ("over the previous hour",
+# "since the previous forecast step"). IMERG and CHIRPS start theirs at the label.
+_END_LABELLED_ANALYSES = ("noaa-gfs-analysis", "noaa-gefs-analysis", "noaa-mrms-")
+
 
 def _open_dataset(state, dataset) -> dict:
     """Validate the dataset id, open it, and detect its shape, at most once per run."""
@@ -284,8 +296,7 @@ def _open_dataset(state, dataset) -> dict:
     probe=True,
     help=(
         "Print the latest available YYYY-MM-DD (or none) on stdout and exit. "
-        "Does not download fields. Optional IDENT selects a product "
-        "(dataset id, IMERG late/final, …)."
+        "Does not download fields. Optional IDENT: a dataset id (default --dataset)."
     ),
 )
 @weather_skill.argument(
@@ -299,7 +310,10 @@ def _open_dataset(state, dataset) -> dict:
 )
 @weather_skill.argument(
     "--max-lead",
-    help=("Forecasts only: keep output steps up to this one (240h, 10D). Default: every step."),
+    help=(
+        "Forecasts only: keep output steps up to this one (240h, 10D). Fields relabelled "
+        "to interval start keep only the intervals that end by it. Default: every step."
+    ),
 )
 def fetch(
     bbox,
@@ -400,6 +414,27 @@ def fetch(
     if variable:
         ds = ds[_resolve_variables(variable, ds.data_vars, dataset)]
 
+    # Provider accumulations (step_type accum): a run total since init, or GFS/GEFS
+    # buckets that restart every 6 h. Forecasts are turned into per-step amounts
+    # below; analyses would need the hours before each window, so they are refused.
+    accum_precip = [
+        name
+        for name in ds.data_vars
+        if ds[name].attrs.get("step_type") == "accum"
+        and classify_variable(
+            name,
+            units=ds[name].attrs.get("units"),
+            standard_name=ds[name].attrs.get("standard_name"),
+        )
+        == "precip_amount"
+    ]
+    if accum_precip and not is_forecast:
+        raise UsageError(
+            f"{dataset} stores {', '.join(accum_precip)} as totals over 1-6 h buckets, "
+            "not per-step amounts; fetch precipitation from noaa-gfs-analysis or "
+            "noaa-gefs-analysis (precipitation_surface rates)."
+        )
+
     if is_forecast:
         inits = ds["init_time"].values
         init_range = f"{np_to_date(inits.min()).isoformat()}..{np_to_date(inits.max()).isoformat()}"
@@ -415,8 +450,8 @@ def fetch(
                 ) from None
             if limit < np.timedelta64(0, "ns"):
                 raise UsageError("--max-lead must not be negative")
-            # One catalog lead past the limit: end-labelled fields move back one
-            # step below, and the extra lead is trimmed after that.
+            # One catalog lead past the limit: instant fields need the leads up to
+            # it, and end-labelled fields are cut on their interval end below.
             n = int((ds["lead_time"].values <= limit).sum())
             ds = ds.isel(lead_time=slice(0, n + 1))
         if date is not None:
@@ -452,19 +487,30 @@ def fetch(
         # half-hourly), not just its 00:00 instant. Windows may overlap.
         times = ds["time"].values
         spacing = times[1] - times[0] if len(times) > 1 else np.timedelta64(1, "D")
+        averaged = [
+            name for name in ds.data_vars if ds[name].attrs.get("step_type") in ("accum", "avg")
+        ]
+        end_labelled = dataset.startswith(_END_LABELLED_ANALYSES) and bool(averaged)
+        if end_labelled and len(averaged) < len(ds.data_vars):
+            raise UsageError(
+                f"{dataset} labels averaged fields ({', '.join(averaged)}) at the end of "
+                "their interval and instant fields at their time; fetch them separately"
+            )
+        # Select by where each cell starts, so a day window holds that day's intervals.
+        starts = times - spacing if end_labelled else times
         keep = np.zeros(times.size, dtype=bool)
         for (start, end), (lo, hi) in zip(windows, spans, strict=True):
-            inside = (times >= lo) & (times < hi)
+            inside = (starts >= lo) & (starts < hi)
             keep |= inside
             # The catalog only lists published times, so a window running past
             # the latest (or before the first) time comes back shorter. Say so;
             # never pad.
             if not inside.any():
                 print(f"WARNING: {dataset} has no data in {start}..{end}.", file=sys.stderr)
-            elif times[inside][0] > lo or times[inside][-1] + spacing < hi:
+            elif starts[inside][0] > lo or starts[inside][-1] + spacing < hi:
                 print(
-                    f"WARNING: {dataset} covers only {str(times[inside][0])[:16]}.."
-                    f"{str(times[inside][-1])[:16]} of the requested {start}..{end}; "
+                    f"WARNING: {dataset} covers only {str(starts[inside][0])[:16]}.."
+                    f"{str(starts[inside][-1])[:16]} of the requested {start}..{end}; "
                     "writing that partial window (not padded).",
                     file=sys.stderr,
                 )
@@ -472,6 +518,15 @@ def fetch(
             raise DataError(f"{dataset} has no data in {window_text}.")
         ds = ds.isel(time=np.nonzero(keep)[0])
         ds = ds.drop_vars([c for c in _DROP_COORDS if c in ds.coords])
+        if end_labelled:
+            ds = ds.assign_coords(time=("time", ds["time"].values - spacing, ds["time"].attrs))
+            for name in ds.data_vars:
+                note = "dynamical-fetch relabelled time to interval start: time t covers [t, t + step)."
+                ds[name].attrs["comment"] = f"{ds[name].attrs.get('comment', '')} {note}".strip()
+            print(
+                "Relabelled times to interval start (averages end at the catalog label).",
+                file=sys.stderr,
+            )
 
     # Spatial subset after the time/variable selection: an antimeridian bbox
     # concatenates two longitude wings, which reads every selected value.
@@ -493,6 +548,38 @@ def fetch(
         # forecast in one order. Only after the load: without dask, a lazy
         # transpose makes the read take gigabytes for a small bbox.
         ds = ds.transpose(*[d for d in ("time", "step", "number") if d in ds.dims], ...)
+        # Per-step amount = this lead's total minus the previous lead's when both
+        # are in the same accumulation (one run total, or the same 6 h bucket:
+        # lead L is in bucket ceil(L / 6 h)). WeatherNext 2's 6 h totals at 6 h
+        # leads are each their own bucket. Lead 0 covers no time: its total
+        # counts as 0 and its amount is NaN. Each amount is divided by its own
+        # gap, since lead spacing changes (1 h to 3 h, 3 h to 6 h); the result is
+        # a mean rate over (previous lead, lead], like the plain stores' avg fields.
+        # Small negative totals are model artifacts; the catalog says to zero them.
+        hours = ds["step"].values / np.timedelta64(1, "h")
+        # From 0 for the first lead (WeatherNext 2 has no lead 0); lead 0 has none.
+        gaps = np.diff(hours, prepend=0.0)
+        gap_seconds = ds["step"].copy(data=np.where(gaps > 0, gaps * 3600, np.nan))
+        for name in accum_precip:
+            da = ds[name]
+            bucket = np.zeros_like(hours) if "_run_total_" in name else np.ceil(hours / 6)
+            same = ds["step"].copy(data=np.concatenate([[False], bucket[1:] == bucket[:-1]]))
+            total = da.where(ds["step"] > np.timedelta64(0, "ns"), 0)
+            amount = (total - total.shift(step=1)).where(same, total).clip(min=0)
+            ds[name] = (amount / gap_seconds).assign_attrs(
+                {
+                    **da.attrs,
+                    "units": f"{da.attrs['units']} s-1",
+                    "standard_name": "precipitation_flux",
+                    "long_name": "Precipitation rate",
+                    "step_type": "avg",
+                    "comment": (
+                        "dynamical-fetch turned the provider total "
+                        f"({da.attrs.get('comment') or 'accumulated'}) into the mean rate "
+                        "since the previous lead."
+                    ),
+                }
+            )
         empty = np.ones(ds.sizes["step"], dtype=bool)
         for name in ds.data_vars:
             other = [d for d in ds[name].dims if d != "step"]
@@ -534,11 +621,16 @@ def fetch(
                         "leads are NaN (not filled).",
                         file=sys.stderr,
                     )
+    # End of each step's interval once steps are relabelled to interval start.
+    cell_end = None
     if is_forecast and ds.sizes.get("step", 0) > 1 and len(ds.data_vars) > 0:
         first = ds.isel(step=0)
         if all(bool(first[name].isnull().all()) for name in ds.data_vars):
             leads = ds["step"].values
-            ds = ds.isel(step=slice(1, None)).assign_coords(step=leads[:-1])
+            ds = ds.isel(step=slice(1, None)).assign_coords(
+                step=("step", leads[:-1], ds["step"].attrs)
+            )
+            cell_end = leads[1:]
             # GEFS / IFS ENS go 3- to 6-hourly. Write each cell's [start, end]
             # here: stamp_data_interval would infer bounds as if steps were ends.
             if len(set(np.diff(leads))) > 1:
@@ -566,10 +658,16 @@ def fetch(
                 pairs = np.stack([leads, ends], axis=1)
                 ds = ds.assign_coords(step_bounds=(("step", "nv"), pairs))
                 ds["step"].attrs["bounds"] = "step_bounds"
+        else:
+            # Averaged fields with instant ones keep the catalog labels, where each
+            # average ends: every cell is [previous lead, s).
+            leads = ds["step"].values
+            starts = np.concatenate([[leads[0] - (leads[1] - leads[0])], leads[:-1]])
+            ds = ds.assign_coords(step_bounds=(("step", "nv"), np.stack([starts, leads], axis=1)))
+            ds["step"].attrs["bounds"] = "step_bounds"
     # WeatherNext 2 and 3 have no lead 0: the first lead ends the first period
-    # (a 6 h total, step_type accum, or a 1 h mean rate, step_type avg). When
-    # every field is such a period, relabel to interval start.
-    # Small negative totals are model artifacts; the catalog says to zero them.
+    # (a mean rate, step_type avg, or a total, step_type accum). When every
+    # field is such a period, relabel to interval start.
     accum = [name for name in ds.data_vars if ds[name].attrs.get("step_type") == "accum"]
     for name in accum:
         ds[name] = ds[name].clip(min=0, keep_attrs=True)
@@ -590,14 +688,26 @@ def fetch(
         and len(period) == len(ds.data_vars)
         and leads[0] > np.timedelta64(0, "ns")
     ):
-        ds = ds.assign_coords(step=np.concatenate([[np.timedelta64(0, "ns")], leads[:-1]]))
+        ds = ds.assign_coords(
+            step=("step", np.concatenate([[np.timedelta64(0, "ns")], leads[:-1]]), ds["step"].attrs)
+        )
+        cell_end = leads
         for name in ds.data_vars:
             note = (
                 "dynamical-fetch relabelled steps to interval start: step s covers [s, next lead)."
             )
             ds[name].attrs["comment"] = f"{ds[name].attrs.get('comment', '')} {note}".strip()
         print("Relabelled steps to interval start (catalog has no lead 0).", file=sys.stderr)
-    if is_forecast and max_lead is not None:
+    if is_forecast and max_lead is not None and cell_end is not None:
+        # Keep whole intervals: one that ends after the limit is not "up to" it.
+        keep = np.flatnonzero(cell_end <= limit)
+        if keep.size == 0:
+            raise UsageError(
+                f"--max-lead {max_lead} ends before the first interval does "
+                f"({cell_end[0] / np.timedelta64(1, 'h'):g} h); pass at least that"
+            )
+        ds = ds.isel(step=keep)
+    elif is_forecast and max_lead is not None:
         ds = ds.sel(step=slice(None, limit))
         # Mixed with instant fields, an end-labelled field has no value at step 0.
         empty = [name for name in ds.data_vars if bool(ds[name].isnull().all())]
@@ -628,11 +738,11 @@ def fetch(
             continue
     # Stamp the lead spacing first: with an init window, `time` is the init axis
     # and its 1-day gaps are not the cell length the rate conversion needs.
-    if accum_interval:
+    if accum_interval and "step_bounds" not in out.coords:
         out = stamp_data_interval(out, period=accum_interval)
     else:
         out = stamp_data_interval(out, dim="step" if is_forecast else None)
-    # Period totals (WeatherNext 2 6 h precip in mm) become mm day-1 rates.
+    # Any remaining period totals in mm become mm day-1 rates.
     return precip_amounts_to_rates(out, deaccumulate=False)
 
 

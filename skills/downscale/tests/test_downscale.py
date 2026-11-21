@@ -186,6 +186,9 @@ def test_qq_with_model_climatology_keeps_forecast_signal(tmp_path, downscale, ca
     assert res.values == pytest.approx([4.0, 18.0])
     # The skill's own no-model warning, not any library warning (zarr prints its own).
     assert "input is its own model climatology" not in capsys.readouterr().err
+    # Both climatologies shape the values, so both are recorded as inputs.
+    inputs = load_history(out)[-1]["input"]
+    assert [i["basename"] for i in inputs] == ["fc.zarr", "ref.zarr", "model.zarr"]
 
 
 def test_qq_without_model_warns(tmp_path, downscale, capsys):

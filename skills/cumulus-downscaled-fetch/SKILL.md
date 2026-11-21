@@ -7,16 +7,8 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.4"
   catalog-group: fetchers
-  variables:
-    - precip
-  openclaw:
-    requires:
-      env:
-        - AZURE_STORAGE_SAS_TOKEN
-    primaryEnv: AZURE_STORAGE_SAS_TOKEN
-    envVars:
-      - name: AZURE_STORAGE_SAS_TOKEN
-        description: Read SAS (list and read, sp=rl) for Azure container italynorthdata/data
+  variables: "precip"
+  required-env: "AZURE_STORAGE_SAS_TOKEN"
 ---
 
 # cumulus-downscaled-fetch
@@ -81,4 +73,4 @@ Writes the flow-matching ensemble mean from the `aurora-imerg` run over Nigeria.
 
 ## Details
 
-Files live at `az://italynorthdata/data/live_forecasts/downscaled_models/<source>/east_africa-ghana-kenya-senegal-west_africa/<init>/<model folder>/<checkpoint>/<target folder>/precip_24h/data/`: `YYYY-MM-DD-00-LLLL.nc` holds the ensemble mean for lead `LLLL` hours (0024 to 1104), and `member_NNN/` holds the same files per member. Each file is the 24 h total ending at its lead; the skill relabels it to the period start and divides by one day to give a rate.
+Source: `az://italynorthdata/data/live_forecasts/downscaled_models/`. Each 24 h total is relabelled to its period start and divided by one day to give a `mm day-1` rate.

@@ -1,20 +1,14 @@
 ---
 name: smap-fetch
-description: "Fetch NASA SMAP Enhanced L3 (SPL3SMP_E) daily 9 km volumetric surface soil moisture for a region and short date range via NASA Earthdata, as a weather-skills Zarr. Needs an Earthdata login. Use when a task needs gridded soil-moisture observations, e.g. for drought or agricultural analysis, or comparison against models."
+description: "Fetch NASA SMAP Enhanced L3 (SPL3SMP_E) daily 9 km volumetric surface soil moisture (2015-03-31 to a few days ago) for a region and short date range via NASA Earthdata, as a weather-skills Zarr. Needs an Earthdata login. Use when a task needs gridded soil-moisture observations, e.g. for drought or agricultural analysis, or comparison against models."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Authenticates to NASA Earthdata via the `earthaccess` library — set EARTHDATA_USERNAME and EARTHDATA_PASSWORD in the environment, or use a `.netrc` entry for `urs.earthdata.nasa.gov`. Earthdata accounts are free with sign-up at https://urs.earthdata.nasa.gov/users/new.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.11"
   catalog-group: fetchers
-  variables:
-    - soil_moisture
-  openclaw:
-    requires:
-      env:
-        - EARTHDATA_USERNAME
-        - EARTHDATA_PASSWORD
-    primaryEnv: EARTHDATA_USERNAME
+  variables: "soil_moisture"
+  required-env: "EARTHDATA_USERNAME EARTHDATA_PASSWORD"
 ---
 
 # smap-fetch
@@ -29,7 +23,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time Y
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest
 ```
 
-Needs `EARTHDATA_USERNAME` and `EARTHDATA_PASSWORD` (or `EARTHDATA_TOKEN`) in the environment, or a `urs.earthdata.nasa.gov` entry in `~/.netrc`. Failed login exits 1 with that hint; it never prompts.
+Credentials come from `EARTHDATA_USERNAME` / `EARTHDATA_PASSWORD`, then a `urs.earthdata.nasa.gov` entry in `~/.netrc`; failure exits 1.
+
+**Coverage:** daily from 2015-03-31 to about 2 days ago.
 
 ### Arguments
 - `--start-time`, `--end-time` — inclusive date range.
@@ -41,7 +37,7 @@ Needs `EARTHDATA_USERNAME` and `EARTHDATA_PASSWORD` (or `EARTHDATA_TOKEN`) in th
 
 ### Output
 - Dims `(time, latitude, longitude)`, daily, on the 9 km EASE-Grid 2.0 cell centres. Latitude is ascending and unevenly spaced in degrees (about 0.07° near the equator); longitude is evenly spaced. Rows and columns that no fetched day's overpass covered are left out, so a window of partial-swath days can have gaps in either axis.
-- `soil_moisture` in `m3 m-3` (volume of water per volume of soil), `standard_name=volume_fraction_of_condensed_water_in_soil`, `data_interval="1 day"`. NaN marks ocean, no retrieval, values outside 0.02–0.5, and (with `--quality recommended`) lower-quality retrievals.
+- `soil_moisture` in `m3 m-3` (volume of water per volume of soil), `standard_name=volume_fraction_of_condensed_water_in_soil`, `data_interval="1 day"`. NaN marks ocean, no retrieval, values outside the granule's valid range, and (with `--quality recommended`) lower-quality retrievals.
 - A `latitude_longitude` grid-mapping variable (WGS84); `weather_skills_source="smap"`.
 
 ### Notes

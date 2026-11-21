@@ -2,52 +2,24 @@
 name: weathernext-fetch
 description: "Fetch a Google WeatherNext AI forecast for one init or a range of inits over an optional lat/lon box, as a weather-skills Zarr: WeatherNext 2 (64-member ensemble, 6-hourly leads to 15 days, 0.25° global, from 2025) or WeatherNext 3 (64-member ensemble or its precomputed mean and percentiles, hourly leads to 15 days, 0.1° global, from 2026). Precipitation, 2 m temperature and dewpoint, winds, sea-level pressure, SST, cloud, radiation and pressure-level fields. Reads the gs://weathernext buckets with a Google Cloud login. Use for WeatherNext 3 ensemble members, upper-air fields or non-00 UTC cycles, or for WeatherNext 2 fields or inits that dynamical-fetch lacks (pressure levels, 06/12/18 UTC); dynamical-fetch serves WeatherNext 3 00 UTC surface statistics with no login."
 license: MIT
-compatibility: "Requires Python 3.12 and uv. Reads consolidated Zarr from the WeatherNext 2 and 3 realtime archives via gcsfs. Requires Google Cloud credentials: GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for environments that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON file path), or Application Default Credentials from `gcloud auth application-default login` — any authenticated Google account works, the buckets have no special allowlist; a Google account is free with sign-up at https://accounts.google.com/signup. WeatherNext 3 ensemble reads are requester pays and need a billing project (--billing-project or GOOGLE_CLOUD_PROJECT)."
+compatibility: "Requires Python 3.12 and uv. Reads the WeatherNext 2 and 3 Zarr archives via gcsfs with any Google Cloud identity (free account at https://accounts.google.com/signup; no allowlist): GCLOUD_SERVICE_CREDENTIALS (the raw service-account key JSON, for runtimes that can only inject secret values), GOOGLE_APPLICATION_CREDENTIALS (a key file path), or `gcloud auth application-default login`. WeatherNext 3 ensemble reads are requester pays: pass --billing-project or set GOOGLE_CLOUD_PROJECT."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.13"
+  version: "0.0.14"
   catalog-group: fetchers
-  variables:
-    - precip
-    - 2m_temperature
-    - 2m_dewpoint_temperature
-    - 10m_u_component_of_wind
-    - 10m_v_component_of_wind
-    - 100m_u_component_of_wind
-    - 100m_v_component_of_wind
-    - mean_sea_level_pressure
-    - sea_surface_temperature
-    - total_cloud_cover
-    - surface_solar_radiation_downwards_1hr
-    - specific_humidity
-    - temperature
-    - u_component_of_wind
-    - v_component_of_wind
-    - vertical_velocity
-    - geopotential
-  openclaw:
-    requires:
-      env:
-        - GCLOUD_SERVICE_CREDENTIALS
-    primaryEnv: GCLOUD_SERVICE_CREDENTIALS
-    envVars:
-      - name: GCLOUD_SERVICE_CREDENTIALS
-        description: Full contents of a GCP service-account key JSON (any Google Cloud identity can read the WeatherNext buckets). Use this when the runtime can only inject secret values, not files.
-      - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: Path to a GCP service-account JSON file. Used only if GCLOUD_SERVICE_CREDENTIALS is unset.
-      - name: GOOGLE_CLOUD_PROJECT
-        description: Billing project for requester-pays WeatherNext 3 ensemble reads (alternative to --billing-project)
+  variables: "precip 2m_temperature 2m_dewpoint_temperature 10m_u_component_of_wind 10m_v_component_of_wind 100m_u_component_of_wind 100m_v_component_of_wind mean_sea_level_pressure sea_surface_temperature total_cloud_cover surface_solar_radiation_downwards_1hr specific_humidity temperature u_component_of_wind v_component_of_wind vertical_velocity geopotential"
+  required-env: "GCLOUD_SERVICE_CREDENTIALS"
 ---
 
 # weathernext-fetch
 
 Fetches one WeatherNext forecast init, or every init in one or more date windows, as a weather-skills standard dataset Zarr.
 
-| `--version` / `--product` | Store | Members | Leads | Grid | Cost |
-|---|---|---|---|---|---|
-| `2` (default) | `gs://weathernext/weathernext_2_0_0/zarr/2025_to_present/` | 64 | 60 × 6 h | 0.25° | free |
-| `3` | `gs://weathernext3_spatial/weathernext_3_0_0/zarr/2026_to_present/` | 64 | 360 × 1 h | 0.1° surface, 0.05° station-head, 0.25° upper air | requester pays |
-| `3 --product statistics` | `gs://weathernext3_statistics_spatial/weathernext_3_0_0_statistics/zarr/2026_to_present/` | mean, p10/p25/p50/p75/p90 | 360 × 1 h | 0.1° / 0.05° surface | free |
+| `--version` / `--product` | Store | Inits | Members | Leads | Grid | Cost |
+|---|---|---|---|---|---|---|
+| `2` (default) | `gs://weathernext/weathernext_2_0_0/zarr/2025_to_present/` | 00/06/12/18 UTC daily from 2025-01-01 | 64 | 60 × 6 h | 0.25° | free |
+| `3` | `gs://weathernext3_spatial/weathernext_3_0_0/zarr/2026_to_present/` | every hour from 2026-01-01 00 UTC | 64 | 360 × 1 h (48 × 1 h for interim inits) | 0.1° surface, 0.05° station-head, 0.25° upper air | requester pays |
+| `3 --product statistics` | `gs://weathernext3_statistics_spatial/weathernext_3_0_0_statistics/zarr/2026_to_present/` | as `3` | mean, p10/p25/p50/p75/p90 | 360 × 1 h | 0.1° / 0.05° surface | free |
 
 ## Usage
 
@@ -70,14 +42,14 @@ Needs Google Cloud credentials: `GCLOUD_SERVICE_CREDENTIALS` (key JSON), `GOOGLE
 - `--variable`, `-v` — repeatable. Common: `precip`/`tp`, `t2m`, `d2m`, `u10`, `v10`, `msl`, `sst`, `ssrd`; pressure levels `t`, `u`, `v`, `w`, `q`, `z` (more under Details). With `--product statistics`, `<name>_<stat>` (`precip_p90`) picks one statistic. Default: WeatherNext 2 every field; WeatherNext 3 every 0.1° surface field. Unknown names exit 2 listing `Available:`.
 - `--member` — 0-based member index, repeatable. Default: all 64. Not with `--product statistics`.
 - `--statistic` — with `--product statistics`: `mean`, `p10`, `p25`, `p50`, `p75`, `p90`, repeatable. Default: all six.
-- `--max-lead` — keep only leads up to this one after init: hours (`72`) or a timedelta (`72h`, `3D`). Default: every lead.
+- `--max-lead` — keep only leads up to this one after init: hours (`72`) or a timedelta (`72h`, `3D`). Precipitation and radiation keep the periods that end by it (`72h` on WeatherNext 2 `precip` ends with the 66 h step); instant fields keep the steps up to it. Default: every lead.
 - `--billing-project` — GCP project billed for WeatherNext 3 ensemble reads. Default: `$GOOGLE_CLOUD_PROJECT`, then `$CLOUDSDK_CORE_PROJECT`.
 - `--probe-latest [IDENT]` — print the latest init date (or `none`) and exit; honours `--version`, `--product`, `--cycle`. `IDENT` is ignored.
 - `--output`, `-o` — output Zarr, overwritten.
 
 ### Output
 - Dims `(number, step, [level,] lat, lon)`, scalar `time` = init, `valid_time` on `step`. With windows, `(time, step, number, [level,] lat, lon)`, one `time` per init, and `valid_time` on `(time, step)`; an init still publishing keeps its missing leads NaN (not filled), with a `WARNING` naming it. Statistics have no `number` and name variables `<name>_<stat>`.
-- `precip` (and `imerg_precip`, `experimental_precip`) is a rate in `mm day-1` and `ssrd` a 1 h total in `J m-2`, labelled at period start. Other fields are instants at `init + step`. Fetched together, the step axis starts at 0: the period fields are NaN at the last lead and the instants at 0 h. Never `deaccumulate` it.
+- `precip` (and `imerg_precip`, `experimental_precip`) is a rate in `mm day-1` and `ssrd` a 1 h total in `J m-2`, labelled at period start. Other fields are instants at `init + step`. Fetched together, the step axis starts at 0: the period fields are NaN at the last lead and the instants at 0 h. Do not run deaccumulate on these fields.
 - Air temperatures are `degree_Celsius`; other fields keep ERA5-style units.
 
 ### Notes
@@ -113,7 +85,7 @@ Writes WeatherNext 3 hourly mean and 90th-percentile precip over Kenya for 3 day
 - Period fields: `step=0` is `[init, init+6h)` for WeatherNext 2 `precip` and `[init, init+1h)` for WeatherNext 3 `precip`, `ssrd` and `total_sky_direct_solar_radiation_at_surface_1hr`. Precipitation is clipped at zero. The radiation fields stay hourly sums in `J m-2` (divide by 3600 s for a mean `W m-2` flux).
 
 ### Flags
-- WeatherNext 2 inits run daily from 2025-01-01, WeatherNext 3 from 2026. WeatherNext 3 interim cycles are `01`–`05`, `07`–`11`, `13`–`17`, `19`–`23`.
+- Every store runs to the present. For WeatherNext 2 inits from 2022 to 2024 use dynamical-fetch (`google-weathernext2-forecast-historical-virtual`). WeatherNext 3 interim cycles are `01`–`05`, `07`–`11`, `13`–`17`, `19`–`23`.
 - `--bbox` takes negative longitudes. A negative `--member` counts from the end.
 - Anonymous access fails; any authenticated Google identity can read the buckets. `GCLOUD_SERVICE_CREDENTIALS` (the service-account key JSON itself, no file needed) takes precedence over `GOOGLE_APPLICATION_CREDENTIALS` and gcloud login. The WeatherNext 3 ensemble bucket bills every listing and read to the billing project, and the skill exits 2 without one before touching GCS. gcloud's default project (`gcloud config set project`) is not read: pass `--billing-project` or export `GOOGLE_CLOUD_PROJECT`.
 
