@@ -310,26 +310,10 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                     "month_group": season.astype(str),
                 }
             )
-        t = list(dict.fromkeys(ds[b].dims for b in by)).index(("time",))
         if irregular:
             # No regular axis to count against: each group expects the steps it has.
-            groups[t] = [
-                (
-                    labels,
-                    isel,
-                    box,
-                    int(
-                        np.logical_and.reduce(
-                            [
-                                ds[b].values == label_values[b][i]
-                                for b, i in labels.items()
-                                if b in time_by
-                            ]
-                        ).sum()
-                    ),
-                )
-                for labels, isel, box, _ in groups[t]
-            ]
+            counted = np.ones(times.size, dtype=bool)
+            label_of = {b: ds[b].values for b in time_by}
         else:
             rebuilt, rebuilt_end = labelled
             change = np.zeros(full.size, dtype=bool)
@@ -358,22 +342,26 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                 raise UsageError(
                     "a --by time group lasts over a year, so its full period is unknown"
                 )
-            groups[t] = [
-                (
-                    labels,
-                    isel,
-                    box,
-                    int(
-                        (
-                            touched
-                            & np.logical_and.reduce(
-                                [rebuilt[b] == label_values[b][i] for b, i in labels.items()]
-                            )
-                        ).sum()
-                    ),
-                )
-                for labels, isel, box, _ in groups[t]
-            ]
+            # Each group expects every step of the calendar runs the data touch.
+            counted, label_of = touched, rebuilt
+        # The time group's labels are all --by labels along time.
+        t = list(dict.fromkeys(ds[b].dims for b in by)).index(("time",))
+        groups[t] = [
+            (
+                labels,
+                isel,
+                box,
+                int(
+                    (
+                        counted
+                        & np.logical_and.reduce(
+                            [label_of[b] == label_values[b][i] for b, i in labels.items()]
+                        )
+                    ).sum()
+                ),
+            )
+            for labels, isel, box, _ in groups[t]
+        ]
         # The longest group's full calendar run, in steps: the span a sum by it covers.
         longest_group = max(expected for _, _, _, expected in groups[t])
 
@@ -419,13 +407,16 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
                 "separate call. Only dimensionless variables (units 1) sum over space"
             )
         share = None  # the coverage of each value, when it was checked
+        # Reduced as plain numbers; no statistic changes the units, which go back on below.
+        da = da.pint.dequantify()
+        # min_count=1: an all-NaN sum is NaN, not 0. ddof=1: the sample standard deviation.
+        kw = {"min_count": 1} if method == "sum" else {"ddof": 1} if method == "std" else {}
+        if method == "quantile":
+            # One quantile leaves a scalar quantile coord; several add a quantile dim.
+            kw = {"q": quantile[0] if len(quantile) == 1 else quantile}
         if by:
-            # min_count=1 / ddof=1 as below. Combinations with no cells stay NaN.
-            kw = {"min_count": 1} if method == "sum" else {"ddof": 1} if method == "std" else {}
-            if method == "quantile":
-                kw = {"q": quantile[0]}
+            # Combinations with no cells stay NaN.
             kept = [d for d in da.dims if d not in rdims]
-            da = da.pint.dequantify()  # values are filled into numpy; units go back on below
             values = None
             dropped = 0
             for parts in itertools.product(*groups):
@@ -460,36 +451,18 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
             out[var] = xr.DataArray(values, dims=[*kept, *by], coords=coords, attrs=template.attrs)
             if time_by:
                 share = xr.DataArray(coverage, dims=[*kept, *by], coords=coords)
-            if units is not None:
-                out[var] = out[var].copy(data=out[var].data * units)
-        elif method == "sum" and over_time:
-            expected = int(np.prod([da.sizes[d] for d in over_time]))
-            others = [d for d in rdims if d not in over_time]
-            da, share, dropped = _keep_covered(
-                da, over_time, expected, weight, min_coverage, others
-            )
-            out[var] = da.sum(dim=rdims, keep_attrs=True, min_count=1)
-        elif method == "sum":
-            # min_count=1: all-NaN → NaN, not 0
-            out[var] = da.sum(dim=rdims, keep_attrs=True, min_count=1)
-        elif method == "std":
-            out[var] = da.std(dim=rdims, keep_attrs=True, ddof=1)
-        elif method == "quantile":
-            # One quantile leaves a scalar quantile coord; several add a quantile dim.
-            q = quantile[0] if len(quantile) == 1 else quantile
-            out[var] = da.pint.dequantify().quantile(q, dim=rdims, keep_attrs=True)
-            if da.pint.units is not None:
-                out[var] = out[var].copy(data=out[var].data * da.pint.units)
-        elif method == "mean" and lat_weighted and lat_dim in rdims:
-            out[var] = (
-                da.pint.dequantify()
-                .weighted(latitude_weights(ds[lat_dim]))
-                .mean(dim=rdims, keep_attrs=True)
-            )
-            if da.pint.units is not None:
-                out[var] = out[var].copy(data=out[var].data * da.pint.units)
         else:
-            out[var] = getattr(da, method)(dim=rdims, keep_attrs=True)
+            if method == "sum" and over_time:
+                expected = int(np.prod([da.sizes[d] for d in over_time]))
+                others = [d for d in rdims if d not in over_time]
+                da, share, dropped = _keep_covered(
+                    da, over_time, expected, weight, min_coverage, others
+                )
+            if lat_weighted and lat_dim in rdims:
+                da = da.weighted(latitude_weights(ds[lat_dim]))
+            out[var] = getattr(da, method)(dim=rdims, keep_attrs=True, **kw)
+        if units is not None:
+            out[var] = out[var].copy(data=out[var].data * units)
         if share is not None:
             if dropped:
                 print(
