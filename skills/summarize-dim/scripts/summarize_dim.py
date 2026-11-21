@@ -157,9 +157,13 @@ def summarize_dim(ds, variable, dim, by, method, quantile, lat_weighted, min_cov
             if "time_bounds" in inferred.variables:
                 cells = inferred["time_bounds"].values
         if cells is not None:
-            # Overlapping cells are rolling windows, placed by their label, as label-group does.
             order = np.argsort(cells[:, 0])
-            if (cells[order][1:, 0] < cells[order][:-1, 1]).any():
+            starts, ends = cells[order, 0], cells[order, 1]
+            # Rolling windows overlap: a cell starts before the previous one ends.
+            rolling_windows = (starts[1:] < ends[:-1]).any()
+            if rolling_windows:
+                # Each window stays at its time label, as label-group places it, not at
+                # its window start, so the bounds are not used below.
                 cells = None
         if cells is not None and not np.array_equal(cells[:, 0], ds["time"].values):
             # A step belongs where its cell starts (as label-group labels it), not its label.
