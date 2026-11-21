@@ -83,11 +83,22 @@ def _nsidc0800_file(**kw):
 ALL = (slice(None), slice(None))
 
 
+def _read(mod, h, dataset, sensor, overpass, rows, cols, rec, day_iso):
+    """One layer from a stand-in granule ``h`` through _read_nasa (HTTPS open and h5py faked)."""
+    handle = MagicMock(__enter__=lambda s: h, __exit__=lambda *a: None)
+    with (
+        patch("earthaccess.open", return_value=["handle"]),
+        patch.dict(sys.modules, {"h5py": MagicMock(File=MagicMock(return_value=handle))}),
+    ):
+        (field,) = mod._read_nasa(None, dataset, [(sensor, overpass)], rows, cols, rec, day_iso)
+    return field
+
+
 @pytest.mark.parametrize("overpass", ["AM", "PM"])
 def test_spl3_fill_out_of_range_and_quality_masking(mod, overpass):
     h = _spl3_file()
-    rec = mod._read_nasa(h, "smap", "smap", overpass, *ALL, True, "2024-06-01")
-    allq = mod._read_nasa(h, "smap", "smap", overpass, *ALL, False, "2024-06-01")
+    rec = _read(mod, h, "smap", "smap", overpass, *ALL, True, "2024-06-01")
+    allq = _read(mod, h, "smap", "smap", overpass, *ALL, False, "2024-06-01")
     # -9999 fill and 0.60 (> valid_max 0.5) are NaN, never 0 or kept.
     np.testing.assert_allclose(allq, [[0.10, 0.20, np.nan], [0.30, np.nan, 0.40]], rtol=1e-6)
     # recommended also drops the bit-0 (not recommended) retrieval at 0.20.
@@ -99,27 +110,27 @@ def test_nsidc0800_reads_each_retrieval_group(mod):
     h["SMOS_Based"]["Soil_Moisture_Retrieval_Data_PM"]["soil_moisture_pm"].values = np.full(
         (2, 3), 0.25, dtype="float32"
     )
-    smos_pm = mod._read_nasa(h, "smap-smos", "smos", "PM", *ALL, False, "2024-06-01")
+    smos_pm = _read(mod, h, "smap-smos", "smos", "PM", *ALL, False, "2024-06-01")
     np.testing.assert_allclose(smos_pm, np.full((2, 3), 0.25))
-    smap_am = mod._read_nasa(h, "smap-smos", "smap", "AM", 0, slice(0, 2), False, "x")
+    smap_am = _read(mod, h, "smap-smos", "smap", "AM", 0, slice(0, 2), False, "x")
     np.testing.assert_allclose(smap_am, [0.10, 0.20], rtol=1e-6)
 
 
 def test_empty_placeholder_field_returns_none(mod):
     # A granule with nothing stored reads as zeros in h5py; it must not become data.
     h = _nsidc0800_file(stored=False)
-    assert mod._read_nasa(h, "smap-smos", "smap", "AM", *ALL, True, "2026-10-05") is None
+    assert _read(mod, h, "smap-smos", "smap", "AM", *ALL, True, "2026-10-05") is None
 
 
 def test_non_ratio_units_are_rejected(mod):
     h = _spl3_file(units=b"kg m-2")
     with pytest.raises(DataError, match="dimensionless volumetric ratio"):
-        mod._read_nasa(h, "smap", "smap", "AM", *ALL, True, "2024-06-01")
+        _read(mod, h, "smap", "smap", "AM", *ALL, True, "2024-06-01")
 
 
 def test_missing_group_names_product_and_overpass(mod):
     with pytest.raises(DataError, match="no smap PM soil moisture"):
-        mod._read_nasa({}, "smap", "smap", "PM", *ALL, True, "2024-06-01")
+        _read(mod, {}, "smap", "smap", "PM", *ALL, True, "2024-06-01")
 
 
 def test_ease9_grid_matches_the_product_geolocation(mod):
@@ -158,13 +169,13 @@ def _granules(*days):
 def _run(mod, fetch, tmp_path, nasa_fields, catds_fields=None, *args):
     """Run fetch with every remote read faked.
 
-    ``nasa_fields[day_iso]`` is the list _read_nasa_day returns for that day;
+    ``nasa_fields[day_iso]`` is the list _read_nasa returns for that day;
     ``catds_fields[(day_iso, overpass)]`` the CATDS DataArray (None: no file).
     """
     out = tmp_path / "out.zarr"
     days = sorted(nasa_fields)
 
-    def fake_read_nasa_day(_g, _dataset, layers, _rows, _cols, _rec, day_iso):
+    def fake_read_nasa(_g, _dataset, layers, _rows, _cols, _rec, day_iso):
         fields = nasa_fields[day_iso]
         assert len(fields) == len(layers)
         return fields
@@ -179,7 +190,7 @@ def _run(mod, fetch, tmp_path, nasa_fields, catds_fields=None, *args):
         patch(
             "earthaccess.search_data", return_value=_granules(*(d.replace("-", "") for d in days))
         ),
-        patch.object(mod, "_read_nasa_day", side_effect=fake_read_nasa_day),
+        patch.object(mod, "_read_nasa", side_effect=fake_read_nasa),
         patch.object(mod, "_catds_day", side_effect=fake_catds_day),
     ):
         run_skill(fetch, *args, "-o", str(out))
@@ -287,7 +298,7 @@ def test_a_failed_granule_read_is_retried(mod):
         patch.dict(sys.modules, {"h5py": MagicMock(File=MagicMock(return_value=handle))}),
         patch.object(mod.time, "sleep"),
     ):
-        (field,) = mod._read_nasa_day(None, "smap", [("smap", "AM")], *ALL, False, "2024-06-01")
+        (field,) = mod._read_nasa(None, "smap", [("smap", "AM")], *ALL, False, "2024-06-01")
     assert opened.call_count == 2 and field.shape == (2, 3)
 
 
@@ -325,19 +336,40 @@ def test_cds_days_keeps_the_newest_daily_version(mod, dataset):
     }
 
 
+def _cds_key_used(mod):
+    """The key _fetch_cds hands the CDS client (the client stops the run right there)."""
+    seen = {}
+
+    class Stop(Exception):
+        pass
+
+    def client(url, key):
+        seen["key"] = key
+        raise Stop
+
+    with (
+        patch.object(mod, "_cds_days", return_value={date(2024, 1, 1): ("v202505", "cdr")}),
+        patch.dict(sys.modules, {"ecmwf.datastores": MagicMock(Client=client),
+                                 "ecmwf.datastores.processing": MagicMock()}),
+        pytest.raises(Stop),
+    ):  # fmt: skip
+        mod._fetch_cds("ascat", [date(2024, 1, 1)], None, False)
+    return seen["key"]
+
+
 def test_cds_key_comes_from_env_or_a_cds_cdsapirc(mod, tmp_path):
     rc = tmp_path / ".cdsapirc"
     with patch.dict(os.environ, {"HOME": str(tmp_path)}, clear=True):
         with pytest.raises(UsageError, match="no CDS credentials"):
-            mod._cds_key()
+            _cds_key_used(mod)
         # An ADS ~/.cdsapirc is not used for the CDS.
         rc.write_text("url: https://ads.atmosphere.copernicus.eu/api\nkey: ads-token\n")
         with pytest.raises(UsageError, match="no CDS credentials"):
-            mod._cds_key()
+            _cds_key_used(mod)
         rc.write_text("url: https://cds.climate.copernicus.eu/api\nkey: cds-token\n")
-        assert mod._cds_key() == "cds-token"
+        assert _cds_key_used(mod) == "cds-token"
     with patch.dict(os.environ, {"HOME": str(tmp_path), "CDS_API_KEY": "env-token"}, clear=True):
-        assert mod._cds_key() == "env-token"
+        assert _cds_key_used(mod) == "env-token"
 
 
 def _cds_day_file(path, day, value):
@@ -387,7 +419,7 @@ def test_cds_fetch_cuts_the_box_and_keeps_every_day(mod, fetch, tmp_path, datase
     available = {date(2024, 2, 28): ("v202505", "cdr"), date(2024, 2, 29): ("v202505", "cdr")}
     with (
         patch.object(mod, "_cds_days", return_value=available),
-        patch.object(mod, "_cds_key", return_value="token"),
+        patch.dict(os.environ, {"CDS_API_KEY": "token"}),
         patch.dict(
             sys.modules,
             {

@@ -87,6 +87,15 @@ _DATASETS = {
     },
 }
 
+
+def _note(msg, days=()):
+    """A stderr note; with ``days``, lists the first ten."""
+    if days:
+        msg = f"{msg} for {len(days)} day(s): " + ", ".join(d.isoformat() for d in days[:10])
+        msg += " ..." if len(days) > 10 else ""
+    print(f"{_NAME}: {msg}", file=sys.stderr)
+
+
 # --- CDS ---------------------------------------------------------------------------
 
 # The CDS API base URL is a fixed, public endpoint, not a secret.
@@ -109,45 +118,6 @@ _CDS_VARS = {
 }
 _POLL_SECONDS = 10
 _POLL_MAX_SECONDS = 3600
-
-# --- NASA --------------------------------------------------------------------------
-
-_NASA = {"smap": ("SPL3SMP_E", None), "smap-smos": ("NSIDC-0800", "2")}
-_FILL = -9999.0
-_READ_TRIES = 3
-_GRANULE_DATE_RE = re.compile(r"_(\d{8})_")
-# EASE-Grid 2.0 global 9 km (EPSG:6933): cell size and outer corner, in metres.
-_ROWS, _COLS = 1624, 3856
-_CELL = 9008.055210146
-_X0, _Y0 = -17367530.445161499, 7314540.830638
-_AUTH_FAIL_MSG = (
-    "Earthdata authentication failed; configure EARTHDATA_USERNAME/"
-    "EARTHDATA_PASSWORD (or EARTHDATA_TOKEN) or a urs.earthdata.nasa.gov entry in "
-    "~/.netrc, then retry."
-)
-
-# --- CATDS -------------------------------------------------------------------------
-
-_CATDS_BASE = "https://data.catds.fr/cpdc/Land_products/GRIDDED/L3SM"
-_CATDS_LAST_RE07 = dt.date(2021, 5, 24)
-# SMOS crosses the equator ascending at 06:00 and descending at 18:00 local time.
-_CATDS_PRODUCT = {"AM": "MIR_CLF31A", "PM": "MIR_CLF31D"}
-_CATDS_ACK = (
-    'These data were obtained from the "Centre Aval de Traitement des Données SMOS" (CATDS), '
-    'operated for the "Centre National d\'Etudes Spatiales" (CNES, France) by IFREMER '
-    "(Brest, France)"
-)
-
-
-def _note(msg, days=()):
-    """A stderr note; with ``days``, lists the first ten."""
-    if days:
-        msg = f"{msg} for {len(days)} day(s): " + ", ".join(d.isoformat() for d in days[:10])
-        msg += " ..." if len(days) > 10 else ""
-    print(f"{_NAME}: {msg}", file=sys.stderr)
-
-
-# --- CDS ---------------------------------------------------------------------------
 
 
 def _cds_days(dataset):
@@ -185,23 +155,6 @@ def _cds_days(dataset):
     return days
 
 
-def _cds_key():
-    """CDS_API_KEY, else the key in a ~/.cdsapirc whose url is the CDS."""
-    key = os.environ.get("CDS_API_KEY")
-    rc = Path("~/.cdsapirc").expanduser()
-    if not key and rc.is_file():
-        fields = dict(line.partition(":")[::2] for line in rc.read_text().splitlines())
-        fields = {k.strip(): v.strip() for k, v in fields.items()}
-        if _CDS_HOST in fields.get("url", ""):
-            key = fields.get("key")
-    if not key:
-        raise UsageError(
-            "no CDS credentials: set CDS_API_KEY (your personal token from "
-            f"https://{_CDS_HOST}/profile), or write a ~/.cdsapirc whose url is {_CDS_URL}."
-        )
-    return key
-
-
 def _fetch_cds(dataset, days, bbox, uncertainty):
     """The CDS's daily files for ``days`` over ``bbox``, as one Dataset (days the CDS lacks are absent)."""
     import requests
@@ -223,7 +176,20 @@ def _fetch_cds(dataset, days, bbox, uncertainty):
             f"is {max(available).isoformat()} (`--probe-latest`)."
         )
 
-    client = Client(url=_CDS_URL, key=_cds_key())
+    # Credentials: CDS_API_KEY, else a ~/.cdsapirc whose url is the CDS.
+    key = os.environ.get("CDS_API_KEY")
+    rc = Path("~/.cdsapirc").expanduser()
+    if not key and rc.is_file():
+        fields = dict(line.partition(":")[::2] for line in rc.read_text().splitlines())
+        fields = {k.strip(): v.strip() for k, v in fields.items()}
+        if _CDS_HOST in fields.get("url", ""):
+            key = fields.get("key")
+    if not key:
+        raise UsageError(
+            "no CDS credentials: set CDS_API_KEY (your personal token from "
+            f"https://{_CDS_HOST}/profile), or write a ~/.cdsapirc whose url is {_CDS_URL}."
+        )
+    client = Client(url=_CDS_URL, key=key)
     _note(f"submitting {len(groups)} CDS request(s)")
     remotes = []
     for (version, record, year, month), group in groups.items():
@@ -313,6 +279,20 @@ def _fetch_cds(dataset, days, bbox, uncertainty):
 
 # --- NASA --------------------------------------------------------------------------
 
+_NASA = {"smap": ("SPL3SMP_E", None), "smap-smos": ("NSIDC-0800", "2")}
+_FILL = -9999.0
+_READ_TRIES = 3
+_GRANULE_DATE_RE = re.compile(r"_(\d{8})_")
+# EASE-Grid 2.0 global 9 km (EPSG:6933): cell size and outer corner, in metres.
+_ROWS, _COLS = 1624, 3856
+_CELL = 9008.055210146
+_X0, _Y0 = -17367530.445161499, 7314540.830638
+_AUTH_FAIL_MSG = (
+    "Earthdata authentication failed; configure EARTHDATA_USERNAME/"
+    "EARTHDATA_PASSWORD (or EARTHDATA_TOKEN) or a urs.earthdata.nasa.gov entry in "
+    "~/.netrc, then retry."
+)
+
 
 def _ease9_box(bbox):
     """Latitudes, longitudes, and row/column selectors of the EASE-2 9 km cell centres in ``bbox``."""
@@ -396,71 +376,63 @@ def _nasa_granules(dataset, start, end):
     return granules
 
 
-def _read_nasa(handle, dataset, sensor, overpass, rows, cols, recommended_only, day_iso):
-    """One retrieval's soil moisture for the box, NaN where missing or masked; None if the field is empty.
+def _read_nasa(granule, dataset, layers, rows, cols, recommended_only, day_iso):
+    """Each (sensor, overpass) layer's soil moisture for the box from one NASA granule, opened once over HTTPS.
 
-    Fill, out-of-valid-range and (with ``recommended_only``) retrievals whose
-    ``retrieval_qual_flag`` bit 0 is set (not recommended) become NaN.
-    """
-    import numpy as np
-    from cf_xarray.units import units as ureg
-
-    grp_name = f"Soil_Moisture_Retrieval_Data_{overpass}"
-    if dataset == "smap":
-        # SPL3SMP_E's PM datasets carry a "_pm" suffix; its AM ones none.
-        root, suffix = handle, "_pm" if overpass == "PM" else ""
-    else:
-        root, suffix = handle[f"{sensor.upper()}_Based"], f"_{overpass.lower()}"
-    try:
-        grp = root[grp_name]
-        dset = grp[f"soil_moisture{suffix}"]
-        qual = grp[f"retrieval_qual_flag{suffix}"]
-    except KeyError as exc:
-        raise DataError(
-            f"the {dataset} granule for {day_iso} has no {sensor} {overpass} soil moisture "
-            f"({exc.args[0]})."
-        ) from None
-    # Some granules are placeholders with nothing stored, which h5py reads as zeros.
-    if dset.id.get_storage_size() == 0:
-        return None
-    raw_units = dset.attrs.get("units")
-    if isinstance(raw_units, bytes):
-        raw_units = raw_units.decode("utf-8", "replace")
-    try:
-        ratio = ureg.Quantity(1.0, str(raw_units).strip()).to("dimensionless").magnitude
-    except Exception:  # noqa: BLE001
-        ratio = None
-    if raw_units is None or ratio is None or not np.isclose(ratio, 1.0):
-        raise DataError(
-            f"the {dataset} granule for {day_iso} has soil moisture units {raw_units!r}; "
-            "expected a dimensionless volumetric ratio (cm**3/cm**3), refusing to relabel it."
-        )
-    sm = dset[rows, cols].astype("float32")
-    lo = float(dset.attrs.get("valid_min", 0.0))
-    hi = float(dset.attrs.get("valid_max", 1.0))
-    bad = (sm == _FILL) | (sm < lo) | (sm > hi)
-    if recommended_only:
-        bad |= (qual[rows, cols] & 1) != 0
-    return np.where(bad, np.nan, sm)
-
-
-def _read_nasa_day(granule, dataset, layers, rows, cols, recommended_only, day_iso):
-    """Every layer's field from one NASA granule, opened once over HTTPS.
-
-    A failed read is retried, so one dropped connection does not end a long fetch.
+    A layer is NaN where fill, out of the valid range, or (with ``recommended_only``)
+    flagged not recommended (``retrieval_qual_flag`` bit 0), and None when the granule
+    stores nothing for it. A failed read is retried, so one dropped connection does not
+    end a long fetch.
     """
     import earthaccess
     import h5py
+    import numpy as np
+    from cf_xarray.units import units as ureg
+
+    def layer(h, sensor, overpass):
+        if dataset == "smap":
+            # SPL3SMP_E's PM datasets carry a "_pm" suffix; its AM ones none.
+            root, suffix = h, "_pm" if overpass == "PM" else ""
+        else:
+            root, suffix = h[f"{sensor.upper()}_Based"], f"_{overpass.lower()}"
+        try:
+            grp = root[f"Soil_Moisture_Retrieval_Data_{overpass}"]
+            dset = grp[f"soil_moisture{suffix}"]
+            qual = grp[f"retrieval_qual_flag{suffix}"]
+        except KeyError as exc:
+            raise DataError(
+                f"the {dataset} granule for {day_iso} has no {sensor} {overpass} soil moisture "
+                f"({exc.args[0]})."
+            ) from None
+        # Some granules are placeholders with nothing stored, which h5py reads as zeros.
+        if dset.id.get_storage_size() == 0:
+            return None
+        raw_units = dset.attrs.get("units")
+        if isinstance(raw_units, bytes):
+            raw_units = raw_units.decode("utf-8", "replace")
+        try:
+            ratio = ureg.Quantity(1.0, str(raw_units).strip()).to("dimensionless").magnitude
+        except Exception:  # noqa: BLE001
+            ratio = None
+        if raw_units is None or ratio is None or not np.isclose(ratio, 1.0):
+            raise DataError(
+                f"the {dataset} granule for {day_iso} has soil moisture units {raw_units!r}; "
+                "expected a dimensionless volumetric ratio (cm**3/cm**3), refusing to relabel it."
+            )
+        sm = dset[rows, cols].astype("float32")
+        lo = float(dset.attrs.get("valid_min", 0.0))
+        hi = float(dset.attrs.get("valid_max", 1.0))
+        bad = (sm == _FILL) | (sm < lo) | (sm > hi)
+        if recommended_only:
+            bad |= (qual[rows, cols] & 1) != 0
+        return np.where(bad, np.nan, sm)
 
     for attempt in range(1, _READ_TRIES + 1):
         try:
             with _earthdata():
                 (handle,) = earthaccess.open([granule])
             with h5py.File(handle, "r") as h:
-                return [
-                    _read_nasa(h, dataset, s, p, rows, cols, recommended_only, day_iso)
-                    for s, p in layers
-                ]
+                return [layer(h, s, p) for s, p in layers]
         except SkillError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -471,7 +443,36 @@ def _read_nasa_day(granule, dataset, layers, rows, cols, recommended_only, day_i
             time.sleep(5 * attempt)
 
 
+def _fetch_nasa(dataset, days, bbox, layers, recommended_only):
+    """The EASE-2 9 km box's latitudes, longitudes, and {day: one field (or None) per layer}."""
+    lat, lon, rows, cols = _ease9_box(bbox)
+    _login()
+    granules = _nasa_granules(dataset, days[0], days[-1])
+    _note(f"no {_NASA[dataset][0]} file (left empty)", [d for d in days if d not in granules])
+    fields = {d: [None] * len(layers) for d in days}
+
+    def one(day):
+        return _read_nasa(
+            granules[day], dataset, layers, rows, cols, recommended_only, day.isoformat()
+        )
+
+    with ThreadPoolExecutor(_WORKERS) as pool:
+        for day, read in zip(sorted(granules), pool.map(one, sorted(granules)), strict=True):
+            fields[day] = read
+    return lat, lon, fields
+
+
 # --- CATDS -------------------------------------------------------------------------
+
+_CATDS_BASE = "https://data.catds.fr/cpdc/Land_products/GRIDDED/L3SM"
+_CATDS_LAST_RE07 = dt.date(2021, 5, 24)
+# SMOS crosses the equator ascending at 06:00 and descending at 18:00 local time.
+_CATDS_PRODUCT = {"AM": "MIR_CLF31A", "PM": "MIR_CLF31D"}
+_CATDS_ACK = (
+    'These data were obtained from the "Centre Aval de Traitement des Données SMOS" (CATDS), '
+    'operated for the "Centre National d\'Etudes Spatiales" (CNES, France) by IFREMER '
+    "(Brest, France)"
+)
 
 
 def _catds_listing(session, url, pattern):
@@ -518,57 +519,69 @@ def _catds_day(session, day, overpass, bbox, workdir):
     return da
 
 
+def _catds_latest(overpasses):
+    """The latest day CATDS has every overpass for."""
+    import requests
+
+    session, latest = requests.Session(), None
+    try:
+        for p in overpasses:
+            top = f"{_CATDS_BASE}/OPER/{_CATDS_PRODUCT[p]}/"
+            year = _catds_listing(session, top, r'href="(\d{4})/?"')[-1]
+            doy = _catds_listing(session, f"{top}{year}/", r'href="(\d{3})/?"')[-1]
+            day = dt.date(int(year), 1, 1) + dt.timedelta(days=int(doy) - 1)
+            latest = day if latest is None else min(latest, day)
+    except Exception as exc:  # noqa: BLE001
+        raise DataError(f"could not list CATDS ({exc}).") from None
+    return latest
+
+
+def _fetch_catds(days, bbox, layers):
+    """The SMOS 25 km box's latitudes, longitudes, and {day: one field (or None) per layer}."""
+    import requests
+
+    n = len(days) * len(layers)
+    if n > _WARN_DAYS:
+        _note(
+            f"warning: {n} CATDS files is about {7 * n // 1000} GB of global files; expect a long download."
+        )
+    session = requests.Session()
+    jobs = [(d, i, p) for d in days for i, (_, p) in enumerate(layers)]
+    with tempfile.TemporaryDirectory(prefix=f"{_NAME}-") as tmp:
+        with ThreadPoolExecutor(_WORKERS) as pool:
+            got = list(pool.map(lambda j: _catds_day(session, j[0], j[2], bbox, tmp), jobs))
+    for p in dict.fromkeys(p for _, p in layers):
+        _note(
+            f"no CATDS {_CATDS_PRODUCT[p]} file (left empty)",
+            [d for (d, _, q), da in zip(jobs, got, strict=True) if q == p and da is None],
+        )
+    found = [da for da in got if da is not None]
+    if not found:
+        raise DataError(f"CATDS has no SMOS files for {days[0]}..{days[-1]}.")
+    lat, lon = found[0]["latitude"].values, found[0]["longitude"].values
+    fields = {d: [None] * len(layers) for d in days}
+    for (d, i, _), da in zip(jobs, got, strict=True):
+        if da is not None:
+            fields[d][i] = da.reindex(latitude=lat, longitude=lon).values
+    return lat, lon, fields
+
+
 # --- radiometers (smap, smos, smap-smos) -------------------------------------------
 
 
 def _fetch_radiometer(dataset, days, bbox, overpasses, recommended_only):
     """Daily soil moisture for ``days``, the first of each day's layers with a value per cell."""
     import numpy as np
-    import requests
     import xarray as xr
 
     sensors = ("smap", "smos") if dataset == "smap-smos" else (dataset,)
     # Fill order: AM before PM, SMAP before SMOS. soil_moisture_source is the 1-based place here.
     layers = [(s, p) for p in overpasses for s in sensors]
-    fields = {d: [None] * len(layers) for d in days}
 
     if dataset == "smos":
-        if len(days) * len(layers) > _WARN_DAYS:
-            _note(
-                f"warning: {len(days) * len(layers)} CATDS files is about "
-                f"{7 * len(days) * len(layers) // 1000} GB of global files; expect a long download."
-            )
-        session = requests.Session()
-        jobs = [(d, i, p) for d in days for i, (_, p) in enumerate(layers)]
-        with tempfile.TemporaryDirectory(prefix=f"{_NAME}-") as tmp:
-            with ThreadPoolExecutor(_WORKERS) as pool:
-                got = list(pool.map(lambda j: _catds_day(session, j[0], j[2], bbox, tmp), jobs))
-        for p in overpasses:
-            _note(
-                f"no CATDS {_CATDS_PRODUCT[p]} file (left empty)",
-                [d for (d, _, q), da in zip(jobs, got, strict=True) if q == p and da is None],
-            )
-        found = [da for da in got if da is not None]
-        if not found:
-            raise DataError(f"CATDS has no SMOS files for {days[0]}..{days[-1]}.")
-        lat, lon = found[0]["latitude"].values, found[0]["longitude"].values
-        for (d, i, _), da in zip(jobs, got, strict=True):
-            if da is not None:
-                fields[d][i] = da.reindex(latitude=lat, longitude=lon).values
+        lat, lon, fields = _fetch_catds(days, bbox, layers)
     else:
-        lat, lon, rows, cols = _ease9_box(bbox)
-        _login()
-        granules = _nasa_granules(dataset, days[0], days[-1])
-        _note(f"no {_NASA[dataset][0]} file (left empty)", [d for d in days if d not in granules])
-
-        def one(day):
-            return _read_nasa_day(
-                granules[day], dataset, layers, rows, cols, recommended_only, day.isoformat()
-            )
-
-        with ThreadPoolExecutor(_WORKERS) as pool:
-            for day, read in zip(sorted(granules), pool.map(one, sorted(granules)), strict=True):
-                fields[day] = read
+        lat, lon, fields = _fetch_nasa(dataset, days, bbox, layers, recommended_only)
 
     shape = (len(days), lat.size, lon.size)
     sm = np.full(shape, np.nan, dtype="float32")
@@ -610,29 +623,6 @@ def _fetch_radiometer(dataset, days, bbox, overpasses, recommended_only):
     if dataset == "smos":
         ds.attrs["acknowledgement"] = _CATDS_ACK
     return ds
-
-
-def _probe_latest(dataset, overpasses):
-    import requests
-
-    today = dt.datetime.now(dt.UTC).date()
-    if dataset in _CDS_VARS:
-        return max(_cds_days(dataset))
-    if dataset in _NASA:
-        _login()
-        days = _nasa_granules(dataset, today - dt.timedelta(days=180), today)
-        return max(days) if days else None
-    session = requests.Session()
-    latest = []
-    try:
-        for p in overpasses:
-            top = f"{_CATDS_BASE}/OPER/{_CATDS_PRODUCT[p]}/"
-            year = _catds_listing(session, top, r'href="(\d{4})/?"')[-1]
-            doy = _catds_listing(session, f"{top}{year}/", r'href="(\d{3})/?"')[-1]
-            latest.append(dt.date(int(year), 1, 1) + dt.timedelta(days=int(doy) - 1))
-    except Exception as exc:  # noqa: BLE001
-        raise DataError(f"could not list CATDS ({exc}).") from None
-    return min(latest)
 
 
 @weather_skill(name=_NAME, version=_SKILL_VERSION)
@@ -687,7 +677,16 @@ def fetch(
     overpasses = ("AM", "PM") if overpass == "both" else (overpass or "AM",)
 
     if probe_latest is not None:
-        latest = _probe_latest(dataset, overpasses)
+        today = dt.datetime.now(dt.UTC).date()
+        if cds:
+            latest = max(_cds_days(dataset))
+        elif dataset in _NASA:
+            _login()
+            latest = max(
+                _nasa_granules(dataset, today - dt.timedelta(days=180), today), default=None
+            )
+        else:
+            latest = _catds_latest(overpasses)
         print(latest.isoformat() if latest else "none")
         return None
 
