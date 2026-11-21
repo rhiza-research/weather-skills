@@ -7,14 +7,7 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.2"
   catalog-group: fetchers
-  variables:
-    - precip
-    - tmp2m
-    - sst
-  openclaw:
-    envVars:
-      - name: AZURE_STORAGE_SAS_TOKEN
-        description: Read SAS (list and read, sp=rl) for Azure container italynorthdata/data. Needed for Cumulus only.
+  variables: "precip tmp2m sst"
 ---
 
 # hindcast-fetch

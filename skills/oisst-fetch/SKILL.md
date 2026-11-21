@@ -7,8 +7,7 @@ allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.10"
   catalog-group: fetchers
-  variables:
-    - sst
+  variables: "sst"
 ---
 
 # oisst-fetch

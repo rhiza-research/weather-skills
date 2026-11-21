@@ -2,29 +2,13 @@
 name: tahmo-fetch
 description: "Fetch daily TAHMO weather-station observations (rainfall, mean, max and min temperature, humidity, pressure) from the Trans-African Hydro-Meteorological Observatory network, for chosen station ids or every station in a lat/lon box (2015 to present), as a weather-skills station Zarr. Can also list the stations in a box, or with --gridded read Sheerwater's historical daily TAHMO rainfall grid (0.25° cell means, 2015-2025) from private GCS. Needs TAHMO credentials (station mode) or Google Cloud credentials (--gridded). Use when a task needs in-situ station data in Africa, for example to compare against gridded satellite or forecast data."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Installs the TAHMO Python SDK from GitHub (git+https://github.com/rhiza-research/tahmo-api). Station mode needs TAHMO_API_USERNAME and TAHMO_API_PASSWORD; --gridded needs Google Cloud credentials.
+compatibility: Requires Python 3.12 and uv. Installs the TAHMO Python SDK from GitHub (git+https://github.com/rhiza-research/tahmo-api). Station mode needs TAHMO_API_USERNAME and TAHMO_API_PASSWORD; --gridded needs read access to gs://sheerwater-datalake/hindcasts via GCLOUD_SERVICE_CREDENTIALS (service-account JSON contents) or GOOGLE_APPLICATION_CREDENTIALS (path to that JSON).
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
   version: "0.0.13"
   catalog-group: fetchers
-  variables:
-    - precip
-    - temperature
-    - tmax
-    - tmin
-    - humidity
-    - pressure
-  openclaw:
-    requires:
-      env:
-        - TAHMO_API_USERNAME
-        - TAHMO_API_PASSWORD
-    primaryEnv: TAHMO_API_USERNAME
-    envVars:
-      - name: GCLOUD_SERVICE_CREDENTIALS
-        description: --gridded only. Full contents of a GCP service-account key JSON with read access to gs://sheerwater-datalake/hindcasts. Use this when the runtime can only inject secret values, not files.
-      - name: GOOGLE_APPLICATION_CREDENTIALS
-        description: --gridded only. Path to a GCP service-account JSON file that can read gs://sheerwater-datalake/hindcasts. Used only if GCLOUD_SERVICE_CREDENTIALS is unset.
+  variables: "precip temperature tmax tmin humidity pressure"
+  required-env: "TAHMO_API_USERNAME TAHMO_API_PASSWORD"
 ---
 
 # tahmo-fetch
