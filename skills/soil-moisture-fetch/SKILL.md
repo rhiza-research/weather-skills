@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Requires Python 3.12 and uv. Credentials depend on --dataset. ascat, combined: CDS_API_KEY (or a ~/.cdsapirc whose url is the CDS), a free token from https://cds.climate.copernicus.eu/profile; accept the satellite-soil-moisture licence once on the site. smap, smap-smos: EARTHDATA_USERNAME and EARTHDATA_PASSWORD (or EARTHDATA_TOKEN, or a urs.earthdata.nasa.gov .netrc entry), free at https://urs.earthdata.nasa.gov. smos: none (CATDS)."
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.1"
+  version: "0.0.2"
   catalog-group: fetchers
   variables: "soil_moisture soil_moisture_saturation"
 ---
