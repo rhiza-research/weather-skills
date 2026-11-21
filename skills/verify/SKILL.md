@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py *)
 metadata:
-  version: "0.0.10"
+  version: "0.0.12"
   catalog-group: transforms
 ---
 
@@ -46,7 +46,7 @@ Each metric needs these inputs:
 | `brier`, `bss`, `reliability`, `roc` | `--threshold` (optional `--probability`) |
 | `heidke` | `--bins` |
 | `spread` | ensemble, ≥ 2 members |
-| `rps`, `rpss` | quintile forecast (pbc-correct), or ensemble + `--fc-edges` / `--obs-edges` |
+| `rps`, `rpss` | quintile forecast (pbc-fetch), or ensemble + `--fc-edges` / `--obs-edges` |
 
 ### Arguments
 - `--metric` — repeatable; every metric goes into one output Zarr.
@@ -60,19 +60,19 @@ Each metric needs these inputs:
 - `--probability` — the forecast is already the event probability (0–1, no members), e.g. `indicator --probability`. The obs must then be a 0/1 event indicator (`indicator` on the obs) with `--threshold 1`; obs in mm are refused. Default: the share of members ≥ threshold (0 or 1 without members).
 - `--clim CLIM.zarr` — climatology on obs dates (`clim-fetch`, `climatology`), for `acc`.
 - `--bins E1 E2 ...` — category edges for `heidke`; category k holds values from edge k−1 up to edge k. A value on an edge is in the upper category, here, in `rps` and for `--threshold`.
-- `--fc-edges`, `--obs-edges` — for `rps`/`rpss` on an ensemble: category edges with a `quantile` dim (`summarize-dim --method quantile --q 0.333 0.667`, or `climatology --quantiles`), one from the forecast's own climate, one from the obs.
+- `--fc-edges`, `--obs-edges` — for `rps`/`rpss` on an ensemble: category edges with a `quantile` dim (`summarize-dim --method quantile -q 0.333 -q 0.667`), one from the forecast's own climate, one from the obs.
 - `--filter MASK.zarr` — repeatable 0/1 mask (an `indicator` output): only samples where every mask is 1 are scored. A mask on `time` follows the forecast leads like the obs; a mask with no time axis (land, a region) holds for every date and lead. Missing mask values leave the sample out.
 - `--output`, `-o` — output Zarr.
 
 ### Output
-- One variable per metric (several for `reliability` and `roc`), float32, on the dims left after grouping. `rmse`, `mae`, `bias`, `crps` in the forecast's units, `mse` squared, scores unitless. `reliability` gives `forecast_probability`, `observed_frequency`, `sample_fraction` on `probability_bin`; `roc` gives `hit_rate`, `false_alarm_rate` on `probability_threshold` and `roc_area`.
+- One variable per metric (several for `reliability` and `roc`), float32, on the dims left after grouping. `fcst`, `obs`, `bias`, `mae`, `rmse`, `crps`, `crps_fair` in the forecast's units (K for °C), `mse` squared, scores unitless. `reliability` gives `forecast_probability`, `observed_frequency`, `sample_fraction` on `probability_bin`; `roc` gives `hit_rate`, `false_alarm_rate` on `probability_threshold` and `roc_area`.
 - `n_valid`: the samples pooled into each value.
 - Attrs: `cell_methods` (the pooling), `verify_metric`, `verify_config` (inputs and grouping); the file's `verify_metrics` lists the metrics.
 
 ### Notes
 - A zero denominator (no observed event in a group for `bss`, `pod`) gives NaN.
 - Partial windows (`aggregation_coverage` < 1 on either input) are not scored. Inputs whose `aggregation_period` differs (daily obs against 3-day forecast means) exit 2: aggregate both onto the same windows first.
-- Leads are scored directly: a forecast with init `time` and `step` pairs with the obs at init + step; output keeps `(time, step, …)`. Label both on the same bins (after `aggregate-temporal --time-dim step`, obs windows labelled at their first day, `--align left`). Valid times outside the obs record stay NaN.
+- Leads are scored directly: a forecast with init `time` and `step` pairs with the obs at init + step, so the samples are on `(time, step, …)`; keep `step` for per-lead scores. Label both on the same bins (forecast: `aggregate-temporal --time-dim step`; obs: `--period` with `--end-time`, which labels each window at its first day). Valid times outside the obs record stay NaN.
 - Grid spacing must match (exit 2 otherwise): coarsen the obs onto the forecast (`coarsen --reference-grid FC.zarr --method conservative`). Inputs keep only shared labels; no overlap exits 2.
 - Obs are converted to the forecast's units; a total against a rate, or units on one side only, exits 2. Offset units (°C) are scored in kelvin; `--threshold` stays in the forecast's °C.
 - Deterministic metrics score the ensemble mean; `brier`, `bss`, `crps`, `crps_fair`, `spread`, `rps`, `rpss`, `reliability` and `roc` score the members. A NaN member drops the sample.
@@ -82,7 +82,7 @@ Each metric needs these inputs:
 - `spread` is √(mean ensemble variance / mean mse of the ensemble mean): 1 is ideal, below 1 under-dispersive, above 1 over-dispersive.
 - `pearson` pooled over space and season includes spatial and seasonal variance, so it is not an anomaly correlation; use `acc` with `--clim` for that, or score per cell (`--keep latitude --keep longitude`). `acc` is uncentred: anomalies from `--clim` are not re-centred on their group mean.
 - `smape` is |f − o| / (|f| + |o|), 0–1, without the factor 2. `mape` divides by the obs, so it explodes on dry days; prefer `mae` or `smape` for rainfall.
-- To compare models with the same member count, `concat --new-dim model` the forecasts and verify once with `--keep model`. With different member counts (ECMWF 51, GEFS 31) verify each model separately, then `concat --new-dim model` the outputs: concatenating the forecasts pads the smaller ensemble with NaN members, which drops all its samples.
+- To compare models with the same member count, `concat --dim model` the forecasts and verify once with `--keep model`. With different member counts (ECMWF 51, GEFS 31) verify each model separately, then `concat --dim model` the outputs: concat refuses forecasts whose members differ.
 - Stations: sample the grid at the station points first, then pass the sample and the station Zarr.
 
 ### Example
@@ -114,4 +114,4 @@ The metrics are computed from per-sample statistics, pooled by their mean over e
 The probability, reliability and ROC statistics use the forecast event probability: the share of members ≥ `--threshold`, or the forecast itself with `--probability`.
 
 ### Event filters
-Score only dates an obs condition holds, e.g. 30-day rain totals during droughts: run `indicator` on the obs (`--rule "precip sum 30d < 50"`) for the mask, put both inputs on 30-day sums (`aggregate-temporal`), then `--metric mae --filter drought.zarr`. Several `--filter` masks must all hold. For locally extreme days, take the q90 from `climatology --quantiles 0.9`, `difference` the obs minus it, and mask with `indicator "precip >= 0"`.
+Score only dates an obs condition holds, e.g. 30-day rain totals during droughts: run `indicator` on the obs (`--rule "precip sum 30d < 50"`) for the mask, put both inputs on 30-day totals (`aggregate-temporal --period '30 day'`, then `convert-to-totals`), then `--metric mae --filter drought.zarr`. Several `--filter` masks must all hold. For locally extreme days, take the q90 from `climatology --quantiles 0.9`, `difference` the obs minus it, and mask with `indicator --rule "precip >= 0"`.

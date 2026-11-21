@@ -460,3 +460,21 @@ def test_admin_unit_past_the_bundled_coastline_is_fetched(tmp_path, label_group,
 
     labels = xr.open_zarr(out, consolidated=True)["admin_1"].values.ravel().tolist()
     assert labels == ["madagascar-diana", ""]
+
+
+def test_time_labels_come_from_cell_starts(tmp_path, label_group):
+    """A week labelled by its last day (2021-01-02) takes the year and month it starts in."""
+    ds = make_gridded(n_time=2, start="2020-12-26").assign_coords(
+        time=np.array(["2020-12-26", "2021-01-02"], dtype="datetime64[ns]")
+    )
+    starts = ds["time"].values - np.timedelta64(6, "D")
+    ds = ds.assign_coords(
+        time_bounds=(("time", "nv"), np.stack([starts, starts + np.timedelta64(7, "D")], axis=1))
+    )
+    ds["time"].attrs["bounds"] = "time_bounds"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(label_group, "-i", str(src), "-o", str(out), "--time", "year", "--time", "month")
+    got = xr.open_zarr(out)
+    assert list(got["year"].values) == [2020, 2020]
+    assert list(got["month"].values) == [12, 12]

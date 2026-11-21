@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 #   "gcsfs",
 # ]
 # ///
@@ -21,7 +21,7 @@ from weather_skills_core.standard_utils import bbox_subset, ensure_normalized_lo
 from weather_skills_core.units import stamp_data_interval
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.13"
 
 _BUCKET = "sheerwater-datalake"
 _PREFIX = "pbc-data"
@@ -271,7 +271,7 @@ def _as_forecast(ds, *, init, dataset: str):
 def fetch(dataset, date, start_time, end_time, bbox, variable, probe_latest, **kwargs):
     """Fetch a PBC AI Weather Quest precipitation forecast as a weather-skills Zarr."""
     # Opens a Zarr under ``gs://sheerwater-datalake/pbc-data/<dataset>/<YYYYMMDD>/``
-    # with GCS Application Default Credentials. Optionally subsets by ``--bbox``
+    # with GCLOUD_SERVICE_CREDENTIALS, else Application Default Credentials. Optionally subsets by ``--bbox``
     # and ``--variable``, maps quintile probabilities onto a classic forecast
     # (scalar init ``time`` + ``step``), and returns a Dataset for the decorator
     # to write.

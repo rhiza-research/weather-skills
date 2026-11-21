@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 #   "fsspec",
 #   "aiohttp",
 #   "dask",
@@ -34,7 +34,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.13"
 
 # Public GCS mirror. Object keys, one convention for every window (daily is
 # just window=1): climatologies/<dataset>_<variable>_<window>d.zarr
@@ -70,7 +70,7 @@ def _valid_units(units) -> bool:
 _DEFAULT_VARIABLE = "precip"
 _DEFAULT_LEAD_DAYS = 0
 _DEFAULT_WINDOW_DAYS = 1
-_DEFAULT_ALIGN = "left"  # matches aggregate-temporal's own --window default
+_DEFAULT_ALIGN = "left"
 
 
 def _object_key(dataset: str, variable: str, window: int) -> str:
@@ -262,7 +262,7 @@ def _expand_climatology(clim: xr.Dataset, start, end) -> xr.Dataset:
     default=_DEFAULT_ALIGN,
     help=(
         f"How a local (non-pre-aggregated) --window roll-up labels each "
-        f"window (default: {_DEFAULT_ALIGN!r}, matching aggregate-temporal). "
+        f"window (default: {_DEFAULT_ALIGN!r}). "
         "Ignored on --window 1 or a pre-aggregated cache hit."
     ),
 )

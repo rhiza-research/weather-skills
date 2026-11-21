@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 #   "shapely",
 # ]
 # ///
@@ -19,7 +19,7 @@ from weather_skills_core.region import LEVELS, level_features
 from weather_skills_core.standard_dataset import detect_spatial_dims, names_for
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.6"
+_SKILL_VERSION = "0.0.9"
 
 _TIME_PARTS = ("month", "year", "dayofyear")
 _INITIALS = "JFMAMJJASOND"
@@ -211,7 +211,18 @@ def label_group(ds, level, geojson, property, time, **kwargs):
         tokens = [t.strip() for spec in time for t in spec.split(",") if t.strip()]
         parts = list(dict.fromkeys(t for t in tokens if t in _TIME_PARTS))
         groups = list(dict.fromkeys(t for t in tokens if t not in _TIME_PARTS))
-        month = ds["time"].dt.month.values
+        # A step belongs to the period its cell starts in; a week can be labelled by its last day.
+        bounds = (
+            ds["time"].attrs.get("bounds") or ds["time"].encoding.get("bounds") or "time_bounds"
+        )
+        start = ds["time"]
+        if bounds in ds.variables:
+            cells = ds[bounds].values
+            order = np.argsort(cells[:, 0])
+            # Overlapping cells are rolling windows: each goes by its label (its anchor).
+            if not (cells[order][1:, 0] < cells[order][:-1, 1]).any():
+                start = ds[bounds][:, 0]
+        month = start.dt.month.values
         group_label = np.full(month.shape, "", dtype=object)
         # Months of a group that crosses December before its first month.
         begins_last_year = np.zeros(month.shape, dtype=bool)
@@ -242,11 +253,11 @@ def label_group(ds, level, geojson, property, time, **kwargs):
                 raise UsageError(f"{coord!r} already exists in the dataset")
             if coord == "year":
                 # A group crossing December takes the year it begins (DJF 2023 = Dec 2023-Feb 2024).
-                values = ds["time"].dt.year.values - begins_last_year
+                values = start.dt.year.values - begins_last_year
             elif coord == "month_group":
                 values = group_label.astype(str)
             else:
-                values = getattr(ds["time"].dt, coord).values
+                values = getattr(start.dt, coord).values
             ds = ds.assign_coords({coord: ("time", values)})
     return ds
 

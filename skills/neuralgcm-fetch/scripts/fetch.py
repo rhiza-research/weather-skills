@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 #   "gcsfs",
 # ]
 # ///
@@ -27,7 +27,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.11"
+_SKILL_VERSION = "0.0.14"
 
 _BUCKET = "neuralgcm-s2s"
 _PREFIX = "staging/realtime/tomorrow_now_2026/v1"
@@ -433,10 +433,7 @@ def fetch(dataset, date, start_time, end_time, bbox, variable, cycle, probe_late
         converted, _ = convert_dataarray(ds["d2m"], "degree_Celsius")
         ds["d2m"] = converted
     ds = precip_amounts_to_rates(ds, interval=_PRECIP_INTERVAL, deaccumulate=False)
-    # precip is a 6 h period total labelled at its end: relabel it to the period
-    # start. Temperatures are instantaneous at init + step and keep their
-    # leads. With both, the merged axis runs from 0: precip is NaN at the last lead
-    # and the temperatures at 0 (gaps, not filled).
+    # precip is a 6 h period total labelled at its end: relabel it to the period start.
     if "precip" in ds.data_vars:
         import xarray as xr
 

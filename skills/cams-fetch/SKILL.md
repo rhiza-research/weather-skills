@@ -1,34 +1,14 @@
 ---
 name: cams-fetch
-description: "Fetch CAMS global air-quality fields (PM2.5, PM10, near-surface NO2, O3, SO2, CO, aerosol optical depth, total columns) for a lat/lon box from the Copernicus Atmosphere Data Store, as a gridded weather-skills Zarr: the 5-day forecast (0.4°, 2015 on) or the EAC4 reanalysis (0.75°, 3-hourly, 2003 on). Needs a free ADS_API_KEY. Use when a task needs gridded air-quality or atmospheric-composition data anywhere in the world."
+description: "Fetch CAMS global air-quality fields (PM2.5, PM10, near-surface NO2, O3, SO2, CO, aerosol optical depth, total columns) for a lat/lon box from the Copernicus Atmosphere Data Store, as a gridded weather-skills Zarr: the 5-day forecast (0.4°, 2015 on) or the EAC4 reanalysis (0.75°, 3-hourly, 2003 to about a year ago). Needs a free ADS_API_KEY. Use when a task needs gridded air-quality or atmospheric-composition data anywhere in the world."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Requires ADS_API_KEY (or a ~/.cdsapirc whose url is the ADS), free with sign-up — register at https://ads.atmosphere.copernicus.eu and copy the key from https://ads.atmosphere.copernicus.eu/profile and the eccodes library that cfgrib loads (installed with the skill on macOS and Linux). Each dataset's licence must be accepted once on the ADS website.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.6"
+  version: "0.0.9"
   catalog-group: fetchers
-  variables:
-    - pm25
-    - pm10
-    - no2
-    - o3
-    - aod550
-    - so2
-    - co
-    - pm1
-    - duaod550
-    - tcno2
-    - tco3
-    - tcco
-    - tcso2
-  openclaw:
-    requires:
-      env:
-        - ADS_API_KEY
-    primaryEnv: ADS_API_KEY
-    envVars:
-      - name: ADS_API_KEY
-        description: Personal token from https://ads.atmosphere.copernicus.eu/profile
+  variables: "pm25 pm10 no2 o3 aod550 so2 co pm1 duaod550 tcno2 tco3 tcco tcso2"
+  required-env: "ADS_API_KEY"
 ---
 
 # cams-fetch
@@ -42,6 +22,16 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --bbox N/W/S/E --date YYYY-MM-DD [--
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset eac4 --bbox N/W/S/E --start-time YYYY-MM-DD --end-time YYYY-MM-DD [-v VAR ...] -o OUT.zarr
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [forecast|eac4]
 ```
+
+### Date ranges
+`--probe-latest` prints the current last day.
+
+| `--dataset` | First | Last | Time step |
+|---|---|---|---|
+| `forecast` | 2015-01-01 init | today | inits 00 and 12 UTC daily; leads 3-hourly to 120 h |
+| `eac4` | 2003-01-01 | about a year ago | 3-hourly (00, 03, ..., 21 UTC) |
+
+A date before the first day exits 2. A date after the last day exits 1 with the ADS message; check `--probe-latest`.
 
 ### Arguments
 - `--bbox` — `N/W/S/E` decimal degrees. Required. A box crossing the antimeridian (W > E) is sent as two requests.
@@ -63,7 +53,6 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --probe-latest [forecast|eac4]
 - Set `ADS_API_KEY` in the environment on the first call (free; register at https://ads.atmosphere.copernicus.eu and copy the key from your profile). A missing key exits 2 before any request. Never print the value.
 - The first request for each dataset fails until its licence is accepted in a browser; the error prints the licence URL.
 - The ADS queues each request: seconds to many minutes. A job still queued after 1 hour exits 1; re-run later or request less.
-- A date outside the product's range exits 1 with the ADS message; check `--probe-latest`. EAC4 runs several months behind real time.
 
 ### Example
 ```bash

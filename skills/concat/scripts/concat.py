@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 # ]
 # ///
 """Join two or more Zarrs into one along a named dimension."""
@@ -9,9 +9,10 @@
 import numpy as np
 from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.standard_dataset import ALIASES, names_for
+from weather_skills_core.units import AGGREGATION_COVERAGE_COORD as COVERAGE
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.13"
 
 
 def _coerce(values):
@@ -56,7 +57,8 @@ def concat(ds, dim, coords, **kwargs):
         )
     if all(has_dim) and coords:
         raise UsageError(
-            f"--coords labels a new dim; {dim!r} already exists on the inputs, so its own labels are kept"
+            f"--coords labels a new dim; {dim!r} already exists on the inputs, so its own labels are kept. "
+            f"To give your own labels, first reduce {dim!r} away (summarize-dim --dim {dim})"
         )
 
     # xr.concat pads a variable missing from some inputs with NaN, which looks
@@ -112,12 +114,22 @@ def concat(ds, dim, coords, **kwargs):
         else:
             dss = [d.expand_dims(dim) for d in dss]
 
+    # convert-to-totals drops aggregation_coverage once every interval is complete, so an
+    # input without it is complete: give it coverage 1 when others carry coverage.
+    if any(COVERAGE in item.coords for item in dss):
+        dss = [
+            item
+            if COVERAGE in item.coords
+            else item.assign_coords({COVERAGE: (dim, [1.0] * item.sizes[dim])})
+            for item in dss
+        ]
+
     # join="exact": every other coordinate must match. The outer join pads a
     # mismatch with NaN instead, which looks like missing data.
-    # coords="different": a single-value label that differs between inputs
-    # (ECMWF step 7 days, GEFS step 14 days) becomes a label along dim.
+    # coords="different": a single-value label that differs between inputs becomes a
+    # label along dim.
     try:
-        out = xr.concat(dss, dim=dim, join="exact", coords="different")
+        out = xr.concat(dss, dim=dim, join="exact", coords="different", compat="equals")
     except pint.DimensionalityError as exc:
         raise UsageError(f"inputs carry incompatible units: {exc}") from None
     except xr.AlignmentError as exc:
@@ -134,19 +146,14 @@ def concat(ds, dim, coords, **kwargs):
                 f"inputs overlap along {dim!r}: {[str(v) for v in dups[:5]]} appear more than once; "
                 "keep only the new entries of one input with select (repeat --index)"
             )
-        # Coordinate axes come out in order; other dims keep the input order.
-        ordered = ALIASES.get(dim, dim) in {
-            "lat",
-            "lon",
-            "x",
-            "y",
-            "vertical",
-            "time",
-            "init_time",
-            "prediction_timedelta",
-            "day_of_year",
-        }
-        if ordered and not (index.is_monotonic_increasing or index.is_monotonic_decreasing):
+        # Time axes run forward. Grid and level axes may run either way (latitude from north
+        # to south) but not out of order. Other dims keep the input order.
+        axis = ALIASES.get(dim, dim)
+        temporal = axis in {"time", "init_time", "prediction_timedelta", "day_of_year"}
+        spatial = axis in {"lat", "lon", "x", "y", "vertical"}
+        if (temporal and not index.is_monotonic_increasing) or (
+            spatial and not (index.is_monotonic_increasing or index.is_monotonic_decreasing)
+        ):
             out = out.sortby(dim)
         # Boxes stitched along lat/lon with a gap between them leave an
         # irregular axis that clipping, regridding, and plotting assume away.

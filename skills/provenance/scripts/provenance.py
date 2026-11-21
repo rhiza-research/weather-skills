@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 #   "pillow",
 # ]
 # ///
@@ -21,10 +21,9 @@ from weather_skills_core.provenance import (
     validate_chain,
 )
 
-DEFAULT_REPO = "https://github.com/rhiza-research/weather-skills"
-DEFAULT_CLI = "weather-skills"
+DEFAULT_REPO = "https://github.com/weather-skills/weather-skills-catalog"
 # Ref a step runs from when it recorded no commit.
-DEFAULT_REF = "dev"
+DEFAULT_REF = "main"
 # Joins whose inputs are not a repeated --input, in the order the decorator
 # records them (declaration order).
 JOIN_FLAGS = {
@@ -52,7 +51,7 @@ _OTHER_SUFFIXES = (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.12"
 
 
 def _parent_histories(step: dict) -> list[tuple[str, list]]:
@@ -243,14 +242,10 @@ def _command(step: dict, inputs: list, output: str) -> str:
     repo = step.get("repo") if isinstance(step.get("repo"), str) and step["repo"] else DEFAULT_REPO
     commit = step.get("commit")
     ref = commit if isinstance(commit, str) and commit else DEFAULT_REF
-    # weather-skills (or a fork) has the CLI. Another repo may name its CLI
-    # differently or have none: run the skill's one script from a checkout, as
-    # skills-runner does.
-    if repo.rsplit("/", 1)[-1] == DEFAULT_REPO.rsplit("/", 1)[-1]:
-        parts = ["uvx", "--from", f"git+{repo}@{ref}", DEFAULT_CLI, skill]
-    else:
-        checkout = f'"$(_checkout {shlex.quote(repo)} {shlex.quote(ref)})"'
-        parts = ["uv", "run", "--script", f"{checkout}/skills/{skill}/scripts/*.py"]
+    # Run the skill's one script from a checkout at that ref, as skills-runner
+    # does: works for any repo, whatever its CLI was called at that commit.
+    script = f'"$(_script {shlex.quote(repo)} {shlex.quote(ref)} {shlex.quote(skill)})"'
+    parts = ["uv", "run", "--script", script]
     positional = POSITIONAL_ARGS.get(skill)
     if positional in args:
         parts.append(shlex.quote(str(args[positional])))
@@ -284,11 +279,22 @@ def _command(step: dict, inputs: list, output: str) -> str:
     return line
 
 
+def _recorded_path(item) -> tuple:
+    """``(path, sep, name)`` of a recorded PATH or PATH=NAME arg item."""
+    path, sep, name = str(item).rpartition("=")
+    return (path, sep, name) if sep else (str(item), "", "")
+
+
 def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
     """Emit one command per step; a join step first reproduces each parent subgraph.
 
     A join can sit anywhere on the path (its output feeding later steps), so every
     step is checked, and nested joins recurse.
+
+    A step whose args name every file it read (core records each input's path)
+    is replayed from its args alone: each named file becomes the file the replay
+    makes for it, and a file with no history is read from its recorded path.
+    A step whose args do not name its inputs gets its input flags added.
     """
     lines = []
     prev = None
@@ -302,6 +308,21 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
         output = final_output if i == n else f"{prefix}{i}.zarr"
         flags = JOIN_FLAGS.get(skill, [])
         branches = _parent_histories(step)
+        args = step.get("args") if isinstance(step.get("args"), dict) else {}
+        read = [
+            item.get("basename")
+            for item in (step_input if isinstance(step_input, list) else [step_input])
+            if isinstance(item, dict)
+        ]
+        named = {
+            Path(_recorded_path(v)[0]).name
+            for value in args.values()
+            for v in (value if isinstance(value, list) else [value])
+            if isinstance(v, str)
+        }
+        recorded = bool(read) and all(name in named for name in read)
+        # Basename of each file this step read -> the file the replay makes for it.
+        replay = {}
 
         if len(branches) >= 2:
             branch_outputs = []
@@ -311,6 +332,9 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
                 lines.append(f"# --- input branch {label} ---")
                 if history:
                     lines += _emit_graph(history, f"{prefix}{label}_", branch_out)
+                    replay[basename] = branch_out
+                elif recorded:
+                    lines.append(f"# branch {label} is {basename}, read from its recorded path.")
                 else:
                     lines.append(
                         f"# branch {label} records no steps; "
@@ -336,10 +360,27 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
             inputs = []
         elif prev is not None:
             inputs = [("--input", prev)]
+        elif recorded:
+            inputs = []
         else:
             lines.append(f"# step {i} ({skill})'s input is an artifact outside this chain;")
             lines.append("# reproduce it separately and replace <UPSTREAM> below.")
             inputs = [("--input", "<UPSTREAM>")]
+
+        if recorded:
+            if prev is not None and len(branches) < 2:
+                replay[read[0]] = prev
+            relinked = {}
+            for dest, value in args.items():
+                items = []
+                for item in value if isinstance(value, list) else [value]:
+                    path, sep, name = (
+                        _recorded_path(item) if isinstance(item, str) else ("", "", "")
+                    )
+                    base = Path(path).name
+                    items.append(replay[base] + sep + name if base in replay else item)
+                relinked[dest] = items if isinstance(value, list) else items[0]
+            step, inputs = {**step, "args": relinked}, []
 
         lines.append(_command(step, inputs, output))
         prev = output
@@ -347,17 +388,27 @@ def _emit_graph(chain: list, prefix: str, final_output: str) -> list:
 
 
 def _with_checkout_helper(lines: list) -> list:
-    """Define ``_checkout`` after the header when a step runs from a repo checkout."""
-    if not any("$(_checkout " in line for line in lines):
+    """Define ``_script`` after the header when a step runs from a repo checkout."""
+    if not any("$(_script " in line for line in lines):
         return lines
     helper = [
-        "# Clone each repo once per ref into ./_checkouts and print its path.",
-        "_checkout() {",
+        "# Clone each repo once per ref into ./_checkouts and print the skill's script.",
+        "# Skills sit at skills/<pack>/<skill> or skills/<skill>.",
+        "_script() {",
         '  local dir="_checkouts/${1##*/}@$2"',
         '  if [ ! -d "$dir" ]; then',
-        '    git clone -q "$1" "$dir" && git -C "$dir" checkout -q "$2"',
+        "    # A ref that won't check out must not leave the default branch behind.",
+        '    if ! { git clone -q "$1" "$dir" && git -C "$dir" checkout -q "$2"; }; then',
+        '      rm -rf "$dir"',
+        '      echo "_script: cannot check out $1 at $2" >&2',
+        "      return 1",
+        "    fi",
         "  fi",
-        '  echo "$dir"',
+        '  for f in "$dir"/skills/*/"$3"/scripts/*.py "$dir"/skills/"$3"/scripts/*.py; do',
+        '    if [ -e "$f" ]; then echo "$f"; return; fi',
+        "  done",
+        '  echo "_script: no script for $3 in $dir" >&2',
+        "  return 1",
         "}",
         "",
     ]

@@ -1,14 +1,13 @@
 ---
 name: gsmap-fetch
-description: "Fetch JAXA GSMaP v6 gauge-corrected hourly 0.1° precipitation (archive from April 2025, 60°N-60°S) for a region and date range from JAXA's public Earth API, as a weather-skills Zarr. No credentials needed. Use when a task needs recent hourly satellite rainfall, or an independent satellite estimate to cross-check other precipitation products."
+description: "Fetch JAXA GSMaP v6 gauge-corrected hourly 0.1° precipitation (2025-04-01 to a few days ago, 60°N-60°S) for a region and date range from JAXA's public Earth API, as a weather-skills Zarr. No credentials needed. Use when a task needs recent hourly satellite rainfall, or an independent satellite estimate to cross-check other precipitation products."
 license: MIT
 compatibility: Requires Python 3.12 and uv. Reads JAXA's public Earth API (data.earth.jaxa.jp); no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.7"
+  version: "0.0.10"
   catalog-group: fetchers
-  variables:
-    - precip
+  variables: "precip"
 ---
 
 # gsmap-fetch
@@ -21,6 +20,8 @@ Reads hourly GSMaP (Global Satellite Mapping of Precipitation) images for a box 
 uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time YYYY-MM-DD --bbox N/W/S/E -o OUT.zarr
 ```
 
+**Coverage:** hourly from 2025-04-01 to about 3 days ago, with a few missing days. From 2026-05-11 there is no 00 or 01 UTC image.
+
 ### Arguments
 - `--start-time`, `--end-time` — inclusive range of whole UTC days.
 - `--bbox` — required `N/W/S/E` decimal degrees. Latitudes must lie within 60°N–60°S, else exit 2. Longitudes may be −180..180 or 0..360; a box crossing the antimeridian (W > E) exits 2, so fetch each side separately.
@@ -32,8 +33,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --start-time YYYY-MM-DD --end-time Y
 - `weather_skills_source="jaxa-earth-api:JAXA.EORC_GSMaP_standard.Gauge.v6_hourly"`.
 
 ### Notes
-- JAXA serves no 00 or 01 UTC image on any day, so each day has at most 22 rows. Missing hours are absent rows, not filled, and stderr reports how many hours were served. Daily means therefore cover at most 22 of 24 hours, and complete daily totals are not available.
-- Days JAXA has not published (before April 2025, or the last few days) are skipped with a stderr note. A range with no published day exits 1.
+- Missing hours are absent rows, not filled, and stderr reports how many hours were served. From 2026-05-11 daily means cover at most 22 of 24 hours, so complete daily totals are not available.
+- Days JAXA has not published (before 2025-04-01, gaps, or the last few days) are skipped with a stderr note. A range with no published day exits 1.
 
 ### Example
 ```bash

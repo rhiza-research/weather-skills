@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/climatology.py *)
 metadata:
-  version: "0.0.1"
+  version: "0.0.2"
   catalog-group: transforms
 ---
 
@@ -27,7 +27,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/climatology.py -i DAILY.zarr -o CLIM.zarr --s
 - `--window` — odd number of calendar days pooled around each day (default `1`). `--window 5` uses each year's values from two days either side too, wrapping across the year end. Use it for short records or sparse inputs.
 - `--quantiles` — comma-separated quantiles between 0 and 1 (e.g. `0.333,0.667` for tercile boundaries), taken over the same pooled values as the mean.
 - `--pool-members` — treat the ensemble members (`number`) as extra samples, so all members share one climatology and `number` leaves the output. Without it each member gets its own.
-- `--min-fraction` — leave a cell NaN in every statistic when fewer than this fraction of its possible values (dates in the window × members) exist (default `0`, keep any cell with a value).
+- `--min-fraction` — leave a cell NaN in every statistic when fewer than this fraction of its possible values (dates in the window, × members with `--pool-members`) exist (default `0`, keep any cell with a value).
 
 ### Output
 - Dims as the input, with `time` holding one row per day of `--start-time`..`--end-time`.
@@ -35,7 +35,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/climatology.py -i DAILY.zarr -o CLIM.zarr --s
 - Global attrs `climatology_start_time` and `climatology_end_time` (first and last input dates), `climatology_window_days`, `climatology_pooled_members` (0 or 1) and `climatology_min_fraction`.
 
 ### Notes
-- Values must be daily: sub-daily dates, or a variable without a `step` dim whose `aggregation_period` is not `1 day`, are refused. Roll them to daily with `aggregate-temporal` first (`--period daily`, which also works on a forecast's `step`), and clip or coarsen to the region before fetching many years: the whole input is read into memory (about 1.4 GB per 10,000 grid cells for 30 years of float32 days).
+- Values must be daily: sub-daily dates, or a variable without a `step` dim whose `aggregation_period` is not `1 day`, are refused. Roll them up to daily with `aggregate-temporal --period daily` (which also works on a forecast's `step`), or split longer values into days with `regularize-time --period '1 day'`, first, and clip or coarsen to the region before fetching many years: the whole input is read into memory (about 1.4 GB per 10,000 grid cells for 30 years of float32 days).
 - Missing values are skipped, never filled; `V_count` shows how many values each day rests on. Days with no value anywhere stay NaN and stderr lists them.
 - Feb 29 uses leap years only, so without `--window` it rests on about a quarter of the years. Every year in the output window gets the same values for the same month and day.
 - For a forecast archive, days are grouped by the `time` coordinate (the init date) and each lead in `step` and member in `number` gets its own climatology. Build the archive by fetching each init, rolling `step` to daily, and stacking with `concat --dim time`. Weekly inits leave each calendar day about one value a year, so pass `--window` (e.g. 7 or 15); stderr notes sparse dates.

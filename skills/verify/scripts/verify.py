@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 #   "pandas",
 # ]
 # ///
@@ -33,7 +33,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.12"
 
 
 # Statistic functions: each takes the paired data (p) and returns one value per sample.
@@ -475,8 +475,8 @@ def _to_units(da, units, role):
     except (pint.DimensionalityError, pint_xarray.errors.PintExceptionGroup):
         raise UsageError(
             f"{role} ({variable_units(da)}) cannot be converted to the forecast's units "
-            f"({units:~}); put both on one basis (a total against a rate needs "
-            "aggregate-temporal / convert-to-totals first)."
+            f"({units:~}); put both on one basis: compare rates (mm day-1 means from "
+            "aggregate-temporal on both sides), or totals from convert-to-totals on both sides."
         ) from None
 
 
@@ -631,7 +631,7 @@ def verify(
             )
     elif {"rps", "rps_clim"} & set(statistics) and (fc_edges is None or not members):
         raise UsageError(
-            "rps and rpss need either a forecast of quintile probabilities (pbc-correct) or an "
+            "rps and rpss need either a forecast of quintile probabilities (pbc-fetch) or an "
             "ensemble (number dim) with --fc-edges and --obs-edges from summarize-dim "
             "--method quantile."
         )
@@ -714,7 +714,7 @@ def verify(
         if "quantile" not in eds[name].dims or "number" in eds[name].dims:
             raise UsageError(
                 f"{role} {name!r} has dims {list(eds[name].dims)}; it needs a quantile dim and no "
-                "number dim (summarize-dim --dim time --dim number --method quantile --q 0.333 0.667)."
+                "number dim (summarize-dim --dim time --dim number --method quantile -q 0.333 -q 0.667)."
             )
         e = eds[name].sortby("quantile")
         side.append((key, e.drop_vars("quantile").rename(quantile="category_edge"), role))

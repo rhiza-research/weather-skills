@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 import xarray as xr
 from conftest import (
@@ -882,6 +883,13 @@ def test_window_rolls_a_duration_and_keeps_partial_windows(
     np.testing.assert_allclose(rolled[AGGREGATION_COVERAGE_COORD].values, coverage)
     assert rolled["precip"].attrs["aggregation_period"] == "3 day"
     assert rolled["precip"].attrs["data_interval"] == "1 day"
+    # Each window's own edges: the label starts it (left), sits mid-window, or ends it.
+    shift = {"left": 0, "center": -1, "right": -2}[align]
+    starts = ds["time"].values + np.timedelta64(shift, "D")
+    np.testing.assert_array_equal(rolled["time_bounds"].values[:, 0], starts)
+    np.testing.assert_array_equal(
+        rolled["time_bounds"].values[:, 1], starts + np.timedelta64(3, "D")
+    )
 
 
 def _two_januaries():
@@ -926,3 +934,135 @@ def test_window_on_uneven_leads_weights_by_duration(tmp_path, aggregate):
     assert float(rolled["precip"].values[at[18]]) == pytest.approx(2.5)
     assert float(rolled[AGGREGATION_COVERAGE_COORD].values[at[18]]) == pytest.approx(1.0)
     assert float(rolled[AGGREGATION_COVERAGE_COORD].values[at[60]]) == pytest.approx(0.5)
+
+
+def _overlapping_weekly_means(n, fill=2.0):
+    """One 7-day mean every 2 days, as for a week-1 lead labeled at each forecast init."""
+    times = np.datetime64("2026-01-01", "ns") + np.arange(n) * np.timedelta64(2, "D")
+    attrs = {"units": "mm day-1", "standard_name": "lwe_precipitation_rate"}
+    attrs["data_interval"] = "7 day"
+    return xr.Dataset(
+        {"precip": (("time", "latitude", "longitude"), np.full((n, 1, 1), fill), attrs)},
+        coords={"time": times, "latitude": [1.0], "longitude": [10.0]},
+    )
+
+
+def test_overlapping_samples_exit_2_pointing_to_regularize_time(tmp_path, aggregate, capsys):
+    """Weekly means every 2 days would count days more than once; regularize them first."""
+    src = write_zarr(_overlapping_weekly_means(40), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--period", "monthly")
+    assert exc.value.code == 2
+    assert "regularize-time" in capsys.readouterr().err
+
+
+def test_overlapping_bounds_exit_2(tmp_path, aggregate):
+    ds = _overlapping_weekly_means(3)
+    start = ds["time"].values
+    ds["time_bounds"] = (("time", "nv"), np.stack([start, start + np.timedelta64(7, "D")], 1))
+    ds["time"].attrs["bounds"] = "time_bounds"
+    del ds["precip"].attrs["data_interval"]
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--period", "28 day")
+    assert exc.value.code == 2
+
+
+def test_regularized_overlaps_aggregate_with_day_coverage(tmp_path, aggregate):
+    """Weeks on days 1-7, 2-8, 3-9 and 23-30 cover 17 of January's 31 days."""
+    regularize = load_skill("regularize-time", "regularize_time").regularize_time
+    starts = np.datetime64("2026-01-01", "ns") + np.array([0, 1, 2, 22]) * np.timedelta64(1, "D")
+    ends = starts + np.array([7, 7, 7, 8]) * np.timedelta64(1, "D")
+    ds = xr.Dataset(
+        {"precip": (("time",), [1.0, 2.0, 3.0, 4.0], {"units": "mm day-1"})},
+        coords={"time": starts},
+    )
+    ds["time_bounds"] = (("time", "nv"), np.stack([starts, ends], 1))
+    ds["time"].attrs["bounds"] = "time_bounds"
+    daily, monthly = tmp_path / "daily.zarr", tmp_path / "monthly.zarr"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    run_skill(regularize, "-i", str(src), "-o", str(daily), "--period", "1 day")
+    run_skill(aggregate, "-i", str(daily), "-o", str(monthly), "--period", "monthly")
+    out = xr.open_zarr(monthly)
+    # Daily values 1, 1.5, 2 x5, 2.5, 3 and 4 x8, each day weighted once.
+    assert float(out["precip"].values[0]) == pytest.approx((1 + 1.5 + 10 + 2.5 + 3 + 32) / 17)
+    assert float(out[AGGREGATION_COVERAGE_COORD].values[0]) == pytest.approx(17 / 31)
+    assert "overlapping samples" in out["precip"].attrs["cell_methods"]
+
+
+def test_weekly_to_monthly_points_to_regularize_time(tmp_path, aggregate, capsys):
+    """Back-to-back weeks don't fit months whole; the error names the way through."""
+    weeks = _overlapping_weekly_means(1)
+    times = np.datetime64("2026-01-01", "ns") + np.arange(5) * np.timedelta64(7, "D")
+    weeks = xr.concat([weeks] * 5, "time").assign_coords(time=times)
+    src = write_zarr(weeks, tmp_path / "weeks.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--period", "monthly")
+    assert exc.value.code == 2
+    assert "regularize-time" in capsys.readouterr().err
+
+
+def _series(times, values, **attrs):
+    return xr.Dataset(
+        {
+            "precip": (
+                ("time", "latitude", "longitude"),
+                np.asarray(values, float)[:, None, None],
+                {"units": "mm day-1", "standard_name": "lwe_precipitation_rate", **attrs},
+            )
+        },
+        coords={
+            "time": np.asarray(times, "datetime64[ns]"),
+            "latitude": [1.0],
+            "longitude": [10.0],
+        },
+    )
+
+
+def test_reaggregated_windows_keep_their_coverage(tmp_path, aggregate):
+    """A partial rolling window counts at its coverage, not as complete."""
+    days = np.datetime64("2026-01-01", "ns") + np.arange(10) * np.timedelta64(1, "D")
+    src = write_zarr(_series(days, np.arange(10.0), data_interval="1 day"), tmp_path / "in.zarr")
+    windows, out = tmp_path / "w.zarr", tmp_path / "o.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(windows), "--window", "7 day", "--stride", "7")
+    run_skill(aggregate, "-i", str(windows), "-o", str(out), "--period", "14 day")
+    np.testing.assert_allclose(xr.open_zarr(out)[AGGREGATION_COVERAGE_COORD].values, [10 / 14])
+
+
+def test_monthly_output_aggregates_again(tmp_path, aggregate):
+    """Monthly means are not 'spaced closer than 1 month' because February is short."""
+    days = np.datetime64("2026-01-01", "ns") + np.arange(120) * np.timedelta64(1, "D")
+    src = write_zarr(_series(days, np.ones(120), data_interval="1 day"), tmp_path / "in.zarr")
+    monthly, again = tmp_path / "m.zarr", tmp_path / "m2.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(monthly), "--period", "monthly")
+    run_skill(aggregate, "-i", str(monthly), "-o", str(again), "--period", "monthly")
+    np.testing.assert_allclose(xr.open_zarr(again)["precip"].values[:, 0, 0], 1.0)
+
+
+@pytest.mark.parametrize("freq", ["QS", "YS"])
+def test_bins_that_split_bounded_samples_exit_2(tmp_path, aggregate, capsys, freq):
+    """Quarter or year starts get calendar bounds; monthly bins would split them."""
+    times = pd.date_range("2026-01-01", periods=3, freq=freq)
+    src = write_zarr(_series(times, [1.0, 2.0, 3.0]), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--period", "monthly")
+    assert exc.value.code == 2 and "regularize-time" in capsys.readouterr().err
+
+
+def test_unstamped_uneven_dates_exit_2(tmp_path, aggregate):
+    """Mid-month labels with no interval: where each sample's cell lies is unknown."""
+    times = ["2026-01-16", "2026-02-15", "2026-03-16", "2026-04-16"]
+    src = write_zarr(_series(times, [1.0, 2.0, 3.0, 4.0]), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--period", "weekly")
+    assert exc.value.code == 2
+
+
+def test_weeks_of_06_utc_days_start_at_06_utc(tmp_path, aggregate):
+    days = np.datetime64("2026-01-01T06", "ns") + np.arange(14) * np.timedelta64(1, "D")
+    src = write_zarr(_series(days, np.ones(14), data_interval="1 day"), tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--period", "weekly")
+    result = xr.open_zarr(out)
+    np.testing.assert_array_equal(result["time"].values, days[[0, 7]])
+    np.testing.assert_allclose(result[AGGREGATION_COVERAGE_COORD].values, [1.0, 1.0])

@@ -42,6 +42,8 @@ grid and are rejected (see below).
 | `ucsb-chc-chirps-analysis-preliminary` | analysis | `time, latitude, longitude` | — |
 | `noaa-hrrr-forecast-48-hour` | **rejected** — projected | `init_time, lead_time, y, x` (2-D lat/lon) | — |
 | `noaa-hrrr-analysis` | **rejected** — projected | `time, y, x` (2-D lat/lon) | — |
+| `*-virtual` ids of ECMWF IFS-ENS, AIFS, GFS, GEFS | same shape as the plain id | same dims as the plain id | same |
+| `eccc-hrdps-forecast`, `noaa-rrfs-*`, `noaa-refs-*`, `noaa-rtma-*`, `noaa-urma-analysis-virtual` | **rejected** — projected | `init_time, lead_time, y, x` or `time, y, x` (2-D lat/lon) | — |
 
 Shape is detected from the dims present, not from this table: `ensemble_member`
 → ensemble forecast, else `lead_time` → deterministic forecast, else `time` →

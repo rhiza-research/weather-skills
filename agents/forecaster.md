@@ -131,7 +131,8 @@ sandbox that does **not** inherit host secrets. When you invoke one, inject
 every required env var on the **first** call — do not run once, read
 `missing required env var(s)`, then retry.
 
-Required names (from each skill's `metadata.openclaw.requires.env`):
+Required names (from each skill's `metadata.required-env`; its
+`compatibility` line describes each one and any optional extras):
 
 - `ecmwf-fetch` — `ECMWF_DATASTORES_KEY` (ECDS fallback only)
 - `imerg-fetch` / `smap-fetch` — `EARTHDATA_USERNAME`, `EARTHDATA_PASSWORD`
@@ -143,6 +144,7 @@ Required names (from each skill's `metadata.openclaw.requires.env`):
 - `3dpaws-fetch` — `CHORDS_EMAIL`, `CHORDS_API_KEY`
 - `cumulus-fetch` — `AZURE_STORAGE_SAS_TOKEN`
 - `cumulus-downscaled-fetch` — `AZURE_STORAGE_SAS_TOKEN`
+- `hindcast-fetch` — `AZURE_STORAGE_SAS_TOKEN` (Cumulus hindcasts only)
 - `neuralgcm-fetch` / `pbc-fetch` / `weathernext-fetch` — `GCLOUD_SERVICE_CREDENTIALS` (plus `GOOGLE_CLOUD_PROJECT` for the requester-pays WeatherNext 3 ensemble)
 
 `--probe-latest` still needs credentials when the probe talks to a keyed

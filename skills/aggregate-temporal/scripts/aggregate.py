@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.6",
+#   "weather-skills-core>=0.4.0",
 #   "pandas",
 # ]
 # ///
@@ -22,12 +22,13 @@ from weather_skills_core.units import (
     format_cell_methods,
     format_duration,
     infer_timestep,
+    interval_days,
     parse_aggregation_period,
     stamp_data_interval,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.10"
+_SKILL_VERSION = "0.0.14"
 
 # Named --period / --window → (aggregation_period stamped, resample freq, length in days).
 NAMED_PERIODS = {
@@ -37,6 +38,8 @@ NAMED_PERIODS = {
     "monthly": ("1 month", "MS", 30),
 }
 _METHOD_TO_CF = {"mean": "mean", "max": "maximum", "min": "minimum"}
+# Added to cell_methods by regularize-time; kept when the result is aggregated again.
+OVERLAPPING_SAMPLES = "overlapping samples"
 
 
 def _as_ns(val):
@@ -98,12 +101,12 @@ def _as_ns(val):
     "--end-time",
     help=(
         "With --period: exclusive right edge of the final bin (bins walk "
-        "backward; labeled at the left edge, same as forecast step buckets)."
+        "backward; labelled at the left edge, same as forecast step buckets)."
     ),
 )
 @weather_skill.argument(
     "--start-time",
-    help="With --period and --end-time: optional earliest coverage floor.",
+    help="With --period and --end-time: create no windows before this date.",
 )
 def aggregate(
     ds,
@@ -136,7 +139,11 @@ def aggregate(
         raise UsageError("--align requires --window")
 
     if variable is not None:
-        ds = ds[list(dict.fromkeys(variable))]
+        missing = [name for name in variable if name not in ds.data_vars]
+        if missing:
+            raise UsageError(f"variable(s) {missing} not in dataset (have {list(ds.data_vars)})")
+        # drop_vars keeps every coordinate; ds[[...]] would lose {dim}_bounds (dims nv).
+        ds = ds.drop_vars([name for name in ds.data_vars if name not in variable])
     # dequantify_dataset keeps the standard spelling (mm day-1, not millimeter / day).
     ds = dequantify_dataset(ds)
 
@@ -158,11 +165,17 @@ def aggregate(
     try:
         ds = stamp_data_interval(ds, dim=dim)
     except UsageError:
-        pass
+        # shortcut: core can't infer cftime spacing across Feb 30; those axes fall back
+        # to point samples. Dates core can't place are refused.
+        if np.asarray(ds[dim].values).dtype.kind in "Mm":
+            raise
     bounds_name = ds[dim].attrs.get("bounds")
     if not (isinstance(bounds_name, str) and bounds_name in ds):
         bounds_name = f"{dim}_bounds" if f"{dim}_bounds" in ds else None
-    bounds = native_interval = cell = None
+    bounds = native_interval = cell = overlap = None
+    overlapping = any(
+        OVERLAPPING_SAMPLES in str(ds[name].attrs.get("cell_methods", "")) for name in ds.data_vars
+    )
     if bounds_name is not None:
         bounds = np.asarray(ds[bounds_name].values)
         if bounds.ndim != 2 or bounds.shape[-1] != 2:
@@ -185,6 +198,27 @@ def aggregate(
                 break
         else:
             cell = data_interval_of(ds)
+        # Samples spaced closer than their own interval overlap.
+        raw = np.asarray(ds[dim].values)
+        if cell and raw.dtype.kind in "Mm" and raw.size > 1:
+            sample_starts = _as_ns(raw)
+            sample_ends = sample_starts + np.round(interval_days(ds[dim], cell) * 86400e9).astype(
+                "int64"
+            )
+            order = np.argsort(sample_starts)
+            if (sample_starts[order][1:] < sample_ends[order][:-1]).any():
+                overlap = f"spaced closer than their {cell} interval"
+    if bounds is not None:
+        order = np.argsort(starts)
+        if (starts[order][1:] < ends[order][:-1]).any():
+            overlap = f"overlapping in {dim}_bounds"
+    if overlap:
+        raise UsageError(
+            f"samples on {dim} are {overlap}, so a bin would count some days more than once. "
+            "Run regularize-time --period <grid> first (e.g. '1 day' for whole-day windows): "
+            "it averages the samples covering each grid cell and stamps each cell's "
+            "coverage; then aggregate its output."
+        )
 
     key = period or window
     flag = "--period" if period else "--window"
@@ -211,7 +245,8 @@ def aggregate(
             length_days = int(round(length_days))
             freq = f"{length_days}D"
         else:
-            # Sub-daily: bins of this many seconds, aligned to 00 UTC of the first day.
+            # Sub-daily: bins of this many seconds from 00 UTC of the first day, shifted below by
+            # the input cells' offset.
             freq = f"{int(round(seconds))}s"
     monthly = key == "monthly"
     if window is not None and monthly:
@@ -219,7 +254,7 @@ def aggregate(
 
     # --period at the input's own spacing: nothing to aggregate, just stamp it.
     same = False
-    if window is None and native_interval:
+    if window is None and native_interval and bounds is None:
         try:
             same = parse_aggregation_period(agg) == parse_aggregation_period(native_interval)
         except UsageError:
@@ -247,7 +282,8 @@ def aggregate(
         if not fits:
             raise UsageError(
                 f"{key!r} windows cannot hold whole {cell} input samples; aggregate "
-                f"from data at a spacing that divides {agg} (e.g. the daily input)"
+                f"from data at a spacing that divides {agg} (e.g. the daily input), or "
+                "run regularize-time --period '1 day' first to split each sample into days"
             )
         raw = ds[dim].values
         if end_time is not None and cell_days > 1 and raw.dtype.kind == "M":
@@ -255,7 +291,8 @@ def aggregate(
             if abs(offset / cell_days - round(offset / cell_days)) > 1e-6:
                 raise UsageError(
                     f"--end-time {end_time} is not on the {cell} grid of the input "
-                    f"(first sample {str(raw[0])[:10]}), so bins would split input samples"
+                    f"(first sample {str(raw[0])[:10]}), so bins would split input samples; "
+                    "run regularize-time --period '1 day' first to split them into days"
                 )
 
     # Every mode below builds half-open [left, right) bins with a label each.
@@ -265,7 +302,7 @@ def aggregate(
     if same:
         pass
     elif window is not None:
-        # One window per sample, labeled at that sample. --align puts the sample at
+        # One window per sample, labelled at that sample. --align puts the sample at
         # the window's start (left), middle (center), or end (right).
         try:
             stride = int(stride)
@@ -321,7 +358,7 @@ def aggregate(
         for left in np.arange(0, max_step + step, step, dtype=raw.dtype):
             bins.append((left, left + step, left))
     elif end_time is not None:
-        # Backward fixed-width bins whose last right edge is --end-time, labeled at
+        # Backward fixed-width bins whose last right edge is --end-time, labelled at
         # the left edge like forecast step buckets.
         if monthly:
             raise UsageError(
@@ -374,8 +411,15 @@ def aggregate(
             bins.insert(0, (right - width, right, right - width))
             right -= width
     else:
-        # Forward calendar bins from the first sample.
-        for label in ds.resample({dim: freq}).groups:
+        # Forward calendar bins from the first sample. Bins start at 00 UTC, shifted by the
+        # first sample's offset from a whole input cell (06-06 UTC days give 06 UTC weeks).
+        offset = None
+        if not monthly and native_interval and raw.dtype.kind == "M":
+            cell_ns = round(float(parse_aggregation_period(native_interval).to("ns").magnitude))
+            first = raw.min()
+            shift = int((first - first.astype("M8[D]")) / np.timedelta64(1, "ns")) % cell_ns
+            offset = pd.Timedelta(shift, "ns") if shift else None
+        for label in ds.resample({dim: freq}, offset=offset).groups:
             if not hasattr(label, "calendar"):
                 label = pd.Timestamp(label)
             if monthly:
@@ -405,9 +449,10 @@ def aggregate(
             if dim in da.dims:
                 present *= np.isfinite(da).any([d for d in da.dims if d != dim]).values
         # Re-aggregating, a 3/7-complete week counts as 3/7 of a week, not a whole one.
-        if bounds is None and AGGREGATION_COVERAGE_COORD in ds.coords:
-            if ds[AGGREGATION_COVERAGE_COORD].dims == (dim,):
-                present *= np.nan_to_num(ds[AGGREGATION_COVERAGE_COORD].values.astype(float))
+        if AGGREGATION_COVERAGE_COORD in ds.coords:
+            if not set(ds[AGGREGATION_COVERAGE_COORD].dims) - {dim}:
+                cov = ds[AGGREGATION_COVERAGE_COORD].values.astype(float)
+                present *= np.nan_to_num(np.broadcast_to(cov, raw.shape))
         if bounds is None:
             timestep_days = 1.0
             try:
@@ -415,7 +460,7 @@ def aggregate(
             except UsageError:
                 pass
 
-        chunks, labels, coverages = [], [], []
+        chunks, labels, coverages, edges = [], [], [], []
         for left, right, label in bins:
             if bounds is not None:
                 # Weight each sample by how much of its cell falls in the bin.
@@ -424,7 +469,13 @@ def aggregate(
                 idx = np.flatnonzero(overlap > 0)
                 if idx.size == 0 or right_ns <= left_ns:
                     continue
-                coverage = float((overlap * present)[idx].sum()) / (right_ns - left_ns)
+                if window is None and (overlap[idx] < (ends - starts)[idx]).any():
+                    raise UsageError(
+                        f"{key!r} bins would split {dim} samples whose bounds cross a bin "
+                        "edge; aggregate to a period they divide, or run regularize-time "
+                        "--period '1 day' first to split them into days"
+                    )
+                coverage = float((overlap[idx] * present[idx]).sum()) / (right_ns - left_ns)
             else:
                 idx = np.flatnonzero((raw >= left) & (raw < right))
                 if idx.size == 0:
@@ -447,7 +498,7 @@ def aggregate(
                     overlap[idx].astype(float), dims=[dim], coords={dim: sub[dim].values}
                 )
                 # Weight only finite samples. Dividing by sum(weights) treats NaN as 0, which
-                # turns unpublished GEFS long leads (all-NaN weeks 4–5) into fake dry zeros.
+                # turns all-NaN samples into zeros.
                 count = (sub.notnull() * weights).sum(dim=dim)
                 reduced = (sub * weights).sum(dim=dim, skipna=True, keep_attrs=True) / count
             else:
@@ -457,10 +508,15 @@ def aggregate(
             # convert-to-totals would scale that mean up to the full period.
             chunks.append(reduced.where(count >= count.max()))
             labels.append(label)
+            edges.append((left, right))
             coverages.append(min(1.0, coverage))
         if not chunks:
             raise UsageError(f"no {key} bins contained samples on {dim}")
         out = xr.concat(chunks, dim=dim).assign_coords({dim: labels})
+        if window is not None:
+            # Each window's own edges: with --align right or center a label is not its start.
+            out = out.assign_coords({f"{dim}_bounds": ((dim, "nv"), np.array(edges))})
+            out[dim].attrs["bounds"] = f"{dim}_bounds"
 
     out = out.assign_coords({AGGREGATION_COVERAGE_COORD: (dim, np.asarray(coverages, dtype=float))})
     out[AGGREGATION_COVERAGE_COORD].attrs.update(
@@ -471,7 +527,7 @@ def aggregate(
     )
 
     # Incomplete bins are kept with their coverage; convert-to-totals drops them
-    # at its default --min-coverage 1.0. Say so now, not three steps later.
+    # at its default --min-coverage 1.0.
     cov = np.asarray(out[AGGREGATION_COVERAGE_COORD].values, dtype=float)
     low = cov < 1.0 - 1e-12
     if low.any():
@@ -495,9 +551,15 @@ def aggregate(
                 file=sys.stderr,
             )
 
-    # Rolling windows overlap, one per sample, so the output keeps the input spacing.
+    # Rolling windows keep the input spacing; their bounds say where each window lies.
     data_interval = native_interval if window is not None or same else agg
     cell_methods = format_cell_methods(dim, _METHOD_TO_CF[method], interval=native_interval)
+    if overlapping:
+        note = f"comment: {OVERLAPPING_SAMPLES}"
+        if cell_methods.endswith(")"):
+            cell_methods = f"{cell_methods[:-1]} {note})"
+        else:
+            cell_methods = f"{cell_methods} ({note})"
     for name in out.data_vars:
         attrs = {**out[name].attrs, AGGREGATION_PERIOD_ATTR: agg, "cell_methods": cell_methods}
         if data_interval:
