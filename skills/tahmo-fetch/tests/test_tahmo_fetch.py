@@ -745,3 +745,152 @@ def test_gridded_probe_latest_prints_last_day_with_data(capsys, mod, fetch):
             "2024-03-01",
         )
     assert capsys.readouterr().out.strip() == "2024-03-02"
+
+
+def _gold_store():
+    """Station store like tahmo_africa_stations.zarr."""
+    import numpy as np
+
+    precip = np.array(
+        [[1.0, np.nan, 0.0], [2.0, np.nan, np.nan], [3.0, 40.0, np.nan]], dtype="float32"
+    )
+    flag = np.zeros(precip.shape, dtype="int8")
+    flag[2, 1] = 1  # unsupported_extreme
+    return xr.Dataset(
+        {"precip": (("time", "station_id"), precip)},
+        coords={
+            "time": pd.date_range("2024-03-01", "2024-03-03", freq="D"),
+            "station_id": ["TA00001", "TA00002", "TA00003"],
+            "latitude": ("station_id", [-1.0, 0.5, 9.0]),
+            "longitude": ("station_id", [36.0, 37.2, -1.0]),
+            "elevation": ("station_id", np.array([1600.0, 900.0, 200.0], dtype="float32")),
+            "country": ("station_id", ["KE", "KE", "GH"]),
+            "name": ("station_id", ["A", "B", "C"]),
+            "precip_flag": (
+                ("time", "station_id"),
+                flag,
+                {"flag_masks": np.array([1, 2, 4], dtype="int8")},
+            ),
+        },
+    )
+
+
+def test_gold_stations_by_bbox_without_tahmo_credentials(tmp_path, mod, fetch, capsys):
+    out = tmp_path / "out.zarr"
+    env = {
+        k: v for k, v in os.environ.items() if k not in ("TAHMO_API_USERNAME", "TAHMO_API_PASSWORD")
+    }
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch.object(mod, "_open_gold", return_value=_gold_store()),
+    ):
+        run_skill(
+            fetch,
+            "--gold-stations",
+            "--bbox",
+            "5/30/-5/40",
+            "--start-time",
+            "2024-03-01",
+            "--end-time",
+            "2024-03-03",
+            "-o",
+            str(out),
+        )
+    ds = xr.open_zarr(out, consolidated=True)
+    assert list(ds["station_id"].values) == ["TA00001", "TA00002"]
+    p = ds["precip"]
+    assert p.dims == ("time", "station_id")
+    assert list(p.sel(station_id="TA00001").values) == [1.0, 2.0, 3.0]
+    # Missing days stay NaN: nothing filled.
+    assert int(p.notnull().sum()) == 4
+    assert p.attrs["units"] == "mm day-1"
+    assert p.attrs.get("data_interval") == "1 day"
+    assert int(ds["precip_flag"].sel(station_id="TA00002").isel(time=2)) == 1
+    assert ds.attrs["featureType"] == "timeSeries"
+    assert ds.attrs["weather_skills_source"] == "sheerwater:hindcasts/tahmo_africa_stations.zarr"
+    assert "precip: 1 of 2 stations complete (all 3 days" in capsys.readouterr().err
+    quantify_dataset(ds)
+
+
+def test_gold_stations_by_id_and_date_range(tmp_path, mod, fetch):
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_gold", return_value=_gold_store()):
+        run_skill(
+            fetch,
+            "--gold-stations",
+            "--station",
+            "ta00003",
+            "--start-time",
+            "2024-03-01",
+            "--end-time",
+            "2024-03-02",
+            "-o",
+            str(out),
+        )
+    ds = xr.open_zarr(out, consolidated=True)
+    assert list(ds["station_id"].values) == ["TA00003"]
+    assert ds.sizes["time"] == 2
+    assert float(ds["precip"].isel(time=0, station_id=0)) == 0.0
+
+
+def test_gold_stations_drops_stations_with_no_day_in_range(tmp_path, mod, fetch):
+    out = tmp_path / "out.zarr"
+    with patch.object(mod, "_open_gold", return_value=_gold_store()):
+        run_skill(
+            fetch,
+            "--gold-stations",
+            "--start-time",
+            "2024-03-02",
+            "--end-time",
+            "2024-03-02",
+            "-o",
+            str(out),
+        )
+    assert list(xr.open_zarr(out, consolidated=True)["station_id"].values) == ["TA00001"]
+
+
+@pytest.mark.parametrize(
+    "extra, code",
+    [
+        (["--station", "TA09999"], 2),
+        (["--gridded"], 2),
+        (["--list-stations"], 2),
+        (["--day-start-hour", "6"], 2),
+        (["--bbox", "50/10/40/20"], 1),
+    ],
+)
+def test_gold_stations_errors(tmp_path, mod, fetch, extra, code):
+    with (
+        patch.object(mod, "_open_gold", return_value=_gold_store()),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_skill(
+            fetch,
+            "--gold-stations",
+            "--start-time",
+            "2024-03-01",
+            "--end-time",
+            "2024-03-03",
+            *extra,
+            "-o",
+            str(tmp_path / "out.zarr"),
+        )
+    assert exc.value.code == code
+
+
+def test_gold_stations_range_outside_store_exits_1(tmp_path, mod, fetch):
+    with (
+        patch.object(mod, "_open_gold", return_value=_gold_store()),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_skill(
+            fetch,
+            "--gold-stations",
+            "--start-time",
+            "2026-01-01",
+            "--end-time",
+            "2026-01-31",
+            "-o",
+            str(tmp_path / "out.zarr"),
+        )
+    assert exc.value.code == 1
