@@ -48,8 +48,7 @@ credentialed or source-specific fetcher only when it does not.
 | `gsmap-fetch` | JAXA GSMaP v6 gauge-corrected hourly 0.1° precip (from April 2025, 60°N–60°S) → Zarr. No credentials. |
 | `pardig-fetch` | Google PARDIG AI precip estimate, 15-minute 0.1° (NRT 2016 to a few hours ago, LR 1999–2023) → Zarr. No credentials. |
 | `oisst-fetch` | NOAA OISST v2.1 daily 0.25° sea-surface temperature (1981-09 on) → Zarr. No credentials. |
-| `smap-smos-fetch` | Daily surface soil moisture (m³/m³) from SMAP, SMOS, or SMAP gaps filled from SMOS; 6am, 6pm or both. Native (SMAP `SPL3SMP_E` 9 km, 2015 on; CATDS SMOS 25 km, 2010 on) or NASA-intercalibrated (NSIDC-0800 v2, 9 km, 2015 to ~5 weeks ago) → Zarr. Requires credentials (except native SMOS). |
-| `ascat-fetch` | C3S ACTIVE (Metop ASCAT) daily 0.25° surface soil moisture, % of saturation, 1991 on → Zarr. Requires credentials. |
+| `soil-moisture-fetch` | Daily satellite surface soil moisture → Zarr, one `--dataset`: `ascat` (C3S ACTIVE, % saturation, 0.25°, 1991 on), `combined` (C3S COMBINED, m³/m³, 0.25°, 1978 on), `smap` (`SPL3SMP_E` 9 km, 2015 on), `smos` (CATDS 25 km, 2010 on), or `smap-smos` (NSIDC-0800 intercalibrated, 9 km). SMAP/SMOS take the 6am, 6pm or both overpasses. Requires credentials (CDS or Earthdata; none for `smos`). |
 | `ghcn-daily-fetch` | NOAA GHCN-Daily station observations (daily precip and max/min/mean temperature, ~130,000 stations) → station Zarr. No credentials. |
 | `openaq-fetch` | OpenAQ air-quality station observations (daily mean PM2.5, PM10, NO2, O3, SO2, CO) → station Zarr. Requires credentials. |
 | `cams-fetch` | CAMS global air-quality fields (PM2.5, PM10, near-surface NO2/O3/SO2/CO, AOD, total columns) — 5-day forecast at 0.4° (2015 on) or EAC4 reanalysis at 0.75° (2003 on) → Zarr. Requires credentials. |
