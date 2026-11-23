@@ -70,6 +70,7 @@ credentialed or source-specific fetcher only when it does not.
 | `coarsen` | Coarsen or align a grid onto a target `(resolution, offset)` or another Zarr's grid, by linear interpolation or an area-weighted (conservative) mean — adds no information |
 | `edit-coords` | Rename data variables, coordinates, or dims (`--rename OLD=NEW`) and re-index a dim by another 1-D coordinate (`--swap-dims OLD=NEW`); refuses edits that lose an ontology dim |
 | `clip-values` | Limit values to `--min` / `--max` (e.g. `--min 0` to remove negative rainfall); NaN stays NaN |
+| `mask` | Set values to NaN wherever other Zarrs have no value (`--valid-in`) or a 0/1 mask is 0 (`--true-in`), e.g. keep only days every source has |
 | `drop` | Drop named data variables or non-index coordinates (`--name`) — e.g. stray `valid_time` / `spatial_ref` before `concat` |
 | `concat` | Join Zarr stores along a named dim (incl. new dims with coord values) |
 | `merge` | Combine the variables of several Zarrs into one dataset on their shared coordinates |
