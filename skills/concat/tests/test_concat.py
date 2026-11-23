@@ -294,3 +294,31 @@ def test_input_without_coverage_joins_as_complete(tmp_path, concat):
         "time",
     )
     np.testing.assert_allclose(xr.open_zarr(out)["aggregation_coverage"].values, [1.0, 3 / 7])
+
+
+def test_concat_obs_onto_every_member_of_a_daily_forecast(tmp_path, concat):
+    obs = make_gridded(n_time=3, start="2026-01-01", name="tp", fill=1.0)
+    obs["tp"].attrs.update(data_interval="1 day", aggregation_period="1 day")
+    fc = make_gridded(n_time=2, start="2026-01-04", name="tp", fill=2.0)
+    fc["tp"].attrs["data_interval"] = "1 day"
+    fc = fc.expand_dims(number=[0, 1, 2])
+    d1 = write_zarr(obs, tmp_path / "obs.zarr")
+    d2 = write_zarr(fc, tmp_path / "fc.zarr")
+    ds = xr.open_zarr(_run(concat, tmp_path, d1, d2, extra=("--dim", "time")))
+    assert ds.sizes["time"] == 5
+    assert ds.sizes["number"] == 3
+    tp = ds["tp"].isel(latitude=0, longitude=0).transpose("number", "time").values
+    assert (tp[:, :3] == 1.0).all()
+    assert (tp[:, 3:] == 2.0).all()
+
+
+def test_concat_refuses_daily_against_weekly_aggregation(tmp_path, concat):
+    weekly = make_gridded(start="2026-01-01")
+    weekly["precip"].attrs.update(data_interval="1 day", aggregation_period="7 day")
+    daily = make_gridded(start="2026-01-03")
+    daily["precip"].attrs["data_interval"] = "1 day"
+    d1 = write_zarr(weekly, tmp_path / "d1.zarr")
+    d2 = write_zarr(daily, tmp_path / "d2.zarr")
+    with pytest.raises(SystemExit) as exc:
+        _run(concat, tmp_path, d1, d2, extra=("--dim", "time"))
+    assert exc.value.code == 2

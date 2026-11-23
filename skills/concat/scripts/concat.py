@@ -12,7 +12,7 @@ from weather_skills_core.standard_dataset import ALIASES, names_for
 from weather_skills_core.units import AGGREGATION_COVERAGE_COORD as COVERAGE
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.13"
+_SKILL_VERSION = "0.0.14"
 
 
 def _coerce(values):
@@ -76,10 +76,15 @@ def concat(ds, dim, coords, **kwargs):
         )
 
     # Mixing e.g. daily and weekly values on one axis would keep only the
-    # first input's label, so refuse instead.
+    # first input's label, so refuse instead. Unaggregated data spans its
+    # data_interval, so daily obs aggregated to "1 day" match a native daily forecast.
     for key in ("data_interval", "aggregation_period"):
         for name in dss[0].data_vars:
-            seen = {str(item[name].attrs.get(key)) for item in dss if name in item.data_vars}
+            seen = {
+                str(item[name].attrs.get(key, item[name].attrs.get("data_interval")))
+                for item in dss
+                if name in item.data_vars
+            }
             if len(seen) > 1:
                 raise UsageError(f"{name!r} has different {key} across inputs: {sorted(seen)}")
 
