@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Reads public Zarr from the dynamical.org open catalog (AWS Open Data) over HTTPS via the dynamical-catalog library; no credentials required.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py *)
 metadata:
-  version: "0.0.20"
+  version: "0.0.22"
   catalog-group: fetchers
   variables: "precipitation_surface temperature_2m temperature_850hpa geopotential_height_500hpa"
 ---
@@ -66,7 +66,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/fetch.py --dataset ID --list-variables
 | `noaa-gfs-analysis`, `noaa-gfs-analysis-virtual` ★ | 0.25° | 2021-05-01 |
 | `noaa-mrms-conus-analysis-hourly` (CONUS) | 0.01° | 2014-11-01 |
 
-★ **Virtual ids** read the provider's original files in place and carry many more fields (`--list-variables`). Their precipitation totals are written as `mm day-1` rates, matching the plain id on the same row; `-v precip` picks it. Virtual analysis ids store precipitation as totals over 1-6 h buckets and refuse it (exit 2): use `noaa-gfs-analysis` or `noaa-gefs-analysis`.
+★ **Virtual ids** read the provider's original files in place and carry many more fields (`--list-variables`). Their precipitation totals are written as `mm day-1` rates, matching the plain id on the same row; `-v precip` picks it. Virtual analysis ids store precipitation as totals over 1-6 h buckets and refuse it (exit 2): use `noaa-gfs-analysis` or `noaa-gefs-analysis`. Prefer the plain (non-virtual) id whenever it has the init, grid, leads and fields you need: virtual ids keep the provider's file layout, often one whole-globe chunk per member, lead and field, so a `--bbox` does not shrink the read and fetches are slower and use more memory. Use a virtual id only for what the plain id lacks.
 
 **Rejected ids** (projected grids, exit 2): HRRR, `eccc-hrdps-forecast`, `noaa-rrfs-*`, `noaa-refs-*`, `noaa-rtma-*`, `noaa-urma-*`.
 
