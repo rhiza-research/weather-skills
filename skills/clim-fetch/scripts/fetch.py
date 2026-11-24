@@ -1,10 +1,9 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.2",
+#   "weather-skills-core[dask] @ git+https://github.com/weather-skills/weather-skills-core@feat/dask-larger-than-memory",
 #   "fsspec",
 #   "aiohttp",
-#   "dask",
 #   "pandas",
 # ]
 # ///
@@ -70,6 +69,7 @@ def _valid_units(units) -> bool:
 _DEFAULT_VARIABLE = "precip"
 _DEFAULT_LEAD_DAYS = 0
 _DEFAULT_WINDOW_DAYS = 1
+_PIECE_DAYS = 32  # days taken from the climatology at a time, when laying it onto a date range
 _DEFAULT_ALIGN = "left"  # matches aggregate-temporal's own --window default
 
 
@@ -80,8 +80,12 @@ def _object_key(dataset: str, variable: str, window: int) -> str:
 def _open_zarr_or_none(key: str) -> xr.Dataset | None:
     url = f"{_GCS_MEDIA}/{key}"
     try:
-        # decode needed across zarr versions to get timedelta back.
-        return xr.open_zarr(url, consolidated=True, decode_timedelta=True)
+        # decode needed across zarr versions to get timedelta back. Always dask
+        # chunks (this skill's header requires dask): the unit conversion runs
+        # before the bbox subset and would otherwise load the whole global grid.
+        # One chunk per stored chunk (125 MiB): "auto" would cut each one into pieces
+        # of --dask-chunk-size, and every piece re-reads and decodes the whole stored chunk.
+        return xr.open_zarr(url, consolidated=True, decode_timedelta=True, chunks={})
     except Exception:  # noqa: BLE001 — probing for existence, caller decides what's fatal
         return None
 
@@ -215,7 +219,13 @@ def _expand_climatology(clim: xr.Dataset, start, end) -> xr.Dataset:
 
     target_dates = pd.date_range(start, end, freq="D")
     target_doy = xr.DataArray(_doy_1904(target_dates), dims="time", coords={"time": target_dates})
-    expanded = clim.sel(day_of_year=target_doy)
+    # In pieces of a month: one take over a multi-year range would build a chunk of
+    # every day for each stored chunk, which grows with the date range.
+    pieces = [
+        clim.sel(day_of_year=target_doy.isel(time=slice(i, i + _PIECE_DAYS)))
+        for i in range(0, max(target_doy.size, 1), _PIECE_DAYS)
+    ]
+    expanded = pieces[0] if len(pieces) == 1 else xr.concat(pieces, dim="time")
     return expanded.drop_vars("day_of_year")
 
 
@@ -268,7 +278,16 @@ def _expand_climatology(clim: xr.Dataset, start, end) -> xr.Dataset:
 )
 @weather_skill.argument("--bbox")
 def fetch(
-    dataset, start_time, end_time, variable, prediction_timedelta, window, align, bbox, **kwargs
+    dataset,
+    start_time,
+    end_time,
+    variable,
+    prediction_timedelta,
+    window,
+    align,
+    bbox,
+    dask=False,
+    **kwargs,
 ):
     """Fetch a precomputed daily climatology (mean and standard deviation) laid onto a date range as a weather-skills Zarr."""
     if window < 1:
@@ -331,12 +350,14 @@ def fetch(
     if window > 1 and not is_pre_aggregated:
         clim = _roll_climatology(clim, mean_name, std_name, window, align)
 
-    expanded = _expand_climatology(clim, start_time, end_time).load()
+    expanded = _expand_climatology(clim, start_time, end_time)
+    if not dask:
+        expanded = expanded.load()
     expanded = expanded.drop_attrs(deep=False)
 
     # The mirrors keep no value for an init whose valid date runs past Dec 31,
     # so a lead of N days leaves Jan 1..Jan N empty. Never filled: say so.
-    empty = expanded[mean_name].isnull().all(["latitude", "longitude"])
+    empty = expanded[mean_name].isnull().all(["latitude", "longitude"]).compute()
     if empty.any():
         dates = pd.DatetimeIndex(expanded["time"].values[empty.values]).strftime("%Y-%m-%d")
         print(
