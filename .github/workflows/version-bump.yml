@@ -390,7 +390,8 @@ jobs:
 
   # After a real merge (skill bump and/or agent change), publish a lean copy of
   # just the plugin to the `plugin-dist` branch: the manifest, the agent,
-  # skills/, and LICENSE -- nothing else from the repo (no demo/, tools/, CI, or
+  # skills/ (with the skills of weather-skills/weather-skills and
+  # rhiza-research/weather-skills-fetchers), and LICENSE -- nothing else from the repo (no demo/, tools/, CI, or
   # tests).
   # marketplace.json sources the rhiza-forecasting plugin from this branch, so
   # installs never pull the repo's non-runtime content. One appended commit per
@@ -423,6 +424,23 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
+      # The plugin bundles the transform and fetcher skills from their own repos.
+      # shortcut: their changes reach plugin-dist on this repo's next merge to main;
+      # add a schedule or repository_dispatch trigger if that lag matters.
+      - name: Checkout the transform skills
+        uses: actions/checkout@v4
+        with:
+          repository: weather-skills/weather-skills
+          ref: main
+          path: .upstream/weather-skills
+
+      - name: Checkout the fetcher skills
+        uses: actions/checkout@v4
+        with:
+          repository: rhiza-research/weather-skills-fetchers
+          ref: main
+          path: .upstream/weather-skills-fetchers
+
       - name: Publish curated plugin payload to plugin-dist
         run: |
           set -euo pipefail
@@ -440,6 +458,8 @@ jobs:
           cp .claude-plugin/plugin.json "$stage/.claude-plugin/plugin.json"
           cp agents/forecaster.md "$stage/agents/forecaster.md"
           cp LICENSE "$stage/LICENSE"
+          rsync -a --exclude='/*/tests/' .upstream/weather-skills/skills/ "$stage/skills/"
+          rsync -a --exclude='/*/tests/' .upstream/weather-skills-fetchers/skills/ "$stage/skills/"
           rsync -a --exclude='/*/tests/' skills/ "$stage/skills/"
 
           # Check out plugin-dist in a separate worktree so the main checkout is
