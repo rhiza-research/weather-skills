@@ -4,12 +4,12 @@
 # never reads or outputs the contents of .env or any credential file.
 set -e
 
-claude plugin marketplace add rhiza-research/weather-skills
-claude plugin install rhiza-forecasting@weather-skills
+claude plugin marketplace add rhiza-research/rhiza-weather-skills
+claude plugin install weather-skills@rhiza-research
 
 cat <<'EOF'
 
-Installed the rhiza-forecasting plugin.
+Installed the weather-skills plugin.
 
 Next steps:
 
@@ -32,6 +32,6 @@ export TAHMO_API_PASSWORD=
 
 
 # Then run the agent
-claude --agent rhiza-forecasting:forecaster
+claude --agent weather-skills:forecaster
 
 EOF

@@ -147,7 +147,11 @@ to a new version. This is simpler when the bad state is recoverable in-place.
 
 The repo also ships as a Claude Code plugin. After a real merge, the `dist` job
 in `.github/workflows/version-bump.yml` copies the plugin payload —
-`.claude-plugin/plugin.json`, `agents/forecaster.md`, `skills/`, and `LICENSE`
+`.claude-plugin/plugin.json`, the agents in `agents/`, `skills/` together with the
+skills of [weather-skills/weather-skills](https://github.com/weather-skills/weather-skills),
+[rhiza-research/weather-skills-fetchers](https://github.com/rhiza-research/weather-skills-fetchers)
+and [weather-skills/weather-skills-plotting](https://github.com/weather-skills/weather-skills-plotting)
+(from their `main`), and `LICENSE`
 — onto the `plugin-dist` branch, which is the source
 `.claude-plugin/marketplace.json` installs from.
 
