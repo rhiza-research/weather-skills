@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end demo: a daily S2S rainfall pipeline (ECMWF forecast, IMERG and
 # CHIRPS observations, TAHMO stations, weekly and dekadal totals per country)
-# using the weather-skills and weather-skills-fetchers CLIs. Requires
-# ECMWF_DATASTORES_KEY, EARTHDATA_*, TAHMO_API_*. Plotting is not part of this repo, so the demo stops at Zarrs.
+# using the weather-skills CLI. Requires ECMWF_DATASTORES_KEY, EARTHDATA_*,
+# TAHMO_API_*. Plotting is not part of this repo, so the demo stops at Zarrs.
 
 set -euo pipefail
 
@@ -24,14 +24,13 @@ COUNTRIES=(Kenya Ghana Senegal Ethiopia)
 declare -A ISO=([Kenya]=KEN [Ghana]=GHA [Senegal]=SEN [Ethiopia]=ETH)
 
 mkdir -p "$OUT"
-uv tool install --force --reinstall git+https://github.com/weather-skills/weather-skills
-uv tool install --force --reinstall git+https://github.com/rhiza-research/weather-skills-fetchers
+uv tool install --force --reinstall ../
 
 # Africa is a continent, not a country, so the continental extent is passed as an
 # explicit bbox rather than via resolve-region (which is country-level).
-weather-skills-fetchers ecmwf-fetch  --date  "$INIT_DATE"  --bbox=23/-20/-37/59 --output "$OUT/ecmwf.zarr"
-weather-skills-fetchers imerg-fetch  --start-time "$START_DATE" --end-time "$END_DATE" --output "$OUT/imerg.zarr"
-weather-skills-fetchers chirps-fetch --start-time "$START_DATE" --end-time "$END_DATE" --output "$OUT/chirps.zarr"
+weather-skills ecmwf-fetch  --date  "$INIT_DATE"  --bbox=23/-20/-37/59 --output "$OUT/ecmwf.zarr"
+weather-skills imerg-fetch  --start-time "$START_DATE" --end-time "$END_DATE" --output "$OUT/imerg.zarr"
+weather-skills chirps-fetch --start-time "$START_DATE" --end-time "$END_DATE" --output "$OUT/chirps.zarr"
 
 for COUNTRY in "${COUNTRIES[@]}"; do
     d="$OUT/$COUNTRY"
@@ -63,7 +62,7 @@ for COUNTRY in "${COUNTRIES[@]}"; do
     weather-skills convert-to-totals  -i "$d/chirps_weekly.zarr"  -o "$d/chirps_weekly_totals.zarr"
     weather-skills convert-to-totals  -i "$d/chirps_dekadal.zarr" -o "$d/chirps_dekadal_totals.zarr"
 
-    weather-skills-fetchers tahmo-fetch --bbox="$BBOX" --start-time "$START_DATE" --end-time "$END_DATE" --output "$d/tahmo.zarr"
+    weather-skills tahmo-fetch --bbox="$BBOX" --start-time "$START_DATE" --end-time "$END_DATE" --output "$d/tahmo.zarr"
 
     # Station data aggregated to the same windows as the IMERG/CHIRPS totals,
     # ready to compare against them.

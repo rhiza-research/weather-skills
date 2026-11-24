@@ -1,0 +1,1128 @@
+"""Correctness tests for summarize-dim."""
+
+from pathlib import Path
+
+import pytest
+import xarray as xr
+from conftest import load_skill, make_gridded, make_point_obs, run_skill, write_zarr
+from weather_skills_core.provenance import load_history
+from weather_skills_core.units import units_equal
+
+
+@pytest.fixture(scope="module")
+def summarize_dim():
+    return load_skill("summarize-dim", "summarize_dim").summarize_dim
+
+
+def test_mean_collapses_time(tmp_path, summarize_dim):
+    src = write_zarr(make_gridded(n_time=3, fill=2.0), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(summarize_dim, "-i", str(src), "-o", str(out), "--dim", "time", "--method", "mean")
+
+    assert Path(out).exists()
+    ds = xr.open_zarr(out, consolidated=True)
+    assert "time" not in ds.dims
+    assert ds["precip"].values == pytest.approx(2.0)
+    assert load_history(out)[-1]["skill"] == "summarize-dim"
+
+
+def test_sum_of_dimensionless_flags_collapses_longitude(tmp_path, summarize_dim):
+    ds = make_gridded(name="wet")
+    ds["wet"].attrs.update(units="1", standard_name="")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim, "-i", str(src), "-o", str(out), "--dim", "longitude", "--method", "sum"
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert "longitude" not in ds.dims
+    assert ds["wet"].sizes["latitude"] == 3
+    assert (ds["wet"].values == 4.0).all()  # four wet cells per row
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--dim", "latitude", "--dim", "longitude"),
+        ("--dim", "longitude"),
+    ],
+)
+def test_sum_over_space_of_physical_units_is_refused(tmp_path, summarize_dim, capsys, args):
+    ds = make_gridded()
+    ds["precip"].attrs.update(units="mm", standard_name="", cell_methods="time: sum")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "out.zarr"),
+            *args,
+            "--method",
+            "sum",
+        )
+    assert exc.value.code == 2
+    assert "use --method mean" in capsys.readouterr().err
+
+
+def _celsius(lats=(0.0, 60.0), lons=(10.0, 11.0)):
+    import numpy as np
+
+    ds = make_gridded(name="t2m", lats=lats, lons=lons)
+    # 10 °C at the equator row, 30 °C at 60°N (cos weights 1 and 0.5).
+    ds["t2m"].values[:] = np.array([10.0, 30.0])[None, :, None]
+    ds["t2m"].attrs.update(units="degree_Celsius", standard_name="air_temperature")
+    return ds
+
+
+def test_lat_weighted_mean_celsius(tmp_path, summarize_dim):
+    src = write_zarr(_celsius(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "latitude",
+        "--method",
+        "mean",
+        "--lat-weighted",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert "latitude" not in ds.dims
+    # (1 * 10 + 0.5 * 30) / 1.5 = 16.67 °C — not 290 K, and not 16.67 K.
+    assert ds["t2m"].values == pytest.approx(50.0 / 3.0)
+    assert ds["t2m"].attrs["units"] == "degree_Celsius"
+    assert ds["t2m"].attrs["standard_name"] == "air_temperature"
+
+
+def test_lat_weighted_mean_celsius_over_lat_and_lon(tmp_path, summarize_dim):
+    src = write_zarr(_celsius(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "latitude",
+        "--dim",
+        "longitude",
+        "--method",
+        "mean",
+        "--lat-weighted",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds["t2m"].dims == ("time",)
+    assert ds["t2m"].values == pytest.approx(50.0 / 3.0)
+    assert ds["t2m"].attrs["cell_methods"].endswith("latitude: longitude: mean (latitude-weighted)")
+
+
+def test_lat_weighted_mean_precip_unchanged(tmp_path, summarize_dim):
+    src = write_zarr(make_gridded(fill=2.0), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "latitude",
+        "--method",
+        "mean",
+        "--lat-weighted",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds["precip"].values == pytest.approx(2.0)
+    assert units_equal(ds["precip"].attrs["units"], "mm day-1")
+
+
+def test_accepts_precip_totals(tmp_path, summarize_dim):
+    ds = make_gridded()
+    ds["precip"].attrs.update(
+        units="mm",
+        standard_name="lwe_thickness_of_precipitation_amount",
+        cell_methods="time: sum",
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(summarize_dim, "-i", str(src), "-o", str(out), "--dim", "time", "--method", "mean")
+
+    result = xr.open_zarr(out, consolidated=True)
+    assert "time" not in result.dims
+    assert "sum" in result["precip"].attrs["cell_methods"]
+
+
+def _labeled(n_time=4):
+    import numpy as np
+
+    ds = make_gridded(n_time=n_time, lats=(1.0, 2.0), lons=(10.0, 11.0, 12.0))
+    ds["precip"].values[:] = np.arange(n_time * 6, dtype=float).reshape(n_time, 2, 3)
+    regions = np.array([["a", "a", ""], ["b", "b", "b"]])
+    return ds.assign_coords(
+        region=(("latitude", "longitude"), regions),
+        region_name=(("latitude", "longitude"), np.char.upper(regions)),
+        half=("time", ["x", "x", "y", "y"][:n_time]),
+    )
+
+
+def test_by_label_collapses_its_dims(tmp_path, summarize_dim):
+    src = write_zarr(_labeled(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(summarize_dim, "-i", str(src), "-o", str(out), "--by", "region", "--method", "mean")
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert ds["precip"].dims == ("time", "region")
+    assert ds["region"].values.tolist() == ["a", "b"]  # "" dropped
+    # time 0: a = mean(0, 1), b = mean(3, 4, 5)
+    assert ds["precip"].isel(time=0).values.tolist() == [0.5, 4.0]
+    assert "latitude" not in ds.dims and "region_name" not in ds.coords
+    assert "(grouped by region)" in ds["precip"].attrs["cell_methods"]
+
+
+def test_by_two_labels_with_extra_dim(tmp_path, summarize_dim):
+    ds = _labeled().drop_vars("half")
+    ds = ds.assign_coords(dayofyear=("time", ds["time"].dt.dayofyear.values))
+    ds["precip"].attrs.update(units="mm", cell_methods="time: sum")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "region",
+        "--by",
+        "dayofyear",
+        "--method",
+        "mean",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert set(ds["precip"].dims) == {"region", "dayofyear"}
+    # region a, day 2: cells 0, 1 at time 1 -> mean of 6 and 7
+    assert ds["precip"].sel(region="a", dayofyear=2).item() == 6.5
+
+
+def test_sum_by_spatial_label_is_refused(tmp_path, summarize_dim, capsys):
+    ds = _labeled().drop_vars("half")
+    ds["precip"].attrs.update(units="mm", cell_methods="time: sum")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "out.zarr"),
+            "--by",
+            "region",
+            "--method",
+            "sum",
+        )
+    assert exc.value.code == 2
+    assert "(via --by region)" in capsys.readouterr().err
+
+
+def test_by_rejects_dim_coord(tmp_path, summarize_dim, capsys):
+    src = write_zarr(_labeled(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "time",
+            "--method",
+            "mean",
+        )
+    assert "not a label coord" in capsys.readouterr().err
+
+
+def test_by_all_empty_labels_is_an_error(tmp_path, summarize_dim, capsys):
+    import numpy as np
+
+    ds = _labeled().assign_coords(region=(("latitude", "longitude"), np.full((2, 3), "")))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "region",
+            "--method",
+            "mean",
+        )
+    assert "empty label" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--by", "region", "--method", "mean"),
+        ("--dim", "latitude", "--dim", "longitude", "--method", "mean", "--lat-weighted"),
+    ],
+)
+def test_units_text_is_kept(tmp_path, summarize_dim, args):
+    """Grouped and lat-weighted results keep the input's units spelling (mm day-1)."""
+    src = write_zarr(_labeled(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(summarize_dim, "-i", str(src), "-o", str(out), *args)
+
+    assert xr.open_zarr(out, consolidated=True)["precip"].attrs["units"] == "mm day-1"
+
+
+def test_by_labels_sharing_some_dims_is_an_error(tmp_path, summarize_dim, capsys):
+    ds = _labeled().assign_coords(band=("latitude", ["s", "n"]))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "region",
+            "--by",
+            "band",
+            "--method",
+            "mean",
+        )
+    assert "share some but not all dims" in capsys.readouterr().err
+
+
+def test_by_same_dims_combination_without_cells_is_nan(tmp_path, summarize_dim):
+    """Two labels on the same dims: a pair that never co-occurs is NaN, not dropped."""
+    import numpy as np
+
+    zone = np.array([["w", "e", "e"], ["w", "w", "e"]])
+    ds = _labeled().assign_coords(zone=(("latitude", "longitude"), zone))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "region",
+        "--by",
+        "zone",
+        "--method",
+        "max",
+    )
+
+    r = xr.open_zarr(out, consolidated=True)["precip"].isel(time=0)
+    # region a = cells (0,0) w, (0,1) e; region b = (1,0) w, (1,1) w, (1,2) e
+    assert r.sel(region="a", zone="w").item() == 0.0
+    assert r.sel(region="a", zone="e").item() == 1.0
+    assert r.sel(region="b", zone="e").item() == 5.0
+    assert r.sel(region="b", zone="w").item() == 4.0
+
+
+def _seasons(n_time=275, start="2020-04-01"):
+    """Two stations of daily totals with year and MAM / OND labels; S1 misses 10 OND days."""
+    import numpy as np
+
+    ds = make_point_obs(n_time=n_time, start=start, fill=1.0)
+    ds["precip"].attrs.update(
+        units="mm", standard_name="lwe_thickness_of_precipitation_amount", cell_methods="time: sum"
+    )
+    month = ds["time"].dt.month.values
+    ds["precip"].values[1, np.nonzero(month == 11)[0][:10]] = np.nan
+    group = np.where(np.isin(month, [3, 4, 5]), "MAM", np.where(month >= 10, "OND", ""))
+    ds["elevation"] = ("point_id", [10.0, 20.0])
+    return ds.assign_coords(year=("time", ds["time"].dt.year.values), month_group=("time", group))
+
+
+def _by_season(summarize_dim, tmp_path, *extra):
+    src = write_zarr(_seasons(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month_group",
+        "--method",
+        "sum",
+        *extra,
+    )
+    return xr.open_zarr(out, consolidated=True)
+
+
+def test_by_season_blanks_incomplete_groups(tmp_path, summarize_dim, capsys):
+    """April-May is a partial MAM (61 of 92 days) and S1 misses 10 OND days: both blanked."""
+    import numpy as np
+
+    ds = _by_season(summarize_dim, tmp_path)
+
+    precip = ds["precip"].sel(year=2020)  # integer label
+    assert precip.dims == ("point_id", "month_group")
+    assert precip.sel(point_id="S0", month_group="OND").item() == 92.0
+    assert np.isnan(precip.sel(month_group="MAM")).all()
+    assert np.isnan(precip.sel(point_id="S1", month_group="OND").item())
+    assert "left out 3 slice(s)" in capsys.readouterr().err
+    assert "precip_coverage" not in ds
+    # A variable without the label dims passes through.
+    assert ds["elevation"].values.tolist() == [10.0, 20.0]
+
+
+def test_coverage_is_per_station_before_a_regional_mean(tmp_path, summarize_dim, capsys):
+    """Two stations missing different days are never pooled into a complete OND."""
+    import numpy as np
+
+    ds = _seasons()
+    month = ds["time"].dt.month.values
+    ds["precip"].values[0, np.nonzero(month == 12)[0][:5]] = np.nan  # S0 misses Dec days
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "point_id",
+        "--by",
+        "year",
+        "--by",
+        "month_group",
+        "--method",
+        "mean",
+    )
+    result = xr.open_zarr(out, consolidated=True)["precip"].sel(year=2020, month_group="OND")
+    assert np.isnan(result.item())
+    assert "left out" in capsys.readouterr().err
+
+
+def test_min_coverage_keeps_partial_sums_with_warning(tmp_path, summarize_dim, capsys):
+    ds = _by_season(summarize_dim, tmp_path, "--min-coverage", "0.5")
+
+    precip = ds["precip"].sel(year=2020)
+    assert precip.sel(point_id="S0", month_group="MAM").item() == 61.0  # not scaled up
+    assert precip.sel(point_id="S1", month_group="OND").item() == 82.0
+    assert "estimates from partial data" in capsys.readouterr().err
+    coverage = ds["precip_coverage"].sel(year=2020)
+    assert coverage.sel(point_id="S1", month_group="MAM").item() == pytest.approx(61 / 92)
+    assert coverage.sel(point_id="S1", month_group="OND").item() == pytest.approx(82 / 92)
+    assert coverage.sel(point_id="S0", month_group="OND").item() == 1.0
+    assert ds["precip"].attrs["ancillary_variables"] == "precip_coverage"
+
+
+def test_season_crossing_december_takes_its_start_year(tmp_path, summarize_dim):
+    """Dec 2020 - Feb 2021 is one complete DJF (90 days) labelled 2020."""
+    import numpy as np
+
+    ds = make_gridded(n_time=90, start="2020-12-01", lats=(1.0,), lons=(10.0,))
+    ds["precip"].attrs.update(units="mm", cell_methods="time: sum")
+    month = ds["time"].dt.month.values
+    ds = ds.assign_coords(
+        year=("time", ds["time"].dt.year.values - (month < 12)),
+        month_group=("time", np.full(90, "DJF")),
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month_group",
+        "--method",
+        "sum",
+    )
+
+    result = xr.open_zarr(out, consolidated=True)["precip"]
+    assert result.sel(year=2020, month_group="DJF").values.ravel().tolist() == [90.0]
+
+
+def test_sum_of_rates_over_time_is_refused(tmp_path, summarize_dim, capsys):
+    src = write_zarr(make_gridded(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--dim",
+            "time",
+            "--method",
+            "sum",
+        )
+    assert "convert the rates to period totals first" in capsys.readouterr().err
+
+
+def test_min_coverage_needs_a_time_label(tmp_path, summarize_dim, capsys):
+    src = write_zarr(_labeled(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "region",
+            "--method",
+            "mean",
+            "--min-coverage",
+            "0.5",
+        )
+    assert "--min-coverage needs a --by label along time" in capsys.readouterr().err
+
+
+def test_sum_over_stations_is_refused(tmp_path, summarize_dim, capsys):
+    src = write_zarr(_seasons(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "out.zarr"),
+            "--dim",
+            "point_id",
+            "--method",
+            "sum",
+        )
+    assert exc.value.code == 2
+    assert "--method sum over point_id would add up" in capsys.readouterr().err
+
+
+def test_by_labels_that_never_meet_is_an_error(tmp_path, summarize_dim, capsys):
+    import numpy as np
+
+    zone = np.array([["", "", "w"], ["", "", ""]])  # only on the cell outside every region
+    ds = _labeled().assign_coords(zone=(("latitude", "longitude"), zone))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "region",
+            "--by",
+            "zone",
+            "--method",
+            "mean",
+        )
+    assert "nothing to group" in capsys.readouterr().err
+
+
+def test_repeated_time_step_is_refused(tmp_path, summarize_dim, capsys):
+    """A repeated day would count twice and pass as a complete season."""
+    ds = _seasons()
+    src = write_zarr(xr.concat([ds, ds.isel(time=[200])], "time"), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "year",
+            "--by",
+            "month_group",
+            "--method",
+            "sum",
+        )
+    assert "appears more than once" in capsys.readouterr().err
+
+
+def _weekly(start):
+    """Weekly mm totals for 2020 labelled like label-group --time year --time MAM,OND."""
+    import numpy as np
+
+    ds = make_point_obs(n_time=1, n_points=1)
+    times = xr.date_range(start, "2020-12-31", freq="7D")
+    month = times.month
+    group = np.where(month.isin([3, 4, 5]), "MAM", np.where(month >= 10, "OND", ""))
+    return xr.Dataset(
+        {"precip": (("point_id", "time"), np.ones((1, times.size)))},
+        coords={"point_id": ds["point_id"].values, "time": times},
+    ).assign_coords(year=("time", times.year), month_group=("time", group))
+
+
+def test_weekly_steps_crossing_a_season_are_refused(tmp_path, summarize_dim, capsys):
+    """A week from 27 May takes in June days, so its MAM total would not be MAM's."""
+    ds = _weekly("2020-01-01")
+    ds["precip"].attrs.update(units="mm", aggregation_period="7 day")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "year",
+            "--by",
+            "month_group",
+            "--method",
+            "sum",
+        )
+    assert "runs into the next --by" in capsys.readouterr().err
+
+
+def _weeks_labelled_by_last_day(first_label):
+    """Weekly mm totals labelled by their last day, with year labels from each cell's start."""
+    import numpy as np
+
+    ds = _weekly(first_label)
+    starts = ds["time"].values - np.timedelta64(6, "D")
+    ends = ds["time"].values + np.timedelta64(1, "D")
+    ds = ds.assign_coords(
+        time_bounds=(("time", "nv"), np.stack([starts, ends], axis=1)),
+        year=("time", starts.astype("datetime64[Y]").astype(int) + 1970),
+    ).drop_vars("month_group")
+    ds["time"].attrs["bounds"] = "time_bounds"
+    ds["precip"].attrs.update(units="mm")
+    return ds
+
+
+def test_steps_group_by_cell_start(tmp_path, summarize_dim):
+    """Weeks labelled by their last day fall in the year their cell starts in."""
+    ds = _weeks_labelled_by_last_day("2020-01-11")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    # The first cell starts 2020-01-05, so the year is incomplete: allow partial coverage.
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--method",
+        "sum",
+        "--min-coverage",
+        "0",
+    )
+    assert float(xr.open_zarr(out)["precip"].sel(year=2020).squeeze()) == ds.sizes["time"]
+
+
+def test_cell_crossing_a_group_is_refused_by_its_start(tmp_path, summarize_dim, capsys):
+    """The week labelled 2020-01-05 runs from 2019-12-30, so it crosses into 2020."""
+    src = write_zarr(_weeks_labelled_by_last_day("2020-01-05"), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit):
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "o.zarr"),
+            "--by",
+            "year",
+            "--method",
+            "sum",
+        )
+    assert "starting 2019-12-30" in capsys.readouterr().err
+
+
+def test_month_bounds_give_calendar_steps(tmp_path, summarize_dim):
+    """Monthly values with month-long time_bounds and no data_interval group by month."""
+    import numpy as np
+
+    ds = make_point_obs(n_time=1, n_points=1)
+    times = xr.date_range("2019-11-01", "2021-02-01", freq="MS")
+    ends = xr.date_range("2019-12-01", "2021-03-01", freq="MS")
+    ds = xr.Dataset(
+        {"index": (("point_id", "time"), np.arange(times.size, dtype=float)[None])},
+        coords={
+            "point_id": ds["point_id"].values,
+            "time": times,
+            "time_bounds": (("time", "nv"), np.stack([times.values, ends.values], axis=1)),
+            "year": ("time", times.year),
+            "month": ("time", times.month),
+        },
+    )
+    ds["time"].attrs["bounds"] = "time_bounds"
+    ds["index"].attrs.update(units="degree_Celsius")
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month",
+        "--method",
+        "mean",
+    )
+    got = xr.open_zarr(out)["index"].sel(point_id=ds["point_id"].values[0])
+    assert float(got.sel(year=2020, month=12)) == 13.0
+    assert float(got.sel(year=2019, month=11)) == 0.0
+
+
+def test_daily_steps_stamped_at_noon_are_kept(tmp_path, summarize_dim):
+    """A daily step belongs to the day it is stamped on, whatever the hour."""
+    import pandas as pd
+
+    ds = _seasons()
+    ds = ds.assign_coords(time=ds.indexes["time"] + pd.Timedelta("12h"))
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month_group",
+        "--method",
+        "sum",
+    )
+    precip = xr.open_zarr(out, consolidated=True)["precip"]
+    assert precip.sel(point_id="S0", year=2020, month_group="OND").item() == 92.0
+
+
+def _members(n=11):
+    import numpy as np
+
+    ds = make_gridded(n_time=2)
+    ds = ds.expand_dims(number=np.arange(n)).copy(deep=True)
+    # Member k holds k everywhere: quantiles are easy to read off.
+    ds["precip"].values[:] = np.arange(n, dtype=float)[:, None, None, None]
+    ds["precip"].attrs.update(units="mm day-1")
+    return ds
+
+
+def test_quantiles_add_a_quantile_dim(tmp_path, summarize_dim):
+    src = write_zarr(_members(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "number",
+        "--method",
+        "quantile",
+        "-q",
+        "0.1",
+        "-q",
+        "0.9",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert "number" not in ds.dims
+    assert ds["quantile"].values.tolist() == [0.1, 0.9]
+    assert ds["precip"].sel(quantile=0.1).values == pytest.approx(1.0)
+    assert ds["precip"].sel(quantile=0.9).values == pytest.approx(9.0)
+    assert ds["precip"].attrs["units"] == "mm day-1"
+    assert ds["precip"].attrs["cell_methods"].endswith("number: quantile 0.1, 0.9")
+
+
+def test_one_quantile_keeps_a_scalar_coord(tmp_path, summarize_dim):
+    src = write_zarr(_members(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "number",
+        "--method",
+        "quantile",
+        "-q",
+        "0.5",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert "quantile" not in ds.dims
+    assert float(ds["quantile"]) == 0.5
+    assert ds["precip"].values == pytest.approx(5.0)
+
+
+def test_quantile_by_label(tmp_path, summarize_dim):
+    src = write_zarr(_labeled(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "region",
+        "--method",
+        "quantile",
+        "-q",
+        "0.5",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    # time 0: a = median(0, 1), b = median(3, 4, 5)
+    assert ds["precip"].isel(time=0).values.tolist() == [0.5, 4.0]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--method", "quantile"),
+        ("--method", "mean", "-q", "0.5"),
+        ("--method", "quantile", "-q", "1.5"),
+    ],
+)
+def test_quantile_arguments_checked(tmp_path, summarize_dim, capsys, args):
+    src = write_zarr(_members(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            summarize_dim, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--dim", "number", *args
+        )
+    assert exc.value.code == 2
+    assert "--quantile" in capsys.readouterr().err
+
+
+def test_quantile_keeps_scalar_coords(tmp_path, summarize_dim):
+    # A forecast's init time is a scalar coord; xarray's quantile alone would drop it.
+    src = write_zarr(_members().isel(time=0), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "number",
+        "--method",
+        "quantile",
+        "-q",
+        "0.1",
+        "-q",
+        "0.9",
+    )
+
+    ds = xr.open_zarr(out, consolidated=True)
+    assert "time" in ds.coords and ds["time"].ndim == 0
+
+
+@pytest.mark.parametrize("period, total", [("1 day", "10 day"), ("1 month", "10 month")])
+def test_sum_over_steps_stamps_the_summed_span(tmp_path, summarize_dim, period, total):
+    """Ten daily amounts summed over step are a 10-day total, not a "1 day" one."""
+    import numpy as np
+    import xarray as xr
+
+    ds = xr.Dataset(
+        {"tp": (("step", "latitude", "longitude"), np.ones((10, 2, 2)))},
+        coords={
+            "step": np.arange(10) * np.timedelta64(1, "D"),
+            "latitude": [0.0, 1.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    ds["tp"].attrs.update(units="mm", aggregation_period=period)
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(summarize_dim, "-i", str(src), "-o", str(out), "--dim", "step", "--method", "sum")
+    assert xr.open_zarr(out)["tp"].attrs["aggregation_period"] == total
+
+
+def _daily_with_gap():
+    import numpy as np
+    import xarray as xr
+
+    a = np.ones((10, 2, 2))
+    a[3:6, 0, 0] = np.nan  # one cell misses 3 of the 10 days
+    ds = xr.Dataset(
+        {"tp": (("step", "latitude", "longitude"), a)},
+        coords={
+            "step": np.arange(10) * np.timedelta64(1, "D"),
+            "latitude": [0.0, 1.0],
+            "longitude": [10.0, 11.0],
+        },
+    )
+    ds["tp"].attrs.update(units="mm", aggregation_period="1 day")
+    return ds
+
+
+def test_sum_over_steps_leaves_out_incomplete_cells(tmp_path, summarize_dim):
+    """At the default --min-coverage 1.0 a cell missing a day has no 10-day total."""
+    import numpy as np
+    import xarray as xr
+
+    src = write_zarr(_daily_with_gap(), tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(summarize_dim, "-i", str(src), "-o", str(out), "--dim", "step", "--method", "sum")
+    ds = xr.open_zarr(out)
+    assert np.isnan(ds["tp"].values[0, 0])
+    assert (ds["tp"].values.ravel()[1:] == 10).all()
+    assert "tp_coverage" not in ds
+
+
+def test_sum_over_steps_partial_total_with_coverage(tmp_path, summarize_dim):
+    """Below 1.0 the partial total is kept and its coverage written beside it."""
+    import xarray as xr
+
+    src = write_zarr(_daily_with_gap(), tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--dim",
+        "step",
+        "--method",
+        "sum",
+        "--min-coverage",
+        "0.5",
+    )
+    ds = xr.open_zarr(out)
+    assert ds["tp"].values[0, 0] == 7
+    assert ds["tp_coverage"].values[0, 0] == 0.7
+    assert ds["tp_coverage"].values[1, 1] == 1.0
+    assert ds["tp"].attrs["ancillary_variables"] == "tp_coverage"
+    assert ds["tp"].attrs["aggregation_period"] == "10 day"
+
+
+def test_sum_by_season_stamps_the_season_span(tmp_path, summarize_dim):
+    """Daily "1 day" totals summed by MAM / OND are "92 day" totals."""
+    ds = _seasons()
+    ds["precip"].attrs["aggregation_period"] = "1 day"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month_group",
+        "--method",
+        "sum",
+    )
+    assert xr.open_zarr(out)["precip"].attrs["aggregation_period"] == "92 day"
+
+
+def test_month_bounds_as_data_var_are_not_reduced(tmp_path, summarize_dim):
+    """time_bounds saved as a data variable is read for the step, not summarized."""
+    import numpy as np
+
+    times = xr.date_range("2019-11-01", "2021-02-01", freq="MS")
+    ends = xr.date_range("2019-12-01", "2021-03-01", freq="MS")
+    ds = xr.Dataset(
+        {
+            "index": (("time",), np.arange(times.size, dtype=float), {"units": "degree_Celsius"}),
+            "time_bounds": (("time", "nv"), np.stack([times.values, ends.values], axis=1)),
+        },
+        coords={"time": times, "year": ("time", times.year), "month": ("time", times.month)},
+    )
+    ds["time"].attrs["bounds"] = "time_bounds"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    assert "time_bounds" in xr.open_zarr(src).data_vars
+    out = tmp_path / "o.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month",
+        "--method",
+        "mean",
+    )
+    got = xr.open_zarr(out)
+    assert list(got.data_vars) == ["index"]
+    assert float(got["index"].sel(year=2020, month=12)) == 13.0
+
+
+def test_month_start_labels_without_bounds_group_by_month(tmp_path, summarize_dim):
+    """Month-start labels with no bounds or data_interval get calendar-month cells."""
+    import numpy as np
+
+    times = xr.date_range("2019-11-01", "2021-02-01", freq="MS")
+    ds = xr.Dataset(
+        {"index": ("time", np.arange(times.size, dtype=float), {"units": "degree_Celsius"})},
+        coords={"time": times, "year": ("time", times.year), "month": ("time", times.month)},
+    )
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "o.zarr"
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(src),
+        "-o",
+        str(out),
+        "--by",
+        "year",
+        "--by",
+        "month",
+        "--method",
+        "mean",
+    )
+    got = xr.open_zarr(out)["index"]
+    assert float(got.sel(year=2020, month=12)) == 13.0
+    assert float(got.sel(year=2019, month=11)) == 0.0
+
+
+def _daily(times, values):
+    import numpy as np
+
+    return xr.Dataset(
+        {
+            "precip": (
+                ("time", "latitude", "longitude"),
+                np.asarray(values, float)[:, None, None],
+                {
+                    "units": "mm day-1",
+                    "standard_name": "lwe_precipitation_rate",
+                    "data_interval": "1 day",
+                },
+            )
+        },
+        coords={"time": np.asarray(times, "datetime64[ns]"), "latitude": [0.0], "longitude": [0.0]},
+    )
+
+
+def test_weeks_restarting_each_year_summarize_by_dayofyear(tmp_path, summarize_dim):
+    """Weekly steps from 1 Feb of each year are off one regular grid; --min-coverage 0 still groups them."""
+    import numpy as np
+
+    label_group = load_skill("label-group", "label_group").label_group
+    weeks = [
+        np.datetime64(f"{year}-02-01", "ns") + k * np.timedelta64(7, "D")
+        for year in (2024, 2025)
+        for k in range(4)
+    ]
+    ds = _daily(weeks, np.arange(8.0))
+    ds["precip"].attrs.update(data_interval="7 day", aggregation_period="7 day")
+    labelled, out = tmp_path / "l.zarr", tmp_path / "o.zarr"
+    run_skill(
+        label_group,
+        "-i",
+        str(write_zarr(ds, tmp_path / "in.zarr")),
+        "-o",
+        str(labelled),
+        "--time",
+        "dayofyear",
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            summarize_dim,
+            "-i",
+            str(labelled),
+            "-o",
+            str(out),
+            "--by",
+            "dayofyear",
+            "--method",
+            "mean",
+        )
+    assert exc.value.code == 2
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(labelled),
+        "-o",
+        str(out),
+        "--by",
+        "dayofyear",
+        "--method",
+        "mean",
+        "--min-coverage",
+        "0",
+    )
+    result = xr.open_zarr(out)["precip"]
+    np.testing.assert_allclose(result.transpose("dayofyear", ...).values[:, 0, 0], [2, 3, 4, 5])
+
+
+def test_centred_rolling_windows_group_by_their_label(tmp_path, summarize_dim):
+    """A 15-day centred window labelled 1 Sep belongs to 1 Sep, and its 1-day spacing is the step."""
+    import numpy as np
+
+    aggregate = load_skill("aggregate-temporal", "aggregate").aggregate
+    label_group = load_skill("label-group", "label_group").label_group
+    days = np.datetime64("2026-08-01", "ns") + np.arange(60) * np.timedelta64(1, "D")
+    rolled, labelled, out = tmp_path / "r.zarr", tmp_path / "l.zarr", tmp_path / "o.zarr"
+    src = write_zarr(_daily(days, np.arange(60.0)), tmp_path / "in.zarr")
+    run_skill(
+        aggregate, "-i", str(src), "-o", str(rolled), "--window", "15 day", "--align", "center"
+    )
+    run_skill(label_group, "-i", str(rolled), "-o", str(labelled), "--time", "dayofyear")
+    lab = xr.open_zarr(labelled)
+    sep1 = int(np.flatnonzero(lab["time"].values == np.datetime64("2026-09-01", "ns"))[0])
+    assert int(lab["dayofyear"].values[sep1]) == 244
+    run_skill(
+        summarize_dim,
+        "-i",
+        str(labelled),
+        "-o",
+        str(out),
+        "--by",
+        "dayofyear",
+        "--method",
+        "mean",
+        "--min-coverage",
+        "0.5",
+    )
+    assert xr.open_zarr(out).sizes["dayofyear"] == 60
