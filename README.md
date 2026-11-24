@@ -9,20 +9,19 @@
 > use in any automated workflow you rely on, and do not assume outputs are
 > scientifically validated. Expect breakage.
 
-Rhiza Research's weather-skills agents and Claude Code plugin, plus the skills
-Rhiza hosts. The plugin bundles skills from four repos:
+The weather skills Rhiza Research hosts. The other weather skills live in:
 
 | Repo | Skills |
 |---|---|
 | [weather-skills/weather-skills](https://github.com/weather-skills/weather-skills) | Transforms (clip, aggregate, convert, verify, …) and general tools (`resolve-region`, `resolve-time`, `inspect-zarr`, `provenance`) |
 | [rhiza-research/weather-skills-fetchers](https://github.com/rhiza-research/weather-skills-fetchers) | Data fetchers (`dynamical-fetch`, `ecmwf-fetch`, `chirps-fetch`, `tahmo-fetch`, …) |
 | [weather-skills/weather-skills-plotting](https://github.com/weather-skills/weather-skills-plotting) | `plot`: maps, time series, ensembles and animations from a Jsonnet spec that evaluates to a Plotly figure |
-| This repo | The skills below, the `forecaster` and `plotting` agents, and the Claude Code plugin |
 
 Every skill reads and writes one shared Zarr format — see
 [`STANDARD_DATASET.md`](https://github.com/weather-skills/weather-skills-core/blob/main/docs/weather-skill-authoring/references/STANDARD_DATASET.md).
 The [weather-skills catalog](https://github.com/weather-skills/weather-skills-catalog)
-lists skills from every provider.
+lists skills from every provider and ships the `weather-skills` Claude Code plugin
+and its agents.
 
 Built as [Agent Skills](https://agentskills.io) by Rhiza Research.
 
@@ -37,46 +36,6 @@ Built as [Agent Skills](https://agentskills.io) by Rhiza Research.
 | `submit-feedback` | Build a length-checked prefilled GitHub new-issue URL the user clicks to file feedback under their own account. Holds no token, makes no network call, creates no issue itself. |
 
 ## Install
-
-### As a Claude Code plugin
-
-Install the plugin once — add the marketplace, then install the plugin:
-
-```bash
-claude plugin marketplace add rhiza-research/rhiza-weather-skills
-claude plugin install weather-skills@rhiza-research
-```
-
-Then run the bundled `forecaster` agent (or `plotting` for figures). The `--allowedTools` flag pre-approves
-the plugin's skills for the session so a multi-step pipeline runs end to end
-without a prompt at each step:
-
-```bash
-claude --agent weather-skills:forecaster --allowedTools "Skill(weather-skills:*)"
-```
-
-Fetchers still need their credentials in the environment; see each skill's
-`compatibility:` frontmatter for what it reads (for example an
-`EXAMPLE_API_KEY`).
-
-To make the approval permanent instead of passing the flag every time, add the
-same rule to `permissions.allow` in a settings file (`.claude/settings.json` for
-one project, `~/.claude/settings.json` for every project):
-
-```json
-{
-  "permissions": {
-    "allow": [
-      "Skill(weather-skills:*)"
-    ]
-  }
-}
-```
-
-With that rule in place, plain `claude --agent weather-skills:forecaster`
-works without the flag. This lets the plugin's skills run unprompted —
-including reaching the network and writing output files — so add an `ask` or
-`deny` rule instead if you want to be prompted for some or all of them.
 
 ### As a CLI tool
 
