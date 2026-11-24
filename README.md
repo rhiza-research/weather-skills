@@ -34,6 +34,7 @@ Built as [Agent Skills](https://agentskills.io) by Rhiza Research.
 | `cumulus-downscaled-fetch` | Cumulus AI downscaled Aurora precip — 0.1° over East and West Africa, 46 daily leads, diffusion / flow-matching / UNet, ensemble mean or 10 members → Zarr. Requires credentials. |
 | `hindcast-fetch` | ECMWF (inits 1996–2025), GEFS (1998–2019) or Cumulus (1996 to 2026-08-31) subseasonal hindcasts for one or more ranges of init dates → multi-init forecast Zarr of daily precip, 2 m temperature and (ECMWF) SST. ECMWF and GEFS need no credentials; Cumulus does. |
 | `submit-feedback` | Build a length-checked prefilled GitHub new-issue URL the user clicks to file feedback under their own account. Holds no token, makes no network call, creates no issue itself. |
+| `pbc-correct` | Probabilistic bias correction (PBC) of an ensemble's quintile probabilities: Debias++, Persistence++ and Climatology++ trained on hindcasts and obs; `--components raw` puts a raw ensemble on the same quintiles. |
 
 ## Install
 
