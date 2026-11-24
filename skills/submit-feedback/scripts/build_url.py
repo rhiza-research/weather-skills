@@ -14,16 +14,14 @@ from urllib.parse import quote
 from weather_skills_core import DataError, UsageError, weather_skill
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.12"
+_SKILL_VERSION = "0.0.10"
 
 # Feedback goes to one of the skill repos: allow-listed, so the caller cannot
 # direct it elsewhere by guessing a slug. Repo name -> its GitHub owner.
 OWNERS = {
-    "weather-skills": "weather-skills",
-    "weather-skills-plotting": "weather-skills",
+    "weather-skills": "rhiza-research",
+    "weather-skills-plotting": "rhiza-research",
     "weather-skills-core": "weather-skills",
-    "weather-skills-fetchers": "rhiza-research",
-    "rhiza-weather-skills": "rhiza-research",
 }
 DEFAULT_REPO = "weather-skills"
 

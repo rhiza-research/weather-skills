@@ -13,7 +13,7 @@ def test_build_url_prints_github_link(capsys, submit_feedback):
     run_skill(submit_feedback, "--title", "Plot bug", "--body", "Heatmap axis labels overlap.")
 
     out = capsys.readouterr().out
-    assert "github.com/weather-skills/weather-skills/issues/new" in out
+    assert "github.com/rhiza-research/weather-skills/issues/new" in out
     assert "title=Plot%20bug" in out
 
 
@@ -26,12 +26,7 @@ def test_overlong_body_exits_1(submit_feedback):
 
 def test_repo_flag_targets_allow_listed_repo(capsys, submit_feedback):
     run_skill(submit_feedback, "--title", "t", "--body", "b", "--repo", "weather-skills-plotting")
-    assert "github.com/weather-skills/weather-skills-plotting/issues/new" in capsys.readouterr().out
-
-
-def test_fetcher_feedback_goes_to_rhiza_research(capsys, submit_feedback):
-    run_skill(submit_feedback, "--title", "t", "--body", "b", "--repo", "weather-skills-fetchers")
-    assert "github.com/rhiza-research/weather-skills-fetchers/issues/new" in capsys.readouterr().out
+    assert "github.com/rhiza-research/weather-skills-plotting/issues/new" in capsys.readouterr().out
 
 
 def test_core_feedback_goes_to_the_weather_skills_org(capsys, submit_feedback):
@@ -73,4 +68,4 @@ def test_output_holds_only_the_title_and_body(capsys, submit_feedback):
     # Privacy: the link carries nothing beyond what the caller wrote.
     run_skill(submit_feedback, "--title", "T", "--body", "B")
     out = capsys.readouterr().out.strip()
-    assert out == "https://github.com/weather-skills/weather-skills/issues/new?title=T&body=B"
+    assert out == "https://github.com/rhiza-research/weather-skills/issues/new?title=T&body=B"

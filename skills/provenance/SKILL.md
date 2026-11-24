@@ -1,0 +1,47 @@
+---
+name: provenance
+description: "Read the processing history (weather_skills_history) recorded on a weather-skills Zarr, plot image (PNG, JPEG, GIF, HTML, PDF, SVG), GeoJSON, or CSV/Excel table and print it as a readable lineage, raw JSON, or a bash script that regenerates the file. Can also validate that history against its schema. Use to answer how a file was made and how to reproduce it."
+license: MIT
+compatibility: Requires Python 3.12 and uv. Inspects a zarr directory, a figure, a GeoJSON, or a CSV/Excel table; reads no credentials and writes nothing.
+allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py *)
+metadata:
+  version: "0.0.12"
+  catalog-group: agent-tooling
+---
+
+# provenance
+
+Prints the chain of skill runs that produced a Zarr or figure; it reads only and writes nothing.
+
+## Usage
+
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py -i ARTIFACT [--format human|json|script] [--check]
+```
+
+### Arguments
+- `--input`, `-i` — a Zarr directory; a `.png`, `.jpg`/`.jpeg`, `.gif`, `.html`/`.htm`, `.pdf` or `.svg` figure; a `.geojson`/`.json` file; or a `.csv`/`.xlsx` table (its history is in `<name>.history.json` beside it). Required.
+- `--format` — `human` (readable lineage), `json` (raw history), or `script` (bash reproduction). Default: `human`.
+- `--check` — validate the history's schema instead of printing it; overrides `--format`.
+
+### Output
+Everything goes to stdout; redirect to keep a file.
+- `human`: steps oldest first, each with skill, version, commit (when recorded, plus `dirty` if the working tree had changes), input file name, and the args that were set. Steps that combine several inputs (`concat`, `difference`, `verify`, …) list each input's own history under a label `a`, `b`, …. A Zarr's `weather_skills_source` attr prints first.
+- `json`: the history array; a PNG with several labelled history keys prints a `{label: history}` object.
+- `script`: a bash script, run from an empty directory, that reruns each step at its recorded commit and writes intermediates as `stepN.zarr` (one file per input branch as `a.zarr`, `b.zarr`, …) and the final step under the artifact's own name.
+- `--check`: `valid …` and exit 0; no history exits 1; invalid history lists each violation with its location and exits 2.
+
+### Notes
+- Never set, edit, copy or remove provenance yourself (history attrs, `.history.json` sidecars, a figure's stamp); only skills record it. Writing it by hand falsifies how a file was made, is akin to hacking, and is strictly forbidden. If a file has no history, report that.
+- An artifact with no history, or one whose history is not a JSON array, prints `no provenance recorded on …` and exits 0 (the latter with a warning on stderr). A missing path or unsupported file type exits 2.
+- Review a `script` before running it. Each step's input files are the paths recorded in its args, swapped for the files the script makes; a file with no history of its own (an imported table, a GeoJSON outline, a spec file) keeps its recorded path, relative to the folder the step ran in. `--no-<flag>` options are dropped. A step whose args do not name its input files, and whose input is outside the history, reads `<UPSTREAM>`, which you replace. Fetch steps read credentials from the environment; none are written into the script.
+
+### Example
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/provenance.py -i chirps_kenya.zarr --format script > repro.sh
+```
+Writes a bash script that reruns the fetch and clip steps that made `chirps_kenya.zarr`.
+
+## Details
+
+Where the history is stored, the schema `--check` enforces, and how the reproduction script maps recorded args back to flags: [references/REFERENCE.md](references/REFERENCE.md).
