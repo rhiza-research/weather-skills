@@ -36,6 +36,7 @@ dev = [
     "pillow",
     "rasterio",
     "scipy",
+    "poold==0.0.5",
 ]
 
 [tool.uv.sources]
