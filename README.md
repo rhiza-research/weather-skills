@@ -9,21 +9,25 @@
 > use in any automated workflow you rely on, and do not assume outputs are
 > scientifically validated. Expect breakage.
 
-The weather skills Rhiza Research hosts. The other weather skills live in:
+The weather skills Rhiza Research hosts. Every skill reads and writes one shared Zarr format — see
+[`STANDARD_DATASET.md`](https://github.com/weather-skills/weather-skills-core/blob/main/docs/weather-skill-authoring/references/STANDARD_DATASET.md).
 
-| Repo | Skills |
+Built as [Agent Skills](https://agentskills.io) by Rhiza Research.
+
+## The Weather Skills project
+
+These skills are part of [Weather Skills](https://weather-skills.org): Agent Skills
+that fetch, transform and plot weather and climate data, all sharing one Zarr
+format so the output of one skill feeds the next. The skills live in these repos:
+
+| Repo | What it holds |
 |---|---|
 | [weather-skills/weather-skills](https://github.com/weather-skills/weather-skills) | Transforms (clip, aggregate, convert, verify, …) and general tools (`resolve-region`, `resolve-time`, `inspect-zarr`, `provenance`) |
 | [rhiza-research/weather-skills-fetchers](https://github.com/rhiza-research/weather-skills-fetchers) | Data fetchers (`dynamical-fetch`, `ecmwf-fetch`, `chirps-fetch`, `tahmo-fetch`, …) |
-| [weather-skills/weather-skills-plotting](https://github.com/weather-skills/weather-skills-plotting) | `plot`: maps, time series, ensembles and animations from a Jsonnet spec that evaluates to a Plotly figure |
-
-Every skill reads and writes one shared Zarr format — see
-[`STANDARD_DATASET.md`](https://github.com/weather-skills/weather-skills-core/blob/main/docs/weather-skill-authoring/references/STANDARD_DATASET.md).
-The [weather-skills catalog](https://github.com/weather-skills/weather-skills-catalog)
-lists skills from every provider and ships the `weather-skills` Claude Code plugin
-and its agents.
-
-Built as [Agent Skills](https://agentskills.io) by Rhiza Research.
+| [weather-skills/weather-skills-plotting](https://github.com/weather-skills/weather-skills-plotting) | `plot` and `report-dashboard`: maps, time series, animations, reports and dashboards |
+| [rhiza-research/rhiza-weather-skills](https://github.com/rhiza-research/rhiza-weather-skills) (this repo) | `clim-fetch`, `hindcast-fetch` and `submit-feedback` |
+| [weather-skills/weather-skills-core](https://github.com/weather-skills/weather-skills-core) | The shared library and the standard Zarr dataset format every skill reads and writes |
+| [weather-skills/weather-skills-catalog](https://github.com/weather-skills/weather-skills-catalog) | The catalog of skills from every provider, and the `weather-skills` Claude Code plugin and its agents |
 
 ## Skills
 
