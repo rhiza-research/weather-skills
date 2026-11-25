@@ -1,8 +1,9 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
-#   "weather-skills-plotting @ git+https://github.com/rhiza-research/weather-skills-plotting@main",
+#   "weather-skills-core>=0.4.0",
+#   "plotly",
+#   "weather-skills-plotting @ git+https://github.com/weather-skills/weather-skills-plotting@main",
 # ]
 # ///
 """Choose blend weights for several forecasts on an interactive HTML page with coupled sliders."""
@@ -47,12 +48,26 @@ def _default_label(path):
 def _run_blend(inputs, label, variable, lead, weights, reference_grid, out):
     if not _BLEND.is_file():
         raise UsageError(f"blend-interface needs the blend skill beside it ({_BLEND})")
-    cmd = ["uv", "run", "--quiet", str(_BLEND), "-o", str(out), "--lead", str(lead), "--keep-members"]
+    cmd = [
+        "uv",
+        "run",
+        "--quiet",
+        str(_BLEND),
+        "-o",
+        str(out),
+        "--lead",
+        str(lead),
+        "--keep-members",
+    ]
     for i in inputs:
         cmd += ["-i", str(i)]
     for lab in label or []:
         cmd += ["--label", lab]
-    for flag, value in (("--variable", variable), ("--weights", weights), ("--reference-grid", reference_grid)):
+    for flag, value in (
+        ("--variable", variable),
+        ("--weights", weights),
+        ("--reference-grid", reference_grid),
+    ):
         if value:
             cmd += [flag, value]
     run = subprocess.run(cmd, capture_output=True, text=True)
@@ -135,7 +150,9 @@ def _figure(bl, n, title, subtitle, palette, units, anomaly):
     from weather_skills_plotting.lint import check_bindings
     from weather_skills_plotting.render import SpecArg, evaluate, house_template, input_metadata
 
-    figure = evaluate(SpecArg(_spec(n, title, subtitle, palette, units, anomaly)), {"BL": input_metadata(bl)}, {})
+    figure = evaluate(
+        SpecArg(_spec(n, title, subtitle, palette, units, anomaly)), {"BL": input_metadata(bl)}, {}
+    )
     figure.setdefault("layout", {}).setdefault("template", house_template())
     check_bindings(figure)
     resolved, _ = resolve(figure, {"BL": bl, "const": {}})
@@ -153,18 +170,33 @@ def _figure(bl, n, title, subtitle, palette, units, anomaly):
 @weather_skill.argument("--palette", default="ppt_week")
 @weather_skill.argument("--anomaly-palette", default="ppt_anom_week")
 @weather_skill.argument("--title")
-def blend_interface(input, label, variable, lead, weights, reference_grid, anomaly, palette,
-                    anomaly_palette, title, output, **kwargs):
+def blend_interface(
+    input,
+    label,
+    variable,
+    lead,
+    weights,
+    reference_grid,
+    anomaly,
+    palette,
+    anomaly_palette,
+    title,
+    output,
+    **kwargs,
+):
     """Choose blend weights for several forecasts on an interactive HTML page with coupled sliders."""
-    import plotly.io as pio
-    import xarray as xr
-
     if Path(output).suffix.lower() not in (".html", ".htm"):
         raise UsageError(f"--output {output}: the page is written to .html")
     inputs = [str(i) for i in input]
     anomalies = [str(a) for a in anomaly or []]
     if anomalies and len(anomalies) != len(inputs):
-        raise UsageError(f"got {len(anomalies)} --anomaly for {len(inputs)} --input; pass one per input, in the same order")
+        raise UsageError(
+            f"got {len(anomalies)} --anomaly for {len(inputs)} --input; pass one per input, in the same order"
+        )
+
+    import plotly.io as pio
+    import xarray as xr
+
     # Both runs use the same labels, so the anomaly maps pair with their forecasts.
     labels = label or ([_default_label(p) for p in inputs] if anomalies else None)
     with tempfile.TemporaryDirectory(prefix="blend-interface-") as work:
@@ -202,12 +234,16 @@ def blend_interface(input, label, variable, lead, weights, reference_grid, anoma
     valid = next((str(ds[d].values[0])[:10] for d in ds.dims if ds[d].dtype.kind == "M"), "")
     period = ds[variable].attrs.get("aggregation_period", "")
     title = title or f"Forecast blend, lead {lead}" + (f" ({period} totals)" if period else "")
-    subtitle = " · ".join(s for s in (
-        f"init {init}" if init else "",
-        f"valid from {valid}" if valid else "",
-        f"{len(names)} forecasts on a {grid_spacing(bl['latitude'].values):g}° grid",
-        f"no lead {lead}: {', '.join(left_out)}" if left_out else "",
-    ) if s)
+    subtitle = " · ".join(
+        s
+        for s in (
+            f"init {init}" if init else "",
+            f"valid from {valid}" if valid else "",
+            f"{len(names)} forecasts on a {grid_spacing(bl['latitude'].values):g}° grid",
+            f"no lead {lead}: {', '.join(left_out)}" if left_out else "",
+        )
+        if s
+    )
 
     fig = _figure(bl, len(names), title, subtitle, palette, units, anomaly_view)
     trace = {t.name: k for k, t in enumerate(fig.data) if t.type == "heatmap"}
@@ -216,15 +252,23 @@ def blend_interface(input, label, variable, lead, weights, reference_grid, anoma
         "small": [trace[f"m{k}"] for k in range(len(names))],
         "blend": trace["blend"],
         "units": units,
-        "anomaly": anomaly_view and {
+        "anomaly": anomaly_view
+        and {
             "small": [trace[f"m{k}_anom"] for k in range(len(names))],
             "blend": trace["blend_anom"],
             "units": anomaly_view[1],
         },
         "axes": ["" if c == 0 else str(c + 1) for c in _layout(len(names))[3]],
         "weights": json.loads(ds.attrs["blend_weights"]),
-        "record": {"skill": "blend", "inputs": inputs, **({"labels": label} if label else {}),
-                   "variable": variable, "lead": lead, "init": init, "valid": valid},
+        "record": {
+            "skill": "blend",
+            "inputs": inputs,
+            **({"labels": label} if label else {}),
+            "variable": variable,
+            "lead": lead,
+            "init": init,
+            "valid": valid,
+        },
     }
     page = pio.to_html(
         fig,

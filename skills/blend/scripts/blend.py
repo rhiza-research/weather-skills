@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#   "weather-skills-core>=0.3.4",
+#   "weather-skills-core>=0.4.0",
 # ]
 # ///
 """Blend several forecasts at one lead into one weighted mean on a common grid."""
@@ -87,10 +87,30 @@ def _regrid(path, variable, reference, finer, workdir, label):
         script = _SKILLS / "downscale" / "scripts" / "downscale.py"
         args = ["--algorithm", "linear-interpolation"]
     if not script.is_file():
-        raise UsageError(f"blend needs the {script.parent.parent.name} skill beside it ({script})")
+        # coarsen and downscale live in weather-skills/weather-skills; the weather-skills
+        # plugin installs them beside this skill, a checkout of this repo alone does not.
+        raise UsageError(
+            f"{label} is on another grid, and regridding it needs the "
+            f"{script.parent.parent.name} skill beside blend ({script}); install the "
+            "weather-skills plugin, or copy skills/coarsen and skills/downscale from "
+            "https://github.com/weather-skills/weather-skills next to skills/blend"
+        )
     out = Path(workdir) / f"{label}.zarr"
-    cmd = ["uv", "run", "--quiet", str(script), "-i", str(path), "-o", str(out),
-           "--reference-grid", str(reference), "-v", variable, *args]
+    cmd = [
+        "uv",
+        "run",
+        "--quiet",
+        str(script),
+        "-i",
+        str(path),
+        "-o",
+        str(out),
+        "--reference-grid",
+        str(reference),
+        "-v",
+        variable,
+        *args,
+    ]
     run = subprocess.run(cmd, capture_output=True, text=True)
     if run.returncode != 0:
         raise UsageError(f"{label}: {script.parent.parent.name} failed:\n{run.stderr.strip()}")
@@ -98,7 +118,7 @@ def _regrid(path, variable, reference, finer, workdir, label):
 
 
 def _parse_weights(text, labels, absent):
-    """Weights from the interface's Finish text or file, JSON, or name=value pairs; sums to 1."""
+    """Weights from the interface's downloaded file or weights line, JSON, or name=value pairs; sums to 1."""
     import numpy as np
 
     raw = str(text).strip()
@@ -122,13 +142,19 @@ def _parse_weights(text, labels, absent):
 
     unknown = sorted(set(given) - set(labels) - set(absent))
     if unknown:
-        raise UsageError(f"--weights names {unknown}, which are not inputs; the forecasts are {labels}")
+        raise UsageError(
+            f"--weights names {unknown}, which are not inputs; the forecasts are {labels}"
+        )
     dropped = [k for k in absent if given.get(k, 0) > 0]
     if dropped:
-        raise UsageError(f"--weights gives weight to {dropped}, which lack this lead; set them to 0")
+        raise UsageError(
+            f"--weights gives weight to {dropped}, which lack this lead; set them to 0"
+        )
     missing = [k for k in labels if k not in given]
     if missing:
-        raise UsageError(f"--weights has no weight for {missing}; give every forecast one (0 leaves it out)")
+        raise UsageError(
+            f"--weights has no weight for {missing}; give every forecast one (0 leaves it out)"
+        )
     w = np.array([given[k] for k in labels])
     if not np.isfinite(w).all() or (w < 0).any() or w.sum() <= 0:
         raise UsageError("--weights must be 0 or more, with at least one above 0")
@@ -153,7 +179,9 @@ def blend(ds, label, variable, lead, weights, reference_grid, keep_members, **kw
     if len(ds) < 2:
         raise UsageError(f"pass at least two --input forecasts, got {len(ds)}")
     if label and len(label) != len(ds):
-        raise UsageError(f"got {len(label)} --label for {len(ds)} --input; pass one per input or none")
+        raise UsageError(
+            f"got {len(label)} --label for {len(ds)} --input; pass one per input or none"
+        )
     paths = [Path(d.attrs[_INPUT_PATH_ATTR]) for d in ds]
     labels = list(label) if label else [_default_label(p) for p in paths]
     if len(set(labels)) != len(labels):
@@ -163,7 +191,9 @@ def blend(ds, label, variable, lead, weights, reference_grid, keep_members, **kw
     if variable is None:
         shared = set.intersection(*(set(d.data_vars) for d in ds))
         if len(shared) != 1:
-            raise UsageError(f"inputs share {sorted(shared) or 'no'} data variables; pick one with --variable")
+            raise UsageError(
+                f"inputs share {sorted(shared) or 'no'} data variables; pick one with --variable"
+            )
         variable = shared.pop()
     for lab, d in zip(labels, ds, strict=True):
         if variable not in d.data_vars:
@@ -222,8 +252,11 @@ def blend(ds, label, variable, lead, weights, reference_grid, keep_members, **kw
 
     weight_map = {k: round(float(x), 4) for k, x in zip(names, w, strict=True)}
     attrs = {k: v for k, v in template.attrs.items() if not k.startswith("GRIB_")}
-    blended.attrs = dict(attrs, long_name=f"{attrs.get('long_name') or variable} blend",
-                         blend_weights=json.dumps(weight_map))
+    blended.attrs = dict(
+        attrs,
+        long_name=f"{attrs.get('long_name') or variable} blend",
+        blend_weights=json.dumps(weight_map),
+    )
     out = xr.Dataset({variable: blended})
     if keep_members:
         out[f"{variable}_members"] = stack.assign_attrs(attrs)

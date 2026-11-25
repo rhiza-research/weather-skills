@@ -1,8 +1,8 @@
 ---
 name: blend
-description: "Blend two or more forecasts at one lead (e.g. week 2) into a weighted mean on a common grid, regridding each with coarsen or downscale. Weights come from blend-interface's Finish button, a JSON dictionary, or name=value pairs; without them every forecast counts equally. Use for a multi-model blend or multi-model mean."
+description: "Blend two or more forecasts at one lead (e.g. week 2) into a weighted mean on a common grid, regridding each with coarsen or downscale. Weights come from blend-interface's Download blend file, a JSON dictionary, or name=value pairs; without them every forecast counts equally. Use for a multi-model blend or multi-model mean."
 license: MIT
-compatibility: Requires Python 3.12 and uv. Calls the coarsen and downscale skills, which must sit beside it.
+compatibility: Requires Python 3.12 and uv. To regrid, calls the coarsen and downscale skills (from weather-skills/weather-skills), which must sit beside it, as the weather-skills plugin installs them.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/blend.py *)
 metadata:
   version: "0.0.1"
@@ -23,7 +23,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/blend.py -i A.zarr -i B.zarr [-i ...] -o OUT.
 - `--input`, `-i` — a forecast Zarr; repeat, at least twice. Each holds the variable on lat/lon plus at most one lead axis (`time` or `step`); reduce an ensemble first (summarize-dim `--dim number`).
 - `--output`, `-o` — output Zarr.
 - `--lead` — 1-based position along each input's lead axis: `1` is the first week of weekly totals. Inputs too short for it are left out, with a note on stderr. Default: `1`.
-- `--weights` — one weight per forecast, by label: the record blend-interface's Finish button gives (text or its downloaded `.json`), a JSON dictionary (`'{"gefs": 0.6, "ecmwf": 0.4}'`), or pairs (`gefs=0.6,ecmwf=0.4`). Every forecast that has the lead needs one (`0` leaves it out); one without the lead may only be given `0`. Scaled to add to 1. Default: equal weights.
+- `--weights` — one weight per forecast, by label: blend-interface's downloaded `blend_weights_*.json` or the weights line under its maps, a JSON dictionary (`'{"gefs": 0.6, "ecmwf": 0.4}'`), or pairs (`gefs=0.6,ecmwf=0.4`). Every forecast that has the lead needs one (`0` leaves it out); one without the lead may only be given `0`. Scaled to add to 1. Default: equal weights.
 - `--label` — a name per input, in `-i` order; these are the keys of `--weights`. Default: the file name up to `_weekly`, `_daily`, `_monthly` or `_init` (`gefs_weekly_totals_init2026-11-02.zarr` → `gefs`).
 - `--variable`, `-v` — the variable to blend. Default: the one data variable every input shares.
 - `--reference-grid` — Zarr whose lat/lon grid the blend is on. Default: the grid most inputs share (ties: the earliest).
