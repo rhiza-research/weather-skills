@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Builds a URL string only; reads no credentials, makes no network request, and writes no file.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py *)
 metadata:
-  version: "0.0.12"
+  version: "0.0.13"
   catalog-group: agent-tooling
 ---
 
@@ -23,7 +23,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py --title TITLE (--body TEXT | --b
 - `--title` — issue title. Required, not empty.
 - `--body` — issue body as markdown.
 - `--body-file` — read the body from this UTF-8 file instead. Pass exactly one of `--body`, `--body-file`.
-- `--repo` — the repo that owns the skill: `weather-skills` (transform skills, resolve-region, resolve-time, inspect-zarr, provenance), `weather-skills-fetchers` (data fetchers), `weather-skills-plotting` (plot), `rhiza-weather-skills` (clim-fetch, hindcast-fetch, submit-feedback, the forecaster agent and the Claude plugin), or `weather-skills-core` (the shared library). Default: `weather-skills`.
+- `--repo` — the repo that owns the skill: `weather-skills` (transform skills, resolve-region, resolve-time, inspect-zarr, provenance), `weather-skills-fetchers` (data fetchers), `weather-skills-plotting` (plot, report-dashboard), `rhiza-weather-skills` (clim-fetch, hindcast-fetch, submit-feedback), or `weather-skills-core` (the shared library). Default: `weather-skills`.
 
 ### Output
 - Exit 0: the URL alone on stdout (`https://github.com/<owner>/<repo>/issues/new?title=…&body=…`; `weather-skills`, `weather-skills-plotting` and `weather-skills-core` are under `weather-skills`; `weather-skills-fetchers` and `rhiza-weather-skills` under `rhiza-research`); a length note on stderr.
