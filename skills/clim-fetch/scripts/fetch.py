@@ -34,7 +34,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.13"
+_SKILL_VERSION = "0.0.14"
 
 # Public GCS mirror. Object keys, one convention for every window (daily is
 # just window=1): climatologies/<dataset>_<variable>_<window>d.zarr
@@ -198,7 +198,7 @@ def _doy_1904(times) -> np.ndarray:
     """
     times = pd.DatetimeIndex(times)
     same_day = pd.to_datetime({"year": 1904, "month": times.month, "day": times.day})
-    return same_day.dt.dayofyear.to_numpy()
+    return same_day.dt.day_of_year.to_numpy()
 
 
 def _expand_climatology(clim: xr.Dataset, start, end) -> xr.Dataset:
