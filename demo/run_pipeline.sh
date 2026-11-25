@@ -48,7 +48,7 @@ for COUNTRY in "${COUNTRIES[@]}"; do
     weather-skills convert-to-totals  -i "$d/ecmwf_weekly.zarr"  -o "$d/ecmwf_weekly_totals.zarr"
     weather-skills convert-to-totals  -i "$d/ecmwf_dekadal.zarr" -o "$d/ecmwf_dekadal_totals.zarr"
     # Dekadal forecast downscaled to 0.25°.
-    weather-skills downscale          -i "$d/ecmwf_dekadal.zarr" -o "$d/ecmwf_dekadal_ds.zarr" --algorithm linear-interpolation --target-resolution 0.25 --variable tp
+    weather-skills downscale          -i "$d/ecmwf_dekadal.zarr" -o "$d/ecmwf_dekadal_ds.zarr" --algorithm linear-interpolation --target-resolution 0.25 --variable precip
     weather-skills convert-to-totals  -i "$d/ecmwf_dekadal_ds.zarr" -o "$d/ecmwf_dekadal_ds_totals.zarr"
 
     weather-skills clip-region        -i "$OUT/imerg.zarr"  -o "$d/imerg.zarr"         --bbox="$BBOX"
@@ -63,7 +63,7 @@ for COUNTRY in "${COUNTRIES[@]}"; do
     weather-skills convert-to-totals  -i "$d/chirps_weekly.zarr"  -o "$d/chirps_weekly_totals.zarr"
     weather-skills convert-to-totals  -i "$d/chirps_dekadal.zarr" -o "$d/chirps_dekadal_totals.zarr"
 
-    weather-skills-fetchers tahmo-fetch --bbox="$BBOX" --start-time "$START_DATE" --end-time "$END_DATE" --output "$d/tahmo.zarr"
+    weather-skills-fetchers tahmo-fetch --daily --bbox="$BBOX" --start-time "$START_DATE" --end-time "$END_DATE" --output "$d/tahmo.zarr"
 
     # Station data aggregated to the same windows as the IMERG/CHIRPS totals,
     # ready to compare against them.
