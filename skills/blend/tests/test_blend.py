@@ -21,7 +21,7 @@ def blend(module):
 
 def _forecast(tmp_path, name, fill, n_time=2, lats=(1.0, 2.0, 3.0)):
     ds = make_gridded(n_time=n_time, lats=lats, fill=fill)
-    ds["precip"].attrs["units"] = "mm"
+    ds["precip"].attrs.update(units="mm", aggregation_period="7 day")
     return str(write_zarr(ds, tmp_path / f"{name}_weekly_totals_init2026-01-01.zarr"))
 
 
@@ -35,7 +35,7 @@ def test_equal_weights_by_default(tmp_path, blend):
     assert ds["precip"].sizes["time"] == 1
     assert str(ds["time"].values[0])[:10] == "2026-01-01"
     np.testing.assert_allclose(ds["precip"].values, 3.0)
-    assert json.loads(ds.attrs["blend_weights"]) == {"a": 0.5, "b": 0.5}
+    assert json.loads(ds.attrs["blend_weights"]) == {"week1": {"a": 0.5, "b": 0.5}}
     assert ds["precip"].attrs["long_name"].endswith(" blend")
     assert load_history(out)[-1]["skill"] == "blend"
 
@@ -49,7 +49,7 @@ def test_weight_pairs_and_lead(tmp_path, blend):
     ds = xr.open_zarr(out)
     assert str(ds["time"].values[0])[:10] == "2026-01-02"
     np.testing.assert_allclose(ds["precip"].values, 2.5)
-    assert ds.attrs["blend_lead"] == 2
+    assert json.loads(ds.attrs["blend_leads"]) == [2]
 
 
 def test_weights_from_interface_file(tmp_path, blend):
@@ -71,7 +71,7 @@ def test_weights_are_scaled_to_one(tmp_path, blend):
 
     ds = xr.open_zarr(out)
     np.testing.assert_allclose(ds["precip"].values, 2.5)
-    assert json.loads(ds.attrs["blend_weights"]) == {"a": 0.75, "b": 0.25}
+    assert json.loads(ds.attrs["blend_weights"]) == {"week1": {"a": 0.75, "b": 0.25}}
 
 
 def test_nan_where_any_weighted_forecast_is_nan(tmp_path, blend):
@@ -100,7 +100,85 @@ def test_forecast_without_the_lead_is_left_out(tmp_path, blend):
 
     ds = xr.open_zarr(out)
     np.testing.assert_allclose(ds["precip"].values, 3.0)
-    assert json.loads(ds.attrs["blend_left_out"]) == ["c"]
+    assert json.loads(ds.attrs["blend_left_out"]) == {"week2": ["c"]}
+
+
+def test_several_leads_with_weights_per_lead(tmp_path, blend):
+    a, b = _forecast(tmp_path, "a", 2.0, n_time=3), _forecast(tmp_path, "b", 4.0, n_time=3)
+    weights = '{"week1": {"a": 1, "b": 0}, "week3": {"a": 0.5, "b": 0.5}}'
+    out = tmp_path / "out.zarr"
+
+    run_skill(blend, "-i", a, "-i", b, "--lead", "1,3", "--weights", weights, "-o", str(out))
+
+    ds = xr.open_zarr(out)
+    assert [str(t)[:10] for t in ds["time"].values] == ["2026-01-01", "2026-01-03"]
+    np.testing.assert_allclose(ds["precip"].isel(time=0).values, 2.0)
+    np.testing.assert_allclose(ds["precip"].isel(time=1).values, 3.0)
+    assert json.loads(ds.attrs["blend_leads"]) == [1, 3]
+    assert json.loads(ds.attrs["blend_weights"]) == {
+        "week1": {"a": 1.0, "b": 0.0},
+        "week3": {"a": 0.5, "b": 0.5},
+    }
+
+
+def test_per_lead_keys_may_be_numbers_and_non_weekly_leads_are_lead_n(tmp_path, blend):
+    a = str(write_zarr(make_gridded(n_time=2, fill=2.0), tmp_path / "a.zarr"))
+    b = str(write_zarr(make_gridded(n_time=2, fill=4.0), tmp_path / "b.zarr"))
+    weights = '{"1": {"a": 1, "b": 0}, "lead2": {"a": 0, "b": 1}}'
+    out = tmp_path / "out.zarr"
+
+    run_skill(blend, "-i", a, "-i", b, "--lead", "1-2", "--weights", weights, "-o", str(out))
+
+    ds = xr.open_zarr(out)
+    np.testing.assert_allclose(ds["precip"].isel(time=0).values, 2.0)
+    np.testing.assert_allclose(ds["precip"].isel(time=1).values, 4.0)
+    assert list(json.loads(ds.attrs["blend_weights"])) == ["lead1", "lead2"]
+
+
+def test_flat_weights_apply_to_every_lead(tmp_path, blend):
+    a, b = _forecast(tmp_path, "a", 2.0, n_time=3), _forecast(tmp_path, "b", 4.0, n_time=3)
+    out = tmp_path / "out.zarr"
+
+    run_skill(
+        blend, "-i", a, "-i", b, "--lead", "1-3", "--weights", "a=0.75,b=0.25", "-o", str(out)
+    )
+
+    np.testing.assert_allclose(xr.open_zarr(out)["precip"].values, 2.5)
+
+
+def test_a_forecast_short_of_a_later_lead(tmp_path, blend):
+    a, b = _forecast(tmp_path, "a", 2.0), _forecast(tmp_path, "b", 4.0)
+    c = _forecast(tmp_path, "c", 6.0, n_time=1)
+    out = tmp_path / "out.zarr"
+
+    run_skill(blend, "-i", a, "-i", b, "-i", c, "--lead", "1-2", "--keep-members", "-o", str(out))
+
+    ds = xr.open_zarr(out)
+    np.testing.assert_allclose(ds["precip"].isel(time=0).values, 4.0)
+    np.testing.assert_allclose(ds["precip"].isel(time=1).values, 3.0)
+    assert json.loads(ds.attrs["blend_left_out"]) == {"week1": [], "week2": ["c"]}
+    assert json.loads(ds.attrs["blend_weights"])["week2"] == {"a": 0.5, "b": 0.5, "c": 0.0}
+    assert np.isnan(ds["precip_members"].isel(time=1).sel(model="c").values).all()
+
+
+@pytest.mark.parametrize("lead", ["0", "3-1", "week1"])
+def test_bad_lead_exits_2(tmp_path, blend, lead):
+    a, b = _forecast(tmp_path, "a", 2.0), _forecast(tmp_path, "b", 4.0)
+
+    with pytest.raises(SystemExit) as exc:
+        run_skill(blend, "-i", a, "-i", b, "--lead", lead, "-o", str(tmp_path / "o.zarr"))
+    assert exc.value.code == 2
+
+
+def test_per_lead_weights_must_cover_every_lead(tmp_path, blend):
+    a, b = _forecast(tmp_path, "a", 2.0), _forecast(tmp_path, "b", 4.0)
+
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            blend, "-i", a, "-i", b, "--lead", "1-2", "--weights", '{"week1": {"a": 1, "b": 0}}',
+            "-o", str(tmp_path / "o.zarr"),
+        )  # fmt: skip
+    assert exc.value.code == 2
 
 
 def test_keep_members_and_labels(tmp_path, blend):

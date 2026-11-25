@@ -4,9 +4,10 @@
 #   "weather-skills-core>=0.4.0",
 # ]
 # ///
-"""Blend several forecasts at one lead into one weighted mean on a common grid."""
+"""Blend several forecasts at one or more leads into a weighted mean on a common grid."""
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -117,10 +118,27 @@ def _regrid(path, variable, reference, finer, workdir, label):
     return xr.open_zarr(out)[variable].load()
 
 
-def _parse_weights(text, labels, absent):
-    """Weights from the interface's downloaded file or weights line, JSON, or name=value pairs; sums to 1."""
-    import numpy as np
+def _parse_leads(values):
+    """--lead values such as 2, 1-3 or 1,2,4 -> sorted 1-based leads."""
+    leads = set()
+    for value in values or ["1"]:
+        for part in str(value).replace(" ", "").split(","):
+            first, _, last = part.partition("-")
+            try:
+                lo, hi = int(first), int(last or first)
+            except ValueError:
+                raise UsageError(f"--lead {value}: give leads as 2, 1-3 or 1,2,4") from None
+            if lo < 1 or hi < lo:
+                raise UsageError(f"--lead {value}: leads start at 1 and ranges run upwards")
+            leads.update(range(lo, hi + 1))
+    return sorted(leads)
 
+
+def _read_weights(text):
+    """--weights as a dictionary: {label: weight}, or {lead: {label: weight}} for one set per lead.
+
+    Takes blend-interface's downloaded file or weights line, JSON, or name=value pairs.
+    """
     raw = str(text).strip()
     # Anything that is not JSON or name=value pairs is a file path.
     if not raw.startswith("{") and "=" not in raw and "\n" not in raw:
@@ -135,31 +153,59 @@ def _parse_weights(text, labels, absent):
         given = parsed.get("weights", parsed)
     else:
         given = dict(p.split("=", 1) for p in raw.replace("\n", ",").split(",") if p.strip())
+    nested = bool(given) and all(isinstance(v, dict) for v in given.values())
     try:
-        given = {str(k).strip(): float(v) for k, v in given.items()}
+        if nested:
+            return {
+                _lead_number(lead): {str(k).strip(): float(v) for k, v in ws.items()}
+                for lead, ws in given.items()
+            }
+        return {str(k).strip(): float(v) for k, v in given.items()}
     except (TypeError, ValueError):
-        raise UsageError("--weights: every weight must be a number") from None
+        raise UsageError(
+            "--weights: every weight must be a number, and per-lead weights keyed by week1, "
+            "week2, ... (or lead1, ...)"
+        ) from None
 
+
+def _lead_number(key):
+    """A per-lead weights key, week2, lead2 or 2, as the lead number 2."""
+    match = re.fullmatch(r"(?:week|lead)?\s*(\d+)", str(key).strip().lower())
+    if not match:
+        raise ValueError(key)
+    return int(match.group(1))
+
+
+def _lead_weights(given, lead, labels, absent, name):
+    """One lead's weights for labels, from _read_weights' dictionary; sums to 1."""
+    import numpy as np
+
+    if given and all(isinstance(v, dict) for v in given.values()):
+        if lead not in given:
+            raise UsageError(f"--weights has no weights for {name}")
+        given = given[lead]
+    where = f" for {name}"
     unknown = sorted(set(given) - set(labels) - set(absent))
     if unknown:
         raise UsageError(
-            f"--weights names {unknown}, which are not inputs; the forecasts are {labels}"
+            f"--weights{where} names {unknown}, which are not inputs; the forecasts are {labels}"
         )
     dropped = [k for k in absent if given.get(k, 0) > 0]
     if dropped:
-        raise UsageError(
-            f"--weights gives weight to {dropped}, which lack this lead; set them to 0"
-        )
+        raise UsageError(f"--weights gives weight to {dropped}, which lack {name}; set them to 0")
     missing = [k for k in labels if k not in given]
     if missing:
         raise UsageError(
-            f"--weights has no weight for {missing}; give every forecast one (0 leaves it out)"
+            f"--weights{where} has no weight for {missing}; give every forecast one (0 leaves it out)"
         )
     w = np.array([given[k] for k in labels])
     if not np.isfinite(w).all() or (w < 0).any() or w.sum() <= 0:
-        raise UsageError("--weights must be 0 or more, with at least one above 0")
+        raise UsageError(f"--weights{where} must be 0 or more, with at least one above 0")
     if abs(w.sum() - 1) > 0.01:
-        print(f"blend: weights add up to {w.sum():.3f}; scaling them to 1", file=sys.stderr)
+        print(
+            f"blend: {name} weights add up to {w.sum():.3f}; scaling them to 1",
+            file=sys.stderr,
+        )
     return w / w.sum()
 
 
@@ -167,12 +213,12 @@ def _parse_weights(text, labels, absent):
 @weather_skill.argument("-i", "--input", type=Dataset("spatial"), action="append", required=True)
 @weather_skill.argument("--label", action="append")
 @weather_skill.argument("--variable", "-v")
-@weather_skill.argument("--lead", type=int, default=1)
+@weather_skill.argument("--lead", action="append")
 @weather_skill.argument("--weights")
 @weather_skill.argument("--reference-grid", type=Dataset("spatial"))
 @weather_skill.argument("--keep-members", action="store_true")
 def blend(ds, label, variable, lead, weights, reference_grid, keep_members, **kwargs):
-    """Blend several forecasts at one lead into one weighted mean on a common grid."""
+    """Blend several forecasts at one or more leads into a weighted mean on a common grid."""
     import numpy as np
     import xarray as xr
 
@@ -182,6 +228,7 @@ def blend(ds, label, variable, lead, weights, reference_grid, keep_members, **kw
         raise UsageError(
             f"got {len(label)} --label for {len(ds)} --input; pass one per input or none"
         )
+    leads = _parse_leads(lead)
     paths = [Path(d.attrs[_INPUT_PATH_ATTR]) for d in ds]
     labels = list(label) if label else [_default_label(p) for p in paths]
     if len(set(labels)) != len(labels):
@@ -199,18 +246,34 @@ def blend(ds, label, variable, lead, weights, reference_grid, keep_members, **kw
         if variable not in d.data_vars:
             raise UsageError(f"{lab}: no variable {variable!r} (has {list(d.data_vars)})")
 
-    # Keep the inputs that reach this lead.
-    kept, absent = [], []
-    for lab, path, d in zip(labels, paths, ds, strict=True):
-        dim = _lead_dim(d[variable])
-        if dim is not None and not 1 <= lead <= d.sizes[dim]:
-            absent.append(lab)
-            continue
-        kept.append((lab, path, d[variable], dim))
-    if absent:
-        print(f"blend: lead {lead} missing from {', '.join(absent)}; left out", file=sys.stderr)
-    if len(kept) < 2:
-        raise UsageError(f"only {len(kept)} input(s) reach lead {lead}; need at least two")
+    # Leads are named for what they are: week1, week2, ... for weekly inputs, else lead1, ...
+    period = ds[0][variable].attrs.get("aggregation_period", "")
+    word = "week" if period == "7 day" else "lead"
+
+    def key(n):
+        return f"{word}{n}"
+
+    # Which inputs reach each lead; an input without a lead axis counts for lead 1 only.
+    def reaches(d, dim, n):
+        return n == 1 if dim is None else n <= d.sizes[dim]
+
+    dims = [_lead_dim(d[variable]) for d in ds]
+    absent = {
+        n: [lab for lab, d, dim in zip(labels, ds, dims, strict=True) if not reaches(d, dim, n)]
+        for n in leads
+    }
+    for n in leads:
+        if absent[n]:
+            print(
+                f"blend: {word} {n} missing from {', '.join(absent[n])}; left out", file=sys.stderr
+            )
+        if len(absent[n]) == len(labels):
+            raise UsageError(f"no input reaches {word} {n}")
+    kept = [
+        (lab, path, d[variable], dim)
+        for lab, path, d, dim in zip(labels, paths, ds, dims, strict=True)
+        if any(reaches(d, dim, n) for n in leads)
+    ]
 
     # Target grid: --reference-grid, else the grid most inputs share (ties: the earliest).
     if reference_grid is not None:
@@ -222,59 +285,90 @@ def blend(ds, label, variable, lead, weights, reference_grid, keep_members, **kw
     target_key, target_res = _grid_key(target), _spacing(target)
     lat_t, lon_t = (np.asarray(v) for v in target_key)
 
-    fields = []
+    # Each input on the target grid, one field per lead (NaN for a lead it lacks).
+    names = [lab for lab, *_ in kept]
+    fields = {}
     with tempfile.TemporaryDirectory(prefix="blend-") as work:
         ref_path = _write_grid(target, work)
         for lab, path, da, dim in kept:
             if _grid_key(da) != target_key:
                 da = _regrid(path, variable, ref_path, _spacing(da) < target_res * 0.99, work, lab)
-            if dim is not None:
-                da = da.isel({dim: lead - 1})
             lat_dim, lon_dim = detect_spatial_dims(da)
             da = da.rename({lat_dim: "latitude", lon_dim: "longitude"})
             # Regridding keeps only the input's extent; pad it back out to the full grid.
             da = da.reindex(latitude=lat_t, longitude=lon_t, method="nearest", tolerance=1e-3)
-            fields.append(da.load())
-
-    names = [lab for lab, *_ in kept]
-    lead_coord = kept[0][3]
-    template = fields[0]
-    stack = xr.concat(
-        [f.drop_vars([c for c in f.coords if c not in ("latitude", "longitude")]) for f in fields],
-        dim=xr.DataArray(names, dims="model", name="model"),
-    )
-    w = _parse_weights(weights, names, absent) if weights else np.full(len(names), 1 / len(names))
-    weight = xr.DataArray(w, dims="model", coords={"model": names})
-    # NaN wherever a forecast with weight has no value, so the blend never quietly
-    # becomes a mean of fewer forecasts.
-    covered = stack.sel(model=weight["model"][weight > 0]).notnull().all("model")
-    blended = (stack.fillna(0) * weight).sum("model").where(covered)
-
-    weight_map = {k: round(float(x), 4) for k, x in zip(names, w, strict=True)}
+            for n in leads:
+                if lab not in absent[n]:
+                    fields[lab, n] = (da if dim is None else da.isel({dim: n - 1})).load()
+    template = next(iter(fields.values()))
     attrs = {k: v for k, v in template.attrs.items() if not k.startswith("GRIB_")}
+
+    def plain(f):
+        return f.drop_vars([c for c in f.coords if c not in ("latitude", "longitude")])
+
+    blends, stacks, weight_maps = [], [], {}
+    given = _read_weights(weights) if weights else None
+    for n in leads:
+        here = [lab for lab in names if lab not in absent[n]]
+        w = (
+            _lead_weights(given, n, here, absent[n], f"{word} {n}")
+            if given is not None
+            else np.full(len(here), 1 / len(here))
+        )
+        stack = xr.concat(
+            [plain(fields[lab, n]) for lab in here],
+            dim=xr.DataArray(here, dims="model", name="model"),
+        )
+        weight = xr.DataArray(w, dims="model", coords={"model": here})
+        # NaN wherever a forecast with weight has no value, so the blend never quietly
+        # becomes a mean of fewer forecasts.
+        covered = stack.sel(model=weight["model"][weight > 0]).notnull().all("model")
+        blends.append((stack.fillna(0) * weight).sum("model").where(covered))
+        stacks.append(stack.reindex(model=names))
+        given_w = dict(zip(here, w, strict=True))
+        weight_maps[n] = {k: round(float(given_w.get(k, 0.0)), 4) for k in names}
+
+    # Keyed by lead, as blend-interface downloads them: {"week1": {label: weight}, ...}.
+    weights_attr = json.dumps({key(n): weight_maps[n] for n in leads})
+    blended = xr.concat(blends, dim="lead") if len(leads) > 1 else blends[0]
     blended.attrs = dict(
         attrs,
         long_name=f"{attrs.get('long_name') or variable} blend",
-        blend_weights=json.dumps(weight_map),
+        blend_weights=weights_attr,
     )
     out = xr.Dataset({variable: blended})
     if keep_members:
-        out[f"{variable}_members"] = stack.assign_attrs(attrs)
-    if lead_coord is not None and lead_coord in template.coords:
-        out = out.expand_dims({lead_coord: [template[lead_coord].values]})
+        members = xr.concat(stacks, dim="lead") if len(leads) > 1 else stacks[0]
+        out[f"{variable}_members"] = members.assign_attrs(attrs)
+    # The lead axis holds, for each lead, the first input's value there (such as the
+    # week's start date), from the first input that has a lead axis.
+    lead_dim = next((dim for *_, dim in kept if dim is not None), None)
+    if lead_dim is not None:
+        values = [
+            next(
+                d[lead_dim].values[n - 1]
+                for d, dim in zip(ds, dims, strict=True)
+                if dim == lead_dim and n <= d.sizes[dim] and lead_dim in d.coords
+            )
+            for n in leads
+        ]
+        out = out.rename({"lead": lead_dim}) if len(leads) > 1 else out.expand_dims(lead_dim)
+        out = out.assign_coords({lead_dim: values})
+        out[lead_dim].attrs = ds[dims.index(lead_dim)][lead_dim].attrs
+    span = f"{word} {leads[0]}" if len(leads) == 1 else f"{word}s {','.join(map(str, leads))}"
     # Stated in full: otherwise the first input's title, source and licence pass through.
     licences = dict.fromkeys(str(d.attrs["license"]) for d in ds if d.attrs.get("license"))
     out.attrs = {
-        "title": f"Blend of {len(names)} forecasts, lead {lead}",
+        "title": f"Blend of {len(names)} forecasts, {span}",
         "source": ", ".join(names),
         "weather_skills_source": "blend:" + ",".join(names),
         "license": " | ".join(licences) or "see the inputs",
         "weather_skills_forecast_init": ds[0].attrs.get("weather_skills_forecast_init", ""),
-        "blend_lead": lead,
-        "blend_weights": json.dumps(weight_map),
-        "blend_left_out": json.dumps(absent),
+        "blend_leads": json.dumps(leads),
+        "blend_weights": weights_attr,
+        "blend_left_out": json.dumps({key(n): absent[n] for n in leads}),
     }
-    print(f"blend: lead {lead}, weights {weight_map}", file=sys.stderr)
+    print(f"blend: {span}, weights {weights_attr}", file=sys.stderr)
     return out
 
 

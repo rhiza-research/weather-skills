@@ -50,12 +50,12 @@ def test_labels_match_blend():
         assert interface(path) == blend(path)
 
 
-@pytest.mark.parametrize("n", range(2, 9))
-def test_layout_puts_each_map_in_its_own_cell(module, n):
-    rows, cols, small_cols, cells, blend, empty = module._layout(n)
-    assert rows == (1 if n <= 3 else 2)
-    assert len(set(cells)) == n
-    assert blend not in cells and blend not in empty
-    # Every small map is left of the blend, which takes the right-hand columns.
-    assert all(c % cols < small_cols for c in cells)
-    assert sorted([*cells, blend, *empty]) == list(range(rows * cols))
+@pytest.mark.parametrize("n_models", [2, 4, 8])
+@pytest.mark.parametrize("n_leads", [1, 3])
+def test_layout_is_a_row_per_lead_with_the_blend_last(module, n_models, n_leads):
+    cols, small, blend = module._layout(n_models, n_leads)
+    assert cols == n_models + 1
+    assert len(small) == len(blend) == n_leads
+    for r in range(n_leads):
+        assert small[r] == list(range(r * cols, r * cols + n_models))
+        assert blend[r] == r * cols + n_models

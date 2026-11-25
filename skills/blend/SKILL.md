@@ -1,6 +1,6 @@
 ---
 name: blend
-description: "Blend two or more forecasts at one lead (e.g. week 2) into a weighted mean on a common grid, regridding each with coarsen or downscale. Weights come from blend-interface's Download blend file, a JSON dictionary, or name=value pairs; without them every forecast counts equally. Use for a multi-model blend or multi-model mean."
+description: "Blend two or more forecasts at one or more leads (e.g. weeks 1-3) into a weighted mean on a common grid, regridding each with coarsen or downscale. Weights, the same for every lead or one set per lead, come from blend-interface's Download blend file, a JSON dictionary, or name=value pairs; without them every forecast counts equally. Use for a multi-model blend or multi-model mean."
 license: MIT
 compatibility: Requires Python 3.12 and uv. To regrid, calls the coarsen and downscale skills (from weather-skills/weather-skills), which must sit beside it, as the weather-skills plugin installs them.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/blend.py *)
@@ -11,39 +11,41 @@ metadata:
 
 # blend
 
-Writes the weighted mean of several forecasts at one lead, on one grid.
+Writes the weighted mean of several forecasts at one or more leads, on one grid.
 
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/blend.py -i A.zarr -i B.zarr [-i ...] -o OUT.zarr [--lead N] [--weights W] [--label NAME ...] [-v VAR] [--reference-grid REF.zarr] [--keep-members]
+uv run ${CLAUDE_SKILL_DIR}/scripts/blend.py -i A.zarr -i B.zarr [-i ...] -o OUT.zarr [--lead N|N-M|N,M,...] [--weights W] [--label NAME ...] [-v VAR] [--reference-grid REF.zarr] [--keep-members]
 ```
 
 ### Arguments
 - `--input`, `-i` — a forecast Zarr; repeat, at least twice. Each holds the variable on lat/lon plus at most one lead axis (`time` or `step`); reduce an ensemble first (summarize-dim `--dim number`).
 - `--output`, `-o` — output Zarr.
-- `--lead` — 1-based position along each input's lead axis: `1` is the first week of weekly totals. Inputs too short for it are left out, with a note on stderr. Default: `1`.
-- `--weights` — one weight per forecast, by label: blend-interface's downloaded `blend_weights_*.json` or the weights line under its maps, a JSON dictionary (`'{"gefs": 0.6, "ecmwf": 0.4}'`), or pairs (`gefs=0.6,ecmwf=0.4`). Every forecast that has the lead needs one (`0` leaves it out); one without the lead may only be given `0`. Scaled to add to 1. Default: equal weights.
+- `--lead` — 1-based positions along each input's lead axis: `1` is the first week of weekly totals, `1-3` weeks 1 to 3, `1,3` weeks 1 and 3; repeatable. An input too short for a lead is left out of that lead only, with a note on stderr. Default: `1`.
+- `--weights` — one weight per forecast, by label: blend-interface's downloaded `blend_weights_*.json` or the weights text under its maps, a JSON dictionary (`'{"gefs": 0.6, "ecmwf": 0.4}'`), or pairs (`gefs=0.6,ecmwf=0.4`). These apply to every lead; for one set per lead, key them `week1`, `week2`, ... (`lead1`, ... or plain numbers also work): `'{"week1": {"gefs": 0.6, "ecmwf": 0.4}, "week2": {"gefs": 0.3, "ecmwf": 0.7}}'`, with every lead present. Every forecast that has a lead needs a weight there (`0` leaves it out); one without the lead may only be given `0`. Each lead's weights are scaled to add to 1. Default: equal weights.
 - `--label` — a name per input, in `-i` order; these are the keys of `--weights`. Default: the file name up to `_weekly`, `_daily`, `_monthly` or `_init` (`gefs_weekly_totals_init2026-11-02.zarr` → `gefs`).
 - `--variable`, `-v` — the variable to blend. Default: the one data variable every input shares.
 - `--reference-grid` — Zarr whose lat/lon grid the blend is on. Default: the grid most inputs share (ties: the earliest).
-- `--keep-members` — also write each blended forecast on the blend grid as `<var>_members` along a `model` dim (used by blend-interface).
+- `--keep-members` — also write each blended forecast on the blend grid as `<var>_members` along a `model` dim, NaN at a lead it lacks (used by blend-interface).
 
 ### Output
-- `<var>`: the blend on (lead dim of length 1, `latitude`, `longitude`); the lead dim holds the first input's value at that lead, such as the week's start date. Attrs are the first input's, `long_name` ending in ` blend`, plus `blend_weights`.
+- `<var>`: the blend on (lead dim, `latitude`, `longitude`), one entry per `--lead`; the lead dim holds the first input's value at each lead, such as the week's start date. Attrs are the first input's, `long_name` ending in ` blend`, plus `blend_weights`.
 - `<var>_members` with `--keep-members`.
-- Dataset attrs: `blend_weights`, `blend_lead`, `blend_left_out` (forecasts without the lead), `weather_skills_forecast_init` from the first input, and `license` listing every input's licence.
+- Dataset attrs: `blend_leads` (JSON list of lead numbers), `blend_weights` (`{"week1": {label: weight}, ...}`, as blend-interface downloads them), `blend_left_out` (`{"week3": [labels], ...}`: forecasts without that lead), `weather_skills_forecast_init` from the first input, and `license` listing every input's licence.
 - stderr: the weights used and any forecasts left out.
 
 ### Notes
 - An input on another grid is regridded by its spacing: a finer one with coarsen `--method conservative` (a target cell partly outside a masked input, such as a country-only field, is NaN), a coarser one with downscale `--algorithm linear-interpolation` (NaN beyond its outermost cell centres).
-- A blend cell is NaN wherever any forecast with weight above 0 is NaN, so the blend never quietly becomes a mean of fewer forecasts.
+- A blend cell is NaN wherever any forecast with weight above 0 at that lead is NaN, so the blend never quietly becomes a mean of fewer forecasts.
 - Inputs must share units and aggregation period (weekly totals with weekly totals); convert first with unit-convert, aggregate-temporal or convert-to-totals.
+- Leads are named `week1`, `week2`, ... when the inputs are weekly (`aggregation_period` `7 day`), else `lead1`, `lead2`, ...
 - Weights follow labels, not input order: pass the same `-i` files and `--label` values the weights were chosen with.
 
 ### Example
 ```bash
 uv run ${CLAUDE_SKILL_DIR}/scripts/blend.py -i gefs_weekly.zarr -i ecmwf_weekly.zarr -i cumulus_weekly.zarr \
-  --lead 2 --weights 'gefs=0.5,ecmwf=0.3,cumulus=0.2' -o blend_week2.zarr
+  --lead 1-2 --weights '{"week1": {"gefs": 0.5, "ecmwf": 0.3, "cumulus": 0.2}, "week2": {"gefs": 0.2, "ecmwf": 0.4, "cumulus": 0.4}}' \
+  -o blend_weeks1-2.zarr
 ```
-Writes the week-2 rainfall blend: half GEFS, 30% ECMWF, 20% Cumulus, on the grid two of them share.
+Writes the week-1 and week-2 rainfall blends, GEFS weighted most in week 1 and least in week 2, on the grid two of them share.
