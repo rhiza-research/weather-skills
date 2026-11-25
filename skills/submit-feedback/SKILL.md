@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv. Builds a URL string only; reads no credentials, makes no network request, and writes no file.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py *)
 metadata:
-  version: "0.0.10"
+  version: "0.0.13"
   catalog-group: agent-tooling
 ---
 
@@ -23,10 +23,10 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py --title TITLE (--body TEXT | --b
 - `--title` — issue title. Required, not empty.
 - `--body` — issue body as markdown.
 - `--body-file` — read the body from this UTF-8 file instead. Pass exactly one of `--body`, `--body-file`.
-- `--repo` — the repo that owns the skill: `weather-skills`, `weather-skills-core`, or `weather-skills-plotting`. Default: `weather-skills`.
+- `--repo` — the repo that owns the skill: `weather-skills` (transform skills, resolve-region, resolve-time, inspect-zarr, provenance), `weather-skills-fetchers` (data fetchers), `weather-skills-plotting` (plot, report-dashboard), `rhiza-weather-skills` (clim-fetch, hindcast-fetch, submit-feedback), or `weather-skills-core` (the shared library). Default: `weather-skills`.
 
 ### Output
-- Exit 0: the URL alone on stdout (`https://github.com/<owner>/<repo>/issues/new?title=…&body=…`; `weather-skills-core` is under `weather-skills`, the others under `rhiza-research`); a length note on stderr.
+- Exit 0: the URL alone on stdout (`https://github.com/<owner>/<repo>/issues/new?title=…&body=…`; `weather-skills`, `weather-skills-plotting` and `weather-skills-core` are under `weather-skills`; `weather-skills-fetchers` and `rhiza-weather-skills` under `rhiza-research`); a length note on stderr.
 - Exit 1: the URL would be over 6,800 characters. Nothing on stdout; stderr says roughly how many body characters to cut.
 - Exit 2: empty title or body, both or neither body source, unreadable or non-UTF-8 input, or a title too long on its own.
 
@@ -37,8 +37,8 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py --title TITLE (--body TEXT | --b
 
 ### Example
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py --title "plot: empty map for IMERG over Kenya" \
+uv run ${CLAUDE_SKILL_DIR}/scripts/build_url.py --repo weather-skills-plotting --title "plot: empty map for IMERG over Kenya" \
   --body "**Did:** plotted a clipped IMERG Zarr for 2026-10-01 to 2026-10-14.
 **Expected:** a filled rainfall map. **Got:** a near-white PNG, colour bar 0 to 0.0001 mm."
 ```
-Prints a `rhiza-research/weather-skills` new-issue link with that title and body filled in.
+Prints a `weather-skills/weather-skills-plotting` new-issue link with that title and body filled in.
