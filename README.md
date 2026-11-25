@@ -32,6 +32,7 @@ Built as [Agent Skills](https://agentskills.io) by Rhiza Research.
 | `clim-fetch` | Climatology (mean + std) for a `--dataset` (`imerg_final`, `era5`, `chirps`, `ecmwf_ifs`, `oisst`, …), at a selected `--prediction-timedelta` lead and `--window` (days; correctly rolled up, centered, with circular padding if not pre-mirrored), expanded to a `--start-time`/`--end-time` window → Zarr. OISST SST is `--dataset oisst --variable sst`. |
 | `hindcast-fetch` | ECMWF (inits 1996–2025), GEFS (1998–2019) or Cumulus (1996 to 2026-08-31) subseasonal hindcasts for one or more ranges of init dates → multi-init forecast Zarr of daily precip, 2 m temperature and (ECMWF) SST. ECMWF and GEFS need no credentials; Cumulus does. |
 | `submit-feedback` | Build a length-checked prefilled GitHub new-issue URL the user clicks to file feedback under their own account. Holds no token, makes no network call, creates no issue itself. |
+| `pbc-correct` | Probabilistic bias correction (PBC) of an ensemble's quintile probabilities: Debias++, Persistence++ and Climatology++ trained on hindcasts and obs; `--components raw` puts a raw ensemble on the same quintiles. |
 
 ## Install
 
